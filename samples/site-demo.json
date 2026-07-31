@@ -1,0 +1,1338 @@
+{
+  "meshcraft_site_config": 1,
+  "site": {
+    "name": "Festival Horizon",
+    "plan": {
+      "width": 1120,
+      "height": 620
+    }
+  },
+  "vlans": [
+    {
+      "vlan_id": 10,
+      "name": "MGMT",
+      "color": "#94a3b8",
+      "purpose": "Administration équipements"
+    },
+    {
+      "vlan_id": 20,
+      "name": "DANTE PRI",
+      "color": "#46a758",
+      "purpose": "Audio Dante — primaire"
+    },
+    {
+      "vlan_id": 21,
+      "name": "DANTE SEC",
+      "color": "#14b8a6",
+      "purpose": "Audio Dante — secondaire"
+    },
+    {
+      "vlan_id": 30,
+      "name": "ARTNET",
+      "color": "#f5a623",
+      "purpose": "Lumière Art-Net / sACN"
+    },
+    {
+      "vlan_id": 40,
+      "name": "NDI VIDEO",
+      "color": "#a855f7",
+      "purpose": "Vidéo NDI / captation"
+    },
+    {
+      "vlan_id": 41,
+      "name": "PTZ CTRL",
+      "color": "#8b5cf6",
+      "purpose": "Contrôle caméras"
+    },
+    {
+      "vlan_id": 50,
+      "name": "INTERCOM",
+      "color": "#06b6d4",
+      "purpose": "Intercom IP"
+    },
+    {
+      "vlan_id": 55,
+      "name": "VOIP",
+      "color": "#0ea5e9",
+      "purpose": "Téléphonie site"
+    },
+    {
+      "vlan_id": 60,
+      "name": "PROD",
+      "color": "#84cc16",
+      "purpose": "Bureaux production"
+    },
+    {
+      "vlan_id": 70,
+      "name": "WIFI CREW",
+      "color": "#4f7cff",
+      "purpose": "WiFi équipes"
+    },
+    {
+      "vlan_id": 71,
+      "name": "WIFI GUEST",
+      "color": "#ec4899",
+      "purpose": "WiFi public"
+    },
+    {
+      "vlan_id": 80,
+      "name": "STREAM",
+      "color": "#f97316",
+      "purpose": "Streaming sortant"
+    },
+    {
+      "vlan_id": 90,
+      "name": "CCTV",
+      "color": "#e5484d",
+      "purpose": "Vidéosurveillance"
+    },
+    {
+      "vlan_id": 100,
+      "name": "BILLET",
+      "color": "#eab308",
+      "purpose": "Billetterie / accès"
+    },
+    {
+      "vlan_id": 999,
+      "name": "TRANSIT",
+      "color": "#64748b",
+      "purpose": "Natif des liaisons inter-switch"
+    }
+  ],
+  "port_profiles": [
+    {
+      "name": "Prise artiste — Dante",
+      "spec": {
+        "description": "Console, stagebox ou ampli sur le réseau audio primaire",
+        "mode": "access",
+        "pvid": 20,
+        "tagged": [],
+        "poe": false
+      }
+    },
+    {
+      "name": "Dante secondaire",
+      "spec": {
+        "description": "Réseau audio redondant (carte SEC)",
+        "mode": "access",
+        "pvid": 21,
+        "tagged": [],
+        "poe": false
+      }
+    },
+    {
+      "name": "Node lumière",
+      "spec": {
+        "description": "Node Art-Net ou gateway sACN, alimenté PoE",
+        "mode": "access",
+        "pvid": 30,
+        "tagged": [],
+        "poe": true
+      }
+    },
+    {
+      "name": "AP WiFi site",
+      "spec": {
+        "description": "Borne crew + public, management natif",
+        "mode": "trunk",
+        "pvid": 10,
+        "tagged": [
+          10,
+          70,
+          71
+        ],
+        "poe": true
+      }
+    },
+    {
+      "name": "Caméra PTZ",
+      "spec": {
+        "description": "Flux NDI + contrôle caméra, alimentée PoE",
+        "mode": "trunk",
+        "pvid": 40,
+        "tagged": [
+          40,
+          41
+        ],
+        "poe": true
+      }
+    },
+    {
+      "name": "Beltpack intercom",
+      "spec": {
+        "description": "Poste intercom IP, alimenté PoE",
+        "mode": "access",
+        "pvid": 50,
+        "tagged": [],
+        "poe": true
+      }
+    },
+    {
+      "name": "Poste production",
+      "spec": {
+        "description": "PC bureautique équipe production",
+        "mode": "access",
+        "pvid": 60,
+        "tagged": [],
+        "poe": false
+      }
+    },
+    {
+      "name": "Encodeur streaming",
+      "spec": {
+        "description": "Sortie captation vers CDN",
+        "mode": "access",
+        "pvid": 80,
+        "tagged": [],
+        "poe": false
+      }
+    },
+    {
+      "name": "Caméra sécurité",
+      "spec": {
+        "description": "CCTV fixe, alimentée PoE",
+        "mode": "access",
+        "pvid": 90,
+        "tagged": [],
+        "poe": true
+      }
+    },
+    {
+      "name": "Liaison inter-switch",
+      "spec": {
+        "description": "Trunk complet, natif TRANSIT — uplinks fibre ou cuivre",
+        "mode": "trunk",
+        "pvid": 999,
+        "tagged": "all",
+        "poe": false,
+        "eng_only": true
+      }
+    }
+  ],
+  "device_profiles": [
+    {
+      "name": "switch-standard",
+      "spec": {
+        "stp": {
+          "mode": "rstp",
+          "priority": 32768
+        },
+        "management": {
+          "ssh": true,
+          "http": false,
+          "telnet": false
+        },
+        "igmp_snooping": true
+      }
+    }
+  ],
+  "device_groups": [
+    {
+      "name": "Régies",
+      "device_profile": "switch-standard"
+    },
+    {
+      "name": "Plateau",
+      "device_profile": "switch-standard"
+    }
+  ],
+  "devices": [
+    {
+      "name": "CORE",
+      "model": "Generic-AGG-16X",
+      "vendor": "generic",
+      "location": "Local technique",
+      "mgmt_ip": "10.10.0.1",
+      "status": "ok",
+      "position": {
+        "x": 880,
+        "y": 430
+      },
+      "extra": {
+        "os": "Generic OS 1.0",
+        "uptime": "3 j 06 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 1,
+          "speed": "1G",
+          "label": "MGMT"
+        },
+        {
+          "prefix": "sfp-sfpplus",
+          "count": 16,
+          "speed": "10G",
+          "label": "SFP+ 1–16"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Poste ingénieur",
+          "mode": "access",
+          "pvid": 10,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 2,
+          "tx_mbps": 1
+        },
+        "sfp-sfpplus1": {
+          "label": "Uplink FOH",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 540,
+          "tx_mbps": 860
+        },
+        "sfp-sfpplus2": {
+          "label": "Uplink RÉGIE LUMIÈRE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 40,
+          "tx_mbps": 95
+        },
+        "sfp-sfpplus3": {
+          "label": "Uplink CAR RÉGIE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 980,
+          "tx_mbps": 1450
+        },
+        "sfp-sfpplus4": {
+          "label": "Uplink BACKSTAGE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 80,
+          "tx_mbps": 120
+        },
+        "sfp-sfpplus5": {
+          "label": "Uplink ACCUEIL",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 22,
+          "tx_mbps": 45
+        },
+        "sfp-sfpplus6": {
+          "label": "Uplink TOUR DÉLAI",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": null
+        },
+        "sfp-sfpplus7": {
+          "label": "Routeur WAN",
+          "mode": "access",
+          "pvid": 999,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 610,
+          "tx_mbps": 240
+        },
+        "sfp-sfpplus8": {
+          "label": "NAS captation",
+          "mode": "access",
+          "pvid": 80,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 420,
+          "tx_mbps": 15
+        },
+        "sfp-sfpplus9": {
+          "label": "Serveur production",
+          "mode": "access",
+          "pvid": 60,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 35,
+          "tx_mbps": 18
+        }
+      }
+    },
+    {
+      "name": "FOH",
+      "model": "Generic-24P-4X",
+      "vendor": "generic",
+      "location": "Régies façade",
+      "mgmt_ip": "10.10.0.10",
+      "status": "ok",
+      "group": "Régies",
+      "poe_budget_w": 450,
+      "position": {
+        "x": 330,
+        "y": 400
+      },
+      "extra": {
+        "os": "Generic OS 1.0",
+        "uptime": "2 j 14 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 24,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–24 · PoE+"
+        },
+        {
+          "prefix": "sfp-sfpplus",
+          "count": 4,
+          "speed": "10G",
+          "label": "SFP+"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Console FOH — PRI",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 98,
+          "tx_mbps": 96
+        },
+        "ether2": {
+          "label": "Console FOH — SEC",
+          "mode": "access",
+          "pvid": 21,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 98,
+          "tx_mbps": 96
+        },
+        "ether3": {
+          "label": "PC régie son",
+          "mode": "access",
+          "pvid": 60,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 12,
+          "tx_mbps": 4
+        },
+        "ether4": {
+          "label": "Master intercom",
+          "mode": "access",
+          "pvid": 50,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 6.4,
+          "rx_mbps": 3,
+          "tx_mbps": 3
+        },
+        "ether5": {
+          "label": "AP crew FOH",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70,
+            71
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 9.6,
+          "rx_mbps": 120,
+          "tx_mbps": 45
+        },
+        "ether6": {
+          "label": "Encodeur stream",
+          "mode": "access",
+          "pvid": 80,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 2,
+          "tx_mbps": 24
+        },
+        "ether7": {
+          "label": "Caméra PTZ FOH",
+          "mode": "trunk",
+          "pvid": 40,
+          "tagged": [
+            40,
+            41
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 13.2,
+          "rx_mbps": 210,
+          "tx_mbps": 6
+        },
+        "ether8": {
+          "label": "Enregistreur multipiste",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 96,
+          "tx_mbps": 4
+        },
+        "ether9": {
+          "label": "Ampli délai gauche",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": null
+        },
+        "sfp-sfpplus1": {
+          "label": "Uplink CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 860,
+          "tx_mbps": 540
+        },
+        "sfp-sfpplus2": {
+          "label": "Fibre SCÈNE JARDIN",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": [
+            10,
+            20,
+            21,
+            30,
+            40,
+            41,
+            50
+          ],
+          "link": "10G",
+          "rx_mbps": 310,
+          "tx_mbps": 180
+        },
+        "sfp-sfpplus3": {
+          "label": "Fibre SCÈNE COUR",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": [
+            10,
+            20,
+            21,
+            30,
+            40,
+            41,
+            50
+          ],
+          "link": "10G",
+          "rx_mbps": 280,
+          "tx_mbps": 150
+        }
+      }
+    },
+    {
+      "name": "SCÈNE JARDIN",
+      "model": "Generic-8P-2S",
+      "vendor": "generic",
+      "location": "Plateau",
+      "mgmt_ip": "10.10.0.21",
+      "status": "ok",
+      "group": "Plateau",
+      "poe_budget_w": 120,
+      "position": {
+        "x": 250,
+        "y": 70
+      },
+      "extra": {
+        "os": "Generic OS lite",
+        "uptime": "2 j 14 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 8,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–8 · PoE"
+        },
+        {
+          "prefix": "sfp",
+          "count": 2,
+          "speed": "1G",
+          "label": "SFP"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Stagebox — PRI",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 97,
+          "tx_mbps": 97
+        },
+        "ether2": {
+          "label": "Stagebox — SEC",
+          "mode": "access",
+          "pvid": 21,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 97,
+          "tx_mbps": 97
+        },
+        "ether3": {
+          "label": "Node lumière jardin",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 4.8,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "ether4": {
+          "label": "Antenne intercom HF",
+          "mode": "access",
+          "pvid": 50,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 7.1,
+          "rx_mbps": 3,
+          "tx_mbps": 3
+        },
+        "ether5": {
+          "label": "AP plateau jardin",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 9.2,
+          "rx_mbps": 60,
+          "tx_mbps": 25
+        },
+        "ether6": {
+          "label": "Caméra PTZ jardin",
+          "mode": "trunk",
+          "pvid": 40,
+          "tagged": [
+            40,
+            41
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 12.8,
+          "rx_mbps": 185,
+          "tx_mbps": 4
+        },
+        "sfp1": {
+          "label": "Fibre FOH",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 180,
+          "tx_mbps": 310
+        }
+      }
+    },
+    {
+      "name": "SCÈNE COUR",
+      "model": "Generic-8P-2S",
+      "vendor": "generic",
+      "location": "Plateau",
+      "mgmt_ip": "10.10.0.22",
+      "status": "ok",
+      "group": "Plateau",
+      "poe_budget_w": 120,
+      "position": {
+        "x": 700,
+        "y": 70
+      },
+      "extra": {
+        "os": "Generic OS lite",
+        "uptime": "2 j 14 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 8,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–8 · PoE"
+        },
+        {
+          "prefix": "sfp",
+          "count": 2,
+          "speed": "1G",
+          "label": "SFP"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Stagebox — PRI",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 64,
+          "tx_mbps": 64
+        },
+        "ether2": {
+          "label": "Stagebox — SEC",
+          "mode": "access",
+          "pvid": 21,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 64,
+          "tx_mbps": 64
+        },
+        "ether3": {
+          "label": "Node lumière cour",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 4.8,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "ether4": {
+          "label": "Écran retour plateau",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 160,
+          "tx_mbps": 2
+        },
+        "ether5": {
+          "label": "AP plateau cour",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 9.4,
+          "rx_mbps": 55,
+          "tx_mbps": 22
+        },
+        "ether6": {
+          "label": "Caméra PTZ cour",
+          "mode": "trunk",
+          "pvid": 40,
+          "tagged": [
+            40,
+            41
+          ],
+          "poe": true,
+          "link": null
+        },
+        "sfp1": {
+          "label": "Fibre FOH",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 150,
+          "tx_mbps": 280
+        }
+      }
+    },
+    {
+      "name": "RÉGIE LUMIÈRE",
+      "model": "Generic-24G-2X",
+      "vendor": "generic",
+      "location": "Régies façade",
+      "mgmt_ip": "10.10.0.12",
+      "status": "ok",
+      "group": "Régies",
+      "position": {
+        "x": 560,
+        "y": 400
+      },
+      "extra": {
+        "os": "Generic OS 1.0",
+        "uptime": "2 j 13 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 24,
+          "speed": "1G",
+          "label": "ETHER 1–24"
+        },
+        {
+          "prefix": "sfp-sfpplus",
+          "count": 2,
+          "speed": "10G",
+          "label": "SFP+"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Console lumière principale",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 16,
+          "tx_mbps": 8
+        },
+        "ether2": {
+          "label": "Unité de processing lumière",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 16,
+          "tx_mbps": 12
+        },
+        "ether3": {
+          "label": "PC poursuites / trackers",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 8,
+          "tx_mbps": 2
+        },
+        "ether4": {
+          "label": "Gateway sACN A",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 11,
+          "tx_mbps": 1
+        },
+        "ether5": {
+          "label": "Gateway sACN B",
+          "mode": "access",
+          "pvid": 30,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 11,
+          "tx_mbps": 1
+        },
+        "ether6": {
+          "label": "Serveur média mapping",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 240,
+          "tx_mbps": 10
+        },
+        "ether7": {
+          "label": "Poste prod lumière",
+          "mode": "access",
+          "pvid": 60,
+          "tagged": [],
+          "link": "100M",
+          "rx_mbps": 4,
+          "tx_mbps": 1
+        },
+        "sfp-sfpplus1": {
+          "label": "Uplink CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 95,
+          "tx_mbps": 40
+        }
+      }
+    },
+    {
+      "name": "CAR RÉGIE",
+      "model": "Generic-AGG-16X",
+      "vendor": "generic",
+      "location": "Car régie",
+      "mgmt_ip": "10.10.0.13",
+      "status": "ok",
+      "group": "Régies",
+      "position": {
+        "x": 900,
+        "y": 120
+      },
+      "extra": {
+        "os": "Generic OS 1.0",
+        "uptime": "1 j 20 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 1,
+          "speed": "1G",
+          "label": "MGMT"
+        },
+        {
+          "prefix": "sfp-sfpplus",
+          "count": 16,
+          "speed": "10G",
+          "label": "SFP+ 1–16"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Management car",
+          "mode": "access",
+          "pvid": 10,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 1,
+          "tx_mbps": 1
+        },
+        "sfp-sfpplus1": {
+          "label": "Uplink CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "10G",
+          "rx_mbps": 1450,
+          "tx_mbps": 980
+        },
+        "sfp-sfpplus2": {
+          "label": "Mélangeur — NDI",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 820,
+          "tx_mbps": 790
+        },
+        "sfp-sfpplus3": {
+          "label": "Serveur replay",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 640,
+          "tx_mbps": 610
+        },
+        "sfp-sfpplus4": {
+          "label": "Encodeur stream 4K",
+          "mode": "access",
+          "pvid": 80,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 4,
+          "tx_mbps": 38
+        },
+        "sfp-sfpplus5": {
+          "label": "Caméra fibre 1",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 155,
+          "tx_mbps": 2
+        },
+        "sfp-sfpplus6": {
+          "label": "Caméra fibre 2",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": "10G",
+          "rx_mbps": 155,
+          "tx_mbps": 2
+        },
+        "sfp-sfpplus7": {
+          "label": "Caméra fibre 3",
+          "mode": "access",
+          "pvid": 40,
+          "tagged": [],
+          "link": null
+        }
+      }
+    },
+    {
+      "name": "BACKSTAGE",
+      "model": "Generic-8P-2S",
+      "vendor": "generic",
+      "location": "Backstage",
+      "mgmt_ip": "10.10.0.14",
+      "status": "warn",
+      "status_note": "budget PoE à 94 %",
+      "poe_budget_w": 66,
+      "position": {
+        "x": 60,
+        "y": 240
+      },
+      "extra": {
+        "os": "Generic OS lite",
+        "uptime": "2 j 14 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 8,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–8 · PoE"
+        },
+        {
+          "prefix": "sfp",
+          "count": 2,
+          "speed": "1G",
+          "label": "SFP"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "AP loges",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70,
+            71
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 11.2,
+          "rx_mbps": 85,
+          "tx_mbps": 30
+        },
+        "ether2": {
+          "label": "AP couloir technique",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70,
+            71
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 11.4,
+          "rx_mbps": 70,
+          "tx_mbps": 26
+        },
+        "ether3": {
+          "label": "CCTV loge artistes",
+          "mode": "access",
+          "pvid": 90,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 12.6,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "ether4": {
+          "label": "CCTV quai déchargement",
+          "mode": "access",
+          "pvid": 90,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 12.6,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "ether5": {
+          "label": "Écran planning",
+          "mode": "access",
+          "pvid": 60,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 7.8,
+          "rx_mbps": 6,
+          "tx_mbps": 1
+        },
+        "ether6": {
+          "label": "Intercom loges",
+          "mode": "access",
+          "pvid": 50,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 6.4,
+          "rx_mbps": 2,
+          "tx_mbps": 2
+        },
+        "ether7": {
+          "label": "Imprimante production",
+          "mode": "access",
+          "pvid": 60,
+          "tagged": [],
+          "link": "100M",
+          "rx_mbps": 1,
+          "tx_mbps": 1
+        },
+        "sfp1": {
+          "label": "Uplink CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 120,
+          "tx_mbps": 80
+        }
+      }
+    },
+    {
+      "name": "ACCUEIL",
+      "model": "Generic-8P-2S",
+      "vendor": "generic",
+      "location": "Accueil public",
+      "mgmt_ip": "10.10.0.15",
+      "status": "ok",
+      "poe_budget_w": 120,
+      "position": {
+        "x": 100,
+        "y": 480
+      },
+      "extra": {
+        "os": "Generic OS lite",
+        "uptime": "2 j 12 h"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 8,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–8 · PoE"
+        },
+        {
+          "prefix": "sfp",
+          "count": 2,
+          "speed": "1G",
+          "label": "SFP"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Caisse billetterie 1",
+          "mode": "access",
+          "pvid": 100,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 3,
+          "tx_mbps": 1
+        },
+        "ether2": {
+          "label": "Caisse billetterie 2",
+          "mode": "access",
+          "pvid": 100,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 3,
+          "tx_mbps": 1
+        },
+        "ether3": {
+          "label": "Portique de scan",
+          "mode": "access",
+          "pvid": 100,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 5.2,
+          "rx_mbps": 2,
+          "tx_mbps": 1
+        },
+        "ether4": {
+          "label": "AP accueil public",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            71
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 9.4,
+          "rx_mbps": 140,
+          "tx_mbps": 60
+        },
+        "ether5": {
+          "label": "CCTV parvis",
+          "mode": "access",
+          "pvid": 90,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 12.4,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "sfp1": {
+          "label": "Uplink CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 45,
+          "tx_mbps": 22
+        }
+      }
+    },
+    {
+      "name": "TOUR DÉLAI",
+      "model": "Generic-16P-2X",
+      "vendor": "generic",
+      "location": "Fosse",
+      "mgmt_ip": "10.10.0.16",
+      "status": "off",
+      "status_note": "Uplink CORE sfp-sfpplus6 down — fibre à contrôler.",
+      "poe_budget_w": 240,
+      "position": {
+        "x": 490,
+        "y": 250
+      },
+      "extra": {
+        "os": "Generic OS 1.0",
+        "uptime": "—"
+      },
+      "port_groups": [
+        {
+          "prefix": "ether",
+          "count": 16,
+          "poe": true,
+          "speed": "1G",
+          "label": "ETHER 1–16 · PoE"
+        },
+        {
+          "prefix": "sfp-sfpplus",
+          "count": 2,
+          "speed": "10G",
+          "label": "SFP+"
+        }
+      ],
+      "ports": {
+        "ether1": {
+          "label": "Ampli délai droit",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 96,
+          "tx_mbps": 3
+        },
+        "ether2": {
+          "label": "Ampli délai gauche",
+          "mode": "access",
+          "pvid": 20,
+          "tagged": [],
+          "link": "1G",
+          "rx_mbps": 96,
+          "tx_mbps": 3
+        },
+        "ether3": {
+          "label": "AP fosse",
+          "mode": "trunk",
+          "pvid": 10,
+          "tagged": [
+            10,
+            70,
+            71
+          ],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 10.8,
+          "rx_mbps": 95,
+          "tx_mbps": 35
+        },
+        "ether4": {
+          "label": "CCTV fosse",
+          "mode": "access",
+          "pvid": 90,
+          "tagged": [],
+          "poe": true,
+          "link": "1G",
+          "poe_w": 12.2,
+          "rx_mbps": 14,
+          "tx_mbps": 1
+        },
+        "sfp-sfpplus1": {
+          "label": "Fibre CORE",
+          "mode": "trunk",
+          "pvid": 999,
+          "tagged": "all",
+          "link": "1G",
+          "rx_mbps": 150,
+          "tx_mbps": 60
+        }
+      }
+    }
+  ],
+  "links": [
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus1",
+      "b": "FOH",
+      "b_port": "sfp-sfpplus1",
+      "speed": "10G",
+      "status": "up"
+    },
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus2",
+      "b": "RÉGIE LUMIÈRE",
+      "b_port": "sfp-sfpplus1",
+      "speed": "10G",
+      "status": "up"
+    },
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus3",
+      "b": "CAR RÉGIE",
+      "b_port": "sfp-sfpplus1",
+      "speed": "10G",
+      "status": "warn",
+      "note": "Affaiblissement optique côté CAR RÉGIE : RX −21,4 dBm (seuil −18 dBm), TX côté CORE nominal — connecteur à nettoyer / fibre pincée au panneau du car."
+    },
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus4",
+      "b": "BACKSTAGE",
+      "b_port": "sfp1",
+      "speed": "1G",
+      "status": "up"
+    },
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus5",
+      "b": "ACCUEIL",
+      "b_port": "sfp1",
+      "speed": "1G",
+      "status": "up"
+    },
+    {
+      "a": "CORE",
+      "a_port": "sfp-sfpplus6",
+      "b": "TOUR DÉLAI",
+      "b_port": "sfp-sfpplus1",
+      "speed": "1G",
+      "status": "down",
+      "note": "LOS côté CORE : aucune lumière reçue — fibre sectionnée ou débranchée sur le cheminement fosse."
+    },
+    {
+      "a": "FOH",
+      "a_port": "sfp-sfpplus2",
+      "b": "SCÈNE JARDIN",
+      "b_port": "sfp1",
+      "speed": "10G",
+      "status": "up"
+    },
+    {
+      "a": "FOH",
+      "a_port": "sfp-sfpplus3",
+      "b": "SCÈNE COUR",
+      "b_port": "sfp1",
+      "speed": "10G",
+      "status": "up"
+    }
+  ]
+}

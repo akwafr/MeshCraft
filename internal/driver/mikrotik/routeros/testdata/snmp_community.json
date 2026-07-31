@@ -1,0 +1,16 @@
+[
+ {
+  ".id": "*0",
+  "addresses": "::/0",
+  "authentication-password": "",
+  "authentication-protocol": "MD5",
+  "default": "true",
+  "disabled": "false",
+  "encryption-password": "",
+  "encryption-protocol": "DES",
+  "name": "qgK3hB8sePXOMI5",
+  "read-access": "true",
+  "security": "none",
+  "write-access": "false"
+ }
+]

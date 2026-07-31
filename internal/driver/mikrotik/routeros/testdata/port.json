@@ -1,0 +1,16 @@
+[
+ {
+  ".id": "*1",
+  "baud-rate": "115200",
+  "channels": "1",
+  "data-bits": "8",
+  "device": "",
+  "flow-control": "none",
+  "inactive": "false",
+  "line-state": "dtr,rts,dcd,dsr",
+  "name": "serial0",
+  "parity": "none",
+  "stop-bits": "1",
+  "used-by": "Serial Console(#0)"
+ }
+]

@@ -1,0 +1,6 @@
+web/node_modules
+web/dist
+docs
+.git
+*.md
+!VERSION

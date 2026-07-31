@@ -1,0 +1,13 @@
+{
+ "contact": "",
+ "enabled": "true",
+ "engine-id": "80003a8c04",
+ "engine-id-suffix": "",
+ "location": "",
+ "src-address": "::",
+ "trap-community": "qgK3hB8sePXOMI5",
+ "trap-generators": "temp-exception",
+ "trap-target": "",
+ "trap-version": "1",
+ "vrf": "main"
+}

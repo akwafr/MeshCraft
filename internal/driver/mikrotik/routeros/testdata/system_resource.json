@@ -1,0 +1,19 @@
+{
+ "architecture-name": "arm",
+ "board-name": "CRS326-24G-2S+",
+ "build-time": "2025-10-14 12:50:07",
+ "cpu": "ARM",
+ "cpu-count": "2",
+ "cpu-frequency": "800",
+ "cpu-load": "1",
+ "factory-software": "6.41",
+ "free-hdd-space": "1265664",
+ "free-memory": "450670592",
+ "platform": "MikroTik",
+ "total-hdd-space": "16777216",
+ "total-memory": "536870912",
+ "uptime": "1d17h38m11s",
+ "version": "7.21beta3 (testing)",
+ "write-sect-since-reboot": "380",
+ "write-sect-total": "5327"
+}

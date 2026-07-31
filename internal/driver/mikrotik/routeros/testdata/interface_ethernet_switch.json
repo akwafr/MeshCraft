@@ -1,0 +1,20 @@
+[
+ {
+  ".id": "*0",
+  "custom-drop-packet": "92",
+  "driver-rx-byte": "46270649",
+  "driver-rx-packet": "648494",
+  "driver-tx-byte": "20221522",
+  "driver-tx-packet": "77021",
+  "invalid": "false",
+  "l3-hw-offloading": "false",
+  "mirror-target": "none",
+  "name": "switch1",
+  "not-learned": "0",
+  "qos-hw-offloading": "false",
+  "rspan": "false",
+  "rspan-egress-vlan-id": "1",
+  "rspan-ingress-vlan-id": "1",
+  "type": "Marvell-98DX3236"
+ }
+]

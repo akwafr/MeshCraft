@@ -1,0 +1,48 @@
+# Frontend build dependencies and artefacts.
+#
+# `web/dist` is produced by Vite and copied into `internal/api/webdist/` by the
+# Dockerfile. Tracking it would put a regenerated binary in history on every
+# build, whose diff teaches nothing.
+web/node_modules/
+web/dist/
+
+# Secrets for THIS instance: `.env` holds the admin password and the
+# credentials encryption key. `.env.example` is the template without real
+# values, and stays tracked. `.env.local` is for machine-only tokens (e.g. GitHub PAT).
+.env
+.env.local
+.env.*.local
+
+# Database backups. A meshcraft dump is the WORST file to commit: it contains
+# the sealed fleet credentials AND, while MESHCRAFT_SECRET_KEY is unset, the
+# key that opens them — both in the same file, which defeats encryption.
+# Ignored before the first dump even exists, because a secret committed by
+# mistake remains in history after deletion: the only fix is to treat it as
+# leaked and rotate everything it held.
+.backups/
+*.sql.gz
+*.dump
+
+# NOTE — `internal/api/webdist/index.html` is NOT ignored, and that is not an
+# oversight: it is a placeholder without which `go:embed all:webdist` refuses
+# to compile outside Docker. The build replaces it in its own context, never
+# on the host.
+
+# Editor and filesystem traces.
+*.swp
+*~
+.DS_Store
+.cursor/
+.claude/
+.idea/
+.vscode/
+
+# graphify knowledge graph: ~30 MB regenerated on demand from code and the
+# vault, including a 5 MB graph.html. Derived artefact, never a source —
+# committing it would put a binary that reshuffles on every touched file,
+# whose diff teaches nothing.
+graphify-out/
+
+# Local build artefacts / scratch
+/controller
+*.log

@@ -1,0 +1,11 @@
+{
+ "discover-interface-list": "!dynamic",
+ "discover-interval": "30s",
+ "lldp-dcbx": "true",
+ "lldp-mac-phy-config": "false",
+ "lldp-max-frame-size": "false",
+ "lldp-med-net-policy-vlan": "disabled",
+ "lldp-vlan-info": "false",
+ "mode": "tx-and-rx",
+ "protocol": "cdp,lldp,mndp"
+}

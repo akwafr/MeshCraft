@@ -1,0 +1,30 @@
+# Public TLS termination for the meshcraft controller.
+# Caddy obtains and renews Let's Encrypt certificates on its own (ACME HTTP-01
+# on port 80), and serves the whole controller over HTTPS: UI, API, proxy
+# WebSockets, and the integrated docker registry (/v2/…).
+{
+	email {$ACME_EMAIL}
+	# Uncomment to test without consuming Let's Encrypt quota:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$MESHCRAFT_DOMAIN} {
+	encode zstd gzip
+
+	# Proxy images are large and immutable: no compression, and a generous
+	# timeout for docker pulls.
+	@registry path /v2/*
+	reverse_proxy @registry controller:8080 {
+		transport http {
+			response_header_timeout 5m
+		}
+	}
+
+	reverse_proxy controller:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+}

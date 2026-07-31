@@ -1,0 +1,14 @@
+[
+ {
+  ".id": "*1",
+  "address": "",
+  "comment": "system default user",
+  "disabled": "false",
+  "expired": "false",
+  "group": "full",
+  "inactivity-policy": "none",
+  "inactivity-timeout": "10m",
+  "last-logged-in": "2026-07-28 17:18:20",
+  "name": "admin"
+ }
+]

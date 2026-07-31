@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- meshcraft — même tracé que web/src/Logo.tsx (marque du bandeau).
+       Toute retouche doit être reportée dans les deux fichiers. -->
+  <defs>
+    <linearGradient id="mc-hex" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6890ff"/>
+      <stop offset="1" stop-color="#3d63e8"/>
+    </linearGradient>
+  </defs>
+  <path d="M16 2.8 L27.4 9.4 L27.4 22.6 L16 29.2 L4.6 22.6 L4.6 9.4 Z"
+        fill="url(#mc-hex)" stroke="url(#mc-hex)" stroke-width="3.2" stroke-linejoin="round"/>
+  <!-- Nœuds francs, liens fins : à 16 px les trois nœuds doivent rester
+       distincts au lieu de fusionner en triangle plein. -->
+  <g stroke="#eef3ff" stroke-width="1.45" stroke-linecap="round">
+    <path d="M16 9.8 L10.11 20"/>
+    <path d="M16 9.8 L21.89 20"/>
+    <path d="M10.11 20 L21.89 20"/>
+  </g>
+  <g fill="#eef3ff">
+    <circle cx="16" cy="9.8" r="3.1"/>
+    <circle cx="10.11" cy="20" r="3.1"/>
+    <circle cx="21.89" cy="20" r="3.1"/>
+  </g>
+</svg>

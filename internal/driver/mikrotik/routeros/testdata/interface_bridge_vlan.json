@@ -1,0 +1,39 @@
+[
+ {
+  ".id": "*2",
+  "bridge": "bridge",
+  "current-tagged": "bridge,sfp-sfpplus2",
+  "current-untagged": "",
+  "disabled": "false",
+  "dynamic": "false",
+  "mvrp-forbidden": "",
+  "tagged": "bridge,sfp-sfpplus2",
+  "untagged": "",
+  "vlan-ids": "99"
+ },
+ {
+  ".id": "*6",
+  "bridge": "bridge",
+  "current-tagged": "sfp-sfpplus2",
+  "current-untagged": "",
+  "disabled": "false",
+  "dynamic": "false",
+  "mvrp-forbidden": "",
+  "tagged": "sfp-sfpplus2",
+  "untagged": "",
+  "vlan-ids": "100"
+ },
+ {
+  ".id": "*7",
+  "bridge": "bridge",
+  "comment": "added by pvid",
+  "current-tagged": "",
+  "current-untagged": "bridge,sfp-sfpplus2",
+  "disabled": "false",
+  "dynamic": "true",
+  "mvrp-forbidden": "",
+  "tagged": "",
+  "untagged": "bridge,sfp-sfpplus2",
+  "vlan-ids": "1"
+ }
+]

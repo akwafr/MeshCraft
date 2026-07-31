@@ -1,0 +1,89 @@
+# meshcraft — controller + database + public TLS termination.
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: meshcraft
+      POSTGRES_PASSWORD: meshcraft
+      POSTGRES_DB: meshcraft
+    volumes:
+      - meshcraft_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meshcraft"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Time series. Separated from Postgres on purpose: interface counters at 5 s
+  # across a whole fleet are a write load Postgres can absorb, but pays for on
+  # EVERYTHING else — inventory and journal included. See
+  # docs/en/01-Architecture/Overview.md and the French monitoring pipelines note.
+  metrics:
+    image: victoriametrics/victoria-metrics:v1.111.0
+    restart: unless-stopped
+    command:
+      - "-retentionPeriod=90d"
+      # Listen only on the compose network: like the database, this service is
+      # never reachable from outside. Proxies write THROUGH the controller,
+      # which is the only component talking to both.
+      - "-httpListenAddr=:8428"
+      # A late metric is better than a lost one: the persistence queue absorbs
+      # bursts when a tunnel reconnects after an outage.
+      - "-memory.allowedPercent=40"
+    volumes:
+      - meshcraft_metrics:/victoria-metrics-data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  controller:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      metrics:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://meshcraft:meshcraft@db:5432/meshcraft?sslmode=disable
+      # Public controller URL: used in generated proxy docker-compose files and
+      # in migration orders between instances.
+      MESHCRAFT_EXTERNAL_URL: ${MESHCRAFT_EXTERNAL_URL:-}
+      MESHCRAFT_ADMIN_EMAIL: ${MESHCRAFT_ADMIN_EMAIL:-admin@meshcraft.local}
+      # Empty = password generated and printed once in the logs.
+      MESHCRAFT_ADMIN_PASSWORD: ${MESHCRAFT_ADMIN_PASSWORD:-}
+      # Encryption of discovery known-credentials. Empty = random key stored
+      # in the database (warning at startup).
+      MESHCRAFT_SECRET_KEY: ${MESHCRAFT_SECRET_KEY:-}
+      # Time series. Empty = no metric storage: meshcraft still runs, and says
+      # so, rather than failing startup for a service inventory does not need.
+      MESHCRAFT_METRICS_URL: ${MESHCRAFT_METRICS_URL:-http://metrics:8428}
+    # No direct public exposure: traffic enters through Caddy.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - controller
+    environment:
+      MESHCRAFT_DOMAIN: ${MESHCRAFT_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  meshcraft_metrics:
+  meshcraft_db:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,15 @@
+{
+ "auto-upgrade": "true",
+ "baud-rate": "115200",
+ "boot-delay": "2s",
+ "boot-device": "nand-if-fail-then-ethernet",
+ "boot-os": "router-os",
+ "boot-protocol": "bootp",
+ "enable-jumper-reset": "true",
+ "enter-setup-on": "any-key",
+ "force-backup-booter": "false",
+ "protected-routerboot": "disabled",
+ "reformat-hold-button": "20s",
+ "reformat-hold-button-max": "10m",
+ "silent-boot": "false"
+}

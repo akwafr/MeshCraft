@@ -1,0 +1,63 @@
+-- Rattachement d'un équipement à un proxy : désigner SON collecteur.
+--
+-- Le problème. Jusqu'ici, aucun équipement n'est rattaché à quoi que ce soit :
+-- `DevicesWatchedBy` DÉDUIT l'éligibilité d'un couple (couverture de sites,
+-- drapeau `proxies.global`). Avec deux proxys d'instance en base — le cas
+-- ordinaire dès qu'un « Local » cohabite avec un proxy déporté — le MÊME
+-- équipement est surveillé par les deux. Ce n'est pas un défaut en soi : deux
+-- pings valent mieux qu'un.
+--
+-- Ça devient un mur dès qu'il faut écrire quelque chose DANS l'équipement. La
+-- déclaration d'un destinataire de traps exige UNE adresse IP concrète, et
+-- « plusieurs proxys éligibles » ne se traduit pas en une adresse. Le même
+-- raisonnement vaut pour la collecte SNMP : deux proxys qui interrogent le même
+-- switch remontent deux fois chaque transition de port, et la corrélation ne
+-- peut que les dédoublonner APRÈS coup, jamais les empêcher.
+--
+-- La réponse est une DÉCLARATION, pas une élection. Élire le collecteur (le
+-- premier proxy connecté, celui de latence la plus faible) le ferait changer
+-- tout seul, et le destinataire de traps écrit dans les équipements deviendrait
+-- faux sans que personne ne touche à rien. L'opérateur désigne, meshcraft obéit.
+--
+-- Ce que la colonne signifie : le COLLECTEUR DE RÉFÉRENCE. Le proxy qui
+-- interroge cet équipement en SNMP, et celui dont l'adresse sera écrite dans
+-- l'équipement comme destination de ses traps.
+--
+-- Ce qu'elle ne signifie PAS, et c'est aussi important :
+--
+--   * elle ne donne AUCUNE couverture. La couverture de sites reste la seule
+--     porte d'entrée (cf. docs/01-Architecture/Proxy) : elle dit qui a le droit
+--     de voir les équipements d'un site, et c'est une frontière de
+--     confidentialité, pas une commodité. Un rattachement qui l'élargirait
+--     permettrait de divulguer le nom et l'adresse d'un équipement du site A à
+--     un proxy qui ne couvre que le site B, par un geste qui n'a rien à voir
+--     avec les droits. Conséquence assumée : rattacher un équipement à un proxy
+--     qui ne couvre pas son site ne le fait pas collecter par lui — ça le fait
+--     collecter par PERSONNE. C'est à la couche qui propose le rattachement de
+--     n'offrir que des proxys couvrants ;
+--   * elle ne restreint PAS la surveillance ICMP. Deux proxys qui pinguent le
+--     même équipement ne coûtent rien et donnent une meilleure vérité de
+--     joignabilité, alors qu'un collecteur unique perd tout basculement si son
+--     proxy tombe. L'arbitrage tient en une phrase : le déterminisme là où
+--     l'unicité est nécessaire (SNMP, traps), la redondance là où elle est
+--     gratuite (ICMP). Le tri se fait donc à la lecture, dans la couche qui
+--     construit les cibles — pas ici.
+--
+-- `null` autorisé, et c'est l'état de tout le parc existant. Inventer un
+-- rattachement à la migration serait une supposition : rien en base ne dit quel
+-- proxy DOIT collecter un équipement que deux proxys atteignent également bien.
+-- Un `null` garde exactement le comportement par couverture d'avant cette
+-- migration — elle est donc à sémantique constante, aucune surveillance ne
+-- change tant que personne n'a déclaré quoi que ce soit.
+--
+-- `on delete set null` : supprimer un proxy ne doit jamais supprimer des
+-- équipements — un `cascade` ici effacerait une partie de l'inventaire au
+-- retrait d'un boîtier, ce qui est absurde. Le repli correct est le retour au
+-- régime par couverture, c'est-à-dire précisément `null`.
+alter table devices add column proxy_id uuid references proxies(id) on delete set null;
+
+-- L'index sert le sens de lecture qui n'existe pas encore mais viendra dès la
+-- première interface : « quels équipements ce proxy collecte-t-il ? », posée à
+-- l'écran d'un proxy et au retrait d'un proxy. La requête de surveillance, elle,
+-- part de `devices` et n'en a pas besoin.
+create index devices_proxy_idx on devices (proxy_id);

@@ -1,0 +1,29 @@
+[
+ {
+  "name": "sfp-sfpplus2",
+  "status": "link-ok",
+  "auto-negotiation": "done",
+  "rate": "10Gbps",
+  "full-duplex": "true",
+  "tx-flow-control": "false",
+  "rx-flow-control": "false",
+  "sfp-module-present": "true",
+  "sfp-rx-loss": "false",
+  "sfp-tx-fault": "false",
+  "sfp-type": "SFP-or-SFP+",
+  "sfp-connector-type": "LC",
+  "sfp-link-length-sm": "10000",
+  "sfp-vendor-name": "FS",
+  "sfp-vendor-part-number": "SFP-10G-BX",
+  "sfp-vendor-revision": "",
+  "sfp-vendor-serial": "S2001001227",
+  "sfp-manufacturing-date": "20-01-07",
+  "sfp-wavelength": "1270",
+  "sfp-temperature": "50",
+  "sfp-supply-voltage": "3.261",
+  "sfp-tx-bias-current": "34",
+  "sfp-tx-power": "-3.2",
+  "sfp-rx-power": "-5.57",
+  "eeprom-checksum": "good"
+ }
+]

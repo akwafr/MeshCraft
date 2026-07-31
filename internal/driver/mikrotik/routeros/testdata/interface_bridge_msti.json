@@ -1,0 +1,11 @@
+[
+ {
+  ".id": "*1",
+  "bridge": "bridge",
+  "disabled": "false",
+  "dynamic": "true",
+  "identifier": "0",
+  "priority": "0x8000",
+  "vlan-mapping": "1-4094"
+ }
+]
