@@ -203,6 +203,14 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		}
 		_, err = c.Add(ctx, "interface/bridge/vlan", fields)
 		if err != nil {
+			// Idempotent: VLAN 1 is often already present as a dynamic « added by
+			// pvid » row, and some firmwares refuse a second static add with
+			// « vlan already added ». The VLAN exists — creating it is done.
+			if isVLANAlreadyAdded(err) {
+				c.step(true, fmt.Sprintf("VLAN %d already present", want.ID),
+					err.Error())
+				continue
+			}
 			return out, fmt.Errorf("creating VLAN %d: %w", want.ID, err)
 		}
 		out.VLANsCreated = append(out.VLANsCreated, want.ID)
@@ -830,6 +838,17 @@ func vlanRowFor(s DeviceState, vlanID int) (BridgeVLAN, bool) {
 		}
 	}
 	return BridgeVLAN{}, false
+}
+
+// isVLANAlreadyAdded reports RouterOS refusing /interface/bridge/vlan/add because
+// that VLAN id is already on the bridge (dynamic PVID row or a prior static add).
+func isVLANAlreadyAdded(err error) bool {
+	if err == nil {
+		return false
+	}
+	var msg = strings.ToLower(err.Error())
+	return strings.Contains(msg, "vlan already added") ||
+		strings.Contains(msg, "already have such vlan")
 }
 
 // insertOnce adds an element if not already present.

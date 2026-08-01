@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -406,9 +405,7 @@ func (s *Server) groupNameOf(ctx context.Context, d model.Device) string {
 // proxyOf finds which proxy discovered the device. Known-working path — preferable to an
 // arbitrary default.
 func (s *Server) proxyOf(ctx context.Context, d model.Device) string {
-	var extra map[string]string
-	_ = json.Unmarshal(d.Extra, &extra)
-	var discoveredID = extra["discovered_id"]
+	var discoveredID = driver.ExtraString(d.Extra, "discovered_id")
 	if discoveredID != "" {
 		var c, err = s.Store.GetDiscovered(ctx, discoveredID)
 		if err == nil && c.ProxyID != "" {

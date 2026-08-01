@@ -117,12 +117,7 @@ type deviceMonitoringView struct {
 // in the registry, unreadable `extra`. Returning an empty slice would claim nothing
 // is unavailable, i.e. availability nobody observed.
 func unavailableMetricsOf(d model.Device) []driver.MetricUnavailable {
-	var extra map[string]string
-	// Error ignored deliberately: missing `extra` (manually entered device) or
-	// unreadable `extra` is not a read anomaly, it is a record whose connector we
-	// do not know. The map stays nil, and indexing is valid.
-	_ = json.Unmarshal(d.Extra, &extra)
-	var drv, known = driver.Get(extra["driver"])
+	var drv, known = driver.Get(driver.DriverNameFromExtra(d.Extra))
 	if !known {
 		return nil
 	}

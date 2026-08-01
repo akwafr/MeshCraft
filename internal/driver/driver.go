@@ -12,6 +12,7 @@ package driver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -393,7 +394,11 @@ type Capabilities struct {
 	// Features : ce qui est present ou absent, named comme dans le model
 	// standard.
 	Features map[string]bool `json:"features"`
-	// STPModes : stp | rstp | mstp.
+	// STPModes : none | stp | rstp | mstp. "none" means the platform can turn
+	// spanning tree off (RouterOS protocol-mode=none, Instant On admin mode 0).
+	// Platforms that only speak one protocol (SwOS RSTP) omit "none" and list
+	// that protocol alone — ResolveSTPMode will not honor a "none" preference
+	// against them.
 	STPModes []string `json:"stp_modes"`
 	// MSTInstances, MaxACLs, MaxACEs, MaxStaticRoutes : les limites chiffrees,
 	// qui servent a refuser AVANT to write.
@@ -511,6 +516,35 @@ func Get(name string) (Driver, bool) {
 	defer registryMu.RUnlock()
 	var d, ok = registry[name]
 	return d, ok
+}
+
+// DriverNameFromExtra reads devices.extra.driver without failing when Extra also
+// carries nested objects (stp_observed, …). Unmarshalling Extra into
+// map[string]string rejects those shapes and used to make the connector look
+// unknown (addressing apply shown as ANNOTATION only).
+func DriverNameFromExtra(raw json.RawMessage) string {
+	return ExtraString(raw, "driver")
+}
+
+// ExtraString reads a string field from devices.extra. Nested objects under other
+// keys (stp_observed, …) are ignored — they must not make the whole decode fail.
+func ExtraString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 || key == "" {
+		return ""
+	}
+	var bag map[string]json.RawMessage
+	if json.Unmarshal(raw, &bag) != nil {
+		return ""
+	}
+	var v, ok = bag[key]
+	if !ok || len(v) == 0 || string(v) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(v, &s) != nil {
+		return ""
+	}
+	return s
 }
 
 // List renvoie tous les connecteurs, par nom.

@@ -211,6 +211,7 @@ export default function Layout() {
                   <div className="section">{t("nav.site")}</div>
                   <NavLink to={sitePath(siteSlug, "config", "vlans")}>{t("nav.vlans")}</NavLink>
                   <NavLink to={sitePath(siteSlug, "config", "management")}>{t("nav.management")}</NavLink>
+                  <NavLink to={sitePath(siteSlug, "config", "spanning-tree")}>{t("nav.spanningTree")}</NavLink>
                   <NavLink to={sitePath(siteSlug, "config", "credentials")}>{t("nav.credentials")}</NavLink>
                   <NavLink to={sitePath(siteSlug, "config", "tags")}>{t("nav.tags")}</NavLink>
                   <NavLink to={sitePath(siteSlug, "config", "pipelines")}>{t("nav.pipelines")}</NavLink>

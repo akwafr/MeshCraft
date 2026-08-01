@@ -93,6 +93,13 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 			"VoiceVLAN":      true, // « Auto Voice VLAN »
 			"PoE":            strings.Contains(strings.ToUpper(model), "PoE") || strings.Contains(model, "P"),
 			"LLDP":           true, // 802.1AB + LLDP-MED
+			// CST Edge Port: Auto (default) / Enable / Disable — AdminEdgePort +
+			// AutoEdgePort. STP State disables protocol participation per port.
+			driver.FeatSTPEdge:       true,
+			driver.FeatSTPEdgeAuto:   true,
+			driver.FeatSTPPortEnable: true,
+			// CST Port « BPDU Guard » (guide 5200-5879) — suspends port on BPDU.
+			driver.FeatBPDUGuard: true,
 			"IGMPSnooping":   true, // v1/v2
 			"LACP":           true, // 802.3ad + static trunks
 			"DHCPSnooping":   true,
@@ -126,7 +133,10 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 			"SerialPort": false,
 			"HTTPMgmt":   true,
 		},
-		STPModes:     []string{"stp", "rstp", "mstp"}, // 802.1D / 802.1w / 802.1s
+		// SpanningTreeGlobalParam.STPOperationMode: 0=STP, 2=RSTP, 3=MSTP;
+		// enabled=2 turns the tree off (« none »). MSTP radio is hidden on k9
+		// Instant On, but the code still answers when set.
+		STPModes:     []string{"none", "stp", "rstp", "mstp"},
 		MSTInstances: 8,
 		// « ACLs (named ACL - IPv4 and MAC). Up to 50 ACLs. Up to 480 ACEs »
 		MaxACLs:         50,

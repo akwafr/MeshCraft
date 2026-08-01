@@ -1,6 +1,9 @@
 package swos
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"meshcraft/internal/driver"
@@ -35,5 +38,62 @@ func TestBareMAC(t *testing.T) {
 	got = bareMAC("AA:BB:CC:DD:EE:FF")
 	if got != "aabbccddeeff" {
 		t.Fatalf("bareMAC plain = %q", got)
+	}
+}
+
+// mac/rmac must use DecodeMAC, not Text(): Text hex-decodes ASCII and turns a
+// CSS326 root MAC into binary junk (replacement chars / garbage in the panel).
+func TestSysBridgeIDsUseDecodeMAC(t *testing.T) {
+	var body, err = os.ReadFile(filepath.Join("testdata", "sys.b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sys *Page
+	sys, err = ParseObject(string(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rootPriority, bridgePriority int
+	if rpr, ok := sys.Num("rpr"); ok {
+		rootPriority = int(rpr)
+	}
+	if prio, ok := sys.Num("prio"); ok {
+		bridgePriority = int(prio)
+	}
+
+	var rootID, bridgeID string
+	if v, ok := sys.Value("rmac"); ok && v.Kind == KindStr {
+		if mac, macOK := DecodeMAC(v.Raw); macOK {
+			rootID = mac
+			if rootPriority > 0 {
+				rootID = fmt.Sprintf("%04x.%s", rootPriority, rootID)
+			}
+		}
+	}
+	if v, ok := sys.Value(FieldMAC); ok && v.Kind == KindStr {
+		if mac, macOK := DecodeMAC(v.Raw); macOK {
+			bridgeID = mac
+			if bridgePriority > 0 {
+				bridgeID = fmt.Sprintf("%04x.%s", bridgePriority, bridgeID)
+			}
+		}
+	}
+
+	if rootID != "1000.04:f4:1c:1d:74:58" {
+		t.Fatalf("RootBridgeID = %q, want 1000.04:f4:1c:1d:74:58", rootID)
+	}
+	if bridgeID != "8000.b8:69:f4:5f:14:a8" {
+		t.Fatalf("BridgeID = %q, want 8000.b8:69:f4:5f:14:a8", bridgeID)
+	}
+
+	// Prove the old bug: Text() yields a 6-byte binary blob containing 't'+'X'
+	// (0x74 0x58) — what showed up as garbage / ".tsx"-like text in the panel.
+	var bad, ok = sys.Text("rmac")
+	if !ok || len(bad) != 6 {
+		t.Fatalf("expected Text(rmac) binary len 6, got %q ok=%v", bad, ok)
+	}
+	if bad[4] != 't' || bad[5] != 'X' {
+		t.Fatalf("fixture rmac Text() suffix = %q, want tX", bad[4:])
 	}
 }

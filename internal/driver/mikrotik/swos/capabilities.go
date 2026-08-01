@@ -1,78 +1,68 @@
 package swos
 
-// Ce que ce connecteur sait WRITE, et surtout ce qu'il ne sait pas.
+// What this connector can WRITE, and especially what it cannot.
 //
-// Declare ICI, dans le paquet qui written, et non dans la couche API : le jour where une
-// intention de plus devient posable, la declaration et le code qui la pose changent
-// dans le same repertoire. Une capability declared loin de writing finit toujours
-// par annoncer autre chose que ce qui se passe actually — et une capability qui
-// mente est pire que pas de capability du tout, parce qu'elle donne a l'exploitant une
-// configuration qu'il croit applied.
+// Declared HERE, in the package that writes, not in the API layer: the day a
+// new intent becomes writable, the declaration and the code that writes it
+// change in the same directory. A capability declared far from the write path
+// always ends up claiming something other than what actually happens — and a
+// capability that lies is worse than no capability at all, because it gives
+// the operator configuration they believe is applied.
 //
-// Meme mecanisme et same raison que instanton.WritableExtras : meshcraft POSE tout
-// ce qui est supporte, considere the device a jour pour autant, et DIT ce qui est
-// reste a quai.
+// Same mechanism and reason as instanton.WritableExtras: meshcraft APPLIES
+// everything supported, considers the device up to date for that scope, and
+// SAYS what was left behind.
 
-// WritableExtras : les intentions AUTRES que l'appartenance VLAN que ce connecteur
-// pose actually (cf. recon.ExtraIntents pour ce que le model sait porter :
+// WritableExtras: intents OTHER than VLAN membership that this connector
+// actually applies (cf. recon.ExtraIntents for what the model can carry:
 // `poe`, `stp`, `dhcp_snooping`, `port_security`).
 //
-// VIDE, et ce n'est pas un oubli.
-//
-// C'est same un vide instructif, parce que la raison n'est PAS l'absence de ces
-// fonctions sur la plateforme : SwOS sait faire trois des quatre. Le spanning-tree
-// est there (/rstp.b `ena` par port), le snooping DHCP aussi (/sys.b `dtrp` et `ainf`),
-// et la security de port also (/fwd.b `lck` et `lckf`). Le PoE est le seul
-// absent, et seulement sur les modeles sans l'electronique correspondante.
-//
-// Ce qui manque est de NOTRE cote, et c'est une distinction qui compte : ces
-// ecritures ne sont pas impossibles, elles ne sont pas faites. Et il y a une raison
-// de ne pas les avoir codees a l'aveugle — sur SwOS, chacune de ces trois intentions
-// vit dans une page qui porte AUSSI des champs capables de couper access. Ecrire le
-// snooping DHCP, c'est rewrite /sys.b, donc renvoyer a the device `avln`, `allp`,
-// `alla` et `allm` dans le same geste. Coder cela sans avoir pu eprouver une seule
-// write sur du hardware serait exactement le genre de raccourci que ce projet
-// refuse.
-//
-// Ce vide se lit a the UI, au lieu de se decouvrir sur le terrain.
-var WritableExtras = map[string]bool{}
+// `stp` is applied via ApplySpanningTree (/rstp.b `ena`, /sys.b `prio`). The other
+// extras remain empty on purpose: DHCP snooping and port security still share
+// pages that also carry management allow-from fields, and those writes are not
+// proven on hardware yet.
+var WritableExtras = map[string]bool{
+	// Spanning-tree: /rstp.b `ena` (+ optional edge) and /sys.b `prio`, applied by
+	// ApplySpanningTree. Proven writable fields come from backup.swb.
+	"stp": true,
+}
 
-// Le pendant en LECTURE de ce vide n'est pas ici mais dans
-// Capabilities().Monitoring.Unavailable (swos.go) : ce que la plateforme n'expose pas
-// en supervision, avec son motif. Il y vit parce qu'il doit be lisible depuis le
-// contrat driver.Capabilities pour un model donne, there where WritableExtras n'est
-// consulte que par la pose.
+// The READ counterpart of this emptiness is not here but in
+// Capabilities().Monitoring.Unavailable (swos.go): what the platform does not
+// expose for monitoring, and why. It lives there because it must be readable
+// from driver.Capabilities for a given model, whereas WritableExtras is
+// consulted only at apply time.
 //
-// Et il y a un troisieme pendant, propre a cette plateforme, qui ne rentre dans aucun
-// des deux champs du contrat : la politique de RETRAIT d'appartenance. Elle a changed —
-// la pose retire now les appartenances que le plan ne demande plus, avec quatre
-// refus qui protegent le VLAN de management, le VLAN natif effectif, les ports en
-// « all » et les ports actifs d'un device dont on ne connait pas le VLAN
-// d'administration. La raison de chacun est written au long dans apply.go
-// (removalPolicy, planLeaves), a cote du code qui decide.
+// There is a third counterpart, specific to this platform, that fits neither
+// contract field: the membership REMOVAL policy. Apply now removes memberships
+// the plan no longer asks for, with four refusals that protect the management
+// VLAN, the effective native VLAN, ports in "all", and active ports on a device
+// whose administration VLAN is unknown. Each reason is written at length in
+// apply.go (removalPolicy, planLeaves), next to the code that decides.
 //
-// Il y a un QUATRIEME pendant, et c'est le seul refus write qui reste sur le
-// model VLAN de cette plateforme : ni « VLAN Receive » (/fwd.b `vlni`) ni « Force
-// VLAN ID » (/fwd.b `fvid`) ne sont written, alors que les deux sont inscriptibles et
-// already renvoyes a the device a chaque pose avec leur valeur lue. Le motif est dans
-// ports.go (receivePolicy) : les resserrer JETTE du trafic, et le model standard
-// n'exprime pas ce qu'il faudrait pour decider lequel. Ils sont en revanche LUS, et
-// flagged from qu'ils contredisent le role du port (vlanAnomalies).
+// There is a FOURTH counterpart, and it is the only remaining write refusal on
+// this platform's VLAN model: neither "VLAN Receive" (/fwd.b `vlni`) nor "Force
+// VLAN ID" (/fwd.b `fvid`) are written, even though both are writable and are
+// already echoed back to the device on every apply with their read value. The
+// reason is in ports.go (receivePolicy): tightening them DROPS traffic, and the
+// standard model does not express what would be needed to decide which. They
+// are READ, however, and flagged when they contradict the port role
+// (vlanAnomalies).
 
-// WritesExtra dit si ce connecteur pose l'intention named.
+// WritesExtra reports whether this connector applies the named intent.
 func WritesExtra(name string) bool { return WritableExtras[name] }
 
-// RemovalPolicy rend, en une phrase, ce que la pose retire et ce qu'elle refuse de
-// retirer. Destine a the UI : l'exploitant doit pouvoir lire la limite sans ouvrir le
-// code.
+// RemovalPolicy returns, in one sentence, what apply removes and what it
+// refuses to remove. Meant for the UI: the operator must be able to read the
+// limit without opening the code.
 func RemovalPolicy() string { return removalPolicy() }
 
-// ReceivePolicy rend, en une phrase, les deux champs de VLAN par port que ce
-// connecteur does not write JAMAIS et pourquoi.
+// ReceivePolicy returns, in one sentence, the two per-port VLAN fields this
+// connector never writes, and why.
 //
-// Exportee pour la same raison que RemovalPolicy, et c'est la troisieme forme du same
-// principe : ce qu'on ne fait pas doit be lisible depuis l'exterieur du paquet.
-// `WritableExtras` dit les intentions non applied, `Monitoring.Unavailable` dit les
-// metriques absentes, et ces deux phrases-ci disent ce que la pose s'interdit DANS une
-// intention qu'elle honore par ailleurs — la nuance qu'aucun champ du contrat ne porte.
+// Exported for the same reason as RemovalPolicy — a third form of the same
+// principle: what we do not do must be readable from outside the package.
+// `WritableExtras` names intents not applied, `Monitoring.Unavailable` names
+// missing metrics, and these two sentences say what apply forbids INSIDE an
+// intent it otherwise honors — a nuance no contract field carries.
 func ReceivePolicy() string { return receivePolicy() }

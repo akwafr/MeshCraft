@@ -210,6 +210,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/mgmt-plan", s.handleGetMgmtPlan)
 			r.Put("/mgmt-plan", s.handleUpdateMgmtPlan)
 
+			r.Get("/stp-preference", s.handleGetSTPPreference)
+			r.Put("/stp-preference", s.handlePutSTPPreference)
+
 			r.Get("/export", s.handleExportSite)
 			r.Post("/import", s.handleImportSite)
 
@@ -299,7 +302,7 @@ func (s *Server) Router() http.Handler {
 		// break links and tuning scripts for cosmetic gain; the response now carries a
 		// `kind` field that says what "a unit" means on the target device, and that is what
 		// the UI must display rather than the word "wcd".
-		r.Get("/api/devices/{id}/wcd/{section}", s.handleReadRawSection)
+		r.Get("/api/devices/{id}/wcd/*", s.handleReadRawSection)
 		// First half of management switchover: add the target VLAN interface,
 		// without removing or saving anything. Cf. handlePrepareMgmtMigration.
 		r.Post("/api/devices/{id}/mgmt-migrate/prepare", s.handlePrepareMgmtMigration)
@@ -319,6 +322,7 @@ func (s *Server) Router() http.Handler {
 		r.Put("/api/devices/{id}/mgmt-addressing", s.handleSetDeviceAddressing)
 		// Apply recorded same-VLAN addressing intent ([driver.MgmtAddrWriter]).
 		r.Post("/api/devices/{id}/mgmt-addressing/apply", s.handleApplyMgmtAddressing)
+		r.Post("/api/devices/{id}/stp/apply", s.handleApplyDeviceSTP)
 		// Single-address leap ([driver.MgmtJumper]) — SwOS-shaped; requires confirmed=true.
 		r.Post("/api/devices/{id}/mgmt-addressing/jump", s.handleJumpMgmtAddressing)
 		// Lab / bring-up: temporary static IPv4 interface to learn Instant On owner value.

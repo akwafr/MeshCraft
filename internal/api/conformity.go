@@ -61,11 +61,7 @@ type MgmtConformity struct {
 // way shows too harsh a warning; erring the other way attempts an irreversible
 // maneuver on a device we believed recoverable.
 func outOfBandOf(d model.Device) bool {
-	var extra map[string]string
-	if json.Unmarshal(d.Extra, &extra) != nil {
-		return false
-	}
-	var drv, known = driver.Get(extra["driver"])
+	var drv, known = driver.Get(driver.DriverNameFromExtra(d.Extra))
 	if !known {
 		return false
 	}
@@ -358,6 +354,38 @@ type deviceView struct {
 	MgmtAddressing MgmtAddressingView `json:"mgmt_addressing"`
 	// STP: last spanning-tree observation (Extra.stp_observed), for topology view.
 	STP *driver.SpanningTreeState `json:"stp,omitempty"`
+	// STPCaps: per-port spanning-tree edge / enable capabilities from the connector.
+	STPCaps STPCapsView `json:"stp_caps"`
+}
+
+// STPCapsView says what this device's PLATFORM allows for spanning tree.
+// Copied from connector Capabilities so the UI can gate Edge / modes without a
+// second capabilities fetch.
+type STPCapsView struct {
+	Known      bool     `json:"known"`
+	Edge       bool     `json:"edge"`
+	EdgeAuto   bool     `json:"edge_auto"`
+	PortEnable bool     `json:"port_enable"`
+	BPDUGuard  bool     `json:"bpdu_guard"`
+	Modes      []string `json:"modes,omitempty"`
+}
+
+func stpCapsOf(d model.Device) STPCapsView {
+	var name = driver.DriverNameFromExtra(d.Extra)
+	var drv, ok = driver.Get(name)
+	if !ok {
+		return STPCapsView{}
+	}
+	var caps = drv.Capabilities(d.Model)
+	var f = caps.Features
+	return STPCapsView{
+		Known:      true,
+		Edge:       f[driver.FeatSTPEdge],
+		EdgeAuto:   f[driver.FeatSTPEdgeAuto],
+		PortEnable: f[driver.FeatSTPPortEnable],
+		BPDUGuard:  f[driver.FeatBPDUGuard],
+		Modes:      append([]string{}, caps.STPModes...),
+	}
 }
 
 // withConformity enriches a device list with conformity AND sync state.
@@ -394,6 +422,7 @@ func (s *Server) withConformity(ctx context.Context, devices []model.Device) []d
 			Device: enriched, Mgmt: c,
 			MgmtAddressing: addressingViewOf(d, plan),
 			STP:            stpObservedOf(d),
+			STPCaps:        stpCapsOf(d),
 		})
 	}
 	return out

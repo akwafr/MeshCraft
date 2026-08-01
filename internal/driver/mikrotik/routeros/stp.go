@@ -65,8 +65,24 @@ func (c *Client) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState
 		var sp = driver.SpanningTreePort{
 			Port:     name,
 			PathCost: parseHexOrDec(p.Get("path-cost")),
-			Edge:     p.Get("edge-port") == "true" || p.Get("edge") == "yes",
 		}
+		var edgeRaw = strings.ToLower(p.Get("edge"))
+		switch edgeRaw {
+		case "yes":
+			sp.Edge, sp.EdgeMode = true, driver.STPEdgeYes
+		case "no":
+			sp.Edge, sp.EdgeMode = false, driver.STPEdgeNo
+		case "auto":
+			sp.EdgeMode = driver.STPEdgeAuto
+			sp.Edge = p.Get("edge-port") == "true"
+		default:
+			sp.Edge = p.Get("edge-port") == "true" || edgeRaw == "yes"
+			if sp.Edge {
+				sp.EdgeMode = driver.STPEdgeYes
+			}
+		}
+		var bg = strings.ToLower(p.Get("bpdu-guard"))
+		sp.BPDUGuard = bg == "true" || bg == "yes"
 		sp.Role = mapROSRole(p.Get("role"))
 		switch {
 		case p.Get("forwarding") == "true":

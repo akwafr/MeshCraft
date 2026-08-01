@@ -250,6 +250,16 @@ func positiveIntent(raw json.RawMessage) bool {
 	if json.Unmarshal(raw, &s) == nil {
 		return s != "" && s != "off" && s != "disabled"
 	}
+	// Object intents (e.g. ports[].stp: {edge:true}): any true/non-zero field counts.
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) == nil && len(obj) > 0 {
+		var v json.RawMessage
+		for _, v = range obj {
+			if positiveIntent(v) {
+				return true
+			}
+		}
+	}
 	return false
 }
 

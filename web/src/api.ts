@@ -131,6 +131,17 @@ export interface PortGroup {
   label?: string;
 }
 
+/** Per-port STP intent (edge / enable / bpdu guard) stored under ports[name].stp. */
+export interface PortSTPIntent {
+  /** "auto" | "yes" | "no" — spanning-tree edge policy. */
+  edge?: "auto" | "yes" | "no" | boolean;
+  /** Participate in spanning tree (SwOS ena / Instant On STP State). */
+  enabled?: boolean;
+  /** BPDU Guard (RouterOS bpdu-guard, Instant On CST — not SwOS). */
+  bpdu_guard?: boolean;
+  path_cost?: number;
+}
+
 /** Standard model of a port: intent + last observed state. */
 export interface PortIntent {
   label?: string;
@@ -138,6 +149,8 @@ export interface PortIntent {
   pvid?: number | null;
   tagged?: number[] | "all";
   poe?: boolean;
+  /** Per-port spanning-tree edge / enable. */
+  stp?: PortSTPIntent;
   // observed state (demo: set by import, later by monitoring)
   link?: string | null;
   poe_w?: number;
@@ -184,6 +197,8 @@ export interface Device {
   mgmt_addressing?: import("./network").MgmtAddressing;
   /** Last spanning-tree observation (from device re-read). */
   stp?: SpanningTreeState;
+  /** Per-port STP edge / enable capabilities from the connector. */
+  stp_caps?: STPCaps;
   /** THE INTENT recorded. Always present — “inherit” is one answer. */
   mgmt_addr?: import("./network").DeviceAddressing;
   /** What the connector read on the equipment. Absent = never read again. */
@@ -350,6 +365,9 @@ export interface SpanningTreePort {
   path_cost?: number;
   root_path_cost?: number;
   edge?: boolean;
+  /** Configured edge policy: auto | yes | no. */
+  edge_mode?: "auto" | "yes" | "no" | string;
+  bpdu_guard?: boolean;
 }
 
 export interface SpanningTreeState {
@@ -363,6 +381,17 @@ export interface SpanningTreeState {
   root_path_cost?: number;
   ports?: SpanningTreePort[];
   notes?: string[];
+}
+
+/** Connector Capabilities.Features for per-port STP (served on deviceView). */
+export interface STPCaps {
+  known: boolean;
+  edge: boolean;
+  edge_auto: boolean;
+  port_enable: boolean;
+  bpdu_guard: boolean;
+  /** Connector Capabilities.STPModes (none|stp|rstp|mstp). */
+  modes?: string[];
 }
 
 export interface DeviceLink {
@@ -483,6 +512,18 @@ export interface PortProfileSpec {
   tagged?: number[] | "all";
   poe?: boolean;
   eng_only?: boolean;
+  /**
+   * Spanning-tree edge when the profile is applied.
+   * true → edge yes; false → auto (safe default on access ports).
+   */
+  stp_edge?: boolean;
+  /**
+   * Per-port spanning-tree participation (SwOS ena / Instant On STP State).
+   * true → enabled; false → disabled. Absent leaves the device value alone.
+   */
+  stp_enabled?: boolean;
+  /** BPDU Guard when the profile is applied (RouterOS / Instant On). */
+  bpdu_guard?: boolean;
 }
 
 // --- Switch profiles (see internal/portrules) ---
@@ -720,9 +761,9 @@ export function useSiteLive(siteId: string | undefined): number | false {
 
 export interface TrafficSeries {
   hours: number;
-  /** true as long as the series is reconstituted (no SNMP collector yet). */
+  /** true when no measured history — points may be an empty time grid. */
   simulated: boolean;
-  points: { ts: string; rx_mbps: number; tx_mbps: number }[];
+  points: { ts: string; rx_mbps: number | null; tx_mbps: number | null }[];
 }
 
 /**

@@ -3,9 +3,10 @@
 // Rules: single Y scale (never dual axis), thin constant-width strokes
 // (vector-effect), discrete grid, legend when two or more series, hover
 // crosshair + tooltip, values in text ink never series color.
-import { useRef, useState } from "react";
+import { useRef, useState, useId, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { QuickTip } from "./components";
+import { claimHoverTip, registerHoverTip, releaseHoverTip } from "./hoverExclusive";
 
 /** Series colors validated (CVD separation checked). */
 export const SERIES = {
@@ -42,7 +43,30 @@ export function StatTile({
 export interface Series {
   name: string;
   color: string;
-  points: number[];
+  /** null = no sample at this slot — the stroke breaks (empty area). */
+  points: (number | null)[];
+}
+
+/** Split a series into polyline segments that skip null / NaN slots. */
+function strokeSegments(
+  points: (number | null)[],
+  px: (i: number) => number,
+  py: (v: number) => number,
+): string[] {
+  var segs: string[] = [];
+  var cur: string[] = [];
+  var i = 0;
+  for (i = 0; i < points.length; i++) {
+    var v = points[i];
+    if (v == null || Number.isNaN(v)) {
+      if (cur.length >= 2) segs.push(cur.join(" "));
+      cur = [];
+      continue;
+    }
+    cur.push(px(i) + "," + py(v));
+  }
+  if (cur.length >= 2) segs.push(cur.join(" "));
+  return segs;
 }
 
 const VB_W = 600;
@@ -72,9 +96,14 @@ export function LineChart({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number } | null>(null);
+  const tipId = useId();
+
+  useEffect(() => {
+    return registerHoverTip(tipId, () => setHover(null));
+  }, [tipId]);
 
   const n = Math.max(...series.map((s) => s.points.length), 2);
-  const all = series.flatMap((s) => s.points);
+  const all = series.flatMap((s) => s.points).filter((v): v is number => v != null && !Number.isNaN(v));
   const bipolar = all.some((v) => v < 0);
   const rawPeak = Math.max(...all.map((v) => Math.abs(v)), 1);
   const mag = Math.pow(10, Math.floor(Math.log10(rawPeak)));
@@ -83,6 +112,7 @@ export function LineChart({
   const span = max - min || 1;
   const plotTop = bipolar ? PAD_T : 0;
   const plotH = VB_H - PAD_B - plotTop;
+  const empty = all.length === 0;
 
   const px = (i: number) => PAD_L + (i * (VB_W - PAD_L * 2)) / (n - 1);
   const py = (v: number) => plotTop + plotH * (1 - (v - min) / span);
@@ -94,6 +124,7 @@ export function LineChart({
     if (!box) return;
     const ratio = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
     const i = Math.round(ratio * (n - 1));
+    claimHoverTip(tipId);
     setHover({ i, x: ratio * box.width });
   };
 
@@ -103,7 +134,10 @@ export function LineChart({
       ref={ref}
       style={{ height }}
       onMouseMove={onMove}
-      onMouseLeave={() => setHover(null)}
+      onMouseLeave={() => {
+        setHover(null);
+        releaseHoverTip(tipId);
+      }}
     >
       <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="none" width="100%" height="100%">
         {grid.map((f) => (
@@ -119,17 +153,20 @@ export function LineChart({
             vectorEffect="non-scaling-stroke"
           />
         ))}
-        {series.map((s) => (
-          <polyline
-            key={s.name}
-            points={s.points.map((v, i) => `${px(i)},${py(v)}`).join(" ")}
-            fill="none"
-            stroke={s.color}
-            strokeWidth={2}
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
+        {!empty &&
+          series.map((s) =>
+            strokeSegments(s.points, px, py).map((pts, si) => (
+              <polyline
+                key={s.name + "-" + si}
+                points={pts}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            )),
+          )}
         {hover && (
           <>
             <line
@@ -143,7 +180,7 @@ export function LineChart({
             />
             {series.map((s) => {
               const v = s.points[hover.i];
-              if (v == null) return null;
+              if (v == null || Number.isNaN(v)) return null;
               return (
                 <circle
                   key={s.name}
@@ -170,13 +207,16 @@ export function LineChart({
           }}
         >
           {xLabel && <div className="chart-tip-x">{xLabel(hover.i, n)}</div>}
-          {series.map((s) => (
-            <div key={s.name} className="chart-tip-row">
-              <span className="dot" style={{ background: s.color }} />
-              <span>{s.name}</span>
-              <b>{format(Math.abs(s.points[hover.i] ?? 0))}</b>
-            </div>
-          ))}
+          {series.map((s) => {
+            const v = s.points[hover.i];
+            return (
+              <div key={s.name} className="chart-tip-row">
+                <span className="dot" style={{ background: s.color }} />
+                <span>{s.name}</span>
+                <b>{v == null || Number.isNaN(v) ? "—" : format(Math.abs(v))}</b>
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="chart-legend">

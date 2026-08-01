@@ -28,94 +28,9 @@ import {
 } from "../lldp";
 import { PortSquare, StatusDot } from "../netui";
 import { ghostPeerLinkStroke, linkCapacityMbps, linkSpeedLabel, topologyLinkStroke } from "../topologyLinks";
+import { TopologyLinkLabels } from "../TopologyLinkLabels";
 import { LinkTrafficTip, type LinkTrafficHover } from "../LinkTrafficTip";
-
-/** Rounded label behind topology link text — readable over crossing strokes. */
-function LinkLabelPill({
-  x,
-  y,
-  text,
-  fill = "var(--text-dim)",
-  fontSize = 9,
-  letterSpacing,
-}: {
-  x: number;
-  y: number;
-  text: string;
-  fill?: string;
-  fontSize?: number;
-  letterSpacing?: number;
-}) {
-  if (!text) return null;
-  const padX = 5;
-  const padY = 2.5;
-  const w = Math.max(20, text.length * fontSize * 0.58 + padX * 2);
-  const h = fontSize + padY * 2;
-  return (
-    <g pointerEvents="none">
-      <rect
-        x={x - w / 2}
-        y={y - h / 2}
-        width={w}
-        height={h}
-        rx={h / 2}
-        fill="var(--bg-panel)"
-        stroke="var(--border)"
-        strokeWidth={0.8}
-        opacity={0.94}
-      />
-      <text
-        x={x}
-        y={y + fontSize * 0.35}
-        fill={fill}
-        fontSize={fontSize}
-        letterSpacing={letterSpacing}
-        textAnchor="middle"
-      >
-        {text}
-      </text>
-    </g>
-  );
-}
-
-/** Port names near each end of a topology link. */
-function LinkPortEnds({
-  x1,
-  y1,
-  x2,
-  y2,
-  portA,
-  portB,
-  ox = 0,
-  oy = 0,
-}: {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  portA?: string | null;
-  portB?: string | null;
-  ox?: number;
-  oy?: number;
-}) {
-  const at = (t: number) => ({
-    x: x1 + (x2 - x1) * t + ox,
-    y: y1 + (y2 - y1) * t + oy,
-  });
-  // Close to the box edges (segment already stops on the border).
-  const a = at(0.1);
-  const b = at(0.9);
-  return (
-    <>
-      {portA ? (
-        <LinkLabelPill x={a.x} y={a.y - 11} text={portA} fontSize={8} fill="var(--text)" />
-      ) : null}
-      {portB ? (
-        <LinkLabelPill x={b.x} y={b.y - 11} text={portB} fontSize={8} fill="var(--text)" />
-      ) : null}
-    </>
-  );
-}
+import { claimHoverTip, registerHoverTip, releaseHoverTip } from "../hoverExclusive";
 
 type PlanBox = { x: number; y: number; w: number; h: number };
 
@@ -265,6 +180,10 @@ export default function Plan() {
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
   // 24 h bandwidth tip while the pointer rests on a topology link.
   const [linkHover, setLinkHover] = useState<LinkTrafficHover | null>(null);
+  const linkTrafficTipId = "topology-link-traffic";
+  useEffect(() => {
+    return registerHoverTip(linkTrafficTipId, () => setLinkHover(null));
+  }, [linkTrafficTipId]);
   // Temporary position while dragging (device id or LLDP peer key → {x,y}).
   const [dragPos, setDragPos] = useState<Record<string, { x: number; y: number }>>({});
   const dragRef = useRef<{
@@ -733,6 +652,15 @@ export default function Plan() {
     return ports.find((p) => p.port === portName);
   };
 
+  const stpEdgeHint = (sp?: { edge?: boolean; edge_mode?: string }) => {
+    if (!sp) return "";
+    if (sp.edge_mode === "yes") return "edge";
+    if (sp.edge_mode === "auto") return "auto";
+    if (sp.edge_mode === "no") return "";
+    if (sp.edge) return "edge";
+    return "";
+  };
+
   const linkOnline = (a: Device | undefined, aPort: string, b: Device | undefined, bPort: string) => {
     if (!a || !b) return false;
     if (a.status === "off" || b.status === "off") return false;
@@ -814,7 +742,10 @@ export default function Plan() {
       clientY: e.clientY,
     };
   };
-  const onLinkHover = (h: LinkTrafficHover) => setLinkHover(h);
+  const onLinkHover = (h: LinkTrafficHover) => {
+    claimHoverTip(linkTrafficTipId);
+    setLinkHover(h);
+  };
   const onLinkHoverMove = (e: React.MouseEvent, key: string) => {
     setLinkHover((cur) =>
       cur && cur.key === key
@@ -823,7 +754,11 @@ export default function Plan() {
     );
   };
   const onLinkHoverLeave = (key: string) => {
-    setLinkHover((cur) => (cur?.key === key ? null : cur));
+    setLinkHover((cur) => {
+      if (cur?.key !== key) return cur;
+      releaseHoverTip(linkTrafficTipId);
+      return null;
+    });
   };
 
   const diagnostics = (links ?? []).filter((l) => l.status !== "up" || l.note);
@@ -1087,11 +1022,6 @@ export default function Plan() {
                   });
               const towardA = lx1 <= lx2 ? "◂" : "▸";
               const towardB = lx1 <= lx2 ? "▸" : "◂";
-              const at = (t: number) => ({
-                x: lx1 + (lx2 - lx1) * t,
-                y: ly1 + (ly2 - ly1) * t,
-              });
-              const pA = at(0.28), pB = at(0.72);
               const stpA = stpPortOf(a, l.a_port);
               const stpB = b ? stpPortOf(b, l.b_port ?? "") : undefined;
               const midLabel = !online
@@ -1102,11 +1032,18 @@ export default function Plan() {
                       (stpA?.path_cost || stpB?.path_cost)
                         ? `cost ${stpA?.path_cost || stpB?.path_cost}`
                         : "",
+                      stpEdgeHint(stpA) || stpEdgeHint(stpB),
                     ].filter(Boolean).join(" · ") || drv.label
                   : drv.label;
               const peerPort = l.b_port || l.b_port_label || ghost?.portLabel || "";
               const peerName = b?.name || ghost?.label || "?";
               const hoverKey = `lldp-${l.a_device}-${l.a_port}-${l.b_device ?? ghost?.key}-${l.b_port ?? ""}`;
+              const speedText =
+                midLabel + (!isGhost && lldpLinkKind(l) === "one_side" ? " · ½" : "");
+              const stpExtra =
+                stpView && online && b
+                  ? [stpA?.state, stpB?.state].filter(Boolean).join(" / ")
+                  : "";
               return (
                 <g
                   key={hoverKey}
@@ -1140,39 +1077,20 @@ export default function Plan() {
                     strokeDasharray={st.strokeDasharray} opacity={st.opacity}
                     filter={st.filter}
                   />
-                  <LinkPortEnds
-                    x1={lx1} y1={ly1} x2={lx2} y2={ly2}
+                  <TopologyLinkLabels
+                    x1={lx1}
+                    y1={ly1}
+                    x2={lx2}
+                    y2={ly2}
                     portA={l.a_port}
                     portB={peerPort}
+                    speedText={speedText}
+                    speedFill={!online ? st.stroke : "var(--text)"}
+                    speedLetterSpacing={1}
+                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
+                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    extraText={stpExtra || null}
                   />
-                  <LinkLabelPill
-                    x={(lx1 + lx2) / 2}
-                    y={(ly1 + ly2) / 2 - 6}
-                    text={midLabel + (!isGhost && lldpLinkKind(l) === "one_side" ? " · ½" : "")}
-                    fill={!online ? st.stroke : "var(--text)"}
-                    letterSpacing={1}
-                  />
-                  {stpView && online && b && (
-                    <LinkLabelPill
-                      x={(lx1 + lx2) / 2}
-                      y={(ly1 + ly2) / 2 + 12}
-                      text={[stpA?.state, stpB?.state].filter(Boolean).join(" / ")}
-                    />
-                  )}
-                  {!stpView && online && r.from && (
-                    <>
-                      <LinkLabelPill
-                        x={pA.x}
-                        y={pA.y + 12}
-                        text={`${towardA} ${fmtMbps(r.toA)}`}
-                      />
-                      <LinkLabelPill
-                        x={pB.x}
-                        y={pB.y + 12}
-                        text={`${towardB} ${fmtMbps(r.toB)}`}
-                      />
-                    </>
-                  )}
                 </g>
               );
             })}
@@ -1195,8 +1113,6 @@ export default function Plan() {
               });
               const towardA = x1 <= x2 ? "◂" : "▸";
               const towardB = x1 <= x2 ? "▸" : "◂";
-              const at = (t: number) => ({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
-              const pA = at(0.28), pB = at(0.72);
               const stpA = stpPortOf(a, l.a_port);
               const stpB = stpPortOf(b, l.b_port);
               const midLabel = !online
@@ -1207,6 +1123,7 @@ export default function Plan() {
                       (stpA?.path_cost || stpB?.path_cost)
                         ? `cost ${stpA?.path_cost || stpB?.path_cost}`
                         : "",
+                      stpEdgeHint(stpA) || stpEdgeHint(stpB),
                     ].filter(Boolean).join(" · ") || drv.label
                   : drv.label;
               const selected = selectedLinkId === l.id;
@@ -1216,6 +1133,10 @@ export default function Plan() {
                   : !online || l.note
                     ? st.stroke
                     : "var(--text)";
+              const stpExtra =
+                stpView && online
+                  ? [stpA?.state, stpB?.state].filter(Boolean).join(" / ")
+                  : "";
               return (
                 <g
                   key={l.id}
@@ -1257,35 +1178,20 @@ export default function Plan() {
                     filter={selected ? undefined : st.filter}
                     opacity={st.opacity}
                   />
-                  <LinkPortEnds x1={x1} y1={y1} x2={x2} y2={y2} portA={l.a_port} portB={l.b_port} />
-                  <LinkLabelPill
-                    x={(x1 + x2) / 2}
-                    y={(y1 + y2) / 2 - 6}
-                    text={midLabel + (l.note && online ? " ⚠" : "")}
-                    fill={midFill}
-                    letterSpacing={1}
+                  <TopologyLinkLabels
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    portA={l.a_port}
+                    portB={l.b_port}
+                    speedText={midLabel + (l.note && online ? " ⚠" : "")}
+                    speedFill={midFill}
+                    speedLetterSpacing={1}
+                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
+                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    extraText={stpExtra || null}
                   />
-                  {stpView && online && (
-                    <LinkLabelPill
-                      x={(x1 + x2) / 2}
-                      y={(y1 + y2) / 2 + 12}
-                      text={[stpA?.state, stpB?.state].filter(Boolean).join(" / ")}
-                    />
-                  )}
-                  {!stpView && online && r.from && (
-                    <>
-                      <LinkLabelPill
-                        x={pA.x}
-                        y={pA.y + 12}
-                        text={`${towardA} ${fmtMbps(r.toA)}`}
-                      />
-                      <LinkLabelPill
-                        x={pB.x}
-                        y={pB.y + 12}
-                        text={`${towardB} ${fmtMbps(r.toB)}`}
-                      />
-                    </>
-                  )}
                 </g>
               );
             })}

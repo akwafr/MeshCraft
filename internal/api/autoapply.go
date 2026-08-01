@@ -293,10 +293,25 @@ func (s *Server) runApply(ctx context.Context, d model.Device,
 		Desired: desired, MgmtVLAN: plan.VlanID, SiteVLANs: vlans, Force: force,
 	})
 	out.Steps = adm.Transcript()
+
+	// Spanning-tree: site preference ∩ connector caps, then port intents.
+	// Runs even when ApplyPorts failed: VLAN drift must not block edge / mode push.
+	var stpRes, stpErr = s.applyDeviceSTP(ctx, d, conn, adm)
+	out.Steps = adm.Transcript()
+	if stpErr != nil {
+		if err == nil {
+			err = stpErr
+		} else {
+			out.Notes = append(out.Notes, "spanning tree apply also failed: "+stpErr.Error())
+		}
+	} else {
+		out.Result.Skipped = append(out.Result.Skipped, stpRes.Skipped...)
+		out.Result.Notes = append(out.Result.Notes, stpRes.Notes...)
+		out.Notes = append(out.Notes, stpRes.Notes...)
+	}
 	if err != nil {
 		return out, err
 	}
-
 	// Nothing is considered applied on return code alone: we RE-READ and compare (section 5,
 	// Verify). That re-read is what authorizes dating the apply.
 	var state driver.State

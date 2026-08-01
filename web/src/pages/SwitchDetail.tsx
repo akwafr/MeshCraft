@@ -21,6 +21,7 @@ import {
 } from "../api";
 import { useSiteRole } from "../auth";
 import { MgmtAddressingCard } from "./MgmtAddressing";
+import { SpanningTreeCard, stpEffectiveMeta } from "./SpanningTreeDevice";
 import { ConformMgmtButton } from "./ConformMgmt";
 import {
   ActionButton,
@@ -387,8 +388,13 @@ export default function SwitchDetail() {
   // passing the labels and the PoE of each.
   const mutatePorts = (patch: Partial<PortIntent>, msg?: string) => {
     if (selected.length === 0) return;
+    const merge = (base: PortIntent, patchIn: Partial<PortIntent>): PortIntent => {
+      const next = { ...base, ...patchIn };
+      if (patchIn.stp) next.stp = { ...base.stp, ...patchIn.stp };
+      return next;
+    };
     if (selected.length === 1) {
-      setPort.mutate({ port: selected[0].name, intent: { ...selected[0].p, ...patch } });
+      setPort.mutate({ port: selected[0].name, intent: merge(selected[0].p, patch) });
     } else {
       const body: Record<string, PortIntent> = {};
       selected.forEach((pr) => {
@@ -396,14 +402,16 @@ export default function SwitchDetail() {
         // can mix copper PoE and SFP, and force poe=true on an SFP
         // would write an intention that the material can never satisfy.
         const eff = patch.poe && !pr.poeCap ? { ...patch, poe: false } : patch;
-        body[pr.name] = { ...pr.p, ...eff };
+        body[pr.name] = merge(pr.p, eff);
       });
       setPorts.mutate(body);
     }
     if (msg) showToast(msg);
   };
   const mutatePort = (pr: PortRef, patch: Partial<PortIntent>, msg?: string) => {
-    setPort.mutate({ port: pr.name, intent: { ...pr.p, ...patch } });
+    const next = { ...pr.p, ...patch };
+    if (patch.stp) next.stp = { ...pr.p.stp, ...patch.stp };
+    setPort.mutate({ port: pr.name, intent: next });
     if (msg) showToast(msg);
   };
 
@@ -413,6 +421,16 @@ export default function SwitchDetail() {
     if (!prof) return;
     const spec = prof.spec as unknown as PortProfileSpec;
     if (spec.eng_only && role !== "ing") return;
+    const stp: PortIntent["stp"] = {};
+    if (typeof spec.stp_edge === "boolean") {
+      stp.edge = spec.stp_edge ? "yes" : "auto";
+    }
+    if (typeof spec.stp_enabled === "boolean") {
+      stp.enabled = spec.stp_enabled;
+    }
+    if (typeof spec.bpdu_guard === "boolean") {
+      stp.bpdu_guard = spec.bpdu_guard;
+    }
     mutatePorts(
       {
         mode: spec.mode,
@@ -420,6 +438,7 @@ export default function SwitchDetail() {
         tagged: spec.mode === "trunk" ? (spec.tagged ?? []) : [],
         poe: !!spec.poe,
         label: prof.name,
+        ...(Object.keys(stp).length > 0 ? { stp } : {}),
       },
       t("switchDetailPage.profileAppliedToast", { name: prof.name, ports: selected.length === 1 ? selected[0].name : t("switchDetailPage.portsCountLabel", { count: selected.length }), device: dev.name }),
     );
@@ -889,6 +908,18 @@ export default function SwitchDetail() {
             </SidePanelGroup>
 
             <SidePanelGroup
+              title={t("switchDetailPage.stpTitle")}
+              meta={stpEffectiveMeta(dev, t)}
+              defaultOpen={false}
+            >
+              <SpanningTreeCard
+                dev={dev}
+                canEdit={role === "ing"}
+                onToast={showToast}
+              />
+            </SidePanelGroup>
+
+            <SidePanelGroup
               title={t("switchDetailPage.tagsTitle")}
               defaultOpen
               meta={
@@ -1180,7 +1211,7 @@ function PortPanel({
   vlans: Vlan[];
   profiles: Profile[];
   /** Both directions of traffic from THIS port, measured (see ../telemetry). */
-  traffic: { rx: number[]; tx: number[] };
+  traffic: { rx: (number | null)[]; tx: (number | null)[] };
   /** The pitch of the window served, to name the points of the axis. */
   stepSeconds: number;
   selProf: string | null;
@@ -1207,8 +1238,17 @@ function PortPanel({
   // reduced to zero, because no flow passes through silent equipment.
   const rxHist = traffic.rx;
   const txHist = traffic.tx;
-  const rxNow = off ? 0 : (rxHist[rxHist.length - 1] ?? p.rx_mbps ?? 0);
-  const txNow = off ? 0 : (txHist[txHist.length - 1] ?? p.tx_mbps ?? 0);
+  const lastNum = (xs: (number | null)[]) => {
+    var i = xs.length - 1;
+    for (; i >= 0; i--) {
+      if (xs[i] != null) return xs[i] as number;
+    }
+    return null;
+  };
+  const rxNow = off ? 0 : (lastNum(rxHist) ?? p.rx_mbps ?? 0);
+  const txNow = off ? 0 : (lastNum(txHist) ?? p.tx_mbps ?? 0);
+  const hasHist =
+    rxHist.some((v) => v != null) || txHist.some((v) => v != null);
 
   const tagged = p.tagged ?? [];
   const toggleTrunkMember = (vid: number) => {
@@ -1262,11 +1302,7 @@ function PortPanel({
         <div className="kicker" style={{ marginBottom: 4 }}>
           {t("switchDetailPage.portTrafficTitle")}
         </div>
-        {rxHist.length === 0 && txHist.length === 0 ? (
-          <div className="note">
-            {t("switchDetailPage.noTrafficNote")}
-          </div>
-        ) : (
+        {hasHist ? (
           <LineChart
             height={132}
             series={[
@@ -1283,6 +1319,10 @@ function PortPanel({
               return t("switchDetailPage.chartDaysAgo", { n: Math.round(back / 86400) });
             }}
           />
+        ) : (
+          <div className="note">
+            {t("switchDetailPage.noTrafficNote")}
+          </div>
         )}
       </div>
 
@@ -1445,6 +1485,97 @@ function PortPanel({
                   {t("switchDetailPage.poeCutBtn")}
                 </button>
               </div>
+            </div>
+          )}
+
+          {p.mode !== "libre" && (dev.stp_caps?.edge || dev.stp_caps?.port_enable || dev.stp_caps?.bpdu_guard) && (
+            <div style={{ marginTop: 12 }}>
+              {dev.stp_caps?.edge && (
+                <div className="row" style={{ marginBottom: 8 }}>
+                  <span className="kicker">{t("switchDetailPage.stpEdgeLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    {(dev.stp_caps.edge_auto
+                      ? (["auto", "yes", "no"] as const)
+                      : (["yes", "no"] as const)
+                    ).map((e) => (
+                      <button
+                        key={e}
+                        className={String(p.stp?.edge ?? "") === e ? "on" : ""}
+                        onClick={() =>
+                          onPatch(
+                            { stp: { edge: e } },
+                            t("switchDetailPage.stpEdgeToast", { name: pr.name, edge: e }),
+                          )
+                        }
+                      >
+                        {e === "auto"
+                          ? t("switchDetailPage.stpEdgeAuto")
+                          : e === "yes"
+                            ? t("switchDetailPage.stpEdgeYes")
+                            : t("switchDetailPage.stpEdgeNo")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {dev.stp_caps?.port_enable && (
+                <div className="row" style={{ marginBottom: 8 }}>
+                  <span className="kicker">{t("switchDetailPage.stpPortEnableLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    <button
+                      className={p.stp?.enabled !== false ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { enabled: true } },
+                          t("switchDetailPage.stpPortOnToast", { name: pr.name }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.stpPortOn")}
+                    </button>
+                    <button
+                      className={p.stp?.enabled === false ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { enabled: false } },
+                          t("switchDetailPage.stpPortOffToast", { name: pr.name }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.stpPortOff")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {dev.stp_caps?.bpdu_guard && (
+                <div className="row">
+                  <span className="kicker">{t("switchDetailPage.bpduGuardLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    <button
+                      className={p.stp?.bpdu_guard === true ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { bpdu_guard: true } },
+                          t("switchDetailPage.bpduGuardOnToast", { name: pr.name }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.bpduGuardOn")}
+                    </button>
+                    <button
+                      className={p.stp?.bpdu_guard === false ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { bpdu_guard: false } },
+                          t("switchDetailPage.bpduGuardOffToast", { name: pr.name }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.bpduGuardOff")}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1690,6 +1821,97 @@ function MultiPortPanel({
                   {t("switchDetailPage.poeCutBtn")}
                 </button>
               </div>
+            </div>
+          )}
+
+          {mode !== "libre" && (dev.stp_caps?.edge || dev.stp_caps?.port_enable || dev.stp_caps?.bpdu_guard) && (
+            <div style={{ marginTop: 12 }}>
+              {dev.stp_caps?.edge && (
+                <div className="row" style={{ marginBottom: 8 }}>
+                  <span className="kicker">{t("switchDetailPage.stpEdgeLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    {(dev.stp_caps.edge_auto
+                      ? (["auto", "yes", "no"] as const)
+                      : (["yes", "no"] as const)
+                    ).map((e) => (
+                      <button
+                        key={e}
+                        className={common(sel, (p) => String(p.p.stp?.edge ?? "")) === e ? "on" : ""}
+                        onClick={() =>
+                          onPatch(
+                            { stp: { edge: e } },
+                            t("switchDetailPage.stpEdgeToast", { name: `${sel.length} ports`, edge: e }),
+                          )
+                        }
+                      >
+                        {e === "auto"
+                          ? t("switchDetailPage.stpEdgeAuto")
+                          : e === "yes"
+                            ? t("switchDetailPage.stpEdgeYes")
+                            : t("switchDetailPage.stpEdgeNo")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {dev.stp_caps?.port_enable && (
+                <div className="row" style={{ marginBottom: 8 }}>
+                  <span className="kicker">{t("switchDetailPage.stpPortEnableLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    <button
+                      className={common(sel, (p) => p.p.stp?.enabled !== false) === true ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { enabled: true } },
+                          t("switchDetailPage.stpPortOnToast", { name: `${sel.length} ports` }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.stpPortOn")}
+                    </button>
+                    <button
+                      className={common(sel, (p) => p.p.stp?.enabled === false) === true ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { enabled: false } },
+                          t("switchDetailPage.stpPortOffToast", { name: `${sel.length} ports` }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.stpPortOff")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {dev.stp_caps?.bpdu_guard && (
+                <div className="row">
+                  <span className="kicker">{t("switchDetailPage.bpduGuardLabel")}</span>
+                  <div className="seg3" style={{ marginBottom: 0 }}>
+                    <button
+                      className={common(sel, (p) => p.p.stp?.bpdu_guard === true) === true ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { bpdu_guard: true } },
+                          t("switchDetailPage.bpduGuardOnToast", { name: `${sel.length} ports` }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.bpduGuardOn")}
+                    </button>
+                    <button
+                      className={common(sel, (p) => p.p.stp?.bpdu_guard === false) === true ? "on" : ""}
+                      onClick={() =>
+                        onPatch(
+                          { stp: { bpdu_guard: false } },
+                          t("switchDetailPage.bpduGuardOffToast", { name: `${sel.length} ports` }),
+                        )
+                      }
+                    >
+                      {t("switchDetailPage.bpduGuardOff")}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

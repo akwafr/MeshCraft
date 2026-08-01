@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"meshcraft/internal/driver"
+	_ "meshcraft/internal/driver/instanton"
 	"meshcraft/internal/model"
 )
 
@@ -338,6 +339,32 @@ func TestValidateGardeLaStatiqueEnDHCP(t *testing.T) {
 	}
 	if got.StaticIP != "10.99.0.36/24" || got.StaticGateway != "10.99.0.1" {
 		t.Errorf("static config lost on DHCP switch: %+v", got)
+	}
+}
+
+// TestAddrCapsSurviveSTPObserved: Extra.stp_observed is a nested object. Decoding
+// Extra as map[string]string used to fail and hide the connector (ANNOTATION only).
+func TestAddrCapsSurviveSTPObserved(t *testing.T) {
+	var d = model.Device{
+		Model: "HPE Networking Instant On Switch 48p Gigabit 4p SFP+ 1930 JL685A",
+		Extra: json.RawMessage(`{
+			"driver":"aruba-instant-on-1930",
+			"config_mode":"push",
+			"stp_observed":{"enabled":false,"is_root":false}
+		}`),
+	}
+	var caps = addrCapsOf(d)
+	if !caps.Known {
+		t.Fatal("connector must stay known when Extra carries nested stp_observed")
+	}
+	if !caps.ApplySameVLAN {
+		t.Fatalf("Instant On ApplySameVLAN must stay true, got %+v", caps)
+	}
+	if pushBlockedReason(caps) != "" {
+		t.Fatalf("push must not be blocked as ANNOTATION, got %q", pushBlockedReason(caps))
+	}
+	if !readableAddrOf(d) {
+		t.Fatal("readableAddrOf must survive nested Extra")
 	}
 }
 

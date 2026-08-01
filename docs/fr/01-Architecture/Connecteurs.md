@@ -833,7 +833,7 @@ déclaré par l'équipement.
 | Filtrage d'entrée strict | `strict` non écrit (jette des trames à l'entrée) | **écrit** (`ingress-filtering`), sous garde-fou |
 | Ajouter un port au bridge | sans objet — tous les ports sont dans la table | **non fait** : un port hors bridge est signalé, pas ajouté |
 | Agrégation (LACP / bonding) | `/lacp.b` lu pour les capabilities, **jamais écrit** | `/interface/bonding` relevé vide, **jamais écrit** |
-| STP / RSTP par port | `/rstp.b` lu, **jamais écrit** | `edge`, `path-cost`, `bpdu-guard` relevés, **jamais écrits** |
+| STP / RSTP | `/rstp.b` lu **et écrit** (`ena`, `fc`, `cost`, `edge`) via `ApplySpanningTree` ; mode site via préférence `stp_mode_preference` (MSTP/RSTP-PVST/STP/none) | `edge`, `path-cost`, `bpdu-guard` relevés, **jamais écrits** |
 | Vitesse, duplex, auto-négociation, MTU, contrôle de flux | `/link.b` porte `an`, `dpxc`, `fctc`, `fctr` — **jamais écrits**, et aucune intention du modèle standard ne les demande | `/interface/ethernet` porte `advertise`, `l2mtu` (plafond `max-l2mtu: 10218` relevé) — **jamais écrits** |
 | Isolation de ports | `/fwd.b` `fp1…fp26`, matrice complète, **jamais écrite** | `horizon` par port, **jamais écrit** |
 | Activation / désactivation d'un port | `/link.b` `en` — **jamais écrit** | `disabled` — **jamais écrit** |

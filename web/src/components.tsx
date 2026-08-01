@@ -16,6 +16,7 @@ import {
   ActionLink,
   type ActionKind,
 } from "./ActionButton";
+import { claimHoverTip, registerHoverTip, releaseHoverTip } from "./hoverExclusive";
 
 export { ActionIcon, ActionLink };
 export type { ActionKind };
@@ -93,6 +94,15 @@ export function HelpTip({
   const btnRef = useRef<HTMLButtonElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
   const id = useId();
+
+  useEffect(() => {
+    return registerHoverTip(id, () => setOpen(false));
+  }, [id]);
+
+  useEffect(() => {
+    if (open) claimHoverTip(id);
+    else releaseHoverTip(id);
+  }, [open, id]);
 
   const place = useCallback(() => {
     const b = btnRef.current?.getBoundingClientRect();
@@ -224,6 +234,13 @@ export function QuickTip({
   const bubbleRef = useRef<HTMLDivElement>(null);
   const id = useId();
 
+  useEffect(() => {
+    return registerHoverTip(id, () => {
+      setOpen(false);
+      setPinned(false);
+    });
+  }, [id]);
+
   const place = useCallback(() => {
     const b = wrapRef.current?.getBoundingClientRect();
     if (!b) return;
@@ -250,6 +267,7 @@ export function QuickTip({
       if (e.key === "Escape") {
         setOpen(false);
         setPinned(false);
+        releaseHoverTip(id);
       }
     };
     const onDoc = (e: MouseEvent) => {
@@ -258,6 +276,7 @@ export function QuickTip({
       if (!wrapRef.current?.contains(t) && !bubbleRef.current?.contains(t)) {
         setOpen(false);
         setPinned(false);
+        releaseHoverTip(id);
       }
     };
     const onMove = () => place();
@@ -271,26 +290,35 @@ export function QuickTip({
       window.removeEventListener("resize", onMove);
       window.removeEventListener("scroll", onMove, true);
     };
-  }, [open, pinned, place, tip]);
+  }, [open, pinned, place, tip, id]);
 
   if (!tip) {
     if (className) return <div className={className}>{children}</div>;
     return <>{children}</>;
   }
 
-  const show = () => setOpen(true);
+  const show = () => {
+    claimHoverTip(id);
+    setOpen(true);
+  };
   const hide = () => {
     if (pinned) return;
     setOpen(false);
+    releaseHoverTip(id);
   };
 
   return (
     <div
       ref={wrapRef}
       className={className}
+      data-quicktip={id}
       aria-describedby={open ? id : undefined}
       onPointerEnter={(e) => {
         if (e.pointerType === "touch") return;
+        // Nested QuickTips (topology STP card): only the deepest tip under the
+        // pointer opens — otherwise parent + child both fire and stack.
+        const deepest = (e.target as Element | null)?.closest?.("[data-quicktip]");
+        if (deepest && deepest !== wrapRef.current) return;
         show();
       }}
       onPointerLeave={(e) => {
@@ -303,6 +331,8 @@ export function QuickTip({
           e.preventDefault();
           setPinned((p) => {
             const next = !p;
+            if (next) claimHoverTip(id);
+            else releaseHoverTip(id);
             setOpen(next);
             return next;
           });

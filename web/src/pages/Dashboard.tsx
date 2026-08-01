@@ -84,20 +84,24 @@ export default function Dashboard() {
     online = rates.online;
   }
 
-  // Sliding traffic window — default 24 h; longer ranges keep the same point budget.
+  // Sliding traffic window — default 24 h. Point density is chosen server-side
+  // from the window (1 min / 5 min / 10 min / 15 min) so every chip stays dense.
   const [trafficHours, setTrafficHours] = useState(24);
   const { data: traffic } = useQuery({
     queryKey: ["traffic", siteId, trafficHours],
     queryFn: () =>
       get<TrafficSeries>(
-        `/api/sites/${siteId}/traffic?hours=${trafficHours}&points=96`,
+        `/api/sites/${siteId}/traffic?hours=${trafficHours}`,
       ),
     enabled: !!siteId,
     refetchInterval: 60000,
   });
   const tp = traffic?.points ?? [];
-  const rxHist = tp.length > 1 ? tp.map((p) => p.rx_mbps) : [rx, rx];
-  const txHist = tp.length > 1 ? tp.map((p) => p.tx_mbps) : [tx, tx];
+  const hasSamples = tp.some((p) => p.rx_mbps != null || p.tx_mbps != null);
+  // Keep the full time grid even when values are null — empty stretches stay empty
+  // instead of compressing later samples across the whole width.
+  const rxHist: (number | null)[] = tp.map((p) => p.rx_mbps);
+  const txHist: (number | null)[] = tp.map((p) => p.tx_mbps);
   const hourLabel = (i: number) => {
     const p = tp[i];
     if (!p) return "";
@@ -219,22 +223,16 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="note" style={{ marginBottom: 8 }}>
-            {traffic?.simulated ? t("dashboard.reconstitutedProfile") : t("dashboard.measured")}
+            {hasSamples ? t("dashboard.measured") : t("dashboard.noHistoryInWindow")}
           </div>
           <LineChart
             series={[
               { name: t("dashboard.incoming"), color: SERIES.in, points: rxHist },
-              {
-                name: t("dashboard.outgoing"),
-                color: SERIES.out,
-                // Negated so upload sits below the zero line (download above).
-                points: txHist.map((v) => -v),
-              },
+              { name: t("dashboard.outgoing"), color: SERIES.out, points: txHist },
             ]}
             format={fmtMbps}
             xLabel={(i, n) => (i === n - 1 ? t("dashboard.now") : hourLabel(i))}
-          />
-        </div>
+          />        </div>
         <div className="card">
           <div className="card-head">
             <div className="kicker">{t("dashboard.configuredPortsByVlan")}</div>

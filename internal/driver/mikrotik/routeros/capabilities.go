@@ -19,36 +19,19 @@ package routeros
 // applies (cf. recon.ExtraIntents for the list the model can carry:
 // `poe`, `stp`, `dhcp_snooping`, `port_security`).
 //
-// EMPTY, and not an oversight — but the reason for the emptiness is NOT the same as on
-// the Instant On product line, and it deserves to be stated because it is more
-// uncomfortable.
-//
-// On Instant On, these intents are not applied because meshcraft does not write them
-// yet: the path exists on the device, code is missing. Here code is missing TOO, but
-// above all VERIFICATION is missing — no write from this connector has been exercised on
-// hardware, the only path to the reference device having remained read-only. VLAN
-// membership and the admin account are coded and await the write campaign; declaring
-// additional intents whose code has never run would promise the same thing twice.
-//
-// What the platform would do, so we know where to go when we write it — all OBSERVED on
-// the reference device:
-//
+//	stp            → ApplySpanningTree: `/interface/bridge` `protocol-mode`
+//	                 (none|stp|rstp|mstp) and `priority`; `/interface/bridge/port`
+//	                 `edge` and `path-cost`. Same REST Set path already used for
+//	                 vlan-filtering on the bridge.
 //	poe            → NOT APPLICABLE on this model: menu `/interface/ethernet/poe`
-//	                 does not exist (observed, cf. Capabilities). The intent is not
-//	                 « not applied », it is inapplicable — declared as such in
-//	                 Monitoring.Unavailable, not here.
-//	stp            → `/interface/bridge/port` carries `edge`, `path-cost`, `priority`,
-//	                 `bpdu-guard`, `point-to-point`, `restricted-role`.
+//	                 does not exist (observed, cf. Capabilities).
 //	dhcp_snooping  → `/interface/bridge` carries `dhcp-snooping`, and
-//	                 `/interface/bridge/port` carries `trusted`. Both halves of the
-//	                 mechanism, global switch and trusted ports.
+//	                 `/interface/bridge/port` carries `trusted` — not applied yet.
 //	port_security  → NO per-port equivalent on this platform (observed:
 //	                 `max-learned-entries` exists on the bridge, not on its ports).
-//	                 A port security intent cannot be honored as-is, however much code
-//	                 is written.
-//
-// This emptiness shows on screen, instead of being discovered in the field.
-var WritableExtras = map[string]bool{}
+var WritableExtras = map[string]bool{
+	"stp": true,
+}
 
 // The READ counterpart of this emptiness is not here but in
 // Capabilities().Monitoring.Unavailable (routeros.go): what the platform does not expose

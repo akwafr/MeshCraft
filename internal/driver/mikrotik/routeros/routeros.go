@@ -219,6 +219,9 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// `"discovered-by":"lldp"` with its full `system-description`
 		// (« HPE Networking Instant On Switch 48p ... JL685A »).
 		"LLDP": true,
+		// /interface/bridge/port `edge` = auto|yes|no (spanning-tree edge).
+		driver.FeatSTPEdge:     true,
+		driver.FeatSTPEdgeAuto: true,
 		// OBSERVED — `/interface/bridge` : `"igmp-snooping":"false"` (the field exists,
 		// so the function does too), plus `"multicast-router":"temporary-query"` and
 		// `"fast-leave":"false"` per port in `/interface/bridge/port`.
@@ -388,7 +391,8 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		"QinQ": true,
 		// OBSERVED — `/interface/bridge/port` : `"bpdu-guard":"false"`,
 		// `"restricted-role":"false"`, `"restricted-tcn":"false"`.
-		"BPDUGuard": true,
+		// Written via ApplySpanningTree (bpdu-guard=yes|no).
+		driver.FeatBPDUGuard: true,
 		// OBSERVED — `/interface/bridge` : `"mvrp":"false"`, and per port
 		// `"mvrp-applicant-state":"normal-participant"`,
 		// `"mvrp-registrar-state":"normal"`. Dynamic VLAN registration (802.1ak)
@@ -446,11 +450,11 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		MaxVlans: 4094,
 		Features: features,
 		// OBSERVED for `mstp` — `/interface/bridge` : `"protocol-mode":"mstp"`, and
-		// `/interface/bridge/msti` exists with one instance. DERIVED for `stp` and
-		// `rstp`: these are the other documented values of the same `protocol-mode`
-		// field, of which value `mstp` was observed. The fourth value, `none`, is not
-		// a spanning-tree mode but its absence.
-		STPModes: []string{"stp", "rstp", "mstp"},
+		// `/interface/bridge/msti` exists with one instance. DERIVED for `stp`,
+		// `rstp`, and `none`: these are the other documented values of the same
+		// `protocol-mode` field. RouterOS can disable spanning tree (`none`) or
+		// run STP / RSTP / MSTP on the bridge.
+		STPModes: []string{"none", "stp", "rstp", "mstp"},
 		// 8 instances, DERIVED — treat with caution.
 		//
 		// OBSERVED: only ONE instance exists on this device,

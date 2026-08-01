@@ -1,6 +1,7 @@
 package routeros
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -312,19 +313,28 @@ func TestNothingWrittenWithoutIdentifier(t *testing.T) {
 	}
 }
 
-// TestWritableExtrasIsEmptyAndSaysSo: emptiness reads on screen instead of being
-// discovered in the field.
-func TestWritableExtrasIsEmptyAndSaysSo(t *testing.T) {
-	if len(WritableExtras) != 0 {
-		t.Errorf("WritableExtras = %v: if this connector now applies an intent outside "+
-			"VLAN, the capabilities.go comment must change too", WritableExtras)
+func TestIsVLANAlreadyAdded(t *testing.T) {
+	var err = fmt.Errorf("interface/bridge/vlan/add refused: request refused: 400 Bad Request: failure: vlan already added")
+	if !isVLANAlreadyAdded(err) {
+		t.Fatal("expected already-added")
 	}
-	// All standard-model intents are declared not applied.
+	if isVLANAlreadyAdded(fmt.Errorf("failure: invalid value")) {
+		t.Fatal("other failures must still abort create")
+	}
+	if isVLANAlreadyAdded(nil) {
+		t.Fatal("nil")
+	}
+}
+
+// TestWritableExtrasSTP: spanning-tree is applied via ApplySpanningTree.
+func TestWritableExtrasSTP(t *testing.T) {
+	if !WritesExtra("stp") {
+		t.Fatal("WritesExtra(stp) must be true once ApplySpanningTree exists")
+	}
 	var name string
-	for _, name = range []string{"poe", "stp", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "dhcp_snooping", "port_security"} {
 		if WritesExtra(name) {
-			t.Errorf("intent %q is declared applied although no write from this connector "+
-				"has been verified on hardware", name)
+			t.Errorf("WritesExtra(%q) = true without apply code", name)
 		}
 	}
 }

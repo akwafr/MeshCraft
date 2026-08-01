@@ -339,10 +339,17 @@ func (s *Server) handleReadRawSection(w http.ResponseWriter, r *http.Request) {
 	// Not a convenience: Instant On allows only FIVE simultaneous sessions, and one
 	// session per read exhausts the device in a few requests — learned the hard way.
 	// Recognizing an unknown set of units requires many reads.
+	//
+	// RouterOS menus contain slashes (`interface/bridge`): the route is
+	// `/wcd/*` so the wildcard captures the full menu path.
 	var out = map[string]any{"ok": true, "kind": rr.RawKind()}
 	var found = map[string]string{}
+	var sectionParam = chi.URLParam(r, "*")
+	if sectionParam == "" {
+		sectionParam = chi.URLParam(r, "section")
+	}
 	var name string
-	for _, name = range strings.Split(chi.URLParam(r, "section"), ",") {
+	for _, name = range strings.Split(sectionParam, ",") {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue

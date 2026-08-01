@@ -2524,3 +2524,154 @@ button.chip.on {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* Configuration → Spanning-Tree dual list */
+.stp-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 14px 12px;
+  align-items: stretch;
+  margin-top: 18px;
+  max-width: 760px;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, rgba(79, 124, 255, 0.06), transparent 48%),
+    var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.stp-dual--readonly {
+  opacity: 0.85;
+}
+.stp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.stp-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 1.2em;
+}
+.stp-col-head .kicker {
+  margin: 0;
+}
+.stp-col-count {
+  flex: none;
+  min-width: 1.4em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.stp-col--preferred .stp-col-count {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent-hover);
+}
+.stp-list {
+  appearance: none;
+  width: 100%;
+  min-height: 220px;
+  margin: 0;
+  padding: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.stp-list:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.stp-list:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.stp-list:disabled {
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+.stp-list--preferred {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background:
+    linear-gradient(180deg, rgba(79, 124, 255, 0.07), transparent 42%),
+    var(--bg);
+}
+.stp-list--empty {
+  color: var(--text-dim);
+  font-style: italic;
+  cursor: default;
+}
+.stp-list option {
+  padding: 8px 10px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+.stp-list option:checked,
+.stp-list option:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-hover));
+  color: var(--text);
+}
+.stp-list option:disabled {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.stp-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  align-self: center;
+  flex: none;
+  padding: 4px 0;
+}
+.stp-actions-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.stp-action-btn {
+  min-width: 7.5rem;
+  justify-content: flex-start;
+}
+.stp-action-btn:disabled {
+  opacity: 0.4;
+}
+
+@media (max-width: 720px) {
+  .stp-dual {
+    grid-template-columns: 1fr;
+    max-width: none;
+  }
+  .stp-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    padding: 0;
+  }
+  .stp-actions-sep {
+    display: none;
+  }
+  .stp-action-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    justify-content: center;
+  }
+  .stp-list {
+    min-height: 160px;
+  }
+}

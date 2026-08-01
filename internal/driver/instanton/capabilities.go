@@ -20,13 +20,15 @@ package instanton
 // actually applies (cf. recon.ExtraIntents for the list of intents the model
 // can carry).
 //
-// Empty, and that is not an oversight. This product line's web UI exposes PoE
-// and spanning-tree, but meshcraft does not write them yet: the only thing this
-// connector applies today is port VLAN membership. This emptiness shows on
-// screen, instead of being discovered in the field.
-var WritableExtras = map[string]bool{}
+//	stp → ApplySpanningTree: SpanningTreeGlobalParam (enabled +
+//	      STPOperationMode 0/2/3) and STP.GlobalSetting / InterfaceList.
+//	      Section names proven on lab JL685A (sw-labo-1930) via the product
+//	      UI bundle (pages1.js STP.initWcd).
+var WritableExtras = map[string]bool{
+	"stp": true,
+}
 
-// The READ counterpart of this emptiness is not here but in
+// The READ counterpart of extras not applied here is in
 // Capabilities().Monitoring.Unavailable (instanton.go): what the product line
 // does not expose for monitoring, and why. It lives there because it must be
 // readable from driver.Capabilities for a given model, whereas WritableExtras
