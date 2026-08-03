@@ -74,7 +74,7 @@ var requiredPolicies = []string{"rest-api", "read", "write"}
 // for a list of NAMES ([Client.Accounts]). What is kept here is what writes need
 // and the contract does not carry: the record `.id` — without which no `set` or
 // `remove` is possible —, the group, and the last-login date, which answers
-// « has this account already been used? » before removing the one it replaces.
+// 'has this account already been used?' before removing the one it replaces.
 //
 // VALIDATED LIVE against 10.99.0.54: returns one account, `admin`, in group `full`.
 func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
@@ -104,8 +104,8 @@ type Account struct {
 	Group    string `json:"group"`
 	Comment  string `json:"comment,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
-	// LastLogin answers « has this account already been used? » before removing
-	// the one it replaces. Observed: « 2026-07-28 17:03:48 ».
+	// LastLogin answers 'has this account already been used?' before removing
+	// the one it replaces. Observed: '2026-07-28 17:03:48'.
 	LastLogin string `json:"last_login,omitempty"`
 	RowID     string `json:"-"`
 }
@@ -204,7 +204,7 @@ func (c *Client) Groups(ctx context.Context) (map[string][]string, error) {
 //
 // RouterOS policy is a list where an entry can be DENIED by a `!` prefix —
 // observed: group `read` carries `!write` and `!policy`. A naive search for the
-// substring « write » in `read`'s policy would find it inside `!write` and
+// substring 'write' in `read`'s policy would find it inside `!write` and
 // conclude exactly the opposite of the truth. That is the kind of error that
 // places an account unable to write, discovered on the first apply.
 func GroupAllows(policies []string, want string) bool {
@@ -437,7 +437,7 @@ func (c *Client) SetIdentity(ctx context.Context, name string) error {
 // the same list, otherwise comparing two observations means nothing.
 //
 // ONE READ, and it is what makes account writes safe: RouterOS distinguishes
-// « create » from « modify » and refuses one in place of the other. That is also
+// 'create' from 'modify' and refuses one in place of the other. That is also
 // what makes the operation replayable — an interrupted then resumed set does not
 // stumble on a half-created account.
 func (c *Client) Accounts(ctx context.Context) ([]string, error) {
@@ -457,8 +457,8 @@ func (c *Client) Accounts(ctx context.Context) ([]string, error) {
 //
 // The account is not a contract parameter, deliberately: it is
 // [Client.Account], the one PROVEN to open the device. Letting the caller name
-// another would open the door to « change the password of an account we have not
-// proven we can access »; creating or modifying ANOTHER account is a distinct
+// another would open the door to 'change the password of an account we have not
+// proven we can access'; creating or modifying ANOTHER account is a distinct
 // gesture, and it lives in [driver.AccountManager].
 //
 // `oldSecret` IS IGNORED, and why must be said rather than left unused: RouterOS

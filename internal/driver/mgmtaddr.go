@@ -2,79 +2,84 @@ package driver
 
 import "context"
 
-// L'adressage de management TEL QUE THE DEVICE LE PORTE, et l'interface qui le lit.
+// Management addressing EXACTLY AS THE DEVICE CARRIES IT, and the interface that
+// reads it.
 //
-// # Pourquoi ce n'est pas dans [State]
+// # Why this isn't in [State]
 //
-// [State] is serialise in `devices.observed` and serves au calcul de derive des ports
-// (cf. state.go). Deux reasons de nature differente tiennent l'adressage a l'ecart :
+// [State] is serialized into `devices.observed` and serves the port-drift
+// calculation (cf. state.go). Two reasons of a different nature keep addressing
+// separate from it:
 //
-//   - un fait de plateforme : l'adressage de management ne se lit pas au same endroit
-//     que la configuration des ports — /sys.b contre /vlan.b et /fwd.b sur SwOS,
-//     `ip/address` contre `interface/bridge/vlan` sur RouterOS. Une lecture peut
-//     reussir when l'other fails, and les fondre en une only structure ferait passer
-//     failure de l'une pour l'absence de l'autre ;
-//   - un does de produit : ce qui between in `observed` is compare a l'intention and
-//     declenche des poses. L'adressage de management, lui, ne se apply NEVER by le
-//     chemin de la reconciliation des ports (cf. docs/01-Architecture/Adressage de
-//     management §5, « le management ne se touche jamais par le chemin des ports »).
+//   - a platform fact: management addressing isn't read from the same place as
+//     port configuration — /sys.b versus /vlan.b and /fwd.b on SwOS, `ip/address`
+//     versus `interface/bridge/vlan` on RouterOS. One read can succeed while the
+//     other fails, and merging them into a single struct would make a failure in
+//     one look like the absence of the other;
+//   - a product fact: what goes into `observed` is compared against intent and
+//     triggers writes. Management addressing, on the other hand, is NEVER applied
+//     through the port-reconciliation path (cf. docs/01-Architecture/Adressage de
+//     management §5, "management is never touched through the ports path").
 //
-// # Ce que ce type serves a decider
+// # What this type is meant to decide
 //
-// Une only chose, and elle is petite : display la verite. Un device en address
-// statique et un device en bail DHCP se present  identiquement dans un
-// inventaire qui ne observes que l'adresse — et pourtant ce qui se passe le jour where le
-// serveur DHCP change does not have rien de commun between les two. It is also ce qui allows a
-// meshcraft de CONSERVER une configuration statique trouvee en place rather que de la
-// take for un ecart au plan du site.
+// A single thing, and a small one: display the truth. A device with a static
+// address and a device on a DHCP lease look identical in an inventory that only
+// observes the address — and yet what happens the day the DHCP server changes has
+// nothing in common between the two. It is also what lets meshcraft PRESERVE a
+// static configuration found in place rather than treating it as drift from the
+// site plan.
 
-// MgmtAddrState is l'adressage de management observe on un device.
+// MgmtAddrState is the management addressing observed on a device.
 type MgmtAddrState struct {
-	// Mode : « static », « dhcp », ou VIDE quand la plateforme ne le dit pas.
+	// Mode: "static", "dhcp", or EMPTY when the platform doesn't say.
 	//
-	// Le vide est une valeur de plein droit, et il ne se remplace pas par un default.
-	// « On ne sait pas comment cet device a obtenu son adresse » est une response
-	// exacte ; « il is en DHCP puisque le plan du site says DHCP » is une deduction
-	// qui deviendra fausse sur le premier device statique du parc — et il y en a.
+	// Empty is a value in its own right, and it is not replaced by a default.
+	// "We don't know how this device got its address" is an accurate answer;
+	// "it's on DHCP because the site plan says DHCP" is a deduction that will
+	// turn out false on the fleet's first static device — and there are some.
 	Mode string `json:"mode,omitempty"`
-	// Address porte le PREFIXE when la platform le gives (« 10.99.0.36/24 »), and
-	// the address nue sinon. Ce que le connector has lu, never ce that it en deduit.
+	// Address carries the PREFIX when the platform provides one
+	// ("10.99.0.36/24"), and the bare address otherwise. What the connector
+	// actually read, never what it deduced from it.
 	Address string `json:"address,omitempty"`
-	// Gateway / DNS : vides quand la plateforme n'en porte pas.
+	// Gateway / DNS: empty when the platform doesn't carry them.
 	//
-	// Un vide ne se lit donc pas tout seul : c'est [MgmtCapabilities.Gateway] et
-	// [MgmtCapabilities.DNS] qui disent s'il faut le read « non configure » or
-	// « cette platform does not have ce reglage ». Les two menent a des gestes opposes,
-	// et un UI qui les confondrait ferait chercher un champ inexistant.
+	// An empty value therefore can't be read on its own: it's
+	// [MgmtCapabilities.Gateway] and [MgmtCapabilities.DNS] that say whether to
+	// read it as "not configured" or "this platform has no such setting." The
+	// two lead to opposite actions, and a UI that confused them would send
+	// someone looking for a field that doesn't exist.
 	Gateway string   `json:"gateway,omitempty"`
 	DNS     []string `json:"dns,omitempty"`
-	// Interface : le nom que the device gives a the interface qui porte cette
-	// adresse (« vlan99 », « VLAN1 »). Vide sur les plateformes qui n'en nomment
-	// no — un switch SwOS does not have has address and ne l'attache a rien.
+	// Interface: the name the device gives to the interface that carries this
+	// address ("vlan99", "VLAN1"). Empty on platforms that don't name one —
+	// a SwOS switch has no interface concept and attaches the address to
+	// nothing.
 	Interface string `json:"interface,omitempty"`
-	// Notes porte ce que le connecteur a compris et que les champs ci-dessus ne
-	// savent pas dire : une second address trouvee, un mode lu in une value
-	// inconnue, une limite de la platform. Ecrites for un operator and affichees
-	// telles quelles, comme [State.Notes].
+	// Notes carries what the connector understood that the fields above can't
+	// express: a second address found, a mode read as an unknown value, a
+	// platform limitation. Written for an operator and displayed as-is, like
+	// [State.Notes].
 	Notes []string `json:"notes,omitempty"`
 }
 
-// Les valeurs de [MgmtAddrState.Mode].
+// Values for [MgmtAddrState.Mode].
 const (
-	// MgmtAddrModeStatic : the address is configuree a la main on the device.
+	// MgmtAddrModeStatic: the address is configured by hand on the device.
 	MgmtAddrModeStatic = "static"
-	// MgmtAddrModeDHCP : l'adresse vient d'un bail DHCP.
+	// MgmtAddrModeDHCP: the address comes from a DHCP lease.
 	MgmtAddrModeDHCP = "dhcp"
 )
 
-// MgmtAddrReader : le connecteur sait dire COMMENT the device a obtenu son adresse
-// d'administration.
+// MgmtAddrReader: the connector can say HOW the device obtained its
+// administration address.
 //
-// FACULTATIF, et en LECTURE SEULE. Un connecteur qui ne l'implements pas n'est pas en
-// retard sur les autres : il dit qu'il n'a pas observed, sur cette plateforme, de quoi
-// distinguer une adresse statique d'un bail. L'appelant l'apprend AVANT de proposer un
-// UI (cf. [NotSupported]), et affiche « mode d'adressage non observed sur cette
-// plateforme » au lieu d'un choix qui ne repose sur rien.
+// OPTIONAL, and READ ONLY. A connector that doesn't implement it isn't behind the
+// others: it's saying that, on this platform, it has no way to observe anything
+// that would distinguish a static address from a lease. The caller learns this
+// BEFORE offering a UI (cf. [NotSupported]), and displays "addressing mode not
+// observable on this platform" instead of a choice resting on nothing.
 //
 // Read-only. Writes go through [MgmtAddrWriter] (same VLAN), [MgmtMover] (dual-path
 // VLAN migrate), or [MgmtJumper] (single-address leap) — never through this reader.

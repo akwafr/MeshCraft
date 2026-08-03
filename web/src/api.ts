@@ -129,6 +129,14 @@ export interface PortGroup {
   poe?: boolean;
   speed?: string;
   label?: string;
+  /**
+   * The hardware's SILKSCREEN prefix — what is printed on the faceplate
+   * ("1/" for a FS S3900, giving "1/11") — as opposed to `prefix`, the
+   * standard-model name the backend manipulates ("GE"). Absent on platforms
+   * whose standard name already matches what is printed (RouterOS, Instant
+   * On): the screen then falls back to the standard name.
+   */
+  silk?: string;
 }
 
 /** Per-port STP intent (edge / enable / bpdu guard) stored under ports[name].stp. */
@@ -153,6 +161,15 @@ export interface PortIntent {
   stp?: PortSTPIntent;
   // observed state (demo: set by import, later by monitoring)
   link?: string | null;
+  /**
+   * Operational state lifted from the last connector read (up / down / disabled
+   * / unplugged / err-disabled). Distinct from `link`, which is the LIVE SNMP
+   * speed label: SNMP cannot tell an err-disabled port from a plain down one, so
+   * that distinction can only come from the read (cf. mergeLinkState server-side).
+   */
+  link_state?: string | null;
+  /** The switch's own reason when it shut the port itself, verbatim. */
+  err_reason?: string | null;
   poe_w?: number;
   rx_mbps?: number;
   tx_mbps?: number;
@@ -302,6 +319,12 @@ export interface Device {
    * only re-applies after an intent change.
    */
   apply_stalled?: boolean;
+  /**
+   * An automatic apply is writing to this device RIGHT NOW. Live runtime state,
+   * not stored: the dot and the ports being written animate as « provisioning »
+   * while it lasts, then settle when it ends.
+   */
+  applying?: boolean;
   /**
    * NO proxy monitors this device, and here is why. The exclusion is deliberate —
    * a false state is worse than no state — but it must read on screen, otherwise
@@ -581,6 +604,9 @@ export interface FacadePort {
   media: PortMedia;
   poe_cap: boolean;
   speed: string;
+  /** What the operator should read (hardware silkscreen number when the
+   * connector declares one); same as `name` otherwise. */
+  display: string;
 }
 
 /**

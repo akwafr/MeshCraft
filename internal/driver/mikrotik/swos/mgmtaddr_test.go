@@ -62,7 +62,7 @@ func TestMgmtAddrModes(t *testing.T) {
 		nom       string
 		iptp      uint32
 		absent    bool
-		expected   string
+		expected  string
 		noteParle string
 	}{
 		{nom: "statique", iptp: AddrStatic, expected: driver.MgmtAddrModeStatic},

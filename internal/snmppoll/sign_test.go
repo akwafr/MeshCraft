@@ -18,9 +18,9 @@ import (
 
 func TestSigned32(t *testing.T) {
 	var cases = []struct {
-		name  string
-		raw   float64
-		want  float64
+		name string
+		raw  float64
+		want float64
 	}{
 		{"empty SFP cage, READ from hardware", 4294967168, -128},
 		{"zero", 0, 0},

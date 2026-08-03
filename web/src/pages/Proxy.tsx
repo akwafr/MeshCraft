@@ -85,10 +85,10 @@ function CodeBlock({
 }
 
 /**
- * Choice of proxy coverage to deploy. An instance administrator
- * peut en faire un proxy d'instance ; un site-admin ne voit ici que ses sites,
- * et doit en cocher au moins un — une couverture vide ne couvrirait rien
- * (cf. docs/01-Architecture/Proxy).
+ * Choice of proxy coverage to deploy. An instance administrator can turn
+ * it into an instance proxy; a site-admin only sees their own sites here,
+ * and must check at least one — an empty coverage would cover nothing
+ * (see docs/01-Architecture/Proxy).
  */
 function CoveragePicker({
   admin,
@@ -199,7 +199,7 @@ export default function ProxyPage() {
     queryKey: ["artifacts"],
     queryFn: () => get<Artifact[]>("/api/proxy/artifacts"),
   });
-  // Le build de l'instance = la version que les proxys doivent atteindre.
+  // The instance's build = the version the proxies must reach.
   const { data: instance } = useQuery({
     queryKey: ["version"],
     queryFn: () => get<{ version: string; build: string }>("/api/version"),
@@ -655,9 +655,9 @@ export default function ProxyPage() {
 }
 
 /**
- * Version of a proxy, read at a glance. The badge says the deviation from the version of
- * the instance: a half-updated park must be seen, not guessed
- * (see docs/01-Architecture/Version and update of the proxy).
+ * Version of a proxy, read at a glance. The badge states the gap from the
+ * instance's version: a half-upgraded fleet must be visible, not guessed
+ * at (see docs/01-Architecture/Version and update of the proxy).
  */
 function UpgradeCell({
   p,
@@ -725,9 +725,9 @@ function upgradeBadge(
 }
 
 /**
- * Proxy update policy. “Update now” bypasses
- * auto-upgrade it without modifying it; pinning is used for backspace and prime
- * sur la cible de l'instance.
+ * Proxy update policy. "Update now" bypasses auto-upgrade without changing
+ * it; pinning is used to roll back a version and to take precedence over
+ * the instance's target version.
  */
 function UpgradeModal({
   proxy,
@@ -832,10 +832,10 @@ function UpgradeModal({
 }
 
 /**
- * Renaming: the name is just a tracking label (the identity remains the UUID),
- * mais c'est elle qu'on lit dans les journaux et les listes — donc elle doit
- * can be corrected. Same right as revoke or migrate: a shared proxy
- * entre plusieurs sites ne se rebaptise pas depuis un seul d'entre eux.
+ * Renaming: the name is just a tracking label (the identity remains the
+ * UUID), but it's the name that gets read in logs and lists — so it must
+ * be correctable. Same right as revoke or migrate: a proxy shared across
+ * several sites cannot be renamed from just one of them.
  */
 function RenameModal({
   proxy,
@@ -891,14 +891,14 @@ function RenameModal({
 }
 
 /**
- * Modification de la couverture d'un proxy existant. Deux comportements, parce
- * that these are two different rights:
+ * Modifying the coverage of an existing proxy. Two behaviors, because
+ * these are two different rights:
  *
- * - site-admin: he checks/unchecks ITS sites, one by one (`PUT`/`DELETE
- *    /api/proxies/{id}/sites/{siteID}`). Les autres sites couverts sont visibles
- * but locked — the proxy can be used by someone else.
- * - global-admin: it redefines the entire coverage and can promote the
- *    proxy en proxy d'instance (`PUT /api/proxies/{id}/coverage`).
+ * - site-admin: they check/uncheck THEIR sites, one by one (`PUT`/`DELETE
+ *   /api/proxies/{id}/sites/{siteID}`). The other covered sites are visible
+ *   but locked — the proxy can be used by someone else.
+ * - global-admin: they redefine the entire coverage and can promote the
+ *   proxy to an instance proxy (`PUT /api/proxies/{id}/coverage`).
  */
 function CoverageModal({
   proxy,
@@ -1069,7 +1069,7 @@ function MigrateModal({
           disabled={!token.trim() || url.trim().length < 10 || migrate.isPending}
           onClick={() => migrate.mutate()}
         >
-          Programmer la migration
+          Schedule migration
         </ActionButton>
       </div>
     </Modal>

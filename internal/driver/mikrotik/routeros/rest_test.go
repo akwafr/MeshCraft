@@ -60,19 +60,19 @@ func TestEverythingIsAStringInThisAPI(t *testing.T) {
 		t.Errorf("pvid = %d (ok=%t), expected 100", v, ok)
 	}
 	if !r.Bool("hw-offload") {
-		t.Error("hw-offload must read true from the string « true »")
+		t.Error("hw-offload must read true from the string 'true'")
 	}
 	// Unexpected forms are kept rather than lost.
 	if r.Get("liste") != `["a","b"]` {
 		t.Errorf("non-string value = %q, expected kept as JSON", r.Get("liste"))
 	}
 	if r.Get("nombre") != "7" {
-		t.Errorf("nombre = %q, expected « 7 »", r.Get("nombre"))
+		t.Errorf("nombre = %q, expected '7'", r.Get("nombre"))
 	}
 
-	// Int distinguishes « absent » from « zero », and the difference matters: a PVID 0
+	// Int distinguishes 'absent' from 'zero', and the difference matters: a PVID 0
 	// does not exist, an absent PVID does.
-	_, ok = r.Int("inexistant")
+	_, ok = r.Int("nonexistent")
 	if ok {
 		t.Error("Int must return ok=false on an absent field, not a zero that would " +
 			"confuse with a real null value")
@@ -98,7 +98,7 @@ func TestMenuPathSanitized(t *testing.T) {
 		// PATH TRAVERSAL, the least obvious case. The dot is a legitimate character
 		// in a MikroTik interface name, so it cannot be forbidden — but a `..` segment
 		// would survive, and `net/http` NORMALIZES the path before emitting it:
-		// « interface/../../etc » would leave as « /etc », outside the REST API.
+		// 'interface/../../etc' would leave as '/etc', outside the REST API.
 		{"interface/../../etc", "/rest/interface/etc"},
 		{"..", "/rest/"},
 		// Empty segments are absorbed without moving the request.
@@ -173,15 +173,15 @@ func TestSecretsDoNotReachTheTranscript(t *testing.T) {
 //
 // Observed side by side on 7.21beta3:
 //
-//	/rest/nimportequoi                    → 400 « no such command or directory »
-//	/rest/interface/nexistepas            → 500
+//	/rest/whatever                        → 400 'no such command or directory'
+//	/rest/interface/doesnotexist          → 500
 //	/rest/interface/dot1x                 → 500   ← the menu EXISTS nonetheless
 //	/rest/interface/dot1x/server          → 200 []
 //	/rest/interface/ethernet/poe          → 500
-//	/rest/interface/ethernet/poe/settings → 400 « no such command prefix »
+//	/rest/interface/ethernet/poe/settings → 400 'no such command prefix'
 //
 // A menu that contains only SUB-menus returns 500, just like a nonexistent path.
-// Concluding « absent » from a single 500 is a mistake — that is why PoE absence
+// Concluding 'absent' from a single 500 is a mistake — that is why PoE absence
 // is established on the 400 from `poe/settings`.
 //
 // The error message must CARRY this knowledge, because that is where it will be
@@ -197,11 +197,11 @@ func TestA500DoesNotProveAbsence(t *testing.T) {
 		}
 	}
 
-	// The 400 « no such command », on the other hand, does conclude.
+	// The 400 'no such command', on the other hand, does conclude.
 	msg = restStatusMeaning(400, restError{
 		Error: 400, Message: "Bad Request", Detail: "no such command prefix"})
 	if !strings.Contains(msg, "does not exist") {
-		t.Errorf("a 400 « no such command » must conclude absence: %q", msg)
+		t.Errorf("a 400 'no such command' must conclude absence: %q", msg)
 	}
 
 	// The 403 must name the real cause on this platform: the account's GROUP,

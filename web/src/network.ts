@@ -25,7 +25,14 @@ export const vlanMap = (vlans: Vlan[] | undefined): VlanMap =>
   new Map((vlans ?? []).map((v) => [v.vlan_id, v]));
 
 export interface PortRef {
+  /** Standard-model name — what the backend manipulates (API calls, diffs). */
   name: string;
+  /**
+   * What the operator should READ: the hardware's silkscreen number when the
+   * connector declares one (`group.silk`), otherwise the standard name. Use
+   * this everywhere a port is shown; use `name` everywhere one is addressed.
+   */
+  display: string;
   groupLabel: string;
   poeCap: boolean;
   speed: string;
@@ -41,6 +48,7 @@ export function expandPorts(dev: Device): PortRef[] {
       const name = g.prefix + k;
       out.push({
         name,
+        display: g.silk != null ? g.silk + k : name,
         groupLabel: g.label ?? g.prefix,
         poeCap: !!g.poe,
         speed: g.speed ?? "1G",
@@ -166,6 +174,11 @@ export function portVisual(
 }
 
 export function portShortNum(name: string): string {
+  // Structured « unit/port » index (FS « ethernet 1/11 », Cisco « Gi1/0/1 »):
+  // keep the slashed form — it is how the port is silkscreened on the faceplate,
+  // and flattening it to digits printed « ethernet 1/11 » as « 111 ».
+  const slashed = name.match(/(\d+(?:\/\d+)+)\s*$/);
+  if (slashed) return slashed[1];
   const digits = name.replace(/\D+/g, "");
   return name.startsWith("sfp") ? "S" + digits : digits;
 }
@@ -174,6 +187,11 @@ export function statusColor(status: string): string {
   if (status === "off") return "var(--danger)";
   if (status === "warn") return "var(--warn)";
   if (status === "ok") return "var(--ok)";
+  // "unknown" is NOT the same as "never seen": it is what the controller reports
+  // when no proxy able to watch this device is connected. Yellow rather than the
+  // grey of a device nobody has looked at yet, and deliberately not the orange of
+  // an alert — the device may be perfectly healthy and the proxy is what broke.
+  if (status === "unknown") return "var(--indeterminate)";
   return "var(--text-dim)";
 }
 
@@ -181,6 +199,7 @@ export function statusLabel(status: string): string {
   if (status === "off") return i18n.t("status.unreachable");
   if (status === "warn") return i18n.t("status.alert");
   if (status === "ok") return i18n.t("status.online");
+  if (status === "unknown") return i18n.t("status.indeterminate");
   return i18n.t("status.unknown");
 }
 
@@ -544,6 +563,8 @@ export type DeviceAckInput = {
 export type DeviceDotInput = DeviceAckInput & {
   status: string;
   sync?: string;
+  /** An automatic apply is writing to the device RIGHT NOW (live provisioning). */
+  applying?: boolean;
 };
 
 /**
@@ -578,11 +599,20 @@ export function deviceNeedsAck(dev: DeviceAckInput): boolean {
  */
 export function deviceDot(dev: DeviceDotInput): {
   color: string;
-  blink?: "pending" | "drift";
+  blink?: "pending" | "drift" | "applying";
   title: string;
 } {
   const base = statusLabel(dev.status);
   if (dev.status !== "off") {
+    // Live provisioning takes precedence over a plain pending: the connector is
+    // writing to the device right now, and the operator should see it move.
+    if (dev.applying) {
+      return {
+        color: "var(--accent)",
+        blink: "applying",
+        title: base + " · " + i18n.t("status.applyingDotSuffix"),
+      };
+    }
     if (deviceNeedsAck(dev)) {
       let suffix = i18n.t("status.ackDotSuffix");
       if (dev.last_apply?.error) {

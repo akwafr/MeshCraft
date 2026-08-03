@@ -7,17 +7,16 @@ import (
 	"strings"
 )
 
-// Formulaires HTML : ce dont a besoin tout connecteur d'un device qui
-// n'expose que son interface web.
+// HTML forms: what every connector for a web-only device needs.
 //
-// Ces switchs n'ont pas d'API : la seule way de les configurer est de rejouer
-// ce que fait un navigateur. Rejouer un formulaire, ce n'est pas poster deux
-// champs devines — c'est renvoyer TOUS ses champs caches, y compris les jetons
-// de session et les compteurs de sequence que l'UI y glisse. Un POST truncated de
-// l'un d'eux est rejete, souvent sans message.
+// These switches have no API: the only way to configure them is to replay what a
+// browser does. Replaying a form is not posting two guessed fields — it's sending
+// back ALL of its hidden fields, including the session tokens and sequence
+// counters the UI slips into it. A POST missing one of them is rejected, often
+// without any message.
 //
-// Hence ce parseur : il lit le formulaire tel qu'il est servi, et le connecteur
-// ne surcharge que les champs qu'il veut changer.
+// Hence this parser: it reads the form exactly as served, and the connector only
+// overrides the fields it wants to change.
 
 var (
 	reForm      = regexp.MustCompile(`(?is)<form\b([^>]*)>(.*?)</form>`)
@@ -27,20 +26,20 @@ var (
 	reAttr      = regexp.MustCompile(`(?is)([a-zA-Z0-9_:-]+)\s*=\s*"([^"]*)"|([a-zA-Z0-9_:-]+)\s*=\s*'([^']*)'`)
 )
 
-// Form est un formulaire tel que the device l'a servi.
+// Form is a form exactly as the device served it.
 type Form struct {
 	Action string
 	Method string
 	Name   string
 	ID     string
-	// Fields porte tous les champs dans leur ordre d'apparition, valeurs
-	// d'origine comprises.
+	// Fields carries all the fields in their order of appearance, including
+	// their original values.
 	Fields url.Values
-	// Order garde l'ordre : certaines UI d'device sont sensibles a l'ordre
-	// des parameters, et le respecter ne costs rien.
+	// Order keeps the order: some device UIs are sensitive to parameter order,
+	// and respecting it costs nothing.
 	Order []string
-	// Password liste les champs de type password : c'est ce qui permet de
-	// reconnaitre un formulaire de connexion sans deviner son nom.
+	// Password lists the password-type fields: this is what lets a login form
+	// be recognized without guessing its name.
 	Password []string
 }
 
@@ -57,7 +56,7 @@ func attrs(s string) map[string]string {
 	return out
 }
 
-// ParseForms lit tous les formulaires d'une page.
+// ParseForms reads all the forms on a page.
 func ParseForms(body string) []Form {
 	var out []Form
 	var m []string
@@ -81,13 +80,13 @@ func ParseForms(body string) []Form {
 				continue
 			}
 			var typ = strings.ToLower(ia["type"])
-			// Un bouton non clique n'est pas envoye par un navigateur ; l'inclure
-			// declencherait une action que personne n'a demandee.
+			// A button that wasn't clicked isn't sent by a browser; including it
+			// would trigger an action nobody asked for.
 			if typ == "submit" || typ == "button" || typ == "reset" || typ == "image" {
 				continue
 			}
-			// Cases et radios non cochees : absentes du POST, comme dans un
-			// navigateur.
+			// Unchecked checkboxes and radios: absent from the POST, just like in
+			// a browser.
 			if (typ == "checkbox" || typ == "radio") && !strings.Contains(strings.ToLower(im[1]), "checked") {
 				continue
 			}
@@ -123,9 +122,8 @@ func ParseForms(body string) []Form {
 	return out
 }
 
-// LoginForm choisit le formulaire de connexion : celui qui porte un champ de
-// type password. S'il y en a plusieurs, le premier — une page de connexion n'en
-// sert jamais deux.
+// LoginForm picks the login form: the one carrying a password-type field. If
+// there are several, the first one — a login page never serves two.
 func LoginForm(body string) (Form, bool) {
 	var f Form
 	for _, f = range ParseForms(body) {
@@ -136,9 +134,9 @@ func LoginForm(body string) (Form, bool) {
 	return Form{}, false
 }
 
-// Describe resume les formulaires d'une page pour un transcript de session.
-// Quand un connecteur ne reconnait pas une page, il doit dire ce qu'il A VU :
-// « formulaire inattendu » sans le decrire oblige a ressortir un navigateur.
+// Describe summarizes the forms on a page for a session transcript. When a
+// connector doesn't recognize a page, it must say what it SAW: "unexpected form"
+// without describing it forces someone to bring up a browser to find out.
 func Describe(body string) []string {
 	var out []string
 	var f Form
@@ -152,8 +150,8 @@ func Describe(body string) []string {
 	return out
 }
 
-// PostForm renvoie le formulaire avec les champs surcharges, pret a be poste.
-// Les champs non mentionnes gardent la valeur servie par the device.
+// PostForm returns the form with its fields overridden, ready to be posted.
+// Fields not mentioned keep the value served by the device.
 func (f Form) PostForm(override map[string]string) url.Values {
 	var v = url.Values{}
 	var k string
@@ -167,9 +165,9 @@ func (f Form) PostForm(override map[string]string) url.Values {
 	return v
 }
 
-// ResolveAction resout l'action du formulaire par rapport a l'URL de la page.
-// Ces UI utilisent des chemins relatifs sous un prefix de session
-// (`/csNNNNNNNN/…`) : le resoudre a la main est la first source d'erreur.
+// ResolveAction resolves the form's action relative to the page's URL. These UIs
+// use relative paths under a session prefix (`/csNNNNNNNN/…`): resolving it by
+// hand is the number one source of mistakes.
 func (f Form) ResolveAction(pageURL string) string {
 	var base, err = url.Parse(pageURL)
 	if err != nil {

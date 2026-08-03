@@ -5,14 +5,15 @@ import (
 	"strings"
 )
 
-// Matcher relie un indice textuel a un driver. L'ordre du tableau compte : le
-// premier motif qui accroche gagne, les entries les plus specific d'abord.
+// Matcher links a textual clue to a driver. The order of the slice matters:
+// the first pattern that matches wins, so the most specific entries come
+// first.
 type Matcher struct {
 	Driver string
 	Vendor string
 	Re     *regexp.Regexp
-	// PageCmd desactive la pagination interactive, Ident identifie, Config
-	// exporte la configuration courante. Vides pour les drivers generiques.
+	// PageCmd disables interactive pagination, Ident identifies, Config
+	// exports the current configuration. Empty for the generic drivers.
 	PageCmd    string
 	IdentCmd   string
 	ConfigCmd  string
@@ -21,20 +22,21 @@ type Matcher struct {
 
 func re(p string) *regexp.Regexp { return regexp.MustCompile("(?i)" + p) }
 
-// matchers : reconnaissance des plateformes courantes.
+// matchers: recognition of common platforms.
 //
-// Ces entries servent a IDENTIFIER the device et a lire sa configuration.
-// Elles ne constituent pas encore des connecteurs write : piloter la
-// configuration d'un Cisco ou d'un Aruba demande le travail de la phase 2
-// (cf. docs/01-Architecture/Connecteurs).
+// These entries are used to IDENTIFY the device and to read its
+// configuration. They are not yet write connectors: driving the
+// configuration of a Cisco or an Aruba requires the phase-2 work (see
+// docs/01-Architecture/Connecteurs).
 var matchers = []Matcher{
-	// Aruba Instant On : AVANT les entries HPE/Aruba generiques, sinon
-	// « hpe-procurve » attraperait la gamme. Ces switchs sont WEB-ONLY (ni SSH ni
-	// Telnet) : aucune commande CLI a leur envoyer, hence les champs vides.
-	// Connecteur : internal/driver/instanton.
+	// Aruba Instant On: BEFORE the generic HPE/Aruba entries, otherwise
+	// "hpe-procurve" would catch the range. These switches are WEB-ONLY
+	// (neither SSH nor Telnet): no CLI command to send them, hence the empty
+	// fields.
+	// Connector: internal/driver/instanton.
 	{Driver: "aruba-instant-on-1930", Vendor: "Aruba (HPE)",
 		Re:         re(`Instant\s?On`),
-		ConfigNote: "Gamme web-only : la configuration se lit par l'interface web, pas par CLI."},
+		ConfigNote: "Web-only range: the configuration is read through the web interface, not the CLI."},
 	{Driver: "cisco-nxos", Vendor: "Cisco", Re: re(`NX-OS|Nexus`),
 		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-config"},
 	{Driver: "cisco-ios", Vendor: "Cisco", Re: re(`Cisco IOS|IOS-XE|IOS Software|Catalyst|WS-C\d|C9[23]00`),
@@ -46,16 +48,17 @@ var matchers = []Matcher{
 	{Driver: "juniper-junos", Vendor: "Juniper", Re: re(`JUNOS|Juniper`),
 		PageCmd: "set cli screen-length 0", IdentCmd: "show version",
 		ConfigCmd: "show configuration | display set"},
-	// SwOS AVANT RouterOS, et ce n'est pas un detail d'ordre : le titre de sa page
-	// est « MikroTik SwOS », que le motif de RouterOS attrapait par son
-	// alternative `MikroTik`. Un CSS was donc range sous `mikrotik-routeros`, et
-	// le connecteur lui parlait REST — une API que SwOS n'a pas. Ces deux systemes
-	// partagent un constructeur et presque rien d'autre.
-	// Connecteur : internal/driver/mikrotik/swos.
+	// SwOS BEFORE RouterOS, and this is not a mere detail of ordering: its
+	// page title is "MikroTik SwOS", which the RouterOS pattern used to catch
+	// through its `MikroTik` alternative. A CSS unit therefore ended up
+	// classified as `mikrotik-routeros`, and the connector talked REST to it —
+	// an API that SwOS does not have. These two systems share a vendor and
+	// almost nothing else.
+	// Connector: internal/driver/mikrotik/swos.
 	{Driver: "mikrotik-swos", Vendor: "MikroTik", Re: re(`SwOS`),
-		ConfigNote: "Gamme web-only : la configuration se lit par les pages `*.b` de " +
-			"l'interface web (authentification HTTP Digest), pas par CLI."},
-	// Connecteur : internal/driver/mikrotik/routeros.
+		ConfigNote: "Web-only range: the configuration is read through the web interface's " +
+			"`*.b` pages (HTTP Digest authentication), not the CLI."},
+	// Connector: internal/driver/mikrotik/routeros.
 	{Driver: "mikrotik-routeros", Vendor: "MikroTik", Re: re(`RouterOS|ROSSSH|MikroTik`),
 		IdentCmd: "/system resource print", ConfigCmd: "/export terse"},
 	{Driver: "ubiquiti", Vendor: "Ubiquiti", Re: re(`UniFi|EdgeSwitch|EdgeOS|Ubiquiti`),
@@ -72,6 +75,18 @@ var matchers = []Matcher{
 		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-configuration"},
 	{Driver: "fortiswitch", Vendor: "Fortinet", Re: re(`FortiSwitch|FortiOS`),
 		IdentCmd: "get system status", ConfigCmd: "show"},
+	// FS.com S3900 — BEFORE the overly broad matchers. Ident/config observed
+	// in lab testing, OpCode 1.7.
+	// Connector: internal/driver/fs/s3900 (CLI builders; Web Serial soft-reset).
+	// PageCmd: lab testing (console) shows "show run" un-paginated, but a
+	// "--More--" over SSH would block the shell until the budget runs out and
+	// make login_ok false — "terminal length 0" only costs an error echo if
+	// the firmware doesn't support it.
+	{Driver: "fs-s3900", Vendor: "FS.com",
+		Re:        re(`S3900|Factory_Default_Config|Operation Code Version`),
+		PageCmd:   "terminal length 0",
+		IdentCmd:  "show version",
+		ConfigCmd: "show run"},
 	{Driver: "zyxel", Vendor: "Zyxel", Re: re(`Zyxel|ZyNOS`),
 		IdentCmd: "show system-information", ConfigCmd: "show running-config"},
 	{Driver: "netgear", Vendor: "Netgear", Re: re(`Netgear|NETGEAR|GS[13]\d{2}|M4[13]00`),
@@ -84,17 +99,17 @@ var matchers = []Matcher{
 		IdentCmd: "cat /etc/os-release", ConfigCmd: "cat /etc/network/interfaces"},
 }
 
-// genericSSH et genericHTTP servent quand rien n'accroche : the device
-// apparait quand same dans la file d'adoption, marque non identifie.
+// genericSSH and genericHTTP are used when nothing matches: the device still
+// shows up in the adoption queue, marked as unidentified.
 var genericSSH = Matcher{Driver: "generic-ssh", Vendor: "",
 	IdentCmd: "show version", ConfigCmd: "show running-config"}
 var genericHTTP = Matcher{Driver: "generic-http", Vendor: ""}
 
-// Confiance attribuee selon la source de l'indice : ce que the device dit de
-// lui-same after login vaut mieux qu'un en-tete HTTP.
+// Confidence assigned according to the source of the clue: what the device
+// says about itself after login is worth more than an HTTP header.
 const (
-	// ConfDeviceSelfReport : the device s'est identifie lui-same par son API
-	// ou ses champs de page — mieux qu'une sortie de commande interpretee.
+	// ConfDeviceSelfReport: the device identified itself through its API or
+	// its page fields — better than an interpreted command output.
 	ConfDeviceSelfReport = 96
 	ConfShellOutput      = 92
 	ConfSSHBanner        = 72
@@ -102,8 +117,8 @@ const (
 	ConfPortsOnly        = 20
 )
 
-// Identify choisit un driver a partir des indices collectes. Renvoie aussi la
-// confiance et la source retenue, que l'UI affiche telle quelle.
+// Identify picks a driver from the collected clues. Also returns the
+// confidence and the retained source, which the UI displays as-is.
 func Identify(shellOut, sshBanner, httpServer, httpTitle string) (Matcher, int, string) {
 	type source struct {
 		text  string
@@ -111,9 +126,9 @@ func Identify(shellOut, sshBanner, httpServer, httpTitle string) (Matcher, int, 
 		label string
 	}
 	var sources = []source{
-		{shellOut, ConfShellOutput, "sortie de commande"},
-		{sshBanner, ConfSSHBanner, "banniere SSH"},
-		{httpServer + " " + httpTitle, ConfHTTPHeader, "en-tete/titre HTTP"},
+		{shellOut, ConfShellOutput, "command output"},
+		{sshBanner, ConfSSHBanner, "SSH banner"},
+		{httpServer + " " + httpTitle, ConfHTTPHeader, "HTTP header/title"},
 	}
 	var src source
 	var m Matcher
@@ -127,18 +142,18 @@ func Identify(shellOut, sshBanner, httpServer, httpTitle string) (Matcher, int, 
 			}
 		}
 	}
-	// Rien d'identifie : on garde un driver generique selon le transport.
+	// Nothing identified: fall back to a generic driver based on transport.
 	if strings.TrimSpace(sshBanner) != "" || strings.TrimSpace(shellOut) != "" {
-		return genericSSH, ConfPortsOnly, "non identifie (SSH joignable)"
+		return genericSSH, ConfPortsOnly, "not identified (SSH reachable)"
 	}
 	if strings.TrimSpace(httpServer+httpTitle) != "" {
-		return genericHTTP, ConfPortsOnly, "non identifie (web joignable)"
+		return genericHTTP, ConfPortsOnly, "not identified (web reachable)"
 	}
-	return genericHTTP, ConfPortsOnly, "non identifie"
+	return genericHTTP, ConfPortsOnly, "not identified"
 }
 
-// MatcherFor retrouve un matcher par nom de driver (choix manuel du type dans
-// l'UI, ou candidat recharge depuis la base).
+// MatcherFor looks up a matcher by driver name (manual type choice in the
+// UI, or a candidate reloaded from the database).
 func MatcherFor(driver string) Matcher {
 	var m Matcher
 	for _, m = range matchers {
@@ -152,7 +167,8 @@ func MatcherFor(driver string) Matcher {
 	return genericHTTP
 }
 
-// Drivers liste les drivers proposables dans l'UI (choix explicite du type).
+// Drivers lists the drivers that can be proposed in the UI (explicit type
+// choice).
 func Drivers() []map[string]string {
 	var out = []map[string]string{}
 	var m Matcher
@@ -160,37 +176,38 @@ func Drivers() []map[string]string {
 		out = append(out, map[string]string{"driver": m.Driver, "vendor": m.Vendor})
 	}
 	out = append(out,
-		map[string]string{"driver": genericSSH.Driver, "vendor": "generique"},
-		map[string]string{"driver": genericHTTP.Driver, "vendor": "generique"})
+		map[string]string{"driver": genericSSH.Driver, "vendor": "generic"},
+		map[string]string{"driver": genericHTTP.Driver, "vendor": "generic"})
 	return out
 }
 
 var hostnameRe = regexp.MustCompile(`(?m)^\s*(?:hostname|sysname|system name)\s+"?([A-Za-z0-9_.\-]+)"?`)
 
-// Le separateur « : » ou « = » est OBLIGATOIRE dans ces deux motifs.
+// The ":" or "=" separator is MANDATORY in these two patterns.
 //
-// Sans lui, « System Serial Number : FOC1841X0AB » capture le mot « Number » :
-// l'alternative « system serial » accroche avant « serial number », et comme
-// (?i) rend aussi la classe [A-Z0-9] insensible a la casse, le mot suivant fait
-// un serial parfaitement credible. Exiger le separateur supprime la classe
-// entire de ce default, au prix des rares sorties alignees sans ponctuation —
-// where l'on prefers un champ vide a une valeur invented.
+// Without it, "System Serial Number : FOC1841X0AB" captures the word
+// "Number": the "system serial" alternative matches before "serial number",
+// and since (?i) also makes the [A-Z0-9] class case-insensitive, the
+// following word makes a perfectly credible-looking serial. Requiring the
+// separator removes that entire class of bug, at the cost of the rare
+// outputs that are aligned without punctuation — where we'd rather have an
+// empty field than an invented value.
 var serialRe = regexp.MustCompile(`(?i)serial(?:[ -]?(?:number|no\.?))?\s*[:=]\s*"?([A-Za-z0-9\-]{5,24})`)
 var modelRe = regexp.MustCompile(`(?i)(?:model(?:[ -]?(?:number|name))?|hardware(?:[ -]?model)?)\s*[:=]\s*"?([A-Za-z0-9\-/+]{3,32})`)
 
 var hasDigitRe = regexp.MustCompile(`[0-9]`)
 
-// ExtractFacts peche hostname, serial et model dans une sortie de commande.
-// Volontairement conservateur : mieux vaut un champ vide qu'une valeur fausse
-// qui donnerait a l'utilisateur l'illusion d'une identification sure.
+// ExtractFacts fishes the hostname, serial, and model out of a command
+// output. Deliberately conservative: an empty field is better than a wrong
+// value that would give the user the illusion of a reliable identification.
 func ExtractFacts(text string) (hostname, serial, model string) {
 	var m = hostnameRe.FindStringSubmatch(text)
 	if len(m) > 1 {
 		hostname = m[1]
 	}
 	m = serialRe.FindStringSubmatch(text)
-	// Un serial number contient au moins un chiffre : ce garde-fou ecarte les
-	// mots ordinaires qu'un motif trop permissif ramenerait.
+	// A serial number contains at least one digit: this safeguard rules out
+	// ordinary words that an overly permissive pattern would otherwise pick up.
 	if len(m) > 1 && hasDigitRe.MatchString(m[1]) {
 		serial = strings.ToUpper(m[1])
 	}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { decodeDevicePathSegment, sitePath } from "../paths";
@@ -23,6 +23,12 @@ import { useSiteRole } from "../auth";
 import { MgmtAddressingCard } from "./MgmtAddressing";
 import { SpanningTreeCard, stpEffectiveMeta } from "./SpanningTreeDevice";
 import { ConformMgmtButton } from "./ConformMgmt";
+// LAZY on purpose: DeviceConsole pulls in xterm.js, a terminal emulator worth a
+// quarter of a megabyte that the overwhelming majority of visits to this page
+// never open. Loading it on demand keeps the switch sheet's first paint free of
+// it, and the chunk arrives while the controller is still being asked what the
+// device offers.
+const DeviceConsole = lazy(() => import("./DeviceConsole"));
 import {
   ActionButton,
   DriftBanner,
@@ -72,18 +78,23 @@ export default function SwitchDetail() {
   // it's a reading setting, not a place to return to.
   const [teleMinutes, setTeleMinutes] = useState(1440);
   const [hoverVlan, setHoverVlan] = useState<number | null>(null);
-  // {t("switchDetailPage.selection")} multiple : clic = un port, ⇧ = plage depuis l'ancre, Ctrl/⌘ =
-  // adding or removing a port, ⇧+Ctrl/⌘ = adding a range to the selection.
-  // The anchor is the last port clicked without ⇧: it is from there that the beach
-  // se mesure, comme partout ailleurs.
+  // {t("switchDetailPage.selection")} — multiple: click = one port, ⇧ = range
+  // from the anchor, Ctrl/⌘ = adding or removing a port, ⇧+Ctrl/⌘ = adding a
+  // range to the selection. The anchor is the last port clicked without ⇧:
+  // that's where the range is measured from, same as everywhere else.
   const [selPorts, setSelPorts] = useState<string[]>([]);
   const [anchor, setAnchor] = useState<string | null>(null);
   const [selProf, setSelProf] = useState<string | null>(null);
   const [toast, showToast] = useToast();
-  // Real time: this is the sheet where we follow a configuration pose. The state
-  // timing changes WITHOUT user request — installation
-  // automatic ends several seconds after the last click — and that's
-  // the controller who comes to say it (see emitDeviceBG in autoapply.go).
+  // The console overlay. Mounted only while open — xterm.js owns a canvas and a
+  // WebSocket, and keeping it alive behind a hidden panel would hold a vty on a
+  // switch that has sixteen of them.
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  // Real-time: this is the sheet where we track a configuration being
+  // applied. The state changes timing WITHOUT any user request —
+  // automatic provisioning finishes several seconds after the last click
+  // — and it's the controller that comes to announce it (see
+  // emitDeviceBG in autoapply.go).
   const refetchInterval = useSiteLive(siteId);
 
   const { data: devices, error } = useQuery({
@@ -105,10 +116,10 @@ export default function SwitchDetail() {
   const dev = (devices ?? []).find((d) => d.name === decodedName);
   const deviceId = dev?.id ?? "";
 
-  // TELEMETRY: the quantities that no field of the inventory can carry, and
-  // the history of throughput by port. Refreshed at the same rate as the file — this is the
-  // same screen, and two cadences would give a vignette and a curve which
-  // contradict the time of a turn.
+  // TELEMETRY: the quantities no inventory field can carry, plus the
+  // throughput history per port. Refreshed at the same rate as the device
+  // sheet — it's the same screen, and two different cadences would give a
+  // summary and a graph that contradict each other over time.
   const { data: tele, isFetching: teleFetching } = useTelemetry(
     deviceId,
     teleMinutes,
@@ -116,13 +127,19 @@ export default function SwitchDetail() {
   );
 
   /**
-   * The ports ACTUALLY affected by a discrepancy, and nothing else. Do
-   * flashing an entire faceplate for a different port would cause a search
-   * longtemps ce qui ne va pas.
+   * The ports ACTUALLY affected by a drift, and nothing else. Flashing the
+   * whole faceplate for the wrong port would send you searching for a
+   * long time to find what's actually wrong.
    */
-  const driftPorts = new Map<string, "pending" | "drift">();
+  const driftPorts = new Map<string, "pending" | "drift" | "applying">();
   if (dev?.sync === "pending" || dev?.sync === "drift") {
     for (const c of dev.drift ?? []) driftPorts.set(c.port, dev.sync);
+  }
+  // While an apply is actually running, the ports being written blink as
+  // "provisioning" — a stronger, distinct animation from a still pending. The
+  // ports in flight are exactly those the model diverges on (dev.drift).
+  if (dev?.applying) {
+    for (const c of dev.drift ?? []) driftPorts.set(c.port, "applying");
   }
 
   /**
@@ -131,7 +148,7 @@ export default function SwitchDetail() {
    * rereading, meshcraft only knows its own intentions.
    */
   const readState = useMutation({
-    mutationFn: () => post<{ ok: boolean; sync?: string; error?: string }>(
+    mutationFn: () => post<{ ok: boolean; sync?: string; error?: string; snmp_reprovision?: string }>(
       `/api/devices/${deviceId}/read-state`, {}),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["devices", siteId] });
@@ -143,6 +160,13 @@ export default function SwitchDetail() {
             ? t("switchDetailPage.deviceDriftToast")
             : t("switchDetailPage.configPendingToast"),
       );
+      // A refresh on a device whose supervision is down also re-pushes SNMP in
+      // the background: tell the operator it is under way, and refresh the
+      // device shortly so snmp_status flips to ok without a second click.
+      if (res.snmp_reprovision === "triggered") {
+        showToast(t("switchDetailPage.snmpReprovisionToast"));
+        setTimeout(() => qc.invalidateQueries({ queryKey: ["devices", siteId] }), 12000);
+      }
     },
   });
 
@@ -183,9 +207,15 @@ export default function SwitchDetail() {
   });
   const vm = vlanMap(vlans);
 
+  // One port goes through the BATCH endpoint on purpose: it carries the port
+  // name in the request BODY, not the URL path. Port names on some platforms
+  // contain a slash (FS « ethernet 1/11 », Cisco « Gi1/0/1 »); in the path
+  // `/ports/{port}` that slash splits the route and the single-port edit hit
+  // nothing — which is why a profile applied to one FS port did nothing while a
+  // whole-switch apply (already body-based) worked.
   const setPort = useMutation({
     mutationFn: (args: { port: string; intent: PortIntent }) =>
-      put<Device>(`/api/devices/${deviceId}/ports/${args.port}`, args.intent),
+      put<Device>(`/api/devices/${deviceId}/ports`, { ports: { [args.port]: args.intent } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["devices", siteId] }),
   });
   // Batch: a selection is a single gesture, it is sent in a single request —
@@ -198,23 +228,23 @@ export default function SwitchDetail() {
   // Edition of equipment metadata: name, location (grouping of
   // switches on the plan), management address.
   //
-  // # Pourquoi un affichage OPTIMISTE, et pas un simple `invalidateQueries`
+  // # Why an OPTIMISTIC display, and not a plain `invalidateQueries`
   //
-  // This PATCH is not instantaneous: the controller takes the opportunity to replay the
-  // auto tags AND reprovision SNMP, which will TALK to
-  // the equipment through the proxy. Measured on a real switch, the response puts
-  // ~5 s — versus 5 ms for list replay. Refresh only when
-  // response therefore leaves the screen frozen for five seconds on a gesture that
-  // the operator has just done: he concludes that nothing has been taken, reloads the
-  // page, and discovers that yes.
+  // This PATCH is not instantaneous: the controller takes the opportunity
+  // to replay the auto-tags AND reprovision SNMP, which will TALK to the
+  // equipment through the proxy. Measured on a real switch, the response
+  // takes ~5s — versus 5ms for a simple list replay. Refreshing only once
+  // the response comes back therefore leaves the screen frozen for five
+  // seconds after a gesture the operator just made: they conclude that
+  // nothing happened, reload the page, and discover that it actually did.
   //
-  // This is not a latency bypass: it's the only way to be
-  // HONEST on screen. We display the intention immediately, the truth of the
-  // server takes control of the response (`onSettled` rereads), and a failure
-  // ROLL BACK instead of leaving a made-up value.
+  // This is not a way to hide latency: it's the only way to stay HONEST on
+  // screen. We display the intention immediately, the server's truth takes
+  // over once the response lands (`onSettled` rereads), and a failure
+  // ROLLS BACK instead of leaving a made-up value.
   //
-  // Don't forget `cancelQueries`: a reread BEFORE the PATCH
-  // would arrive after him and overwrite the optimistic value with the old one.
+  // Don't forget `cancelQueries`: a refetch triggered BEFORE the PATCH
+  // could land after it and overwrite the optimistic value with the old one.
   const saveDevice = useMutation({
     mutationFn: (fields: Partial<Device>) => {
       const d = (devices ?? []).find((x) => x.id === deviceId)!;
@@ -229,17 +259,17 @@ export default function SwitchDetail() {
     onMutate: async (fields: Partial<Device>) => {
       await qc.cancelQueries({ queryKey: ["devices", siteId] });
       const previous = qc.getQueryData<Device[]>(["devices", siteId]);
-      // `...fields` as is: a REMOVED place is worth the empty string, and it
-      // must pass this stage like any other value — a
-      // `fields.location || d.location` would lose her here in silence.
+      // `...fields` as-is: a REMOVED location is worth an empty string, and
+      // it must pass through this stage like any other value — a
+      // `fields.location || d.location` would silently lose it here.
       qc.setQueryData<Device[]>(["devices", siteId], (list) =>
         (list ?? []).map((d) => (d.id === deviceId ? { ...d, ...fields } : d)),
       );
       return { previous };
     },
     onError: (err, _fields, ctx) => {
-      // Without this backtracking, the screen would keep a value indefinitely
-      // which the controller refused — the worst of both worlds.
+      // Without this rollback, the screen would indefinitely keep a value
+      // that the controller refused — the worst of both worlds.
       if (ctx?.previous) qc.setQueryData(["devices", siteId], ctx.previous);
       showToast(err instanceof Error ? err.message : t("switchDetailPage.updateFailedToast"));
     },
@@ -253,14 +283,15 @@ export default function SwitchDetail() {
       );
     },
     // In both cases: the server has the last word. It may have normalized
-    // the seizure, or having refused it afterwards.
+    // the input, or it may have refused it outright.
     onSettled: () => qc.invalidateQueries({ queryKey: ["devices", siteId] }),
   });
   const places = [...new Set((devices ?? []).map((d) => d.location).filter(Boolean))].sort();
 
-  // The addressing domains of the instance: what to declare in which network
-  // lives this equipment. Useful especially for those who have been grabbed by hand —
-  // those resulting from the discovery inherit the domain of their beach.
+  // The instance's addressing domains: which network this equipment lives
+  // in, for declaration purposes. Especially useful for devices entered by
+  // hand — those coming from discovery inherit the domain of their address
+  // range.
   const { data: domains } = useQuery({
     queryKey: ["address-domains"],
     queryFn: () => get<AddressDomain[]>("/api/discovery/domains"),
@@ -275,16 +306,17 @@ export default function SwitchDetail() {
   });
 
   /**
-   * Les proxys qui COUVRENT ce site — les seuls capables de collecter ses
-   * equipment. This is intentionally a restricted list and not the inventory
-   * proxies: the attachment gives no coverage, so designate a
-   * proxy that does not cover the site would not move the collection, it would
-   * cease. The equipment would remain pinned - therefore green on the screen - without any further
-   * rien ne l'interroge en SNMP et sans destinataire pour ses traps.
+   * The proxies that COVER this site — the only ones capable of collecting
+   * its equipment. This is intentionally a restricted list, not the full
+   * inventory of proxies: attachment alone gives no coverage, so assigning
+   * a proxy that doesn't cover the site wouldn't just move collection
+   * elsewhere, it would stop it. The device would stay pinned — and
+   * therefore green on screen — with nothing polling it over SNMP and no
+   * recipient for its traps.
    *
-   * The controller refuses this connection on its side (a drop-down list is not
-   * not an access control, and the API is callable directly); here it is
-   * not to offer a choice that would be refused.
+   * The controller refuses this assignment on its own side too (a dropdown
+   * is not an access control, and the API can be called directly); the
+   * point here is not to offer a choice that would just be refused.
    */
   const { data: collectors } = useQuery({
     queryKey: ["collector-proxies", siteId],
@@ -302,9 +334,10 @@ export default function SwitchDetail() {
           : t("switchDetailPage.collectorCoverageToast"),
       );
     },
-    // The controller's refusal carries all the reasoning ("it would no longer be
-    // collected per person"): it must arrive on the screen word for word, not
-    // in the form of a “failure” which would leave one wondering which one.
+    // The controller's refusal carries the full reasoning ("it would no
+    // longer be collected by anyone"): it must reach the screen word for
+    // word, not as a generic "failure" that would leave you wondering
+    // which one.
     onError: (err) =>
       showToast(err instanceof Error ? err.message : t("switchDetailPage.attachmentRefusedToast")),
   });
@@ -313,17 +346,18 @@ export default function SwitchDetail() {
   if (!dev) return <div className="empty">{t("switchDetailPage.notFound")}</div>;
 
   /**
-   * An attachment can become invalid AFTER the fact: narrow the coverage
-   * of a proxy, elsewhere in the product, leaves behind equipment
-   * attached to a proxy that no longer covers them. The refusal to write
-   * prevent it, and the result is the worst of all — no one left
-   * does not poll the equipment, while it continues to respond to the ping and
-   * s'affiche vert.
+   * An attachment can become invalid AFTER the fact: narrowing a proxy's
+   * coverage, elsewhere in the product, leaves behind equipment attached
+   * to a proxy that no longer covers it. The write-side refusal doesn't
+   * prevent this existing case, and the result is the worst of all — no
+   * one polls the equipment anymore, while it keeps answering pings and
+   * shows green.
    *
-   * We detect it by comparing the connection to the SAME list as the one which
-   * serves to choose: two different sources would end up contradicting each other.
-   * `collectors === undefined` = list not yet loaded: do not assert anything,
-   * otherwise the banner flashes each time the plug is opened.
+   * We detect it by comparing the attachment to the SAME list used to make
+   * the choice: two different sources would end up contradicting each
+   * other. `collectors === undefined` = list not yet loaded: assert
+   * nothing in that case, otherwise the banner flashes every time the
+   * device sheet opens.
    */
   const covering = collectors ?? [];
   const collectorStranded =
@@ -463,6 +497,20 @@ export default function SwitchDetail() {
           </ActionButton>
           <span className="row" style={{ gap: 8 }}>
             <span className="note">{syncLabel(dev)}</span>
+            {/* CONSOLE: an interactive shell, or the vendor UI when the platform
+                has no SSH. site_admin only, and the controller decides which of
+                the two — the button just asks. */}
+            {role === "ing" && (
+              <QuickTip text={t("console.openTitle")} className="quicktip-inline">
+                <ActionButton
+                  kind="terminal"
+                  className="ghost"
+                  onClick={() => setConsoleOpen(true)}
+                >
+                  {t("console.openBtn")}
+                </ActionButton>
+              </QuickTip>
+            )}
             <QuickTip text={t("switchDetailPage.rereadTitle")} className="quicktip-inline">
               <button
                 className="ghost icon-btn"
@@ -477,6 +525,16 @@ export default function SwitchDetail() {
             </QuickTip>
           </span>
         </div>
+        {consoleOpen && (
+          <Suspense fallback={null}>
+            <DeviceConsole
+              deviceId={deviceId}
+              deviceName={dev.name}
+              siteId={siteId}
+              onClose={() => setConsoleOpen(false)}
+            />
+          </Suspense>
+        )}
         {dev.mgmt?.checked && !dev.mgmt.conforms && (
           // Outside the site addressing plan: meshcraft still watches the
           // device, but administration is not on the planned path yet.
@@ -657,6 +715,7 @@ export default function SwitchDetail() {
                     <PortSquare
                       key={pr.name}
                       name={pr.name}
+                      displayName={pr.display}
                       port={pr.p}
                       vm={vm}
                       size={PORT_SIZE}
@@ -830,9 +889,9 @@ export default function SwitchDetail() {
                       </HelpTip>
                     </span>
                     {role !== "ing" ? (
-                      // In reading, the regime is read in full. “—”
-                      // would suggest missing data where it concerns
-                      // normal operation.
+                      // In read-only mode, the collector regime is spelled
+                      // out in full. A "—" would suggest missing data
+                      // where this is in fact normal operation.
                       <span>
                         {dev.proxy_name || t("switchDetailPage.noCollectorCoverage")}
                         {collectorStranded ? t("switchDetailPage.noLongerCoversSite") : ""}
@@ -845,8 +904,8 @@ export default function SwitchDetail() {
                           style={{ minHeight: 28, fontSize: 12 }}
                           onChange={(e) => setCollector.mutate(e.target.value)}
                         >
-                        {/* Detachment first, and named: fleet-wide regime, not a checkbox
-                            for « none ». */}
+                        {/* Detachment listed first, and named: this is a fleet-wide regime,
+                            not a checkbox for "none". */}
                         <option value="">{t("switchDetailPage.noCollectorOption")}</option>
                         {covering.map((p) => (
                           <option key={p.id} value={p.id}>
@@ -891,8 +950,8 @@ export default function SwitchDetail() {
             </SidePanelGroup>
 
             {/* Management addressing just UNDER identity: the address is already
-                above, and « by what means did it get it? » arises next. Collapsed
-                by default — the card is tall; expand when changing addressing. */}
+                above, and "how did it get it?" comes up next. Collapsed by
+                default — the card is tall; expand it when changing addressing. */}
             <SidePanelGroup
               title={t("switchDetailPage.mgmtNetwork")}
               meta={mgmtEffectiveMeta(dev, t)}
@@ -1036,22 +1095,23 @@ function mgmtEffectiveMeta(
 }
 
 /**
- * Normalize like controller (api.normalizeTag): lowercase, spaces
- * compacted. Duplicating the rule here is not distrust of the server —
- * this is what allows you to say “already placed” BEFORE the round trip, and to display
- * in the toast the label as it will actually be recorded.
+ * Normalize the same way the controller does (api.normalizeTag): lowercase,
+ * spaces compacted. Duplicating the rule here isn't distrust of the
+ * server — it's what lets us say "already exists" BEFORE the round trip,
+ * and show the label in the toast exactly as it will actually be stored.
  */
 /**
  * Equipment labels.
  * See docs/01-Architecture/Identifier labels and scope.
  *
- * A label is not a label: a site administration identifier
- * can target it, and the equipment then falls under another EXPECTED password.
- * Hence the help of the sign - putting a label does not write anything on the equipment, and
- * the operator must be able to check it without leaving the form.
+ * A label is not harmless: a site administration credential can target
+ * it, and the equipment then falls under a different EXPECTED password.
+ * Hence the help icon — adding a label writes nothing to the equipment
+ * itself, and the operator must be able to verify that without leaving
+ * the form.
  *
- * The panel lives next to the equipment identity, not the ports: a
- * label qualifies the machine, never a plug.
+ * The panel lives next to the equipment identity, not the ports: a label
+ * qualifies the machine, never a single port.
  */
 function DeviceTags({
   deviceId,
@@ -1075,10 +1135,10 @@ function DeviceTags({
     queryKey: ["device-tags", deviceId],
     queryFn: () => get<{ tags: DeviceTag[] }>(`/api/devices/${deviceId}/tags`),
   });
-  // Labels already used on the site. Proposing what exists is the only
-  // thing that prevents “regie” from coexisting with “régie”: two sets
-  // where the operator believed to designate only one, and an identifier which does not
-  // covers only half of the target park.
+  // Labels already in use on the site. Suggesting what already exists is
+  // the only thing that keeps "regie" from coexisting with "régie": two
+  // separate sets where the operator believed they were designating just
+  // one, and a tag that ends up covering only half the intended fleet.
   const { data: siteTags } = useQuery({
     queryKey: ["site-tags", siteId],
     queryFn: () => get<{ tags: string[] }>(`/api/sites/${siteId}/tags`),
@@ -1093,8 +1153,8 @@ function DeviceTags({
   };
 
   const add = useMutation({
-    // The tag travels in the PATH: it must be encoded, a “/” or an accent
-    // raw would break the road there.
+    // The tag travels in the PATH: it must be encoded — a raw "/" or
+    // accent would break the route there.
     mutationFn: (tag: string) =>
       put<{
         tag: string;
@@ -1136,9 +1196,9 @@ function DeviceTags({
       del(`/api/devices/${deviceId}/tags/${encodeURIComponent(t.tag)}`),
     onSuccess: (_res, removed) => {
       invalidate();
-      // The toast repeats the consequence at the exact moment it takes place: on a
-      // label deducted, the withdrawal only lasts until the next
-      // reassessment, and now is the time to find out.
+      // The toast repeats the consequence at the exact moment it happens:
+      // for an inferred tag, the removal only lasts until the next
+      // reassessment, and now is the moment to find out.
       onToast(
         isRuleTag(removed)
           ? t("switchDetailPage.tagRemovedRuleToast", { tag: removed.tag })
@@ -1149,13 +1209,13 @@ function DeviceTags({
 
   const tags = data?.tags ?? [];
   const hasRule = tags.some(isRuleTag);
-  // Two populations of labels coexist on the same equipment, and they do not
-  // are not treated the same (see the final note of §3.1 of the labels page):
-  // those of exploitation, arbitrary and removable, and those TECHNICAL, placed
-  // by meshcraft, which decide on an identifier. The second family has two
-  // mechanisms — the SNMPv3 identity and password adapted to the policy of the
-  // platform — hence a help paragraph that says what to look for, and where, present
-  // only when the equipment carries it.
+  // Two populations of labels coexist on the same equipment, and they are
+  // not treated the same way (see the closing note of §3.1 of the labels
+  // page): operational tags, arbitrary and removable, and TECHNICAL tags,
+  // placed by meshcraft, which determine an identifier. The second family
+  // has two mechanisms — the SNMPv3 identity and the password tied to the
+  // platform's password policy — hence a help paragraph that says what to
+  // look for, and where, shown only when the equipment carries one.
   const technical = tags.filter(isTechnicalTag);
 
   return (
@@ -1226,16 +1286,18 @@ function PortPanel({
   const canApply = role !== "viewer" && !off;
   const ing = role === "ing";
 
-  // THE STORY OF TWO SENSES, MEASURED.
+  // THE HISTORY OF BOTH DIRECTIONS, MEASURED.
   //
-  // It was MANUFACTURED: thirty points generated by a deterministic jitter around
-  // the current value, which drew a credible curve of a past which had not
-  // never been measured. It now comes from the series base
-  // (GET /api/devices/{id}/telemetry), therefore equipment counters.
+  // It used to be MANUFACTURED: thirty points generated by a deterministic
+  // jitter around the current value, drawing a plausible-looking curve for
+  // a past that had never actually been measured. It now comes from the
+  // time-series store (GET /api/devices/{id}/telemetry), i.e. real
+  // equipment counters.
   //
-  // An unreachable switch keeps its curve: this is what happened BEFORE it fell,
-  // and this is precisely what we come to look at. Only the “now” value is
-  // reduced to zero, because no flow passes through silent equipment.
+  // An unreachable switch keeps its curve: that's what happened BEFORE it
+  // went down, and that's exactly what we come here to look at. Only the
+  // "now" value is forced to zero, because no traffic flows through
+  // silent equipment.
   const rxHist = traffic.rx;
   const txHist = traffic.tx;
   const lastNum = (xs: (number | null)[]) => {
@@ -1585,14 +1647,14 @@ function PortPanel({
 }
 
 /**
- * Compacts a selection into ranges: “1-8, 12, 24-26”. A panel that
- * announces “1, 2, 3, 4, 5, 6, 7, 8” requires counting again to verify that we have
- * bien pris ce qu'on croyait.
+ * Compacts a selection into ranges: "1-8, 12, 24-26". A panel that
+ * announces "1, 2, 3, 4, 5, 6, 7, 8" forces you to count again to verify
+ * that we actually selected what we thought we did.
  */
 function rangeLabel(sel: PortRef[], all: PortRef[]): string {
   // A port not found in `all` is discarded rather than crashing the
-  // rendered: an incomplete label is a display defect, an exception
-  // here clears the whole page.
+  // render: an incomplete label is a display glitch, an exception here
+  // would blank out the whole page.
   const idx = sel.map((p) => all.indexOf(p)).filter((i) => i >= 0).sort((a, b) => a - b);
   if (idx.length === 0) return sel.map((p) => p.name).join(", ");
   const out: string[] = [];
@@ -1620,9 +1682,10 @@ function common<T>(sel: PortRef[], of: (p: PortRef) => T): T | undefined {
  * Two principles hold this screen:
  *
  * 1. what DIFFERS between ports is shown as such ("mixed"), never
- * reduced to the value of the first — otherwise the screen lies about what we are going to overwrite;
- * 2. nothing goes until you click: on twelve ports, a toggle
- * applied to overflight would be a permanent accident.
+ *    reduced to the value of the first — otherwise the screen would lie
+ *    about what we're about to overwrite;
+ * 2. nothing is sent until you click: on twelve ports, a toggle applied
+ *    on hover would be a permanent accident.
  */
 function MultiPortPanel({
   dev,
@@ -1640,7 +1703,7 @@ function MultiPortPanel({
 }: {
   dev: Device;
   sel: PortRef[];
-  /** La MÊME liste que celle dont `sel` est issue : `expandPorts` reconstruit
+  /** The SAME list that `sel` came from: `expandPorts` reconstructs
    * new objects on each call, and an `indexOf` on a copy returns -1. */
   all: PortRef[];
   role: "ing" | "tech" | "viewer";
@@ -1932,7 +1995,7 @@ function MultiPortPanel({
                 setLabel("");
               }}
             >
-              Poser
+              Apply
             </ActionButton>
           </div>
         </div>

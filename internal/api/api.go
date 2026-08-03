@@ -79,6 +79,12 @@ type Server struct {
 	// right default — and a test that wants to exercise scope builds its own proxyScopes,
 	// exactly like portFlaps.
 	proxyScopes *proxyScopes
+	// serialLog: latest Web Serial wizard transcripts (autodetect / soft-reset),
+	// mirrored to slog as serial.session. Lazy-allocated; tests need not set it.
+	serialLog *serialLogStore
+	// snmpHeal: per-device backoff of the SNMP provisioning retry loop
+	// (RunSNMPHeal). Zero value is ready to use; tests need not set it.
+	snmpHeal snmpHealState
 }
 
 func (s *Server) Router() http.Handler {
@@ -155,6 +161,13 @@ func (s *Server) Router() http.Handler {
 
 		r.Post("/api/auth/logout", s.handleLogout)
 		r.Get("/api/auth/me", s.handleMe)
+		// The caller's OWN SOCKS route token (cf. socks_handlers.go). Not
+		// site-scoped and not admin-gated: it is a credential in one person's
+		// hands, and what it can reach is decided per CONNECT against that
+		// person's site roles, not by who was allowed to mint it.
+		r.Get("/api/auth/socks-token", s.handleGetSocksToken)
+		r.Post("/api/auth/socks-token", s.handleCreateSocksToken)
+		r.Delete("/api/auth/socks-token", s.handleDeleteSocksToken)
 		r.Get("/api/version", s.handleVersion)
 		// APPLICATION log, not to be confused with the fleet log.
 		// Reserved to global-admin, verified in the handler.
@@ -253,6 +266,13 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/devices/{id}/credentials/apply", s.handleApplyDeviceCredential)
 		// Read-only web probe, for tuning a connector.
 		r.Post("/api/devices/{id}/web-probe", s.handleDeviceWebProbe)
+		// INTERACTIVE CONSOLE (cf. console_handlers.go). The GET says what this
+		// device offers and is what the UI asks before drawing a button; the
+		// WebSocket relays a real SSH shell, with the secret staying on the
+		// controller. Both are site_admin — a shell has none of the safeguards a
+		// connector apply carries.
+		r.Get("/api/devices/{id}/console", s.handleDeviceConsoleInfo)
+		r.Get("/api/devices/{id}/console/ws", s.handleDeviceConsole)
 		// Read-only SNMP walk, applied by the proxy that collects this device. Same
 		// role and privilege level as the web probe — understand what the device actually
 		// serves, without modifying anything — and for the same reason it is not a GET: the
@@ -416,6 +436,9 @@ func (s *Server) Router() http.Handler {
 			})
 
 			r.Post("/probe", s.handleProbeIP)
+			// Materialize a known credential for Web Serial soft-reset (browser
+			// must type the secret on the console; controller cannot open UART).
+			r.Post("/serial-credential", s.handleSerialCredential)
 			// Read a device page through a proxy: web-only connector tuning tool,
 			// global-admin, GET only.
 			r.Group(func(r chi.Router) {
@@ -428,6 +451,10 @@ func (s *Server) Router() http.Handler {
 			})
 			r.Post("/serial", s.handleSerialCandidate)
 			r.Post("/parse-config", s.handleParseConfig)
+			// Web Serial wizard run log (autodetect / soft-reset): mirrored to slog
+			// as serial.session and kept in memory for GET.
+			r.Post("/serial-log", s.handlePostSerialLog)
+			r.Get("/serial-log", s.handleGetSerialLog)
 
 			r.Get("/drivers", s.handleListDrivers)
 			r.Get("/reset-procedures", s.handleResetProcedures)
@@ -436,6 +463,12 @@ func (s *Server) Router() http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireGlobalAdmin)
 				r.Get("/credentials", s.handleListKnownCredentials)
+				// Reveal ONE instance credential, journaled like the site reveal.
+				// These are the secrets the serial soft-reset actually places, so a
+				// device provisioned but not yet adopted is reachable only with one
+				// of them — and before this route the only way to see it again was
+				// to re-run the wizard.
+				r.Post("/credentials/{id}/reveal", s.handleRevealKnownCredential)
 				r.Post("/credentials", s.handleCreateKnownCredential)
 				r.Patch("/credentials/{id}", s.handleUpdateKnownCredential)
 				r.Delete("/credentials/{id}", s.handleDeleteKnownCredential)
@@ -518,12 +551,12 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any, limit int64) error 
 //
 // An oversized body and malformed JSON are not fixed the same way: the first asks
 // the sender to send less at once, the second to fix what it sends. Conflating them
-// into has single « invalid JSON » — what this function used to do, since has body cut by
+// into a single « invalid JSON » — what this function used to do, since a body cut by
 // http.MaxBytesReader comes out of the decoder as broken syntax — sends diagnosis
-// into has wall: on the proxy side, has silent 400 on has batch that would NEVER pass,
+// into a wall: on the proxy side, a silent 400 on a batch that would NEVER pass,
 // therefore perpetual replay of the same batch and complete upload stop.
 //
-// Recognition uses *http.MaxBytesError, not error text: net/http's message is not has
+// Recognition uses *http.MaxBytesError, not error text: net/http's message is not a
 // contract, the type is.
 //
 // `geste` is the route-specific follow-up; it names the ACTION expected from the

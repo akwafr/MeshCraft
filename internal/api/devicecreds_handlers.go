@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"meshcraft/internal/auth"
+	"meshcraft/internal/discovery"
 	"meshcraft/internal/driver"
 	"meshcraft/internal/model"
 	"meshcraft/internal/pwpolicy"
@@ -641,7 +642,59 @@ func (s *Server) candidatesFor(ctx context.Context, d model.Device, wanted, grou
 			gens = append(gens, genSecret{Why: p.Why, Secret: clear, Username: p.Username})
 		}
 	}
+
+	// The DISCOVERY credential that actually opened this device — an OBSERVED pair,
+	// not a guess. A device adopted from discovery (or provisioned by the serial
+	// soft-reset, which types this very secret on the console) carries it until the
+	// first successful site-credential apply; the site generations above were never
+	// pushed to it. Skipping this candidate produced a real refusal on 2026-08-02:
+	// four candidates tried on a freshly adopted FS S3900, none of them the secret
+	// meshcraft itself had just set.
+	//
+	// FIRST among generations while no apply has been observed (installedUsername
+	// empty): on such a device the generations are pure intent and would burn the
+	// account's try budget before the one pair known to work. As soon as an apply
+	// has been observed, the site generations regain priority and this pair drops
+	// to last resort.
+	var origin, haveOrigin = s.discoveryOriginSecret(ctx, d)
+	if haveOrigin {
+		if s.installedUsername(ctx, d.ID, credID) == "" {
+			gens = append([]genSecret{origin}, gens...)
+		} else {
+			gens = append(gens, origin)
+		}
+	}
 	return buildCandidates(names, operatorSecret, gens), target, gen, credID, nil
+}
+
+// discoveryOriginSecret resolves the discovery credential that opened the device
+// when it was probed, with its account name — the pair typed by the serial
+// soft-reset and verified by the adoption probe. Best-effort: any missing link
+// (manual device, deleted credential, unreadable secret) simply yields nothing.
+func (s *Server) discoveryOriginSecret(ctx context.Context, d model.Device) (genSecret, bool) {
+	var discoveredID = driver.ExtraString(d.Extra, "discovered_id")
+	if discoveredID == "" {
+		return genSecret{}, false
+	}
+	var cand, err = s.Store.GetDiscovered(ctx, discoveredID)
+	if err != nil || cand.CredentialID == nil || *cand.CredentialID == "" {
+		return genSecret{}, false
+	}
+	var creds, listErr = s.discoveryCredentials(ctx)
+	if listErr != nil {
+		return genSecret{}, false
+	}
+	var c discovery.Credential
+	for _, c = range creds {
+		if c.ID == *cand.CredentialID && c.Username != "" && c.Secret != "" {
+			return genSecret{
+				Why:      "discovery credential that opened the device (« " + c.Name + " »)",
+				Secret:   c.Secret,
+				Username: c.Username,
+			}, true
+		}
+	}
+	return genSecret{}, false
 }
 
 // genSecret is an already decrypted generation, with the reason for its rank.

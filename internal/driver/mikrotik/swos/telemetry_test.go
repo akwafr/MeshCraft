@@ -146,8 +146,8 @@ func TestCompteursDeStatsSurLeSeulPortActif(t *testing.T) {
 	var cage = tel.Ports[25]
 
 	var cas = []struct {
-		nom     string
-		got     *float64
+		nom      string
+		got      *float64
 		expected float64
 	}{
 		{"octets recus", cage.InOctets, 26159750},
@@ -376,10 +376,10 @@ func TestDiagnostiqueOptiqueEtSonIndEXATION(t *testing.T) {
 	}
 
 	var cas = []struct {
-		nom     string
-		got     *float64
+		nom      string
+		got      *float64
 		expected float64
-		tol     float64
+		tol      float64
 	}{
 		{"temperature du module", m.TemperatureC, 50, 0.001},
 		{"tension d'alimentation", m.SupplyVolts, 3.261, 0.0001},

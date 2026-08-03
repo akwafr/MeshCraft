@@ -14,15 +14,15 @@ func TestAccountsReadFromCapture(t *testing.T) {
 		t.Fatalf("%d accounts in capture, 1 expected", len(rows))
 	}
 	if rows[0].Get("name") != "admin" {
-		t.Errorf("account = %q, expected « admin »", rows[0].Get("name"))
+		t.Errorf("account = %q, expected 'admin'", rows[0].Get("name"))
 	}
 	if rows[0].Get("group") != "full" {
-		t.Errorf("group = %q, expected « full »", rows[0].Get("group"))
+		t.Errorf("group = %q, expected 'full'", rows[0].Get("group"))
 	}
 	// The factory account declares itself as such: that is what lets us recognize it
 	// without assuming from its name.
 	if rows[0].Get("comment") != "system default user" {
-		t.Errorf("comment = %q, expected « system default user »",
+		t.Errorf("comment = %q, expected 'system default user'",
 			rows[0].Get("comment"))
 	}
 }
@@ -31,7 +31,7 @@ func TestAccountsReadFromCapture(t *testing.T) {
 //
 // A group policy is a list where an entry can be DENIED by a `!` prefix. Observed:
 // the `read` group carries `!write` and `!policy`. A naive substring search for
-// « write » in `read`'s policy would find it in `!write`, and conclude exactly the
+// 'write' in `read`'s policy would find it in `!write`, and conclude exactly the
 // OPPOSITE of the truth.
 //
 // That is the kind of error that places an account unable to write, and one discovers
@@ -50,11 +50,11 @@ func TestDeniedPolicyIsNotGranted(t *testing.T) {
 
 	// The `read` group DENIES `write` and `policy`.
 	if GroupAllows(groups["read"], "write") {
-		t.Error("the `read` group carries `!write`: it does NOT grant write. A substring "+
+		t.Error("the `read` group carries `!write`: it does NOT grant write. A substring " +
 			"search would have concluded the opposite")
 	}
 	if GroupAllows(groups["read"], "policy") {
-		t.Error("the `read` group carries `!policy`: it does NOT grant account "+
+		t.Error("the `read` group carries `!policy`: it does NOT grant account " +
 			"management")
 	}
 	// But it does grant read and REST access.
@@ -68,9 +68,9 @@ func TestDeniedPolicyIsNotGranted(t *testing.T) {
 		t.Error("the `write` group grants write")
 	}
 	if GroupAllows(groups["write"], "policy") {
-		t.Error("the `write` group carries `!policy`: a meshcraft account placed there "+
-			"could NEITHER create the next account NOR remove `admin` — that is why "+
-			"adminGroup is « full »")
+		t.Error("the `write` group carries `!policy`: a meshcraft account placed there " +
+			"could NEITHER create the next account NOR remove `admin` — that is why " +
+			"adminGroup is 'full'")
 	}
 
 	// The `full` group grants everything meshcraft needs.
@@ -129,7 +129,7 @@ func TestPasswordPolicyReadFromDevice(t *testing.T) {
 // message that states the exact number the device requires.
 func TestSecretTooShortRefusedBeforeWrite(t *testing.T) {
 	var p = PasswordPolicy{MinLength: 12}
-	var ok, reason = p.Accepts("court")
+	var ok, reason = p.Accepts("short")
 	if ok {
 		t.Fatal("a 5-character secret must be refused when the device requires 12")
 	}
@@ -153,7 +153,7 @@ func TestFourClassRequirementStatedExplicitly(t *testing.T) {
 	var p = PasswordPolicy{MinCategories: 4}
 	var ok, reason = p.Accepts("Password2026") // 3 classes: lower, upper, digits
 	if ok {
-		t.Fatal("an alphanumeric secret covers only 3 classes: it must be refused when "+
+		t.Fatal("an alphanumeric secret covers only 3 classes: it must be refused when " +
 			"the device requires 4")
 	}
 	if !strings.Contains(reason, "alphanumeric") {
@@ -165,7 +165,7 @@ func TestFourClassRequirementStatedExplicitly(t *testing.T) {
 	p = PasswordPolicy{MinCategories: 3}
 	ok, reason = p.Accepts("Password2026")
 	if !ok {
-		t.Errorf("three classes must be satisfied by « Password2026 »: %q", reason)
+		t.Errorf("three classes must be satisfied by 'Password2026': %q", reason)
 	}
 }
 
@@ -177,16 +177,16 @@ func TestFourClassRequirementStatedExplicitly(t *testing.T) {
 func TestPunctuationIsAccepted(t *testing.T) {
 	var caps = (&Driver{}).Capabilities(referenceModel)
 	if caps.Admin.AlphanumericOnly {
-		t.Error("RouterOS accepts punctuation in a password: the secret used for all "+
+		t.Error("RouterOS accepts punctuation in a password: the secret used for all " +
 			"observations of this connector contains an at-sign")
 	}
 	// And a named account is possible: RouterOS is a real multi-account system.
 	if !caps.Admin.Custom {
-		t.Error("RouterOS can create named accounts (observed: /user is a list with a "+
+		t.Error("RouterOS can create named accounts (observed: /user is a list with a " +
 			"`name` field, and /user/group offers three groups)")
 	}
 	if caps.Admin.FixedName != "admin" {
-		t.Errorf("the factory account is « admin » (observed), got %q",
+		t.Errorf("the factory account is 'admin' (observed), got %q",
 			caps.Admin.FixedName)
 	}
 	// The name actually placeable is the one meshcraft requests.
@@ -205,7 +205,7 @@ func TestMeshcraftPlacesAccountInFull(t *testing.T) {
 	// `rest-api` must head the required policies: it is the only one whose absence
 	// is INVISIBLE at placement time.
 	if requiredPolicies[0] != "rest-api" {
-		t.Errorf("requiredPolicies starts with %q, expected « rest-api » — it is the "+
+		t.Errorf("requiredPolicies starts with %q, expected 'rest-api' — it is the "+
 			"only policy whose absence shows only on the NEXT request",
 			requiredPolicies[0])
 	}
@@ -263,11 +263,11 @@ func TestMgmtNotesMentionCPU(t *testing.T) {
 	// Tagged management is OBSERVED, not derived: all reads of this connector used a
 	// tagged VLAN.
 	if !mgmt.TaggedOK {
-		t.Error("management on a tagged VLAN is observed on the reference device "+
+		t.Error("management on a tagged VLAN is observed on the reference device " +
 			"(10.99.0.54 on vlan99, VLAN 99 tagged)")
 	}
 	if mgmt.VlanIDs != driver.VlanAny {
-		t.Errorf("VlanIDs = %q, expected « any »", mgmt.VlanIDs)
+		t.Errorf("VlanIDs = %q, expected 'any'", mgmt.VlanIDs)
 	}
 	// RouterOS has NO DHCP fallback address: the observed 192.168.88.1 is the FACTORY
 	// address, not a fallback. Confusing them would send one looking for a device at an
@@ -289,7 +289,7 @@ func TestMgmtNotesMentionCPU(t *testing.T) {
 func TestCommitStyleIsImmediate(t *testing.T) {
 	var caps = (&Driver{}).Capabilities(referenceModel)
 	if caps.Commit != driver.CommitImmediate {
-		t.Errorf("Commit = %q, expected « immediate »: RouterOS has neither candidate "+
+		t.Errorf("Commit = %q, expected 'immediate': RouterOS has neither candidate "+
 			"configuration, nor a save step, nor native commit-confirmed",
 			caps.Commit)
 	}
@@ -298,7 +298,7 @@ func TestCommitStyleIsImmediate(t *testing.T) {
 	// nothing at all. Triggering it from REST is another matter — see the delivery
 	// report.
 	if !caps.Has("ConfigUndoJournal") {
-		t.Error("RouterOS's undo journal is observed readable: /system/history carries "+
+		t.Error("RouterOS's undo journal is observed readable: /system/history carries " +
 			"`undoable: true` and the inverse command in plain text")
 	}
 	// 20 sessions observed on `/ip/service`, versus 5 on an Instant On.
@@ -330,8 +330,8 @@ func TestSNMPv3NotAdvertisedUntilWriteIsProven(t *testing.T) {
 	var v string
 	for _, v = range caps.SNMPVersions {
 		if v == "v3" {
-			t.Error("v3 must not be advertised until a write has been proven: provisioning "+
-				"would generate a label and secret placement might refuse, and an identifier "+
+			t.Error("v3 must not be advertised until a write has been proven: provisioning " +
+				"would generate a label and secret placement might refuse, and an identifier " +
 				"that exists in the database and nowhere else is worse than a missing one")
 		}
 	}
@@ -352,8 +352,8 @@ func TestSNMPv3NotAdvertisedUntilWriteIsProven(t *testing.T) {
 	// REVISABLE after the write campaign.
 	var snmp = fixtureOne(t, "snmp.json")
 	if snmp.Get("engine-id") == "" {
-		t.Error("the capture must carry an engine-id: that is proof the v3 machinery "+
-			"exists on this firmware, and therefore that this declaration is provisional "+
+		t.Error("the capture must carry an engine-id: that is proof the v3 machinery " +
+			"exists on this firmware, and therefore that this declaration is provisional " +
 			"and not final")
 	}
 	var community = fixture(t, "snmp_community.json")[0]
@@ -377,7 +377,7 @@ func TestResetProcedureNotPresentedAsVerified(t *testing.T) {
 	var reset = (&Driver{}).ResetProcedure(referenceModel)
 
 	if reset.Confirmed {
-		t.Error("no reset was executed on this hardware: parameters are observed, the "+
+		t.Error("no reset was executed on this hardware: parameters are observed, the " +
 			"sequence is documentary")
 	}
 	// The source must distinguish the two, otherwise `Confirmed: false` is a mystery.

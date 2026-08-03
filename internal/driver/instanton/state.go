@@ -2,6 +2,7 @@ package instanton
 
 import (
 	"context"
+	"meshcraft/internal/driver"
 	"regexp"
 	"sort"
 	"strconv"
@@ -98,9 +99,9 @@ func (a *Admin) ReadState(ctx context.Context) (State, error) {
 		a.step(false, "reading link state", err.Error())
 		return out, err
 	}
-	out.LinkUp = linksFromPortList(resp.Body, prefix)
+	out.Links = driver.LinksFromUp(linksFromPortList(resp.Body, prefix))
 	a.step(true, "link state read",
-		strconv.Itoa(len(out.LinkUp))+" port(s) with link")
+		strconv.Itoa(len(out.LinkUp()))+" port(s) with link")
 	return out, nil
 }
 

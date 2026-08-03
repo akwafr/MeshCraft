@@ -360,8 +360,8 @@ func TestUnPortEpargneNEstPasReconfigureAMoitie(t *testing.T) {
 		t.Errorf("le port epargne ne doit recevoir AUCUNE write, pas same une "+
 			"appartenance : %+v", plan.Changes)
 	}
-	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0], "NON TAGGED") {
-		t.Fatalf("un seul refus, celui du natif : %v", plan.Skipped)
+	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0], "UNTAGGED") {
+		t.Fatalf("a single refusal, the native one: %v", plan.Skipped)
 	}
 }
 

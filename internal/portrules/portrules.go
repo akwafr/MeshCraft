@@ -58,6 +58,11 @@ type Port struct {
 	// PoE is the port's CAPABILITY, not the intent placed on it.
 	PoE   bool   `json:"poe_cap"`
 	Speed string `json:"speed"`
+	// Display is what the operator should READ: the hardware's silkscreen
+	// number when the connector declares one, otherwise the same as Name. Name
+	// itself must stay the standard-model value — it is what travels back to
+	// the apply endpoint.
+	Display string `json:"display"`
 }
 
 // portGroupJSON is a facade block as `devices.port_groups` stores it.
@@ -73,6 +78,8 @@ type portGroupJSON struct {
 	Speed  string `json:"speed"`
 	PoE    bool   `json:"poe"`
 	Label  string `json:"label"`
+	// Silk is the hardware's silkscreen prefix, display-only (cf. driver.FaceplateReader).
+	Silk string `json:"silk"`
 }
 
 // Expand unfolds the facade into ports, in the order the device presents them.
@@ -109,12 +116,19 @@ func Expand(raw json.RawMessage) []Port {
 		var media = mediaOf(g.Prefix, g.Label, g.Speed)
 		var i int
 		for i = 0; i < g.Count; i++ {
+			var n = from + i
+			var name = g.Prefix + strconv.Itoa(n)
+			var display = name
+			if g.Silk != "" {
+				display = g.Silk + strconv.Itoa(n)
+			}
 			out = append(out, Port{
-				Name:  g.Prefix + strconv.Itoa(from+i),
-				Group: label,
-				Media: media,
-				PoE:   g.PoE,
-				Speed: g.Speed,
+				Name:    name,
+				Group:   label,
+				Media:   media,
+				PoE:     g.PoE,
+				Speed:   g.Speed,
+				Display: display,
 			})
 		}
 	}

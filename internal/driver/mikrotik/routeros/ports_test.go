@@ -121,7 +121,7 @@ func TestNoFilteringNoteWhenBridgeDoesNotFilter(t *testing.T) {
 // TestTrunkNeverGetsAdmitOnlyVLANTagged — the most important refusal in ports.go, and it
 // does not come from the device.
 //
-// `admit-only-vlan-tagged` is what a « clean » trunk should carry. It is INEXPRESSIBLE in
+// `admit-only-vlan-tagged` is what a 'clean' trunk should carry. It is INEXPRESSIBLE in
 // meshcraft's model: a trunk ALWAYS has a native VLAN — when intent does not designate one,
 // `recon.ParsePorts` puts VLAN 1, and that is a project rule — and a native VLAN means that
 // traffic enters and leaves WITHOUT a tag. Writing `admit-only-vlan-tagged` would therefore
@@ -472,13 +472,13 @@ func TestHardwareOffloadSignaledOnlyWhenPartiallyLost(t *testing.T) {
 // When the address is carried by the bridge itself, administration arrives UNTAGGED and the
 // VLAN concerned is the bridge PVID. Deduction looked in `Ports[BridgeName]` — yet the bridge
 // is never a `/interface/bridge/port` record, so that map never contains its name. MgmtVLAN
-// stayed at 0, and placement refused to write « unknown management VLAN » on exactly the most
+// stayed at 0, and placement refused to write 'unknown management VLAN' on exactly the most
 // common case: a RouterOS out of the box.
 func TestUntaggedAdministrationOnBridgeRecognized(t *testing.T) {
 	var bridges = fixture(t, "interface_bridge.json")
 	var pvid, ok = bridges[0].Int("pvid")
 	if !ok || pvid != 1 {
-		t.Fatalf("prerequisite: `/interface/bridge` serves `pvid` (observed \u00ab 1 \u00bb); "+
+		t.Fatalf("prerequisite: `/interface/bridge` serves `pvid` (observed '1'); "+
 			"got %d, readable=%t", pvid, ok)
 	}
 
@@ -498,7 +498,7 @@ func TestUntaggedAdministrationOnBridgeRecognized(t *testing.T) {
 			"deduction, placement refuses to write on every factory device", st.MgmtVLAN)
 	}
 	if st.MgmtInterface != "bridge" {
-		t.Errorf("management interface = %q, expected \u00ab bridge \u00bb", st.MgmtInterface)
+		t.Errorf("management interface = %q, expected 'bridge'", st.MgmtInterface)
 	}
 }
 
@@ -555,7 +555,7 @@ func TestVLANDroppedByPlanEntersLoop(t *testing.T) {
 	}
 }
 
-// TestResolvedAllYieldsStaleTaggedVLAN: resolved « all » is an exact site set —
+// TestResolvedAllYieldsStaleTaggedVLAN: resolved 'all' is an exact site set —
 // tagged VLANs the site no longer declares become stale and apply removes them.
 func TestResolvedAllYieldsStaleTaggedVLAN(t *testing.T) {
 	var st = stateFromFixtures(t)
@@ -586,7 +586,7 @@ func TestResolvedAllYieldsStaleTaggedVLAN(t *testing.T) {
 	}
 }
 
-// TestUnresolvedAllYieldsNoStaleTaggedVLAN: unresolved « all » must not strip
+// TestUnresolvedAllYieldsNoStaleTaggedVLAN: unresolved 'all' must not strip
 // tagged membership until the site plan resolves.
 func TestUnresolvedAllYieldsNoStaleTaggedVLAN(t *testing.T) {
 	var st = stateFromFixtures(t)
@@ -598,7 +598,7 @@ func TestUnresolvedAllYieldsNoStaleTaggedVLAN(t *testing.T) {
 	var desired = map[string]PortState{
 		"sfp-sfpplus2": {Mode: "trunk", PVID: 1, Tagged: []int{99}, TaggedAtLeast: true},
 	}
-	// `managed` carries the port, `managedTagged` does not: unresolved « all ».
+	// `managed` carries the port, `managedTagged` does not: unresolved 'all'.
 	var got = withStaleVLANs(membershipFor(desired), st,
 		map[string]bool{"sfp-sfpplus2": true}, map[string]bool{})
 
@@ -607,17 +607,17 @@ func TestUnresolvedAllYieldsNoStaleTaggedVLAN(t *testing.T) {
 	for _, m = range got {
 		vlans = append(vlans, m.VLAN)
 	}
-	// 50 is stale — it is UNTAGGED. 60 and 70 are tagged on an unresolved « all »
+	// 50 is stale — it is UNTAGGED. 60 and 70 are tagged on an unresolved 'all'
 	// port: untouchable until the site plan resolves.
 	if !reflect.DeepEqual(vlans, []int{1, 50, 99}) {
 		t.Errorf("VLANs visited = %v, expected [1 50 99]: tagged VLANs on unresolved "+
-			"\u00ab all \u00bb are never held stale, its untagged one is", vlans)
+			"'all' are never held stale, its untagged one is", vlans)
 	}
 }
 
-// TestUnmanagedPortHasNoStaleVLAN: « absent = unmanaged ».
+// TestUnmanagedPortHasNoStaleVLAN: 'absent = unmanaged'.
 //
-// meshcraft does not claim ownership of what it never placed. A port left « free » in the plan
+// meshcraft does not claim ownership of what it never placed. A port left 'free' in the plan
 // must trigger NO removal, or first placement would erase configuration an operator made by hand.
 func TestUnmanagedPortHasNoStaleVLAN(t *testing.T) {
 	var st = stateFromFixtures(t)

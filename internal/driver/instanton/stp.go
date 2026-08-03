@@ -23,6 +23,26 @@ var _ driver.SpanningTreeReader = (*Admin)(nil)
 // (STPOperationMode: 0=STP, 2=RSTP, 3=MSTP). STP carries bridge identity and
 // the CST InterfaceList. RSTP carries rapid-protocol port extras.
 const (
+	// sectionMSTP: the MST region. OBSERVED on hardware (1930 JL685A,
+	// InstantOn_1930_3.4.0.0, 2026-08-02), read back as:
+	//
+	//	<MSTP type="section">
+	//	  <regionName>88:25:10:17:61:a7</regionName>
+	//	  <revisionNo>0</revisionNo>
+	//	  <maxHops>20</maxHops>
+	//	  <ISTMasterString>32768-88:25:10:17:61:a7</ISTMasterString>
+	//	  <InstanceList><InstanceEntry></InstanceEntry></InstanceList>
+	//	</MSTP>
+	//
+	// THE DEFAULT regionName IS THE BRIDGE MAC, and that is the whole reason this
+	// section matters: a device left at its default is in a region of its own,
+	// because 802.1s decides membership on name + revision + the VLAN-to-instance
+	// digest, and no two bridges share a MAC. Switching a fleet to `mstp` without
+	// writing a region produces N regions, which interoperate over the CST and
+	// therefore look like they work — until a port blocks somewhere nobody
+	// expected (cf. driver.MSTRegion).
+	sectionMSTP = "MSTP"
+
 	sectionSTPGlobalParam = "SpanningTreeGlobalParam"
 	sectionSTP            = "STP"
 	sectionRSTP           = "RSTP"
@@ -68,6 +88,17 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 		out.BridgeID = fmt.Sprintf("%d-%s", out.BridgePriority, strings.ToLower(addr))
 	} else {
 		out.BridgeID = xmlFieldAny(stpBody, "bridgeID", "BridgeIdentifier")
+	}
+
+	// The MST region, when the device is in MSTP mode. Read back because a region
+	// that does not match its neighbours is invisible any other way: 802.1s
+	// handles a mismatch by silently treating the neighbour as an ordinary RSTP
+	// bridge, so comparing intent with observation is the only place it shows.
+	if out.Mode == "mstp" {
+		var mstBody, mstErr = a.RawSection(ctx, sectionMSTP)
+		if mstErr == nil {
+			out.Region = parseIonRegion(mstBody)
+		}
 	}
 
 	var root = sectionOf(stpBody, "DesignatedRoot")
@@ -399,4 +430,39 @@ func normalizePortState(s string) string {
 		return driver.STPRoleDisabled
 	}
 	return ""
+}
+
+// parseIonRegion reads the MST region out of the `MSTP` section.
+//
+// The instance map is NOT filled in, and that is a statement rather than a gap:
+// the field shape of `InstanceEntry` has not been observed. Every 1930 surveyed
+// so far serves an EMPTY `<InstanceEntry></InstanceEntry>`, which names the
+// element and reveals nothing about what belongs inside it. Guessing the children
+// would produce this platform's signature failure — statusCode 0, no change, no
+// message — and a region that silently disagrees on the digest is worse than one
+// openly missing, because the first still looks configured.
+//
+// Name and revision ARE read, and they are two thirds of what decides membership.
+func parseIonRegion(body string) driver.MSTRegion {
+	var section = sectionOf(body, "MSTP")
+	if section == "" {
+		section = body
+	}
+	return driver.MSTRegion{
+		Name:     xmlFieldAny(section, "regionName"),
+		Revision: xmlInt(section, "revisionNo"),
+	}
+}
+
+// IonRegionIsDefault reports whether the region name is the platform default —
+// the bridge MAC — which means "this device is in a region of its own".
+//
+// Exported for the caller that has to SAY so: a switch in MSTP mode with a
+// default region reads as configured on every screen, and is not.
+func IonRegionIsDefault(region driver.MSTRegion, bridgeMAC string) bool {
+	var name = normalizeBridgeID(region.Name)
+	if name == "" {
+		return true
+	}
+	return name == normalizeBridgeID(bridgeMAC)
 }

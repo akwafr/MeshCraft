@@ -36,30 +36,31 @@ type Admin struct {
 	web  *driver.WebSession
 	host string
 	// Steps is the transcript, in order. Rendered by the `Transcript` method of
-	// contract, which bears this name precisely so that this FIELD can keep the
-	// sien (cf. contract.go) — les tests de ce paquet et la couche API le lisent.
+	// the contract, which bears this name precisely so that this FIELD can keep
+	// its own name (cf. contract.go) — this package's tests and the API layer
+	// read it.
 	Steps []Step
 	// page is the URL of the last page read: form actions there
 	// are relative, under a session prefix `/csNNNNNNNN/`.
 	page string
 	// User is the account actually used to enter.
 	User string
-	// accepted is the candidate that the equipment has ACCEPTED, as supplied.
+	// accepted is the candidate that the device ACCEPTED, as supplied.
 	//
-	// Memorized here because it's the only place that knows it firsthand:
-	// `Login` holds it at the moment when the equipment responds yes. Before, the caller
-	// reconstructed by searching the transcript in search of a step whose
-	// wording starts with “connected in” — therefore depending on a written sentence
-	// for a human, which one day someone would rephrase. That day, the pose
-	// d'identifiant cassait sans un bruit (cf. Admin.Accepted dans contract.go).
+	// Memorized here because this is the only place that knows it firsthand:
+	// `Login` sets it the moment the device says yes. Before, the caller
+	// reconstructed it by searching the transcript for a step whose wording
+	// starts with "logged in as" — thus depending on a sentence written for a
+	// human, which someone would one day rephrase. That day, identity
+	// application broke silently (cf. Admin.Accepted in contract.go).
 	accepted Candidate
-	// prefix is ​​the port naming prefix on the front of THIS equipment
-	// (“GE”), kept during construction.
+	// prefix is the port-naming prefix on THIS device's faceplate
+	// ("GE"), captured at construction.
 	//
-	// On the session, and not passed on each reading: two calls from the same session
-	// which would receive two different prefixes would write to different ports
-	// believing we are talking about the same things. Empty, `portPrefix` applies the default
-	// range rather than writing blindly.
+	// On the session, not passed on each call: two calls on the same session
+	// given two different prefixes would write to different ports while
+	// believing they refer to the same ones. When empty, `portPrefix` falls
+	// back to the range default rather than writing blindly.
 	prefix string
 	// notedEncryption avoids repeating the same transcript line each time.
 	notedEncryption bool
@@ -68,19 +69,20 @@ type Admin struct {
 	State string
 }
 
-// defaultPortPrefix is ​​the facade prefix of the entire 1930 range: its ports
-// are called “GE1” to “GE52”, optical cages included (they continue the
-// copper numbering).
+// defaultPortPrefix is the faceplate prefix for the whole 1930 range: its
+// ports are named "GE1" through "GE52", optical cages included (they continue
+// the copper numbering).
 //
-// Serves as a default when the caller has not said anything — which happens on equipment
-// whose facade is not yet in base. This is exactly what the
-// API layer (`portPrefix`), and the value is here so that the connector does not write
-// never blindly: without a prefix, “GE12” would not translate into any index of
-// port, and a wrong index is a write to the wrong port, thus a broken client.
+// Serves as a default when the caller has said nothing — which happens for a
+// device not yet in the inventory. This mirrors what the API layer does
+// (`portPrefix`), and the value lives here so the connector never writes
+// blindly: without a prefix, "GE12" would not translate to any port index,
+// and a wrong index means writing to the wrong port — i.e., cutting off a
+// customer.
 const defaultPortPrefix = "GE"
 
-// portPrefix makes the prefix to use for translating meshcraft port names
-// in equipment interface numbers.
+// portPrefix returns the prefix to use when translating meshcraft port names
+// into device interface numbers.
 func (a *Admin) portPrefix() string {
 	if a.prefix == "" {
 		return defaultPortPrefix
@@ -92,37 +94,39 @@ func (a *Admin) step(ok bool, what string, detail ...string) {
 	a.Steps = append(a.Steps, Step{What: what, Detail: strings.Join(detail, " "), OK: ok})
 }
 
-// OpenAdmin ouvre une session vers l'interface classique.
+// OpenAdmin opens a session to the classic interface.
 //
-// WITHOUT PORT PREFIX: a session constructed here falls back on the default of the
-// range (“GE”, cf. portPrefix), which is correct for all known models —
-// their facades are numbered “GE1” to “GE52”, and it is this package itself which
-// describes them as follows (see portGroups). A caller who holds a prefix raised in base
-// doit passer par [Driver1930.Authenticate], qui le porte dans son [driver.Target] :
-// it is the only path that guarantees that reading and pose speak of the same
-// ports que l'inventaire.
+// WITHOUT A PORT PREFIX: a session built here falls back to the range default
+// ("GE", cf. portPrefix), which is correct for all known models — their
+// faceplates are numbered "GE1" to "GE52", and this same package describes
+// them that way (see portGroups). A caller holding a prefix raised from the
+// inventory must go through [Driver1930.Authenticate], which carries it in
+// its [driver.Target]: that is the only path that guarantees reads and writes
+// refer to the same ports as the inventory.
 func OpenAdmin(host string, d driver.Dialer) *Admin {
 	return &Admin{web: driver.NewWebSession("https://"+host, d, 0), host: host}
 }
 
-// Candidate, the type of a secret to try, is now that of the contract
-// (`driver.Candidate`), by ALIAS: cf. contract.go. Its fields are the same, and
-// l'ordre vient toujours de l'appelant (cf. store.SecretsForDevice) — le connecteur
-// doesn't decide what a piece of gear probably carries, it applies it.
+// Candidate, the type of a secret to try, is now the contract's
+// (`driver.Candidate`), by ALIAS: cf. contract.go. Its fields are the same,
+// and the order still comes from the caller (cf. store.SecretsForDevice) —
+// the connector doesn't decide what a piece of gear probably carries, it
+// applies it.
 
-// Login tries the credentials IN ORDER and stops at the first one that enters.
+// Login tries the credentials IN ORDER and stops at the first one that
+// succeeds.
 //
-// The order is that of the appellant. Try the most recent password
-// first would fail on any equipment left behind — and on an interface
-// which only accepts 5 sessions, trials are expensive.
+// The order is the caller's. Trying the most recent password first would
+// fail on any device that has fallen behind — and on an interface that
+// accepts only 5 sessions, attempts are expensive.
 //
-// The mechanism is NOT a form POST, contrary to what leaves
-// croire le `<form>` de la page : celui-ci n'est jamais soumis. Le bouton appelle
-// un `formSubmit()` qui interroge `/device/wcd?{EncryptionSetting}`, chiffre les
-// identifiers with the RSA key of the equipment, and does a GET on
-// `system.xml?action=login&cred=<hex>`. Poster le formulaire tel quel renvoie un
-// 404 — this is the first trap in this range, and it costs an hour for anyone who does not
-// lit pas le JavaScript de la page.
+// The mechanism is NOT a form POST, contrary to what the page's `<form>`
+// suggests: it is never submitted. The button calls a `formSubmit()` that
+// queries `/device/wcd?{EncryptionSetting}`, encrypts the credentials with
+// the device's RSA key, and does a GET on
+// `system.xml?action=login&cred=<hex>`. Posting the form as-is returns a
+// 404 — this is the first trap in this range, and it costs an hour for
+// anyone who does not read the page's JavaScript.
 func (a *Admin) Login(ctx context.Context, cands []Candidate) error {
 	var resp, err = a.web.Get(ctx, "/")
 	if err != nil {
@@ -133,16 +137,15 @@ func (a *Admin) Login(ctx context.Context, cands []Candidate) error {
 	a.step(true, "home page read", fmt.Sprintf("HTTP %d — %s", resp.Status, resp.URL))
 
 	// The login URL is relative to the DIRECTORY of the login page
-	// (`/csNNNNNNNN/hpe/config/`), not at the root: the session prefix does
-	// partie du chemin attendu.
+	// (`/csNNNNNNNN/hpe/config/`), not the root: the session prefix is part
+	// of the expected path.
 	var loginBase = dirOf(a.page) + "system.xml?action=login&"
 
 	var c Candidate
 	for _, c = range cands {
-		// The connection token is reread BEFORE EACH TEST: the equipment
-		// renews, and playing it again causes the decryption to fail (code 12) — this
-		// which looks like a key problem when it is a
-		// protection contre le rejeu.
+		// The login token is reread BEFORE EACH ATTEMPT: the device renews
+		// it, and reusing an old one makes decryption fail (code 12) — which
+		// looks like a key problem when it is actually replay protection.
 		var enc, encErr = a.encryptionSetting(ctx)
 		if encErr != nil {
 			return encErr
@@ -163,9 +166,10 @@ func (a *Admin) Login(ctx context.Context, cands []Candidate) error {
 		if authenticated(code) {
 			a.page = r.URL
 			a.User = c.Username
-			// The accepted candidate is selected HERE, in the only place that knows them well.
-			// first hand. This is what `Accepted()` makes, and what exempts
-			// the appellant to reconstruct it by rereading the wording of the transcript.
+			// The accepted candidate is captured HERE, the only place that
+			// knows it firsthand. This is what feeds `Accepted()`, and what
+			// spares the caller from reconstructing it by re-reading the
+			// transcript's wording.
 			a.accepted = c
 			a.State = loginState(code)
 			a.step(true, fmt.Sprintf("logged in as %q", c.Username),
@@ -174,8 +178,8 @@ func (a *Admin) Login(ctx context.Context, cands []Candidate) error {
 		}
 		a.step(false, fmt.Sprintf("refused for %q (%s)", c.Username, c.Why),
 			fmt.Sprintf("HTTP %d — code %q : %s", r.Status, code, loginError(code)))
-		// « Trop de sessions » n'est pas un mauvais mot de passe : insister ne
-		// ferait qu'aggraver la saturation d'une interface qui n'en accepte que cinq.
+		// "Too many sessions" is not a bad password: retrying would only
+		// worsen the saturation of an interface that accepts only five.
 		if code == "5" {
 			return fmt.Errorf("%s", loginError(code))
 		}
@@ -183,8 +187,8 @@ func (a *Admin) Login(ctx context.Context, cands []Candidate) error {
 	return fmt.Errorf("no credential accepted (%d attempt(s))", len(cands))
 }
 
-// encryptionSetting is what the device says about its own encryption
-// identifiants.
+// encryptionSetting is what the device says about its own credential
+// encryption.
 type encryptionSetting struct {
 	Enabled bool
 	Key     *rsa.PublicKey
@@ -232,14 +236,15 @@ func (e encryptionSetting) loginQuery(user, secret string) (string, error) {
 	if !e.Enabled {
 		return payload + "&", nil
 	}
-	// OBSERVED on a real 1930 (firmware 3.4.0.0): when the encryption is
-	// active, an EMPTY password results in a code 12 (“problem of
-	// encryption"), encrypted as in plain text. Factory account without password
-	// is therefore not usable through this door: equipment freshly delivered
-	// to zero is handled by the provisioning UI (port 4443), which is
-	// exactly there for that.
-	// L'ordre des champs et l'esperluette finale reproduisent EXACTEMENT ce que
-	// encrypts the interface: the decrypted message is compared as is.
+	// OBSERVED on real hardware (1930, firmware 3.4.0.0): when encryption
+	// is active, an EMPTY password produces a code 12 ("encryption
+	// problem"), whether encrypted or sent in plain text. The factory
+	// account with no password is therefore unusable through this door: a
+	// device fresh out of the box is handled by the provisioning UI (port
+	// 4443), which exists exactly for that.
+	//
+	// The field order and the trailing ampersand reproduce EXACTLY what the
+	// interface encrypts: the decrypted message is compared as-is.
 	var clear = payload + "&token=" + e.Token + "&"
 	var ct, err = rsa.EncryptPKCS1v15(rand.Reader, e.Key, []byte(clear))
 	if err != nil {
@@ -270,9 +275,9 @@ func parseRSAPublicKey(pemText string) (*rsa.PublicKey, error) {
 	return rsaKey, nil
 }
 
-// escapeURIComponent reproduit `encodeURIComponent`. `url.QueryEscape` ne
-// not suitable: it encodes the space in `+`, which the equipment will reread as a
-// more — a password would be silently altered.
+// escapeURIComponent reproduces `encodeURIComponent`. `url.QueryEscape` is
+// not suitable: it encodes the space as `+`, which the device would read
+// back as a plus sign — a password would be silently altered.
 func escapeURIComponent(s string) string {
 	const safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()"
 	var b strings.Builder
@@ -287,18 +292,18 @@ func escapeURIComponent(s string) string {
 	return b.String()
 }
 
-// authenticated says if a status code is equal to open session.
+// authenticated reports whether a status code means an open session.
 //
 // Major pitfall of this range, discovered the hard way: the login page
-// affiche pour le code 12 le message « Login failed due to Device password
-// encryption problems", while its own `stateChange()` deals with the same 12
-// as a SUCCESSFUL CONNECTION, and that the equipment returns in clear
-// `statusString = "Default user Login"`. Se fier au message d'erreur de l'UI
-// pointed to an encryption breakdown where the factory account came from
-// justement d'ouvrir une session.
+// displays, for code 12, the message "Login failed due to Device password
+// encryption problems", while its own `stateChange()` treats that same 12
+// as a SUCCESSFUL CONNECTION, and the device returns in clear text
+// `statusString = "Default user Login"`. Trusting the UI's error message
+// would have pointed to an encryption failure exactly where the factory
+// account had just opened a session.
 //
-// The codes which are equivalent to open session are those after which `stateChange()`
-// navigue vers `home.htm`.
+// The codes equivalent to an open session are those after which
+// `stateChange()` navigates to `home.htm`.
 func authenticated(code string) bool {
 	switch code {
 	case "0", "9", "10", "12", "13", "14":
@@ -363,9 +368,9 @@ func loginError(code string) string {
 }
 
 // xmlField extracts a field from the device's XML responses. Strict decoding
-// would be cleaner, but these answers mix XML and HTML fragments according to the
-// pages: targeted extraction resists where a complete parser would give up
-// le document entier.
+// would be cleaner, but these answers mix XML and HTML fragments depending on
+// the page: targeted extraction holds up where a full parser would give up
+// on the entire document.
 func xmlField(body, name string) string {
 	var re = regexp.MustCompile(`(?is)<` + regexp.QuoteMeta(name) + `>(.*?)</` +
 		regexp.QuoteMeta(name) + `>`)
@@ -389,57 +394,59 @@ func dirOf(pageURL string) string {
 	return u.Path[:i+1]
 }
 
-// sectionAdminUsers est la section de configuration qui porte les comptes
-// of administration. It is READ and WRITTEN under this name.
+// sectionAdminUsers is the configuration section that carries the
+// administration accounts. It is READ and WRITTEN under this name.
 //
-// A first version of this connector wrote in a section
-// `UpdatePassword`: it does not exist. When questioned, the range responds
+// An earlier version of this connector wrote to a section named
+// `UpdatePassword`: it does not exist. When queried, this range responds
 // `ActionStatus/statusCode = -1` — observed on a 1930 JL685A (firmware
 // 3.4.0.0). This was the root cause of the provisioning failure.
 const sectionAdminUsers = "AdminUserSetting"
 
-// accessLevelRW is the “read/write” privilege level. The value is
-// noted on the equipment itself: `ConnectedUserList` gives `<level>15</level>`
-// pour la session du compte d'administration.
+// accessLevelRW is the "read/write" privilege level. The value is
+// observed on the device itself: `ConnectedUserList` gives
+// `<level>15</level>` for the administration account's session.
 const accessLevelRW = "15"
 
-// SetPassword pose le compte d'administration : nom ET mot de passe.
+// SetPassword sets the administration account: username AND password.
 //
-// This is exactly the gesture of the equipment first access form,
-// noted in its own bundle (`hpe/js/out/mainpage.js`):
+// This is exactly the gesture of the device's first-access form, as
+// observed in its own bundle (`hpe/js/out/mainpage.js`):
 //
 //	post = {AdminUserSetting:{set:{AdminUserList:{AdminUserEntry:{
 //	         userName: …, password: '$'+…, accessLevel: _MODE_RW}}}}}
 //
-// L'interface web de cette gamme est le framework « wcd » de Marvell/RADLAN,
-// shared with the Cisco CBS350 — for which Cisco publishes the emulator, source of
-// three conventions below. You must respect them ALL, otherwise the equipment
-// accept the request without doing anything:
+// This range's web interface is Marvell/RADLAN's "wcd" framework, shared
+// with the Cisco CBS350 — for which Cisco publishes an emulator, the
+// source of the three conventions below. ALL of them must be respected,
+// otherwise the device accepts the request without doing anything:
 //
-//   - the POST URL carries the list of written sections (`wcd?{AdminUserSetting}`).
-//     The dispatcher ONLY knows from this what he must process: without this list,
-//     it responds 200 with an EMPTY body and without `ActionStatus`;
-//   - the body is wrapped in `<?xml …?><DeviceConfiguration>` ;
+//   - the POST URL carries the list of sections being written
+//     (`wcd?{AdminUserSetting}`). This is the ONLY way the dispatcher knows
+//     what to process: without this list, it responds 200 with an EMPTY
+//     body and no `ActionStatus`;
+//   - the body is wrapped in `<?xml …?><DeviceConfiguration>`;
 //   - the action is an ATTRIBUTE of the section element — the dispatcher
-//     literally selects `//*[@action]`. Make it a child element
-//     (`<AdminUserSetting><set>…`) selects nothing, so does nothing.
+//     literally selects `//*[@action]`. Making it a child element
+//     (`<AdminUserSetting><set>…`) selects nothing, so it does nothing.
 //
-// The password is prefixed with a `$` and IN CLEAR, as this form does.
-// RSA encryption with `crypto_!` prefix exists on this range, but it is
-// specific to the account management page; applying it here would fail the
-// laid. Confidentiality therefore relies on TLS and the proxy tunnel.
+// The password is prefixed with a `$` and sent IN CLEAR TEXT, exactly as
+// this form does. RSA encryption with a `crypto_!` prefix exists on this
+// range, but it is specific to the account management page; applying it
+// here would fail silently. Confidentiality therefore relies on TLS and
+// the proxy tunnel.
 //
-// `oldSecret` is not transmitted: the equipment does not request it, the session
-// open is authentic. The setting is retained so that the caller does not have to
-// distinguer cette gamme des autres.
+// `oldSecret` is not sent: the device does not require it, the open
+// session is proof enough. The parameter is kept so the caller does not
+// have to distinguish this range from the others.
 //
-// The device closes the session immediately afterwards (its interface continues with a
-// `gracefulLogout`): this is normal, and this is why the check is done
-// par une NOUVELLE connexion.
+// The device closes the session immediately afterward (its own interface
+// follows up with a `gracefulLogout`): this is normal, and this is why
+// verification is done via a NEW connection.
 //
-// WARNING: writing only affects the CURRENT configuration. Without one
-// explicit backup, a reboot returns the equipment to its factory state —
-// compte `admin` sans mot de passe (cf. Capabilities.Commit).
+// WARNING: writing only affects the CURRENT configuration. Without an
+// explicit save, a reboot returns the device to its factory state — the
+// `admin` account with no password (cf. Capabilities.Commit).
 func (a *Admin) SetPassword(ctx context.Context, user, oldSecret, newSecret string) error {
 	var err = a.writeSection(ctx, sectionAdminUsers, "set",
 		"<AdminUserList>"+adminUserEntry(user, newSecret)+"</AdminUserList>",
@@ -448,22 +455,23 @@ func (a *Admin) SetPassword(ctx context.Context, user, oldSecret, newSecret stri
 		return err
 	}
 
-	// The equipment interface continues with `saveConf()`: we do the same,
-	// otherwise the password would not survive the first reboot. The failure of
-	// la sauvegarde n'annule PAS la pose — le mot de passe est bel et bien en
-	// place, and to claim it is absent would be false. It is recorded in the transcript,
-	// which is the intended channel for what the operator needs to know.
+	// The device's own interface follows up with `saveConf()`: we do the
+	// same, otherwise the password would not survive the first reboot. A
+	// save failure does NOT undo the write — the password is indeed in
+	// place, and claiming otherwise would be false. It is recorded in the
+	// transcript, which is the proper channel for what the operator needs
+	// to know.
 	a.SaveConfig(ctx) //nolint:errcheck // logged in the transcript, non-blocking
 	return nil
 }
 
 // adminUserEntry renders an account entry. The password is prefixed with a
-// `$`: this is the marker by which the equipment recognizes a secret IN CLEAR.
-// He accepts two others, noted in his bundle and not to be confused -
-// `#` announces a footprint already calculated (it is in this form that
-// the equipment MAKES the passwords it stores), and `crypto_!` a secret
-// encrypted in RSA. The marker is placed OUTSIDE the exhaust: it is part
-// du protocole, pas du secret.
+// `$`: this is the marker by which the device recognizes a CLEAR-TEXT
+// secret. It accepts two others, noted in its bundle and not to be
+// confused with this one — `#` announces an already-computed hash (this is
+// the form in which the device STORES the passwords it keeps), and
+// `crypto_!` an RSA-encrypted secret. The marker sits OUTSIDE the payload:
+// it is part of the protocol, not of the secret.
 func adminUserEntry(user, secret string) string {
 	return "<AdminUserEntry>" +
 		"<userName>" + xmlEscape(user) + "</userName>" +
@@ -482,9 +490,9 @@ func (a *Admin) writeSection(ctx context.Context, section, action, inner, done s
 		"</" + section + ">" +
 		"</DeviceConfiguration>"
 
-	// Type de contenu `x-www-form-urlencoded`, et non `application/xml` : c'est
-	// what the `$.ajax` of the interface produces, which does not specify
-	// contentType and therefore inherits the jQuery default.
+	// Content type `x-www-form-urlencoded`, not `application/xml`: this is
+	// what the interface's `$.ajax` produces, since it does not specify a
+	// contentType and therefore inherits jQuery's default.
 	var url = a.wcdURL() + "?{" + section + "}"
 	var resp, err = a.web.PostAJAX(ctx, url, body)
 	if err != nil {
@@ -512,11 +520,12 @@ func (a *Admin) writeSection(ctx context.Context, section, action, inner, done s
 // is enough: the response mixes XML and fragments depending on the sections.
 var reUserName = regexp.MustCompile(`(?is)<AdminUserEntry>.*?<userName>(.*?)</userName>`)
 
-// Accounts lists the administration accounts present on the equipment.
+// Accounts lists the administration accounts present on the device.
 //
-// It’s a READING, and it’s what makes account operations safe:
-// knowing what exists before writing avoids adding an account already there (that
-// the equipment would refuse) and to believe that an account which is not deleted is deleted.
+// This is a READ, and it is what makes account operations safe: knowing
+// what already exists before writing avoids adding an account that is
+// already there (which the device would refuse) and mistakenly believing
+// an account was deleted when it was not.
 func (a *Admin) Accounts(ctx context.Context) ([]string, error) {
 	var url = a.wcdURL() + "?{" + sectionAdminUsers + "}"
 	var resp, err = a.web.Get(ctx, url)
@@ -537,10 +546,10 @@ func (a *Admin) Accounts(ctx context.Context) ([]string, error) {
 
 // EnsureAccount ensures that an account named `user` exists and has `secret`.
 //
-// The equipment distinguishes `add` (create) from `set` (modify) and refuses one instead.
-// place de l'autre : on lit donc l'existant pour choisir. C'est aussi ce qui
-// makes the operation replayable — an pose interrupted then resumed does not come up against
-// a half-created account.
+// The device distinguishes `add` (create) from `set` (modify) and refuses
+// one in place of the other: we therefore read the existing accounts to
+// choose. This is also what makes the operation replayable — a write
+// interrupted and then resumed does not run into a half-created account.
 func (a *Admin) EnsureAccount(ctx context.Context, user, secret string) error {
 	var names, err = a.Accounts(ctx)
 	if err != nil {
@@ -562,13 +571,13 @@ func (a *Admin) EnsureAccount(ctx context.Context, user, secret string) error {
 		"<AdminUserList>"+adminUserEntry(user, secret)+"</AdminUserList>", what)
 }
 
-// DeleteAccount retire un compte d'administration.
+// DeleteAccount removes an administration account.
 //
-// DANGEROUS by nature: this range has no SSH, Telnet, or serial port. If the
-// last usable account disappears, the only recourse is the reset button
-// zero, therefore a trip to site. The appellant MUST have proven — by opening
-// une vraie session, pas en lisant un code de retour — qu'un autre compte
-// fonctionne avant d'appeler ceci.
+// DANGEROUS by nature: this range has no SSH, Telnet, or serial port. If
+// the last usable account disappears, the only recourse is the
+// factory-reset button, meaning a site visit. The caller MUST have proven
+// — by opening a real session, not by reading a return code — that
+// another account works before calling this.
 func (a *Admin) DeleteAccount(ctx context.Context, user string) error {
 	if strings.EqualFold(user, a.User) {
 		// Deleting yourself would leave the current session without an owner,
@@ -581,25 +590,25 @@ func (a *Admin) DeleteAccount(ctx context.Context, user string) error {
 		fmt.Sprintf("account %q removed from device", user))
 }
 
-// SaveConfig recopie la configuration COURANTE dans la configuration de
-// STARTUP. Without it, everything that has just been written disappears in the next
-// reboot: the equipment would revert to the “admin without password” exit
-// factory, which is exactly the trap that provisioning needs to close.
+// SaveConfig copies the CURRENT configuration into the STARTUP
+// configuration. Without it, everything just written disappears on the
+// next reboot: the device would revert to the factory "admin with no
+// password" state, which is exactly the trap provisioning needs to close.
 //
-// This is the gesture of the “Save configuration” button of the interface, noted in
-// `hpe/js/modules.js` :
+// This is the gesture of the interface's "Save configuration" button,
+// observed in `hpe/js/modules.js`:
 //
 //	POST wcd?{file=/hpe/home.htm}{FileCopy}
 //	<FileCopy action="set"><srcLocation>1</srcLocation><srcFileType>2</srcFileType>
 //	  <destLocation>1</destLocation><destFileType>3</destFileType></FileCopy>
 //
-// `srcFileType` 2 designates the current configuration and `destFileType` 3 the
-// startup configuration; `Location` 1 is the equipment flash.
+// `srcFileType` 2 designates the current configuration and `destFileType`
+// 3 the startup configuration; `Location` 1 is the device's flash.
 //
-// PLEASE NOTE for anyone exploring this interface: the `FileCopy` section is not
-// LEGIBLE. Asked to read, it responds `statusCode = -1` — exactly
-// comme une section qui n'existe pas. Une section muette en lecture n'est donc
-// pas une preuve d'absence.
+// NOTE for anyone exploring this interface: the `FileCopy` section is not
+// READABLE. Asked to read it, it responds `statusCode = -1` — exactly
+// like a section that does not exist. A section silent on read is
+// therefore not proof of absence.
 func (a *Admin) SaveConfig(ctx context.Context) error {
 	var body = `<?xml version="1.0" encoding="utf-8"?>` +
 		"<DeviceConfiguration>" +
@@ -628,20 +637,19 @@ func (a *Admin) SaveConfig(ctx context.Context) error {
 	return nil
 }
 
-// wcdURL is the configuration endpoint, under the session prefix. THE
-// READS take it in `?{Section}`; the SCRIPTURES take it POST with
-// le corps XML.
+// wcdURL is the configuration endpoint, under the session prefix. READS
+// take it as `?{Section}`; WRITES take it as POST with the XML body.
 func (a *Admin) wcdURL() string {
 	var dir = dirOf(a.page)
-	// La page de connexion vit dans `…/hpe/config/`, l'endpoint dans `…/hpe/`.
+	// The login page lives under `…/hpe/config/`, the endpoint under `…/hpe/`.
 	dir = strings.TrimSuffix(dir, "config/")
 	return dir + "wcd"
 }
 
-// sessionPrefix extracts the `/csNNNNNNN` prefix that this UI places at the top of
-// all its URLs after connection. Forgetting it systematically returns to the page
-// connection, which looks like an expired session even though it's a URL
-// mal construite.
+// sessionPrefix extracts the `/csNNNNNNN` prefix that this UI places at
+// the front of all its URLs after login. Omitting it systematically
+// bounces back to the login page, which looks like an expired session
+// even though it is actually a malformed URL.
 func sessionPrefix(pageURL string) string {
 	var i = strings.Index(pageURL, "/cs")
 	if i < 0 {
@@ -659,20 +667,20 @@ func sessionPrefix(pageURL string) string {
 	return "/" + seg
 }
 
-// xmlEscape protects body values. The secrets generated by meshcraft
-// are alphanumeric, but a secret entered by an operator is not
-// necessarily — and an unescaped ampersand would break the document without
-// the equipment says why.
+// xmlEscape protects body values. Secrets generated by meshcraft are
+// alphanumeric, but a secret entered by an operator is not necessarily —
+// and an unescaped ampersand would break the document without the device
+// saying why.
 func xmlEscape(s string) string {
 	var r = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;",
 		`"`, "&quot;", "'", "&apos;")
 	return r.Replace(s)
 }
 
-// Get reads a page IN the authenticated session. The session prefix is
-// added if the path does not have one: forgetting it returns you to the page
-// connection, which looks like an expired session even though it's a bad URL
-// construite.
+// Get reads a page WITHIN the authenticated session. The session prefix
+// is added if the path does not already have one: omitting it sends you
+// back to the login page, which looks like an expired session even though
+// it is actually a malformed URL.
 func (a *Admin) Get(ctx context.Context, path string) (*driver.Response, error) {
 	if !strings.HasPrefix(path, "/cs") {
 		path = sessionPrefix(a.page) + path
@@ -695,11 +703,11 @@ func excerpt(s string, n int) string {
 	return s
 }
 
-// Note adds to the transcript what a path responded to. Used for focusing
-// of a connector: recognize the correct URL among several candidates without
-// ouvrir une session par essai.
+// Note adds to the transcript what a path responded with. Used to focus
+// a connector: recognize the correct URL among several candidates without
+// opening a session per attempt.
 func (a *Admin) Note(path string, status int, body string) {
 	a.step(status == 200 && strings.Contains(body, "<"),
 		"response from "+path,
-		fmt.Sprintf("HTTP %d, %d octets : %s", status, len(body), excerpt(body, 200)))
+		fmt.Sprintf("HTTP %d, %d bytes: %s", status, len(body), excerpt(body, 200)))
 }

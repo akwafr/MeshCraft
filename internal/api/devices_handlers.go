@@ -318,6 +318,29 @@ func (s *Server) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
 		_ = s.Store.ClearMgmtAddrObserved(r.Context(), updated.ID)
 		updated.MgmtAddrObserved = nil
 		updated.MgmtAddrObservedAt = nil
+		// AND TELL THE PROXIES, or supervision keeps pinging the old address.
+		//
+		// The watch configuration a proxy holds carries the address to ping, and it
+		// is only recomputed when something pushes it. Every OTHER path that moves a
+		// management address already does this — [Server.adoptWrittenMgmtIP] after a
+		// successful jump, the relocation callback, the renumber promotion — and its
+		// comment there names the consequence exactly: "Proxy still had the OLD
+		// address until this push — that was half the 'meshcraft lost the device'
+		// bug after a successful jump."
+		//
+		// This was the other half. A management address corrected BY HAND — which is
+		// what an operator does when an automatic move failed partway — updated the
+		// database, re-tagged, re-provisioned SNMP, and left every proxy pinging an
+		// address the device had abandoned. Nothing recovered it either, because
+		// proxies emit on TRANSITION only (cf. cmd/proxy/monitor.go): having already
+		// concluded "down" at the old address, they had nothing more to say, and the
+		// device stayed red until an unrelated tunnel reconnection happened to
+		// rebuild the instruction.
+		//
+		// Observed on s3900lab, 2026-08-02: address moved 10.99.0.2 → 10.99.0.71, SNMP
+		// provisioning followed the device to the new address and succeeded, while
+		// ICMP watch stayed on the old one and the switch showed offline throughout.
+		s.pushWatchForDevice(updated)
 	}
 	// Identity changed (model, vendor, address, location): exactly what tagging
 	// rules rely on. Re-running here avoids a fleet whose tags describe the old device.
@@ -715,7 +738,7 @@ func collectorLabel(name string) string {
 // checked on a Tuesday. Identifiers would not suffice — a deleted proxy no longer
 // resolves, only its name stays readable.
 func collectorChangeMessage(deviceName, before, after string) string {
-	return "Collecteur de « " + deviceName + " » : " +
+	return "Collector of « " + deviceName + " »: " +
 		collectorLabel(before) + " → " + collectorLabel(after)
 }
 

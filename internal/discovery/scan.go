@@ -6,17 +6,17 @@ import (
 	"time"
 )
 
-// DefaultConcurrency : assez pour balayer un /24 en quelques secondes, assez
-// peu pour ne pas ressembler a une attaque ni saturer un lien lent.
+// DefaultConcurrency: enough to scan a /24 in a few seconds, low enough to
+// not look like an attack or saturate a slow link.
 const DefaultConcurrency = 24
 
-// ScanReport resume un balayage. Les hotes injoignables ne sont pas retournes.
+// ScanReport summarizes a scan. Unreachable hosts are not returned.
 type ScanReport struct {
 	Prefix    string `json:"prefix"`
 	Addresses int    `json:"addresses"`
-	// Scanned / Truncated : la COUVERTURE reelle. Un balayage interrompu par le
-	// temps imparti doit le dire — « 0 device trouve » sur un /16 a half
-	// parcouru n'est pas un result, c'est un malentendu.
+	// Scanned / Truncated: the real COVERAGE. A scan interrupted by the time
+	// budget must say so — "0 devices found" on a /16 that was only half
+	// walked isn't a result, it's a misunderstanding.
 	Scanned   int      `json:"scanned"`
 	Truncated bool     `json:"truncated"`
 	Found     int      `json:"found"`
@@ -24,8 +24,8 @@ type ScanReport struct {
 	Results   []Result `json:"results"`
 }
 
-// ConcurrencyFor adapte le parallelisme a la taille de la plage. Rester poli sur
-// un /24, aller vite sur un /16 — sans jamais ressembler a une attaque.
+// ConcurrencyFor adapts the parallelism to the size of the range. Stay
+// polite on a /24, go fast on a /16 — without ever looking like an attack.
 func ConcurrencyFor(addresses int) int {
 	switch {
 	case addresses > 8192:
@@ -37,11 +37,11 @@ func ConcurrencyFor(addresses int) int {
 	}
 }
 
-// Scan sonde toutes les adresses d'une plage.
+// Scan probes every address in a range.
 //
-// Les essais d'identifiants ne sont tentes que sur les hotes qui exposent SSH,
-// ce que Probe decide lui-same. Le contexte gouverne l'arret : un scan annule
-// renvoie ce qu'il a already trouve.
+// Credential attempts are only made against hosts that expose SSH, which
+// Probe decides on its own. The context governs the stop: a canceled scan
+// returns whatever it has already found.
 func Scan(ctx context.Context, prefix string, creds []Credential, concurrency int, dialer Dialer) (ScanReport, error) {
 	var addrs, err = ExpandPrefix(prefix)
 	if err != nil {

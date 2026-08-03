@@ -6,571 +6,577 @@ import (
 	"fmt"
 )
 
-// Le contrat d'ACCÈS aux équipements : ce que la couche API appelle pour lire,
-// écrire et poser une identité, sans jamais savoir à quelle plateforme elle parle.
+// The device-ACCESS contract: what the API layer calls to read, write, and set an
+// identity, without ever knowing which platform it is talking to.
 //
-// # Pourquoi ce fichier existe
+// # Why this file exists
 //
-// driver.go décrit ce qu'une plateforme SAIT FAIRE (capabilities, fingerprint,
-// procédure de reset). C'est du SAVOIR, et ça suffisait tant qu'un seul connecteur
-// existait : la couche API appelait `instanton.OpenAdmin` en dur, et le savoir ne
-// servait qu'à décider quoi demander. Le jour où un deuxième connecteur est arrivé,
-// ce raccourci est devenu un défaut d'exploitation constaté, pas supposé : deux
-// switchs MikroTik adoptés dans un site ont déclenché une pose SNMP qui a parlé le
-// protocole Instant On à un MikroTik — `https://10.99.0.54/`, connexion refusée
-// (cet équipement n'écoute pas en 443), `snmp.apply_failed` en sévérité 3. Rien n'a
-// été écrit parce que le TCP a échoué. Le geste, lui, était bien parti.
+// driver.go describes what a platform KNOWS HOW TO DO (capabilities, fingerprint,
+// reset procedure). That is KNOWLEDGE, and it was enough as long as a single
+// connector existed: the API layer called `instanton.OpenAdmin` directly, and the
+// knowledge only served to decide what to ask for. The day a second connector
+// arrived, that shortcut turned into an OBSERVED operational fault, not a
+// hypothetical one: two MikroTik switches adopted on a site triggered an SNMP push
+// that spoke the Instant On protocol to a MikroTik — `https://10.99.0.54/`,
+// connection refused (that device does not listen on 443), `snmp.apply_failed` at
+// severity 3. Nothing was written because the TCP connection failed. The write
+// itself, though, had genuinely been sent.
 //
-// Ce fichier est ce qui rend cette faute impossible : il n'y a plus de chemin par
-// lequel la couche API puisse atteindre un équipement sans passer par le connecteur
-// que la découverte a désigné.
+// This file is what makes that fault impossible: there is no longer any path by
+// which the API layer can reach a device without going through the connector that
+// discovery designated.
 //
-// # Le contrat part du BESOIN DE L'APPELANT, pas de l'implémentation historique
+// # The contract starts from the CALLER'S NEED, not the historical implementation
 //
-// Ce qui est décrit ici est ce que la couche API consomme réellement : ouvrir un
-// accès d'administration avec une liste ordonnée de secrets, relire l'état, poser
-// l'appartenance VLAN, poser un secret d'administration, poser une identité SNMP,
-// poser une destination de traps, et rendre un transcript. Rien de plus.
+// What is described here is what the API layer actually consumes: open an
+// administration access with an ordered list of secrets, re-read the state, set VLAN
+// membership, set an administration secret, set an SNMP identity, set a trap
+// destination, and return a transcript. Nothing more.
 //
-// Il ne recopie DÉLIBÉRÉMENT pas la surface d'`instanton` : celle-ci décrit une
-// interface web rejouée comme un navigateur (sections `wcd`, `SaveConfig`,
-// `RawSection`), et un contrat calqué dessus condamnerait RouterOS à mimer une UI
-// qu'il n'a pas. La règle appliquée partout ci-dessous : on nomme le RÉSULTAT
-// attendu, jamais le geste par lequel une plateforme donnée l'obtient.
+// It DELIBERATELY does not copy the surface of `instanton`: that one describes a
+// web interface replayed like a browser (`wcd` sections, `SaveConfig`,
+// `RawSection`), and a contract modeled on it would condemn RouterOS to mimic a UI
+// it doesn't have. The rule applied everywhere below: name the expected RESULT,
+// never the gesture by which a given platform obtains it.
 //
-// # Les trois plateformes n'ont pas la même NATURE, et le contrat le porte
+// # The three platforms do not have the same NATURE, and the contract carries that
 //
-// C'est le piège principal, et il est déjà documenté en tête de
-// internal/driver/mikrotik/swos/admin.go : « Il n'y a PAS de session, et c'est le
-// premier fait à intégrer. » Les trois s'authentifient de trois façons :
+// This is the main trap, and it is already documented at the top of
+// internal/driver/mikrotik/swos/admin.go: "There is NO session, and that is the
+// first fact to internalize." The three authenticate in three different ways:
 //
-//   - Instant On : formulaire (en réalité un GET chiffré en RSA), état conservé dans
-//     un cookie et dans un préfixe d'URL `/csNNNNNNNN/`. Il y a une vraie session, et
-//     l'équipement n'en accepte que CINQ ;
-//   - SwOS : `Authorization: Digest` re-présenté à CHAQUE requête. Aucun état, rien
-//     à ouvrir, rien à fermer ;
-//   - RouterOS : `Authorization: Basic` re-présenté à chaque requête de l'API REST.
-//     Idem.
+//   - Instant On: a form (actually an RSA-encrypted GET), state kept in a cookie
+//     and in a URL prefix `/csNNNNNNNN/`. There is a real session, and the device
+//     only accepts FIVE of them;
+//   - SwOS: `Authorization: Digest` re-presented on EVERY request. No state,
+//     nothing to open, nothing to close;
+//   - RouterOS: `Authorization: Basic` re-presented on every REST API request.
+//     Same thing.
 //
-// Un contrat en deux temps — `Open()` puis `Login()` — forcerait deux connecteurs
-// sur trois à faire semblant : un `Login` qui ne fait rien, ou qui « vérifie » en
-// tapant une page au hasard sans que l'appelant sache que c'est ça qui s'est passé.
-// D'où [Connector.Authenticate], qui est UN SEUL appel : « rends-moi un accès
-// d'administration déjà éprouvé, ou dis-moi pourquoi tu ne peux pas ». Ce que
-// « éprouvé » veut dire est du ressort du connecteur — une session ouverte ici, une
-// lecture authentifiée là — et l'appelant n'a pas à choisir pour lui.
+// A two-step contract — `Open()` then `Login()` — would force two connectors out of
+// three to fake it: a `Login` that does nothing, or that "verifies" by hitting some
+// random page without the caller knowing that's what actually happened. Hence
+// [Connector.Authenticate], which is a SINGLE call: "give me an administration
+// access that has already been proven, or tell me why you can't." What "proven"
+// means is up to the connector — an open session here, an authenticated read
+// there — and the caller does not have to choose on its behalf.
 //
-// Symétriquement, il n'y a PAS de `Close`. Trois raisons, dans l'ordre de force :
-// SwOS et RouterOS n'ont rien à fermer ; le relevé de l'Instant On dit qu'« aucun
-// point de déconnexion n'a été identifié dans les scripts servis » ; et une méthode
-// `Close` laisserait croire qu'appeler `defer close()` libère une des cinq sessions
-// de cette gamme, ce qui est faux. Une promesse fausse sur une ressource rare est
-// pire que pas de promesse.
+// Symmetrically, there is NO `Close`. Three reasons, in order of strength: SwOS and
+// RouterOS have nothing to close; the Instant On survey states that "no
+// disconnection endpoint was identified in the scripts served"; and a `Close`
+// method would suggest that calling `defer close()` frees one of that range's five
+// sessions, which is false. A false promise about a scarce resource is worse than no
+// promise at all.
 //
-// # Où passe la frontière entre OBLIGATOIRE et FACULTATIF
+// # Where the line falls between MANDATORY and OPTIONAL
 //
-// Deux mécanismes coexistent dans ce paquet pour dire « je ne sais pas faire », et
-// ils ne servent pas au même cas. La règle est mécanique :
+// Two mechanisms coexist in this package to say "I don't know how to do that," and
+// they don't serve the same case. The rule is mechanical:
 //
-//   - une capacité que toute plateforme de commutation POSSÈDE, mais qu'un
-//     connecteur n'a pas encore codée → méthode du contrat OBLIGATOIRE, qui rend
-//     [ErrNotImplemented]. Tout switch a des ports, des VLAN et un mot de passe
-//     d'administration : l'absence est un manque de NOTRE côté, elle se comble par
-//     une version, et l'appelant n'a rien à décider d'autre que d'afficher l'échec ;
-//   - une capacité qu'une plateforme peut structurellement NE PAS AVOIR → interface
-//     FACULTATIVE séparée, testée par assertion de type. SwOS n'a ni compte nommé,
-//     ni destinataire de traps, ni syslog, ni sauvegarde en deux temps : ce ne sont
-//     pas des retards, ce sont des faits de la plateforme.
+//   - a capability that every switching platform HAS, but that a connector hasn't
+//     coded yet → MANDATORY contract method, which returns [ErrNotImplemented].
+//     Every switch has ports, VLANs, and an administration password: the absence is
+//     a gap on OUR side, it gets closed by a release, and the caller has nothing
+//     else to decide besides displaying the failure;
+//   - a capability that a platform can structurally NOT HAVE → separate OPTIONAL
+//     interface, tested by type assertion. SwOS has no named account, no trap
+//     receiver, no syslog, no two-step save: these are not delays, they are facts
+//     about the platform.
 //
-// Pourquoi cette frontière-là et pas une autre : une assertion de type se fait AVANT
-// que le geste ne commence. L'appelant peut donc refuser proprement, expliquer, et
-// ne pas proposer un bouton qui ne mènera nulle part. `ErrNotImplemented`, lui, ne
-// se découvre qu'en essayant — acceptable pour un manque temporaire, inacceptable
-// pour une absence définitive qu'un écran doit annoncer. C'est l'application directe
-// de la règle du projet : « une capability inconnue est supposée ABSENTE, et une
-// absence se DÉCLARE au lieu de se découvrir sur le terrain ».
+// Why this line and not another: a type assertion happens BEFORE the gesture
+// begins. The caller can therefore refuse cleanly, explain why, and avoid offering a
+// button that leads nowhere. `ErrNotImplemented`, on the other hand, is only
+// discovered by trying — acceptable for a temporary gap, unacceptable for a
+// permanent absence that a screen must announce. This is the direct application of
+// the project rule: "an unknown capability is assumed ABSENT, and an absence is
+// DECLARED instead of being discovered in the field."
 //
-// # Ce que ce contrat ne connaît pas
+// # What this contract does not know about
 //
-// Ni SSH, ni HTTP, ni tunnel : un connecteur reçoit un [Dialer] dont le transport
-// est déjà établi, directement ou à travers un [[Proxy]]. C'est la règle « un seul
-// chemin de code » écrite en tête de driver.go, et elle n'est pas négociable — un
-// connecteur qui ouvrirait sa propre connexion contournerait le proxy, donc la
-// frontière de confidentialité, donc la couverture de sites.
+// No SSH, no HTTP, no tunnel: a connector receives a [Dialer] whose transport is
+// already established, either directly or through a [[Proxy]]. This is the "single
+// code path" rule stated at the top of driver.go, and it is not negotiable — a
+// connector that opened its own connection would bypass the proxy, and therefore
+// the confidentiality boundary, and therefore site coverage.
 
-// Connector est un [Driver] qui sait ATTEINDRE l'équipement, et non seulement le
-// décrire.
+// Connector is a [Driver] that knows how to REACH the device, not merely describe
+// it.
 //
-// La séparation des deux est ce qui ferme la faute rapportée en tête de fichier. Un
-// `Driver` peut exister sans savoir écrire : c'est le cas d'une gamme dont on ne
-// connaît que le fingerprint et les capabilities, ce qui suffit à la RANGER dans
-// l'inventaire. Le jour où la couche API veut ÉCRIRE, l'assertion de type sur
-// `Connector` est le seul chemin — et elle échoue proprement au lieu de tomber par
-// défaut sur le connecteur historique.
+// The separation between the two is what closes the fault reported at the top of
+// this file. A `Driver` can exist without knowing how to write: that's the case for
+// a range whose fingerprint and capabilities are known, which is enough to FILE it
+// in the inventory. The day the API layer wants to WRITE, the type assertion on
+// `Connector` is the only path — and it fails cleanly instead of silently falling
+// back to the historical connector.
 //
-// Le registre continue de rendre des `Driver` (cf. [Get]) : c'est [ConnectorFor] qui
-// fait l'assertion en un seul endroit, avec la phrase qui va avec.
+// The registry keeps returning `Driver` values (cf. [Get]): it is [ConnectorFor]
+// that performs the assertion in a single place, with the matching message.
 type Connector interface {
 	Driver
 
-	// Authenticate rend un accès d'administration ÉPROUVÉ sur cet équipement.
+	// Authenticate returns a PROVEN administration access on this device.
 	//
-	// UN SEUL APPEL, et c'est le point de conception le plus important de ce fichier
-	// (cf. l'en-tête, § sur la nature des plateformes). Le connecteur essaie les
-	// candidats DANS L'ORDRE, s'arrête au premier qui entre, et rend l'accès. Ce que
-	// « entrer » signifie lui appartient : ouvrir une session pour l'Instant On,
-	// réussir une lecture authentifiée pour SwOS et RouterOS.
+	// A SINGLE CALL, and this is the most important design point of this file (cf.
+	// the header, § on the nature of the platforms). The connector tries the
+	// candidates IN ORDER, stops at the first one that gets in, and returns the
+	// access. What "getting in" means belongs to the connector: opening a session
+	// for Instant On, succeeding at an authenticated read for SwOS and RouterOS.
 	//
-	// L'ORDRE VIENT DE L'APPELANT et ne se réordonne pas. Il est calculé par la base
-	// (cf. store.SecretsForCredential et api.buildCandidates) : génération constatée
-	// d'abord, générations en retrait ensuite, compte d'usine en DERNIER. Essayer le
-	// secret le plus récent d'abord échouerait sur tout équipement resté en arrière,
-	// et le compte d'usine en tête échouerait sur tout le parc déjà pris en main.
+	// THE ORDER COMES FROM THE CALLER and is never reordered. It is computed by the
+	// database (cf. store.SecretsForCredential and api.buildCandidates): the
+	// observed generation first, older generations next, the factory account LAST.
+	// Trying the most recent secret first would fail on any device that fell
+	// behind, and putting the factory account first would fail on the whole fleet
+	// already taken over.
 	//
-	// LE NOMBRE D'ESSAIS EST UN BUDGET, pas une commodité : l'appelant le plafonne
-	// déjà à deux par compte (api.triesPerAccount), parce que ces gammes
-	// VERROUILLENT les comptes. Un connecteur ne doit donc JAMAIS rejouer un candidat
-	// de sa propre initiative, ni en fabriquer un « pour voir ». Sur un équipement
-	// sans SSH ni port série, épuiser les essais revient à fermer la seule porte.
+	// THE NUMBER OF ATTEMPTS IS A BUDGET, not a convenience: the caller already caps
+	// it at two per account (api.triesPerAccount), because these ranges LOCK
+	// accounts out. A connector must therefore NEVER replay a candidate on its own
+	// initiative, nor fabricate one "just to see." On a device with neither SSH nor
+	// a serial port, exhausting the attempts amounts to closing the only door.
 	//
-	// Un échec est une erreur ORDINAIRE, pas un état à interpréter : « aucun
-	// identifiant accepté » et « l'équipement ne répond pas » se distinguent par le
-	// message et par le transcript, que l'appelant affiche tel quel.
+	// A failure is an ORDINARY error, not a state to interpret: "no credential
+	// accepted" and "the device is not responding" are distinguished by the message
+	// and by the transcript, which the caller displays as-is.
 	Authenticate(ctx context.Context, tgt Target, cands []Candidate) (Admin, error)
 
-	// WritesExtra dit si ce connecteur pose l'intention nommée, en dehors de
-	// l'appartenance VLAN (cf. recon.ExtraIntents : `poe`, `stp`, `dhcp_snooping`,
+	// WritesExtra reports whether this connector sets the named intent, outside of
+	// VLAN membership (cf. recon.ExtraIntents: `poe`, `stp`, `dhcp_snooping`,
 	// `port_security`).
 	//
-	// Sur le Connector et non sur l'Admin : la réponse ne dépend ni d'une session ni
-	// d'un modèle, et l'appelant en a besoin AVANT de joindre l'équipement — ce que
-	// la plateforme ne sait pas écrire doit être annoncé même quand la pose échoue
-	// (cf. api.unsupportedNotes, qui le relève avant le premier paquet).
+	// On the Connector and not on the Admin: the answer depends neither on a
+	// session nor on a model, and the caller needs it BEFORE reaching the device —
+	// what the platform cannot write must be announced even when the write fails
+	// (cf. api.unsupportedNotes, which reports it before the first packet).
 	//
-	// Faux pour tout ce qui n'est pas explicitement posé. C'est la même règle que
-	// partout : ce qui n'est pas déclaré est absent, et une capacité qui MENT est
-	// pire que pas de capacité du tout, parce qu'elle donne à l'exploitant une
-	// configuration qu'il croit posée.
+	// False for anything not explicitly set. Same rule as everywhere else: what is
+	// not declared is absent, and a capability that LIES is worse than no
+	// capability at all, because it gives the operator a configuration they believe
+	// is in place.
 	WritesExtra(name string) bool
 }
 
-// Target est l'équipement à joindre, et par où.
+// Target is the device to reach, and how.
 //
-// Un agrégat plutôt que quatre paramètres répétés dans dix signatures : le jour où
-// il faut y ajouter un port non standard ou un schéma, les connecteurs changent une
-// fois et les appelants zéro fois.
+// An aggregate rather than four parameters repeated across ten signatures: the day
+// a non-standard port or scheme needs to be added, the connectors change once and
+// the callers change zero times.
 type Target struct {
-	// Host est l'adresse d'administration, sans schéma ni port. C'est le connecteur
-	// qui sait comment sa plateforme s'atteint : `https://` sur 443 pour l'Instant
-	// On, `http://` sur 80 pour SwOS (qui n'écoute QUE là), `http://` pour l'API REST
-	// de RouterOS (dont le 443 est fermé faute de certificat d'usine). L'appelant ne
-	// doit surtout pas en décider — c'est très exactement la faute rapportée en tête
-	// de ce fichier.
+	// Host is the administration address, without scheme or port. It is the
+	// connector that knows how its platform is reached: `https://` on 443 for
+	// Instant On, `http://` on 80 for SwOS (which listens ONLY there), `http://` for
+	// RouterOS's REST API (whose 443 is closed for lack of a factory certificate).
+	// The caller must NOT decide this — that is precisely the fault reported at the
+	// top of this file.
 	Host string
-	// Dialer est le transport DÉJÀ ÉTABLI : direct, ou à travers le tunnel d'un
-	// proxy. Nul vaut « depuis cette machine », ce que seul le proxy « Local »
-	// justifie.
+	// Dialer is the ALREADY ESTABLISHED transport: direct, or through a proxy
+	// tunnel. Nil means "from this machine," which only the "Local" proxy
+	// justifies.
 	Dialer Dialer
-	// Model est le modèle tel que l'inventaire le connaît. Sert au connecteur à
-	// choisir entre deux comportements d'une même gamme ; il ne le DEVINE jamais
-	// quand le champ est vide.
+	// Model is the model as the inventory knows it. Used by the connector to choose
+	// between two behaviors of the same range; it never GUESSES it when the field
+	// is empty.
 	Model string
-	// PortPrefix est le préfixe de nommage des ports du modèle standard pour cet
-	// équipement (« GE »), tel que ses groupes de façade le portent.
+	// PortPrefix is the standard-model port-naming prefix for this device ("GE"),
+	// as its faceplate groups carry it.
 	//
-	// À NE PAS PRENDRE POUR UNE VÉRITÉ UNIVERSELLE, et c'est le relevé de RouterOS
-	// qui l'établit : sur cette plateforme les noms meshcraft SONT les noms de
-	// l'équipement (`ether3`, `sfp-sfpplus1`), donc la façade porte PLUSIEURS
-	// préfixes et aucun ne résume l'équipement. Un connecteur qui nomme lui-même ses
-	// ports IGNORE ce champ, et c'est le comportement correct — le lire en le prenant
-	// pour le préfixe de tous les ports écrirait sur le mauvais port, ce qui coupe un
-	// client.
+	// DO NOT TREAT AS A UNIVERSAL TRUTH — the RouterOS survey is what establishes
+	// that: on this platform, meshcraft's names ARE the device's names (`ether3`,
+	// `sfp-sfpplus1`), so the faceplate carries SEVERAL prefixes and none of them
+	// summarizes the device. A connector that names its own ports IGNORES this
+	// field, and that is the correct behavior — reading it as if it were the prefix
+	// for all ports would write to the wrong port, which cuts off a customer.
 	//
-	// Les connecteurs qui NUMÉROTENT leurs ports (Instant On, SwOS) en ont besoin :
-	// c'est ce qui traduit « GE12 » en l'index 12 de l'équipement. Vide, ils
-	// appliquent leur propre défaut plutôt que d'écrire à l'aveugle.
+	// Connectors that NUMBER their ports (Instant On, SwOS) need it: it's what
+	// translates "GE12" into the device's index 12. When empty, they apply their
+	// own default rather than writing blindly.
 	PortPrefix string
 }
 
-// Candidate est un secret à essayer, avec la raison de sa position dans l'ordre.
+// Candidate is a secret to try, with the reason for its position in the order.
 //
-// `Why` n'est pas un commentaire : il part au transcript, et c'est lui qui permet à
-// l'exploitant de comprendre APRÈS COUP quel secret a ouvert l'équipement (« la
-// génération 2, constatée » contre « le compte d'usine »). Il est aussi ce qui
-// permet à l'appelant de retrouver le secret accepté sans le redemander à la base.
+// `Why` is not a comment: it goes into the transcript, and it is what lets the
+// operator understand AFTERWARDS which secret opened the device ("generation 2,
+// observed" versus "the factory account"). It is also what lets the caller retrieve
+// the accepted secret without asking the database for it again.
 type Candidate struct {
 	Username string
 	Secret   string
 	Why      string
 }
 
-// Step est une étape de transcript, telle qu'elle sera montrée à l'opérateur.
+// Step is a transcript step, as it will be shown to the operator.
 //
-// COMMUN aux trois connecteurs, et c'était déjà vrai avant ce contrat : les trois
-// avaient recopié la même structure dans leur propre paquet, en écrivant chacun dans
-// son commentaire « même forme que celle du connecteur Instant On, pour que l'API
-// n'ait qu'une façon de présenter une pose ». Trois copies d'un type identique ne
-// tiennent que jusqu'au jour où l'une gagne un champ.
+// COMMON to all three connectors, and this was already true before this contract:
+// all three had copied the same structure into their own package, each writing in
+// its comment "same shape as the Instant On connector's, so the API has only one
+// way to present a write." Three copies of an identical type only hold up until the
+// day one of them gains a field.
 //
-// La migration côté connecteur ne coûte rien : `type Step = driver.Step` (un ALIAS,
-// pas une définition) fait de leur champ `Steps []Step` existant un `[]driver.Step`
-// sans toucher une ligne de leur code. C'est ce que doivent faire les trois.
+// The migration on the connector side costs nothing: `type Step = driver.Step` (an
+// ALIAS, not a new definition) turns their existing `Steps []Step` field into a
+// `[]driver.Step` without touching a single line of their code. That is what all
+// three must do.
 //
-// Les tags JSON sont ceux d'origine, et ce n'est pas un détail : ces étapes sont
-// sérialisées dans la réponse HTTP de chaque pose et lues par le frontend. Les
-// changer casserait l'affichage des transcripts sans qu'aucun test Go ne le voie.
+// The JSON tags are the original ones, and that is not a minor detail: these steps
+// are serialized in the HTTP response of every write and read by the frontend.
+// Changing them would break the transcript display without any Go test noticing.
 type Step struct {
 	What   string `json:"what"`
 	Detail string `json:"detail,omitempty"`
 	OK     bool   `json:"ok"`
 }
 
-// Admin est un accès d'administration ÉPROUVÉ à UN équipement.
+// Admin is a PROVEN administration access to ONE device.
 //
-// « Éprouvé » et non « ouvert » : sur deux des trois plateformes il n'y a rien
-// d'ouvert, seulement des identifiants dont on a constaté qu'ils passent. Le nom
-// évite la promesse qu'un objet à fermer existe (cf. l'en-tête, § sur l'absence de
-// `Close`).
+// "Proven" and not "open": on two of the three platforms there is nothing open,
+// only credentials that have been observed to work. The name avoids promising that
+// there is an object to close (cf. the header, § on the absence of `Close`).
 //
-// Les méthodes de CETTE interface sont celles que toute plateforme de commutation
-// possède : lire son état, poser l'appartenance VLAN de ses ports, changer le secret
-// du compte qui vient d'entrer. Un connecteur qui ne les a pas encore codées rend
-// [ErrNotImplemented] ; il n'a pas le droit de rendre un succès vide, qui laisserait
-// croire à une configuration en place.
+// The methods of THIS interface are the ones every switching platform has: read its
+// state, set the VLAN membership of its ports, change the secret of the account
+// that just got in. A connector that hasn't coded them yet returns
+// [ErrNotImplemented]; it has no right to return an empty success, which would
+// suggest a configuration is in place.
 //
-// Tout ce qu'une plateforme peut structurellement ne PAS avoir vit dans les
-// interfaces facultatives déclarées plus bas, et se teste par assertion de type.
+// Everything a platform can structurally NOT have lives in the optional interfaces
+// declared further below, and is tested by type assertion.
 type Admin interface {
-	// Connector rend l'identité du connecteur qui a produit cet accès.
+	// Connector returns the identity of the connector that produced this access.
 	//
-	// Sert aux MESSAGES, et c'est suffisant pour justifier son existence : « cette
-	// plateforme ne sait pas déclarer de destinataire de traps » n'aide personne si
-	// l'écran ne dit pas de quelle plateforme il parle. Évite aussi à l'appelant de
-	// promener le nom du connecteur en parallèle de l'accès, deux variables qui
-	// finiraient par désigner deux équipements différents.
+	// Serves MESSAGES, and that is reason enough for it to exist: "this platform
+	// cannot declare a trap receiver" helps no one if the screen doesn't say which
+	// platform it's talking about. It also spares the caller from carrying the
+	// connector name alongside the access as a separate variable — two variables
+	// that would eventually end up pointing at two different devices.
 	Connector() Info
 
-	// Account est le compte qui a RÉELLEMENT ouvert l'accès.
+	// Account is the account that ACTUALLY opened the access.
 	//
-	// Pas celui qu'on souhaitait : celui qui a répondu. La différence décide de la
-	// suite du provisionnement — même compte, on change son secret ; compte
-	// différent, c'est un RENOMMAGE, et il faut créer le nouveau avant de retirer
-	// l'ancien (cf. api.handleApplyDeviceCredential).
+	// Not the one that was wanted: the one that answered. The difference decides
+	// the rest of the provisioning — same account, its secret gets changed;
+	// different account, it's a RENAME, and the new one must be created before the
+	// old one is removed (cf. api.handleApplyDeviceCredential).
 	Account() string
 
-	// Accepted est le candidat qui a fonctionné, tel qu'il a été fourni.
+	// Accepted is the candidate that worked, exactly as it was supplied.
 	//
-	// Rendu explicitement parce que l'appelant en a besoin : le secret ACTUEL de
-	// l'équipement est celui qui vient d'entrer, et certaines plateformes le
-	// réclament pour en poser un nouveau (SwOS répond HTTP 405 « Bad old password »).
+	// Returned explicitly because the caller needs it: the device's CURRENT secret
+	// is the one that just got in, and some platforms require it in order to set a
+	// new one (SwOS answers HTTP 405 "Bad old password").
 	//
-	// Le faire rendre par le contrat remplace une reconstitution par le transcript
-	// que la couche API pratiquait jusqu'ici : elle cherchait une étape dont le
-	// libellé commence par « connecté en » puis recroisait `Why` avec la liste des
-	// candidats. Un libellé de transcript est du TEXTE POUR UN HUMAIN — le reformuler
-	// est légitime et sans conséquence apparente, et cassait silencieusement la pose
-	// d'identifiant. Ce genre de couplage n'a pas à survivre au contrat.
+	// Having the contract return it replaces a reconstruction from the transcript
+	// that the API layer used to do: it looked for a step whose label starts with
+	// "connected as" and then cross-referenced `Why` against the candidate list. A
+	// transcript label is TEXT FOR A HUMAN — rewording it is legitimate and looks
+	// harmless, and it silently broke credential provisioning. This kind of
+	// coupling has no business surviving into the contract.
 	//
-	// Vide si aucun candidat n'a servi (cas d'une plateforme qui n'authentifie rien,
-	// qui n'existe pas aujourd'hui).
+	// Empty if no candidate was used (the case of a platform that authenticates
+	// nothing, which does not exist today).
 	Accepted() Candidate
 
-	// Transcript est la trace de tout ce que cet accès a fait, dans l'ordre.
+	// Transcript is the record of everything this access did, in order.
 	//
-	// Pas un confort de développeur : sur un équipement qu'on peut rendre injoignable
-	// en se trompant, et qui n'a ni SSH ni port série, c'est la seule façon de
-	// comprendre un échec sans retourner sur site. Il est rendu à l'opérateur dans la
-	// réponse HTTP ET rattaché au pipeline, ce qui le rend consultable après coup —
-	// c'est-à-dire au moment où on en a besoin.
+	// Not a developer convenience: on a device that can be made unreachable by a
+	// mistake, and that has neither SSH nor a serial port, it is the only way to
+	// understand a failure without going back on site. It is returned to the
+	// operator in the HTTP response AND attached to the pipeline, which makes it
+	// reviewable afterward — that is, at the moment it's actually needed.
 	//
-	// Nommé `Transcript` et non `Steps` pour une raison prosaïque mais qui compte
-	// pour les trois connecteurs : ils exposent tous un CHAMP `Steps`, et un type Go
-	// ne peut pas porter un champ et une méthode du même nom. Ce nom-ci leur permet
-	// d'adopter le contrat par ajout, sans renommer un champ que leurs propres tests
-	// lisent.
+	// Named `Transcript` and not `Steps` for a mundane reason that nonetheless
+	// matters for all three connectors: they all expose a `Steps` FIELD, and a Go
+	// type cannot carry a field and a method with the same name. This name lets
+	// them adopt the contract by addition, without renaming a field their own tests
+	// read.
 	Transcript() []Step
 
-	// ReadState relit l'équipement. LECTURE SEULE : rejouable aussi souvent qu'on
-	// veut, y compris sur un parc en production.
+	// ReadState re-reads the device. READ ONLY: replayable as often as needed,
+	// including on a production fleet.
 	//
-	// C'est l'étape « Read » du pipeline de réconciliation. Sans elle, meshcraft ne
-	// peut pas savoir si ce qu'il croit est ce qui est, et « dérive de
-	// configuration » reste un mot. C'est aussi ce qui autorise à DATER une pose :
-	// rien n'est tenu pour appliqué sur la foi d'un code de retour.
+	// This is the "Read" step of the reconciliation pipeline. Without it, meshcraft
+	// cannot know whether what it believes matches what actually is, and
+	// "configuration drift" remains just a word. It is also what allows a write to
+	// be DATED: nothing is considered applied on the strength of a return code
+	// alone.
 	ReadState(ctx context.Context) (State, error)
 
-	// ApplyPorts pose l'appartenance VLAN des ports.
+	// ApplyPorts sets the VLAN membership of the ports.
 	//
-	// L'opération la plus dangereuse du produit sur deux des trois plateformes :
-	// l'Instant On et SwOS n'ont ni SSH, ni Telnet, ni port série, et une écriture
-	// qui retire le port d'uplink de son VLAN rend l'équipement muet — le seul
-	// recours est un trombone, sur site. RouterOS a une console série et MAC-winbox,
-	// ce qui rend l'erreur récupérable sans la rendre acceptable.
+	// The most dangerous operation in the product on two of the three platforms:
+	// Instant On and SwOS have neither SSH, nor Telnet, nor a serial port, and a
+	// write that removes the uplink port from its VLAN makes the device mute — the
+	// only recourse is a paperclip, on site. RouterOS has a serial console and
+	// MAC-winbox, which makes the mistake recoverable without making it acceptable.
 	//
-	// LES GARDE-FOUS SONT DANS LE CONNECTEUR, pas ici et pas dans l'appelant. C'est
-	// la règle « ne jamais se couper la main » placée là où elle peut être garantie —
-	// celui qui écrit. Le contrat n'impose donc pas COMMENT protéger : il impose
-	// seulement de dire ce qui a été épargné, par [ApplyResult.Skipped]. La règle
-	// diffère réellement d'une plateforme à l'autre, et c'est instructif : sur
-	// l'Instant On on protège le VLAN natif d'un port actif, sur SwOS c'est
-	// l'ÉTIQUETAGE du VLAN de management sur ce port qui ne doit pas changer — la
-	// règle naïve n'y protégeait rien, la session de l'équipement de référence
-	// arrivant taguée sur une cage au VLAN natif 1.
+	// THE SAFEGUARDS LIVE IN THE CONNECTOR, not here and not in the caller. This is
+	// the "never cut off your own hand" rule placed where it can actually be
+	// guaranteed — with whoever does the writing. The contract therefore does not
+	// dictate HOW to protect: it only requires stating what was spared, via
+	// [ApplyResult.Skipped]. The rule genuinely differs from one platform to
+	// another, and that's instructive: on Instant On the native VLAN of an active
+	// port is protected; on SwOS it's the TAGGING of the management VLAN on that
+	// port that must not change — the naive rule protected nothing there, since the
+	// reference device's session arrived tagged on a cage whose native VLAN was 1.
 	//
-	// Une pose ne relit JAMAIS un état en cache : elle relit l'équipement d'abord.
+	// A write NEVER re-reads a cached state: it re-reads the device first.
 	//
-	// LA POSE PERSISTE, quand la plateforme distingue les deux. C'est tranché ici et
-	// non laissé au connecteur, parce que deux connecteurs qui répondraient
-	// différemment produiraient deux comportements que rien à l'écran ne distingue :
-	// une configuration de ports qu'un redémarrage annule est PIRE qu'une pose
-	// refusée, puisqu'elle a été constatée comme réussie. L'appelant n'a donc pas à
-	// appeler [Persister] derrière `ApplyPorts` — et s'il le faisait, ce serait un
-	// aller-retour de plus sur une interface qui n'accepte que cinq sessions.
+	// THE WRITE PERSISTS, when the platform distinguishes the two. This is decided
+	// here and not left to the connector, because two connectors answering
+	// differently would produce two behaviors that nothing on screen would
+	// distinguish: a port configuration that a reboot undoes is WORSE than a
+	// refused write, since it was observed as successful. The caller therefore does
+	// not need to call [Persister] after `ApplyPorts` — and if it did, that would be
+	// one more round trip on an interface that only accepts five sessions.
 	//
-	// L'échec de la persistance n'annule PAS la pose : le changement est en place, et
-	// le prétendre absent serait faux. Il est consigné au transcript.
+	// A persistence failure does NOT cancel the write: the change is genuinely in
+	// place, and claiming otherwise would be false. It is recorded in the
+	// transcript.
 	ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, error)
 
-	// SetSecret change le mot de passe DU COMPTE QUI VIENT D'ENTRER.
+	// SetSecret changes the password OF THE ACCOUNT THAT JUST GOT IN.
 	//
-	// Le compte n'est pas un paramètre, et c'est délibéré : c'est [Admin.Account], et
-	// laisser l'appelant en nommer un autre ouvrirait la porte à « changer le mot de
-	// passe d'un compte auquel on n'a pas prouvé qu'on accède ». Créer ou modifier un
-	// AUTRE compte est un geste distinct, et il vit dans [AccountManager] parce que
-	// toutes les plateformes ne l'ont pas.
+	// The account is not a parameter, and that is deliberate: it is
+	// [Admin.Account], and letting the caller name a different one would open the
+	// door to "change the password of an account we haven't proven we can access."
+	// Creating or modifying ANOTHER account is a distinct gesture, and it lives in
+	// [AccountManager] because not all platforms have it.
 	//
-	// `oldSecret` est transmis même quand la plateforme ne le réclame pas :
-	// l'Instant On l'ignore (la session ouverte fait foi), SwOS en fait la CLÉ RC4 du
-	// condensé qu'il attend et répond HTTP 405 s'il est faux. L'appelant ne doit pas
-	// avoir à distinguer les deux cas — c'est exactement ce que le contrat existe
-	// pour absorber.
+	// `oldSecret` is passed even when the platform doesn't require it: Instant On
+	// ignores it (the open session is proof enough), SwOS turns it into the RC4 key
+	// of the digest it expects and answers HTTP 405 if it's wrong. The caller must
+	// not have to distinguish the two cases — that is exactly what the contract
+	// exists to absorb.
 	//
-	// LA POSE PERSISTE, comme [Admin.ApplyPorts] et pour une raison plus forte
-	// encore : un mot de passe d'administration qui ne survit pas au redémarrage
-	// ramène l'équipement à son compte d'usine sans mot de passe, ce qui est
-	// exactement le piège que le provisionnement existe pour fermer. L'appelant n'a
-	// donc pas à enchaîner sur [Persister].
+	// THE WRITE PERSISTS, like [Admin.ApplyPorts] and for an even stronger reason:
+	// an administration password that does not survive a reboot brings the device
+	// back to its passwordless factory account, which is exactly the trap
+	// provisioning exists to close. The caller therefore does not need to chain a
+	// call to [Persister].
 	//
-	// Ce qui reste à la charge de l'appelant, et qu'aucun connecteur ne peut faire à
-	// sa place : n'enregistrer le nouveau secret en base qu'après avoir CONSTATÉ
-	// qu'il ouvre l'équipement — c'est-à-dire après un second [Connector.Authenticate]
-	// portant ce seul candidat. Un formulaire accepté sans effet est un mode d'échec
-	// observé sur l'Instant On, et une base convaincue d'un succès qui n'a pas eu lieu
-	// coûte un déplacement.
+	// What remains the caller's responsibility, and that no connector can do in its
+	// place: only saving the new secret to the database after having OBSERVED that
+	// it opens the device — that is, after a second [Connector.Authenticate] call
+	// carrying that one candidate. A form accepted without effect is a failure mode
+	// observed on Instant On, and a database convinced of a success that never
+	// happened costs a site visit.
 	SetSecret(ctx context.Context, oldSecret, newSecret string) error
 }
 
-// --- Les capacités FACULTATIVES ---
+// --- OPTIONAL capabilities ---
 //
-// Chacune est une interface séparée, testée par assertion de type. L'appelant peut
-// donc refuser AVANT de commencer et dire quoi, ce qui est la seule façon de ne pas
-// proposer un bouton qui ne mènera nulle part (cf. l'en-tête, § sur la frontière).
+// Each is a separate interface, tested by type assertion. The caller can therefore
+// refuse BEFORE starting and say why, which is the only way to avoid offering a
+// button that leads nowhere (cf. the header, § on the boundary).
 //
-// La convention pour l'appelant : une assertion qui échoue se traduit par
-// [NotSupported], dont le message nomme le connecteur, le geste et la raison. Une
-// seule phrase pour toutes les capacités absentes vaut mieux que huit variantes
-// approximatives.
+// The convention for the caller: a failed assertion is translated into
+// [NotSupported], whose message names the connector, the gesture, and the reason. A
+// single phrasing for every absent capability beats eight approximate variants.
 
-// AccountManager : la plateforme a des COMPTES NOMMÉS.
+// AccountManager: the platform has NAMED ACCOUNTS.
 //
-// FACULTATIF parce que SwOS n'en a pas — pas « pas encore », pas du tout. Le relevé
-// est sans ambiguïté : le formulaire de changement de mot de passe ne porte que trois
-// champs (ancien, nouveau, confirmation), la page qui le reçoit ne contient qu'une
-// clé (`{pwd:”}`), et la sauvegarde de configuration ENTIÈRE de l'équipement ne
-// mentionne aucun nom d'utilisateur. Il n'y a rien à nommer.
+// OPTIONAL because SwOS does not have any — not "not yet," not at all. The survey
+// is unambiguous: the password-change form carries only three fields (old, new,
+// confirmation), the page that receives it contains only one key (`{pwd:""}`), and
+// the device's FULL configuration backup mentions no username at all. There is
+// nothing to name.
 //
-// Conséquence que l'appelant doit tenir : sur une telle plateforme, le nom de compte
-// unifié du parc (`mcadmin`) n'est pas posable, et c'est
-// [AdminAccount.EffectiveUsername] qui le résout en `admin` AVANT toute tentative.
-// L'absence de cette interface est donc le second verrou, pas le premier — si
-// l'appelant se retrouve à vouloir créer un compte sur SwOS, c'est que la capability
-// a été ignorée en amont.
+// Consequence the caller must hold onto: on such a platform, the fleet's unified
+// account name (`mcadmin`) cannot be set, and it is
+// [AdminAccount.EffectiveUsername] that resolves it to `admin` BEFORE any attempt.
+// The absence of this interface is therefore the second lock, not the first — if
+// the caller ends up wanting to create an account on SwOS, it means the capability
+// was ignored upstream.
 //
-// CES GESTES NE PERSISTENT PAS, à la différence de [Admin.SetSecret] — et c'est la
-// seule asymétrie du contrat, donc elle se justifie. Un RENOMMAGE met deux comptes en
-// vol : on crée le nouveau, on prouve qu'il ouvre l'équipement, et on ne retire
-// l'ancien qu'ensuite. Qui persiste quoi et QUAND est alors une décision de
-// séquencement que seul l'appelant peut prendre — entre les deux, une coupure de
-// courant ne doit pas laisser l'équipement avec un seul compte, et pas celui qui a
-// survécu. Un connecteur qui persisterait de son propre chef à chaque écriture
-// retirerait ce choix, et le retirerait en silence.
+// THESE GESTURES DO NOT PERSIST, unlike [Admin.SetSecret] — and this is the
+// contract's only asymmetry, so it needs justifying. A RENAME puts two accounts at
+// risk: the new one is created, proven to open the device, and only then is the old
+// one removed. Who persists what and WHEN is then a sequencing decision only the
+// caller can make — between the two steps, a power outage must not leave the device
+// with a single account, and not the one that survived. A connector that persisted
+// on its own initiative at every write would take away that choice, and take it
+// away silently.
 //
-// L'appelant enchaîne donc lui-même sur [Persister] aux endroits qu'il a choisis.
+// The caller therefore chains its own calls to [Persister] at the points it has
+// chosen.
 type AccountManager interface {
-	// Accounts liste les comptes d'administration présents.
+	// Accounts lists the administration accounts present.
 	//
-	// Une LECTURE, et c'est elle qui rend les écritures de compte sûres : les
-	// plateformes distinguent « créer » de « modifier » et refusent l'une à la place
-	// de l'autre. C'est aussi ce qui rend l'opération rejouable — une pose
-	// interrompue puis reprise ne bute pas sur un compte à moitié créé.
+	// A READ, and it is what makes account writes safe: the platforms distinguish
+	// "create" from "modify" and refuse one in place of the other. It is also what
+	// makes the operation replayable — a write interrupted and resumed doesn't trip
+	// over a half-created account.
 	Accounts(ctx context.Context) ([]string, error)
 
-	// EnsureAccount garantit qu'un compte nommé existe et porte ce secret.
+	// EnsureAccount guarantees that a named account exists and carries this secret.
 	//
-	// Idempotent par construction : le connecteur lit l'existant et choisit lui-même
-	// entre créer et modifier. L'appelant n'a pas à savoir lequel des deux verbes sa
-	// plateforme attend.
+	// Idempotent by construction: the connector reads what exists and chooses
+	// itself between create and modify. The caller does not need to know which of
+	// the two verbs its platform expects.
 	EnsureAccount(ctx context.Context, user, secret string) error
 
-	// DeleteAccount retire un compte d'administration.
+	// DeleteAccount removes an administration account.
 	//
-	// DANGEREUX par nature. L'appelant DOIT avoir prouvé — en obtenant un
-	// [Admin] réel sous le nouveau compte, pas en lisant un code de retour — qu'une
-	// autre porte fonctionne avant d'appeler ceci. Sur une gamme sans SSH ni port
-	// série, supprimer d'abord et vérifier ensuite se paie d'un déplacement.
+	// DANGEROUS by nature. The caller MUST have proven — by obtaining a real
+	// [Admin] under the new account, not by reading a return code — that another
+	// door works before calling this. On a range with neither SSH nor a serial
+	// port, deleting first and verifying afterward costs a site visit.
 	//
-	// Le connecteur refuse de supprimer le compte de l'accès en cours : c'est le seul
-	// garde-fou qu'il puisse porter tout seul.
+	// The connector refuses to delete the account of the access currently in use:
+	// it's the only safeguard it can carry on its own.
 	DeleteAccount(ctx context.Context, user string) error
 }
 
-// Persister : la plateforme distingue APPLIQUER de PERSISTER.
+// Persister: the platform distinguishes APPLYING from PERSISTING.
 //
-// FACULTATIF, et le champ qui décide est déjà dans le contrat :
-// [Capabilities.Commit]. L'appelant ne doit appeler `Persist` que sur
-// [CommitApplyThenSave] — c'est le seul cas où l'omettre perd la configuration au
-// prochain redémarrage, et le seul où l'appeler trop tôt grave une erreur.
+// OPTIONAL, and the field that decides is already in the contract:
+// [Capabilities.Commit]. The caller must only call `Persist` on
+// [CommitApplyThenSave] — that is the only case where omitting it loses the
+// configuration at the next reboot, and the only one where calling it too early
+// bakes in a mistake.
 //
-// Les trois plateformes livrées montrent les deux mondes, et la différence change la
-// stratégie d'écriture entière :
+// The three shipped platforms show both worlds, and the difference changes the
+// entire write strategy:
 //
-//   - Instant On : `apply_then_save`. Un rollback GRATUIT, à condition de s'en
-//     servir dans l'ordre — appliquer, vérifier la joignabilité, PUIS sauver. C'est
-//     ce qui rend la bascule du VLAN de management testable sur du matériel en
-//     service : tant que rien n'est en flash, une coupure d'alimentation annule ;
-//   - SwOS et RouterOS : `immediate`. Rien à sauver, et donc pas de filet non plus.
-//     Sur SwOS, le SEUL retour arrière est la copie de configuration prise AVANT
-//     l'écriture (cf. [ApplyResult.Backup]).
+//   - Instant On: `apply_then_save`. A FREE rollback, provided it's used in
+//     order — apply, verify reachability, THEN save. This is what makes switching
+//     the management VLAN testable on live hardware: as long as nothing is in
+//     flash, a power outage cancels the change;
+//   - SwOS and RouterOS: `immediate`. Nothing to save, and therefore no safety net
+//     either. On SwOS, the ONLY way back is the configuration copy taken BEFORE
+//     the write (cf. [ApplyResult.Backup]).
 //
-// Ne pas implémenter cette interface est donc une INFORMATION, pas un manque.
+// Not implementing this interface is therefore INFORMATION, not a gap.
 type Persister interface {
-	// Persist recopie la configuration courante dans la configuration de démarrage.
+	// Persist copies the running configuration into the startup configuration.
 	//
-	// Son échec n'annule pas ce qui vient d'être écrit — le changement est bel et
-	// bien en place, et le prétendre absent serait faux. Il est consigné au
-	// transcript, qui est le canal prévu pour ce que l'opérateur doit savoir.
+	// Its failure does not cancel what was just written — the change is genuinely
+	// in place, and claiming otherwise would be false. It is recorded in the
+	// transcript, which is the channel meant for what the operator needs to know.
 	Persist(ctx context.Context) error
 }
 
-// SNMPConfigurator : la plateforme a un agent SNMP configurable.
+// SNMPConfigurator: the platform has a configurable SNMP agent.
 //
-// FACULTATIF parce qu'une plateforme peut n'en avoir aucun, et parce que « avoir un
-// agent » ne veut pas dire « savoir poser une identité dessus ». Ce sont deux
-// questions distinctes, et [Capabilities.SNMPVersions] répond à la première : un
-// [Capabilities.SNMPVersions] vide écarte l'équipement en AMONT — `snmpprov.For` ne
-// produit aucun plan supervisé sans version déclarée — donc l'appelant n'a rien à
-// poser, que cette interface soit implémentée ou non.
+// OPTIONAL because a platform can have none at all, and because "having an agent"
+// doesn't mean "knowing how to set an identity on it." These are two distinct
+// questions, and [Capabilities.SNMPVersions] answers the first: an empty
+// [Capabilities.SNMPVersions] rules the device out UPSTREAM — `snmpprov.For`
+// produces no monitored plan without a declared version — so the caller has
+// nothing to set, whether this interface is implemented or not.
 //
-// La présence de cette interface n'est donc pas ce qui décide de poser : c'est
-// [Capabilities.SNMPVersions] qui décide, et l'interface qui exécute. Les deux doivent
-// concorder, et un connecteur qui déclarerait des versions sans implémenter cette
-// interface annoncerait une supervision qu'il ne sait pas mettre en service.
+// The presence of this interface is therefore not what decides whether to set an
+// identity: [Capabilities.SNMPVersions] decides, and the interface executes. The
+// two must agree, and a connector that declared versions without implementing this
+// interface would be advertising monitoring it doesn't know how to turn on.
 //
-// SwOS est le cas qui a éprouvé cette séparation. Sa liste de versions est restée vide
-// longtemps — un agent existait bien (`/snmp.b`, quatre champs), mais aucune requête
-// n'avait jamais obtenu de réponse, donc personne ne savait à quelle version il
-// répondait — tandis que `ApplySNMP` était déjà écrite et éprouvée. Quand le walk du
-// 29 juillet 2026 a répondu, la supervision de cette gamme s'est ouverte en levant UNE
-// ligne de capability, sans rien à coder. Dans l'autre ordre, il aurait fallu annoncer
-// la supervision puis découvrir qu'on ne savait pas la mettre en service.
+// SwOS is the case that tested this separation. Its version list stayed empty for a
+// long time — an agent did exist (`/snmp.b`, four fields), but no request had ever
+// gotten a response, so nobody knew which version it spoke — while `ApplySNMP` was
+// already written and proven. When the walk on July 29, 2026 got a response,
+// monitoring for this range opened up by flipping ONE capability line, with nothing
+// left to code. In the other order, monitoring would have had to be advertised and
+// then discovered to be impossible to turn on.
 type SNMPConfigurator interface {
-	// ApplySNMP pose l'identité SNMP sur l'équipement.
+	// ApplySNMP sets the SNMP identity on the device.
 	//
-	// Le résultat dit ce qui a été fait ET ce qui ne l'a pas été
-	// ([SNMPResult.Skipped]) : un apply partiel présenté comme complet laisserait
-	// croire à une supervision qui n'existe pas.
+	// The result states what was done AND what was not ([SNMPResult.Skipped]): a
+	// partial apply presented as complete would suggest monitoring that doesn't
+	// exist.
 	//
-	// Une identité que la plateforme ne peut pas porter est REFUSÉE, jamais
-	// rapprochée du « plus proche ». Poser MD5 là où l'appelant voulait SHA-256
-	// donnerait une supervision qui marche et une conformité fausse ; poser une
-	// communauté v2c là où on demandait un utilisateur v3 donnerait un secret en
-	// clair sur le réseau que personne n'a choisi.
+	// An identity the platform cannot carry is REFUSED, never rounded to the
+	// "closest" one. Setting MD5 where the caller wanted SHA-256 would give working
+	// monitoring and false compliance; setting a v2c community where a v3 user was
+	// requested would put a secret in the clear on the network that nobody chose.
 	ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, error)
 }
 
-// TrapPusher : la plateforme sait POUSSER des traps vers un collecteur.
+// TrapPusher: the platform can PUSH traps to a collector.
 //
-// FACULTATIF, et SwOS en est la démonstration : `/snmp.b` n'a AUCUN champ de
-// destinataire, dans aucun onglet, ni dans la sauvegarde de configuration complète.
-// Ce n'est pas une page masquée — l'interface web entière d'un SwOS tient en un
-// fichier, et elle ne connaît pas les traps. Un tel équipement se supervise par
-// interrogation : l'information est là, c'est la RÉACTIVITÉ qui manque, et le dire
-// vaut mieux que d'écrire une ligne dans un équipement qui ne s'en servira pas.
+// OPTIONAL, and SwOS is the demonstration: `/snmp.b` has NO receiver field, in any
+// tab, nor in the full configuration backup. This is not a hidden page — a SwOS's
+// entire web interface fits in one file, and it does not know about traps. Such a
+// device is monitored by polling: the information is there, it's the REACTIVITY
+// that's missing, and saying so is better than writing a line into a device that
+// won't use it.
 //
-// La présence de cette interface doit concorder avec
-// [MonitoringCapabilities.Traps] : c'est la même capability qui décide que le proxy
-// ouvre 162/udp. Déclarer l'un sans l'autre écrirait une destination vers un port
-// que personne n'écoute, ou ouvrirait un port que personne n'alimente.
+// The presence of this interface must agree with [MonitoringCapabilities.Traps]:
+// it's the same capability that decides whether the proxy opens 162/udp. Declaring
+// one without the other would write a destination to a port nobody is listening
+// on, or open a port nobody feeds.
 type TrapPusher interface {
-	// ApplyTrapReceiver déclare le collecteur comme destinataire des traps.
+	// ApplyTrapReceiver declares the collector as the trap destination.
 	//
-	// Le connecteur REFUSE si l'agent SNMP est éteint : un destinataire posé sur un
-	// agent muet donne une configuration exacte et un silence total. C'est
-	// [SNMPConfigurator.ApplySNMP] qui allume l'agent, et l'ordre entre les deux
-	// n'est pas négociable.
+	// The connector REFUSES if the SNMP agent is off: a receiver set on a silent
+	// agent gives an exact configuration and total silence. It is
+	// [SNMPConfigurator.ApplySNMP] that turns the agent on, and the order between
+	// the two is not negotiable.
 	//
-	// Aucun destinataire TIERS n'est retiré, même pour faire de la place : couper la
-	// supervision de quelqu'un d'autre pour installer la sienne serait le pire des
-	// services. Une table pleine se SIGNALE.
+	// No THIRD-PARTY receiver is ever removed, even to make room: cutting off
+	// someone else's monitoring to install one's own would be the worst possible
+	// service. A full table is REPORTED, not cleared.
 	//
-	// Et le résultat n'est qu'une PRÉTENTION : la ligne est dans l'équipement, ce qui
-	// ne prouve pas que ses traps arrivent. La preuve est le premier trap reçu, et
-	// elle appartient à l'appelant (cf. api.confirmTrapPath) — un pare-feu, une route
-	// asymétrique ou une ACL sur le VLAN de management suffisent à faire émettre dans
-	// le vide.
+	// And the result is only a CLAIM: the line is in the device, which does not
+	// prove its traps are arriving. The proof is the first trap received, and that
+	// belongs to the caller (cf. api.confirmTrapPath) — a firewall, an asymmetric
+	// route, or an ACL on the management VLAN is enough to make it transmit into
+	// the void.
 	ApplyTrapReceiver(ctx context.Context, want TrapDestination) (TrapResult, error)
 }
 
-// MgmtMover : la plateforme sait déplacer son ADRESSAGE DE MANAGEMENT sous la
-// session qui le commande.
+// MgmtMover: the platform can move its MANAGEMENT ADDRESSING under the very session
+// that is commanding it.
 //
-// FACULTATIF, et le geste le plus dangereux du produit : il déplace l'accès pendant
-// qu'on s'en sert. D'où trois méthodes et non une — la manœuvre se fait en deux
-// temps VÉRIFIABLES, jamais en un saut.
+// OPTIONAL, and the most dangerous gesture in the product: it moves the access
+// while it is being used. Hence three methods and not one — the maneuver happens in
+// two VERIFIABLE steps, never in a single leap.
 //
-// Ce découpage vient du relevé de l'Instant On, qui accepte PLUSIEURS interfaces
-// IPv4 : on ajoute, on constate qu'un bail est arrivé, puis seulement on bascule.
-// Tant que l'ancienne interface est là, l'accès actuel reste ouvert. Une plateforme
-// qui ne saurait pas porter deux adresses ne peut pas implémenter ce contrat en
-// l'état, et c'est la bonne réponse : elle doit alors NE PAS l'implémenter, plutôt
-// que de sauter sans regarder.
+// This split comes from the Instant On survey, which accepts SEVERAL IPv4
+// interfaces: one is added, a lease is observed to have arrived, and only then is
+// the switch made. As long as the old interface is there, the current access stays
+// open. A platform that cannot carry two addresses cannot implement this contract
+// as it stands, and that is the correct response: it must then NOT implement it,
+// rather than leap without looking.
 //
-// LA BASCULE NE PERSISTE PAS, et c'est l'exception qui justifie que [Persister]
-// existe séparément. Tout le reste du contrat persiste ce qu'il pose
-// ([Admin.ApplyPorts], [Admin.SetSecret]) ; ici, NON — tant que rien n'est écrit en
-// flash, une coupure d'alimentation ramène l'équipement à son adressage d'avant, et
-// c'est ce filet qui autorise à tenter la manœuvre sur du matériel en service. Un
-// connecteur qui persisterait au passage retirerait le seul recours de l'opérateur.
+// THE SWITCH DOES NOT PERSIST, and that is the exception that justifies
+// [Persister] existing separately. Everything else in the contract persists what it
+// sets ([Admin.ApplyPorts], [Admin.SetSecret]); here, it does NOT — as long as
+// nothing is written to flash, a power outage brings the device back to its
+// previous addressing, and that safety net is what allows the maneuver to be
+// attempted on live hardware. A connector that persisted along the way would remove
+// the operator's only recourse.
 //
-// La persistance est donc un TROISIÈME geste, à la charge de l'appelant, et il doit
-// exiger d'avoir CONSTATÉ que l'équipement déclare lui-même administrer par le VLAN
-// visé avant de l'appeler : sauver une bascule non vérifiée graverait une erreur.
+// Persistence is therefore a THIRD gesture, the caller's responsibility, and it
+// must require having OBSERVED that the device itself declares it administers
+// through the target VLAN before calling it: saving an unverified switch would bake
+// in a mistake.
 type MgmtMover interface {
-	// PrepareMgmt ajoute un accès d'administration sur le VLAN visé, SANS rien
-	// retirer. L'équipement garde son adresse actuelle et reste joignable pendant
-	// toute l'opération.
+	// PrepareMgmt adds an administration access on the target VLAN, WITHOUT
+	// removing anything. The device keeps its current address and stays reachable
+	// throughout the operation.
 	PrepareMgmt(ctx context.Context, vlanID int) error
 
-	// MgmtAddressed dit si l'accès préparé a OBTENU son adresse, et laquelle.
+	// MgmtAddressed reports whether the prepared access has OBTAINED its address,
+	// and which one.
 	//
-	// C'est le feu vert de la seconde moitié : tant qu'il est rouge, basculer
-	// couperait l'accès sans contrepartie. Une adresse absente n'est pas forcément un
-	// défaut de configuration — sur l'Instant On, une interface DHCP sans bail se lit
-	// à un état distinct, et confondre les deux ferait « corriger » une écriture déjà
-	// juste.
+	// This is the green light for the second half: as long as it's red, switching
+	// over would cut off access with nothing to show for it. A missing address is
+	// not necessarily a configuration defect — on Instant On, a DHCP interface
+	// without a lease reads as a distinct state, and conflating the two would make
+	// this "fix" a write that was already correct.
 	MgmtAddressed(ctx context.Context, vlanID int) (bool, string, error)
 
-	// CommitMgmt déplace l'administration sur le VLAN visé.
+	// CommitMgmt moves administration onto the target VLAN.
 	//
-	// À n'appeler QU'APRÈS un [MgmtMover.MgmtAddressed] favorable. C'est cet appel
-	// qui coupe la session en cours s'il est passé trop tôt.
+	// Only call this AFTER a favorable [MgmtMover.MgmtAddressed]. This is the call
+	// that cuts the current session if invoked too early.
 	//
-	// Le connecteur y fait tout ce que sa plateforme impose dans l'ordre qu'elle
-	// impose — sur l'Instant On, retirer l'interface de répétition parce que
-	// l'équipement refuse un VLAN de management portant déjà une configuration IP. Ce
-	// genre de contrainte d'ORDRE n'a rien à faire chez l'appelant : elle est propre
-	// à la plateforme, et la répartir entre deux paquets garantit qu'un jour l'un
-	// oublie sa moitié.
+	// The connector does here everything its platform requires, in the order it
+	// requires — on Instant On, removing the repeater interface because the device
+	// refuses a management VLAN that already carries an IP configuration. This kind
+	// of ORDERING constraint has no business living with the caller: it is specific
+	// to the platform, and splitting it across two packages guarantees that one day
+	// one of them forgets its half.
 	CommitMgmt(ctx context.Context, vlanID int) error
 }
 
@@ -596,6 +602,65 @@ func AsMgmtJumper(a Admin) (MgmtJumper, bool) {
 	return j, ok
 }
 
+// PortNamer: the connector can translate a port name it OBSERVED (a pasted
+// configuration, a raw read) into the standard-model name it uses everywhere
+// else (State, PortPlan, faceplate groups).
+//
+// OPTIONAL, and it answers a precise need: on platforms that NUMBER their
+// faceplate under one uniform standard scheme ("GE1"... regardless of the
+// device), the REAL hardware name — the one a pasted-configuration import
+// brings into the model — must be re-keyed before it lands in devices.ports,
+// or the same device would carry two different port-name vocabularies
+// depending on whether it was adopted by push or by import.
+//
+// On the Driver, not the Admin: the translation is a PURE function, no device
+// access, useful even before an access session is open.
+type PortNamer interface {
+	Driver
+	// StandardPortName translates a port name AS OBSERVED ON THE PLATFORM
+	// ("ethernet 1/11", "Eth 1/11") into the standard-model name ("GE11").
+	// ok=false when the name falls outside what this connector can cover (an
+	// extra stacking unit, for instance) — the caller then REFUSES that port
+	// rather than renaming it arbitrarily.
+	StandardPortName(deviceName string) (name string, ok bool)
+}
+
+// AsPortNamer returns the driver as a port namer when it is one.
+func AsPortNamer(d Driver) (PortNamer, bool) {
+	var p, ok = d.(PortNamer)
+	return p, ok
+}
+
+// FaceplateReader: the connector can READ the physical faceplate (port groups) on
+// an already open access.
+//
+// OPTIONAL, and it addresses a precise gap: the faceplate (`devices.port_groups`)
+// is only populated AT ADOPTION TIME, from discovery enrichment. A device adopted
+// BEFORE its connector could read the faceplate — or entered by hand — is therefore
+// left with no drawable ports forever, and nothing catches up: ReadState returns the
+// VLAN state of the ports but not the faceplate (cf. [State], which does not carry
+// groups). On an S3900 adopted the day before its connector shipped, this produced
+// a device with zero ports, an LLDP resolution that discarded every neighbor, and
+// an SNMP MaxIfIndex reading of zero.
+//
+// Distinct from [Identifier]: that one opens its own session from candidates
+// (discovery path), this one reads over an access the caller ALREADY holds proven
+// (re-read path). This is what lets the "refresh" button rebuild the faceplate
+// without a second authentication cycle.
+//
+// The shape is the one [Identity.PortGroups] already carries — `prefix`, `count`,
+// `from`, `speed`, `poe`, `label` — so the caller can persist it without
+// translation.
+type FaceplateReader interface {
+	ReadFaceplate(ctx context.Context) ([]map[string]any, error)
+}
+
+// AsFaceplateReader returns the admin as a faceplate reader when it is one.
+func AsFaceplateReader(a Admin) (FaceplateReader, bool) {
+	var r, ok = a.(FaceplateReader)
+	return r, ok
+}
+
 // MgmtStaticOwnerProber learns the platform's static-interface owner value by a
 // temporary write on a NON-management VLAN (lab / bring-up). Instant On–shaped.
 type MgmtStaticOwnerProber interface {
@@ -608,98 +673,99 @@ func AsMgmtStaticOwnerProber(a Admin) (MgmtStaticOwnerProber, bool) {
 	return p, ok
 }
 
-// RawReader : la plateforme sait rendre une unité de configuration TELLE QUELLE.
+// RawReader: the platform can return a configuration unit EXACTLY AS-IS.
 //
-// FACULTATIF, et c'est un outil de RECONNAISSANCE, pas une fonction de produit. Il
-// existe parce que ces interfaces ne sont pas documentées : on ne sait ÉCRIRE une
-// section qu'après avoir vu son jeu de champs réel, et deviner produit le mode
-// d'échec caractéristique de l'Instant On — `statusCode 0`, aucun changement, aucun
-// message.
+// OPTIONAL, and this is a RECONNAISSANCE tool, not a product feature. It exists
+// because these interfaces are undocumented: a section can only be WRITTEN once
+// its actual field set has been seen, and guessing produces Instant On's
+// characteristic failure mode — `statusCode 0`, no change, no message.
 //
-// LECTURE SEULE, et réservé à l'administration globale par l'appelant.
+// READ ONLY, and reserved for global administration by the caller.
 type RawReader interface {
-	// ReadRaw rend le contenu brut de l'unité nommée.
+	// ReadRaw returns the raw content of the named unit.
 	//
-	// Le connecteur NETTOIE le nom avant de s'en servir : il part dans une URL, et
-	// une injection y détournerait la requête vers un autre endpoint de
-	// l'équipement.
+	// The connector SANITIZES the name before using it: it ends up in a URL, and an
+	// injection there would redirect the request to a different endpoint on the
+	// device.
 	ReadRaw(ctx context.Context, unit string) (string, error)
 
-	// RawKind nomme, pour un humain, ce qu'« une unité » veut dire sur cette
-	// plateforme : « section wcd », « page *.b », « menu REST ».
+	// RawKind names, for a human, what "a unit" means on this platform: "wcd
+	// section," "*.b page," "REST menu."
 	//
-	// Sert à l'écran. Sans lui, la sonde de mise au point demanderait un nom de
-	// section `wcd` à quelqu'un qui regarde un MikroTik, et l'échec ressemblerait à
-	// une panne de l'équipement.
+	// Used on screen. Without it, the debugging probe would ask for a `wcd` section
+	// name from someone looking at a MikroTik, and the failure would look like a
+	// device outage.
 	RawKind() string
 }
 
-// Identifier : le connecteur sait dire QUEL équipement répond à une adresse.
+// Identifier: the connector can tell WHICH device answers at an address.
 //
-// FACULTATIF, mais c'est la capacité qui rend la RELOCALISATION possible : quand un
-// équipement change d'adresse, on le reconnaît à son numéro de série, et rien
-// d'autre ne fait foi. Sur le Connector et non sur l'Admin, parce que la quantité
-// d'identifiants nécessaires varie du tout au rien selon la plateforme :
+// OPTIONAL, but it is the capability that makes RELOCATION possible: when a device
+// changes address, it is recognized by its serial number, and nothing else is
+// authoritative. On the Connector and not the Admin, because the amount of
+// credentials needed ranges from none to all, depending on the platform:
 //
-//   - Instant On : AUCUN. La page de connexion porte `sysDescr` et le numéro de
-//     série dans ses champs cachés, et l'UI de provisionnement du port 4443 les sert
-//     en clair sur un équipement neuf ;
-//   - SwOS : le MODÈLE sans identifiant — le realm de son challenge Digest le porte
-//     (`realm="CSS326-24G-2S+"`) —, mais la série et le firmware demandent à entrer ;
-//   - RouterOS : RIEN sans identifiant. L'API REST répond 401 sur toutes ses
-//     ressources, y compris celle qui porte le modèle.
+//   - Instant On: NONE. The login page carries `sysDescr` and the serial number in
+//     its hidden fields, and the provisioning UI on port 4443 serves them in the
+//     clear on a fresh device;
+//   - SwOS: the MODEL without any credential — the realm of its Digest challenge
+//     carries it (`realm="CSS326-24G-2S+"`) — but the serial number and firmware
+//     require logging in;
+//   - RouterOS: NOTHING without a credential. The REST API answers 401 on all of
+//     its resources, including the one that carries the model.
 //
-// D'où des candidats en paramètre, éventuellement vides. Un connecteur qui n'en a
-// pas besoin les ignore ; un connecteur qui en a besoin rend ce qu'il a PU établir
-// EN MÊME TEMPS que la raison de son arrêt — « c'est un CSS326-24G-2S+ dont on n'a
-// pas le mot de passe » est un résultat utile là où « échec » n'en est pas un.
+// Hence candidates as a parameter, possibly empty. A connector that doesn't need
+// them ignores them; a connector that does need them returns whatever it WAS able
+// to establish TOGETHER WITH the reason it stopped — "this is a CSS326-24G-2S+
+// whose password we don't have" is a useful result where "failure" would not be.
 type Identifier interface {
 	Identify(ctx context.Context, tgt Target, cands []Candidate) (Identity, error)
 }
 
-// Onboarder : la plateforme impose un CHOIX DE MODE DE GESTION avant de pouvoir
-// être administrée localement.
+// Onboarder: the platform requires a MANAGEMENT-MODE CHOICE before it can be
+// administered locally.
 //
-// FACULTATIF, et à ce jour propre à une seule gamme : un Instant On sorti d'usine
-// attend le portail cloud du constructeur, et il faut le lui faire abandonner
-// (« Configure Locally ») pour qu'il accepte d'être administré par nous. Ni SwOS ni
-// RouterOS n'ont d'équivalent — ils sont administrables dès le déballage.
+// OPTIONAL, and as of today specific to a single range: an Instant On fresh out of
+// the factory expects the vendor's cloud portal, and it must be made to abandon
+// that ("Configure Locally") before it will accept being administered by us.
+// Neither SwOS nor RouterOS have an equivalent — they are administrable straight
+// out of the box.
 //
-// L'interface existe pour que le REFUS soit une absence de capacité et non une
-// comparaison de chaîne : la couche API testait `driver == "aruba-instant-on-1930"`,
-// ce qui range toute plateforme future du même côté que celles qui n'en ont pas
-// besoin, et ne le dit pas.
+// This interface exists so that the REFUSAL is an absent capability and not a
+// string comparison: the API layer used to test
+// `driver == "aruba-instant-on-1930"`, which lumps any future platform on the same
+// side as those that don't need it, without saying so.
 type Onboarder interface {
-	// Onboard fait basculer l'équipement en administration locale.
+	// Onboard switches the device to local administration.
 	//
-	// ÉCRITURE, et choix DURABLE : sur la gamme connue, seul un retour aux réglages
-	// d'usine le défait. Le connecteur vérifie donc l'état AVANT et relit APRÈS — un
-	// 2xx qui ne change rien est un échec silencieux, et le comparer est la seule
-	// preuve qui existe.
+	// A WRITE, and a LASTING choice: on the known range, only a factory reset
+	// undoes it. The connector therefore checks the state BEFORE and re-reads it
+	// AFTER — a 2xx that changes nothing is a silent failure, and comparing the two
+	// is the only proof that exists.
 	Onboard(ctx context.Context, tgt Target) (OnboardResult, error)
 }
 
-// --- Résoudre un connecteur, et refuser lisiblement ---
+// --- Resolving a connector, and refusing legibly ---
 
-// ConnectorFor rend le connecteur d'un équipement, ou l'explication de son absence.
+// ConnectorFor returns a device's connector, or the explanation for its absence.
 //
-// LE POINT DE PASSAGE OBLIGÉ de la couche API, et la raison d'être de ce fichier :
-// tant que chaque handler appelait `instanton.OpenAdmin` en dur, aucun d'eux ne
-// pouvait se tromper de plateforme — ils se trompaient tous, tout le temps, et ça ne
-// se voyait que sur un parc à un seul constructeur. Un seul endroit qui résout, et
-// trois refus distincts qui se lisent :
+// THE MANDATORY GATEWAY for the API layer, and the reason this file exists: as
+// long as every handler called `instanton.OpenAdmin` directly, none of them could
+// get the platform wrong — they ALL got it wrong, all the time, and it only showed
+// on a fleet with a single vendor. One single place that resolves, and three
+// distinct refusals that can be read at a glance:
 //
-//   - aucun connecteur associé : la découverte n'a pas su ranger cet équipement, ou
-//     il a été saisi à la main. Il n'y a rien à réparer côté meshcraft ;
-//   - connecteur inconnu de ce binaire : la base porte le nom d'un connecteur que
-//     cette version ne contient pas. Symptôme d'un retour en arrière de version, pas
-//     d'un problème d'équipement ;
-//   - connecteur présent mais qui ne sait pas ATTEINDRE la plateforme : meshcraft
-//     sait décrire cette gamme (fingerprint, capabilities) et pas lui parler. Cet
-//     équipement s'inventorie et se supervise, il ne se configure pas.
+//   - no connector associated: discovery failed to file this device, or it was
+//     entered by hand. There is nothing to fix on meshcraft's side;
+//   - connector unknown to this binary: the database carries the name of a
+//     connector this version doesn't contain. A symptom of a version rollback, not
+//     of a device problem;
+//   - connector present but unable to REACH the platform: meshcraft can describe
+//     this range (fingerprint, capabilities) but not talk to it. This device can
+//     be inventoried and monitored, it cannot be configured.
 //
-// Les trois se réparent par des gestes qui n'ont rien à voir entre eux, d'où trois
-// phrases et non une.
+// The three are fixed by gestures that have nothing to do with each other, hence
+// three distinct messages and not one.
 func ConnectorFor(name string) (Connector, error) {
 	if name == "" {
 		return nil, errors.New("no connector is associated with this device: " +
@@ -723,49 +789,48 @@ func ConnectorFor(name string) (Connector, error) {
 	return c, nil
 }
 
-// Unsupported : le connecteur ne porte pas cette capacité.
+// Unsupported: the connector does not carry this capability.
 //
-// Un TYPE et non un message, pour deux raisons. D'abord parce qu'un appelant doit
-// pouvoir le reconnaître : `errors.Is(err, driver.ErrNotImplemented)` répond vrai,
-// ce qui donne UN seul test pour les deux mécanismes du paquet — l'interface
-// facultative absente et la méthode obligatoire pas encore codée. Ensuite parce que
-// les trois champs sont ce qu'un écran doit afficher séparément : ce qui a été
-// demandé, à qui, et pourquoi c'est sans issue.
+// A TYPE and not a message, for two reasons. First because a caller must be able
+// to recognize it: `errors.Is(err, driver.ErrNotImplemented)` answers true, which
+// gives a SINGLE test for the package's two mechanisms — the absent optional
+// interface and the mandatory method not coded yet. Second because the three
+// fields are what a screen must display separately: what was requested, of whom,
+// and why it's a dead end.
 //
-// `Because` est le champ qui fait la valeur de tout ceci, et il ne doit pas être
-// vide. « Non supporté » envoie chercher une case à cocher ; « cette plateforme n'a
-// aucun champ de destinataire de traps, elle se supervise par interrogation »
-// termine la recherche.
+// `Because` is the field that makes all of this worthwhile, and it must not be
+// empty. "Not supported" sends people looking for a checkbox; "this platform has
+// no trap-receiver field at all, it is monitored by polling" ends the search.
 type Unsupported struct {
-	// Connector est le nom du connecteur, tel que [Info.Name] le porte.
+	// Connector is the connector's name, as [Info.Name] carries it.
 	Connector string
-	// Gesture est ce qui a été demandé, nommé comme un exploitant le nommerait —
-	// « déclarer un destinataire de traps », pas « ApplyTrapReceiver ».
+	// Gesture is what was requested, named the way an operator would name it —
+	// "declare a trap receiver," not "ApplyTrapReceiver."
 	Gesture string
-	// Because est la raison, du côté de la PLATEFORME. Elle doit répondre à « y a-t-il
-	// quelque chose à attendre ? ».
+	// Because is the reason, from the PLATFORM's side. It must answer "is there
+	// anything to expect here?".
 	Because string
 }
 
 func (e *Unsupported) Error() string {
-	var out = e.Gesture + " : le connecteur « " + e.Connector + " » ne sait pas le faire"
+	var out = e.Gesture + ": connector \"" + e.Connector + "\" cannot do this"
 	if e.Because != "" {
 		out += " — " + e.Because
 	}
 	return out
 }
 
-// Unwrap rattache ce refus à [ErrNotImplemented] : les deux façons de dire « je ne
-// sais pas faire » se testent alors d'une seule manière chez l'appelant.
+// Unwrap attaches this refusal to [ErrNotImplemented]: the two ways of saying "I
+// don't know how to do that" can then be tested by the caller in a single way.
 func (e *Unsupported) Unwrap() error { return ErrNotImplemented }
 
-// NotSupported construit le refus d'une capacité absente.
+// NotSupported builds the refusal for an absent capability.
 //
-// À utiliser DÈS QU'UNE ASSERTION DE TYPE ÉCHOUE, et avant d'avoir joint
-// l'équipement : c'est tout l'intérêt des interfaces facultatives. Joindre
-// l'équipement pour lui demander quelque chose qu'on sait déjà impossible coûte une
-// session sur une plateforme qui n'en accepte que cinq, et rend un message qui
-// parlera de transport là où le fait est une capacité.
+// Use it AS SOON AS A TYPE ASSERTION FAILS, and before reaching the device: that
+// is the whole point of optional interfaces. Reaching the device to ask for
+// something already known to be impossible costs a session on a platform that only
+// accepts five of them, and produces a message that talks about transport where
+// the fact is really about a capability.
 func NotSupported(connector, gesture, because string) error {
 	return &Unsupported{Connector: connector, Gesture: gesture, Because: because}
 }

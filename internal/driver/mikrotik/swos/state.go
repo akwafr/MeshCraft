@@ -3,6 +3,7 @@ package swos
 import (
 	"context"
 	"fmt"
+	"meshcraft/internal/driver"
 	"sort"
 	"strconv"
 )
@@ -294,13 +295,15 @@ func (a *Admin) stateOf(snap *snapshot) (State, error) {
 		}
 	}
 
-	out.LinkUp, err = linksFrom(snap.link, snap.facade)
+	var upMap map[string]bool
+	upMap, err = linksFrom(snap.link, snap.facade)
+	out.Links = driver.LinksFromUp(upMap)
 	if err != nil {
 		a.step(false, "etat des liens illisible", err.Error())
 		return out, err
 	}
 	a.step(true, "etat des liens lu",
-		fmt.Sprintf("%d port(s) avec lien", len(out.LinkUp)))
+		fmt.Sprintf("%d port(s) avec lien", len(out.LinkUp())))
 
 	// L'ETIQUETTE LOCALE D'UN PORT, quand elle differe du nom de front panel. Meme nature
 	// que les notes ci-dessus — une phrase a afficher, aucune decision a en tirer — et

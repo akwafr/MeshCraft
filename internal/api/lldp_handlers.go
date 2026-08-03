@@ -111,6 +111,28 @@ func (s *Server) handleProxyLLDP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// IDENTITY PROOF, before anything is stored about the neighborhood.
+	//
+	// This snapshot arrives from the device's DECLARED COLLECTOR — `authorityPoll`
+	// above guarantees it — and carries the MIB-II identity the agent serves. If
+	// it matches the vendor and model in the inventory, this proxy has proven it
+	// is polling the right equipment, and its reachability verdict outranks every
+	// unconfirmed one (cf. reachability.go, and migration 0035 for the outage that
+	// made this necessary).
+	//
+	// Best-effort by design. A device whose agent serves no MIB-II, or whose model
+	// was never recorded, simply stays unconfirmed and falls under the OR rule —
+	// failing to confirm must never cost a snapshot that is otherwise good.
+	var why, confirmed = matchSNMPIdentity(d.Vendor, d.Model,
+		in.Report.SysDescr, in.Report.SysObjectID)
+	if confirmed {
+		var cErr = s.Store.ConfirmProxyIdentity(r.Context(), d.ID, in.ProxyID, why)
+		if cErr != nil {
+			slog.Warn("identity confirmation not recorded", "device_id", d.ID,
+				"proxy_id", in.ProxyID, "err", cErr.Error())
+		}
+	}
+
 	var self, neighbors, dropped = lldpRowsFor(d, in.Report)
 	if err = s.Store.ReplaceLLDP(r.Context(), self, neighbors); err != nil {
 		// An error reaches the proxy, as on the metrics path — but with no replay

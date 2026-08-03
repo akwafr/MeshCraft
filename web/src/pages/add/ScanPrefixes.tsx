@@ -189,7 +189,7 @@ export default function ScanPrefixes() {
               <input
                 value={prefix}
                 onChange={(e) => setPrefix(e.target.value)}
-                placeholder="10.0.10.0/24 ou 2001:db8::/120"
+                placeholder="10.0.10.0/24 or 2001:db8::/120"
               />
             </Field>
           </div>

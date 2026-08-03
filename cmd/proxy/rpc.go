@@ -15,46 +15,47 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Repondre aux questions ponctuelles du controleur : la half PROXY de
+// Answering the controller's one-off questions: the PROXY half of
 // tunnel.OpAsk.
 //
-// Les deux questions du contrat n'ont qu'une raison d'be commune, et elle
-// justifie a elle seule le mecanisme : ces faits ne sont connaissables QUE d'ici.
-// SNMP est de l'UDP et le tunnel ne relaie que du TCP — il n'y a rien a relayer ;
-// et la table de routage qui choisit une adresse source est celle de CE noyau, pas
-// une deduction que le controleur pourrait faire depuis un inventaire d'adresses.
+// The two questions in the contract share only one reason for being grouped
+// together, and it alone justifies the mechanism: these facts are knowable
+// ONLY from here. SNMP is UDP and the tunnel only relays TCP — there is
+// nothing to relay; and the routing table that picks a source address is
+// THIS kernel's, not something the controller could deduce from an address
+// inventory.
 //
-// Trois rules gouvernent ce fichier.
+// Three rules govern this file.
 //
-//  1. LECTURE SEULE, definitivement. Il n'existe pas de question write dans
-//     le contrat et il n'en existera pas : la configuration passe par les
-//     connecteurs, qui ont leurs garde-fous (plan, dry-run, relecture). Rien ici
-//     n'est prepare « pour plus tard » — une extension write demanderait
-//     d'abord de refaire ce raisonnement.
-//  2. RIEN DE SECRET DANS LES JOURNAUX. AskRequest.Community est un secret
-//     d'operation, comme pour les connecteurs : il ne sort jamais dans un
-//     slog, pas same en DEBUG, et pas plus dans le texte d'une erreur — le champ
-//     Err d'une response remonte jusqu'a the UI d'un exploitant et jusqu'aux
-//     journaux du controleur.
-//  3. TOUT EST BORNE, et par le proxy. Le nombre de lignes comme l'attente : la
-//     question vient d'ailleurs, la memory est ici.
+//  1. READ-ONLY, permanently. There is no write question in the contract
+//     and there won't be one: configuration goes through the connectors,
+//     which have their own guard rails (plan, dry-run, review). Nothing here
+//     is prepared "for later" — a write extension would first require
+//     redoing this reasoning.
+//  2. NOTHING SECRET IN THE LOGS. AskRequest.Community is an operational
+//     secret, same as for connectors: it never appears in a slog call, not
+//     even at DEBUG, and no more so in the text of an error — a response's
+//     Err field travels all the way up to an operator's UI and to the
+//     controller's logs.
+//  3. EVERYTHING IS BOUNDED, and by the proxy. Both the row count and the
+//     wait: the question comes from elsewhere, the memory is here.
 //
-// A noter, sur ce que ce fichier NE verifies pas : l'allowlist de dial
-// (MESHCRAFT_DIAL_ALLOW) ne s'applique pas au walk. Elle borne le RELAI TCP, seul
-// chemin par lequel le controleur fait circuler du trafic arbitraire ; une lecture
-// SNMP part exactement comme un poll ordinaire ou un balayage de plage, qui ne la
-// consultent pas non plus. Deux rules differentes pour joindre le same
-// device finiraient par autoriser sa supervision tout en refusant son
-// diagnostic.
+// Worth noting, about what this file does NOT check: the dial allowlist
+// (MESHCRAFT_DIAL_ALLOW) does not apply to the walk. It bounds the TCP
+// RELAY, the only path through which the controller routes arbitrary
+// traffic; an SNMP read behaves exactly like an ordinary poll or a range
+// sweep, neither of which consults it either. Two different rules for
+// reaching the same device would end up allowing its monitoring while
+// refusing its diagnosis.
 
-// handleAsk aiguille une question. C'est la fonction cablee dans le tunnel
-// (cf. cmd/proxy/tunnel.go).
+// handleAsk dispatches a question. This is the function wired into the
+// tunnel (see cmd/proxy/tunnel.go).
 //
-// Une question INCONNUE rend une Err explicite, jamais un silence : un proxy plus
-// ancien que son controleur est un cas normal dans un parc qu'on met a jour
-// progressivement — c'est same la raison d'be du champ Ask. L'exploitant doit
-// lire « ce proxy ne connait pas cette question » et non « pas de response », qui
-// se confond avec un tunnel coupe.
+// An UNKNOWN question returns an explicit Err, never silence: a proxy older
+// than its controller is a normal case in a fleet being upgraded
+// progressively — that's exactly the reason the Ask field exists. The
+// operator must read "this proxy doesn't know this question", not "no
+// response", which would be confused with a broken tunnel.
 func handleAsk(ctx context.Context, req tunnel.AskRequest) tunnel.AskResponse {
 	switch req.Ask {
 	case tunnel.AskSNMPWalk:
@@ -63,20 +64,20 @@ func handleAsk(ctx context.Context, req tunnel.AskRequest) tunnel.AskResponse {
 		return askSourceAddr(req)
 	}
 	return tunnel.AskResponse{
-		Err: "question inconnue de ce proxy : " + quotedAsk(req.Ask) +
-			" (proxy plus ancien que le controleur ?)",
+		Err: "question unknown to this proxy: " + quotedAsk(req.Ask) +
+			" (proxy older than the controller?)",
 	}
 }
 
-// quotedAsk rend le nom de la question tel qu'on peut le journaliser et
-// l'afficher : entre guillemets, borne, echappe.
+// quotedAsk renders the question's name in a form fit for logging and
+// display: quoted, bounded, escaped.
 //
-// Le nom vient DU FIL. Le recopier tel quel dans une Err mettrait du texte
-// arbitraire — mille caracteres, des retours a la ligne, des sequences
-// d'echappement de terminal — dans un journal et dans une interface.
+// The name comes FROM THE WIRE. Copying it verbatim into an Err would put
+// arbitrary text — a thousand characters, newlines, terminal escape
+// sequences — into a log and into a UI.
 func quotedAsk(ask string) string {
 	if ask == "" {
-		return "(vide)"
+		return "(empty)"
 	}
 	const maxLen = 40
 	if len(ask) > maxLen {
@@ -87,25 +88,26 @@ func quotedAsk(ask string) string {
 
 // --- AskSNMPWalk ---
 
-// askWalker : le strict necessary pour walker. Isole derriere une interface pour
-// la same raison que snmppoll.Client — la partie qui se trompe est la TRADUCTION
-// des PDU, et elle doit se tester sans device ni network.
+// askWalker: the strict minimum needed to walk. Isolated behind an
+// interface for the same reason as snmppoll.Client — the part that gets
+// things wrong is the PDU TRANSLATION, and it must be testable without a
+// device or a network.
 //
-// *snmppoll.Session le satisfait tel quel (cf. dialAskSNMP) : l'interface describes un
-// besoin, elle ne describes pas une implementation locale.
+// *snmppoll.Session satisfies it as-is (see dialAskSNMP): the interface
+// describes a need, it does not describe a local implementation.
 type askWalker interface {
 	BulkWalk(rootOID string, walkFn gosnmp.WalkFunc) error
 	Close() error
 }
 
-// askDial est remplacable par les tests. Nil = SNMP reel.
+// askDial is replaceable by tests. Nil = real SNMP.
 var askDial func(tunnel.AskRequest) (askWalker, error)
 
-// errAskTruncated arrete le walk sur la borne de lignes. Sentinelle INTERNE :
-// atteindre une borne voulue n'est pas un failure, et elle ne sort jamais d'ici.
-var errAskTruncated = errors.New("borne de lignes atteinte")
+// errAskTruncated stops the walk at the row limit. An INTERNAL sentinel:
+// reaching an intended limit is not a failure, and it never escapes this file.
+var errAskTruncated = errors.New("row limit reached")
 
-// askSNMPWalk walke req.OID sur req.IP et rend les lignes lues.
+// askSNMPWalk walks req.OID on req.IP and returns the rows read.
 func askSNMPWalk(ctx context.Context, req tunnel.AskRequest) tunnel.AskResponse {
 	var ip, err = askIP(req.IP)
 	if err != nil {
@@ -121,53 +123,55 @@ func askSNMPWalk(ctx context.Context, req tunnel.AskRequest) tunnel.AskResponse 
 	if dial == nil {
 		dial = dialAskSNMP
 	}
-	// La session part sur l'adresse VALIDEE, pas sur la string brute : ce qui a been
-	// verified et ce qui est joint doivent be la same chose, sans quoi le control
-	// ne control rien.
+	// The session dials the VALIDATED address, not the raw string: what was
+	// verified and what gets contacted must be the same thing, otherwise
+	// the check checks nothing.
 	req.IP = ip
 	var w askWalker
 	w, err = dial(req)
 	if err != nil {
-		return tunnel.AskResponse{Err: "session SNMP vers " + ip + " impossible : " + err.Error()}
+		return tunnel.AskResponse{Err: "could not open SNMP session to " + ip + ": " + err.Error()}
 	}
 	defer w.Close() //nolint:errcheck
 
 	var rows, truncated, walkErr = askRows(ctx, w, oid, askMaxRows(req.MaxRows))
 	var resp = tunnel.AskResponse{Rows: rows, Truncated: truncated}
 	if walkErr != nil {
-		// Les lignes ALREADY lues partent avec l'erreur, elles ne sont pas jetees : sur
-		// un device qui repond puis se tait, « voila les 40 premieres lignes et
-		// voila pourquoi ca s'est stopped » vaut infiniment mieux que rien du tout.
-		resp.Err = "walk interrompu after " + strconv.Itoa(len(rows)) +
-			" ligne(s) : " + walkErr.Error()
+		// The rows ALREADY read go out along with the error, they are not
+		// discarded: for a device that responds and then goes silent, "here
+		// are the first 40 rows and here's why it stopped" is infinitely
+		// better than nothing at all.
+		resp.Err = "walk interrupted after " + strconv.Itoa(len(rows)) +
+			" row(s): " + walkErr.Error()
 	}
-	// Jamais la community — ni ici ni ailleurs (cf. l'en-tete de ce fichier).
-	slog.Debug("question snmp_walk", "ip", ip, "oid", oid,
-		"lignes", len(rows), "tronque", truncated)
+	// Never the community — neither here nor anywhere else (see this file's header).
+	slog.Debug("snmp_walk question", "ip", ip, "oid", oid,
+		"rows", len(rows), "truncated", truncated)
 	return resp
 }
 
-// askRows execute le walk et rend les lignes, le drapeau de troncature et
-// l'erreur eventuelle.
+// askRows runs the walk and returns the rows, the truncation flag, and any
+// error.
 func askRows(ctx context.Context, w askWalker, oid string,
 	maxRows int) ([]tunnel.AskRow, bool, error) {
 	var rows []tunnel.AskRow
 	var truncated bool
 	var err = w.BulkWalk(oid, func(pdu gosnmp.SnmpPDU) error {
-		// Le ctx est verified DANS la fonction de walk : gosnmp n'en prend pas, et
-		// c'est le seul point de reprise entre deux PDU (same motif que le cote
-		// metrique, snmppoll.pollClient.BulkWalk). Sans ca, l'attente accordee par le
-		// controleur ne serait qu'un vœu.
+		// ctx is checked INSIDE the walk callback: gosnmp doesn't take one,
+		// and this is the only point between two PDUs where we can bail out
+		// (same pattern as the metrics side, snmppoll.pollClient.BulkWalk).
+		// Without this, the deadline granted by the controller would just be
+		// a wish.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 		if len(rows) >= maxRows {
-			// La ligne DE TROP n'est pas gardee : elle sert seulement a establish qu'il
-			// en restait. Truncated dit donc exactement « il y avait plus », jamais
-			// « peut-be » — un walk qui tombe pile sur la borne n'est pas flagged
-			// tronque, parce qu'il ne l'est pas.
+			// The ONE ROW TOO MANY isn't kept: it only serves to establish
+			// that there was more. Truncated therefore says exactly "there
+			// was more", never "maybe" — a walk that lands exactly on the
+			// limit is not flagged as truncated, because it isn't.
 			truncated = true
 			return errAskTruncated
 		}
@@ -177,17 +181,18 @@ func askRows(ctx context.Context, w askWalker, oid string,
 	if errors.Is(err, errAskTruncated) {
 		err = nil
 	}
-	// Truncated ne parle QUE de la borne MaxRows, jamais d'un walk coupe par un
-	// timeout ou par un device muet : ces deux-there se disent dans Err, avec leur
-	// cause. Melanger les deux ferait passer une panne pour une response bornee.
+	// Truncated speaks ONLY of the MaxRows limit, never of a walk cut short
+	// by a timeout or a silent device: those two are conveyed in Err, with
+	// their cause. Mixing the two would make an outage look like a bounded
+	// response.
 	return rows, truncated, err
 }
 
-// askMaxRows applique la borne du contrat : default et PLAFOND DUR.
+// askMaxRows applies the contract's limit: default and HARD CEILING.
 //
-// Le plafond ne se observes pas depuis la request. Un walk sous `1.3.6.1` sur un
-// switch rend des dizaines de milliers de lignes : la memory qui les tient est
-// celle du proxy, qui tourne sur une VM minimale ou un Raspberry Pi.
+// The ceiling is never relaxed based on the request. A walk under `1.3.6.1`
+// on a switch returns tens of thousands of rows: the memory holding them
+// belongs to the proxy, which runs on a minimal VM or a Raspberry Pi.
 func askMaxRows(want int) int {
 	if want <= 0 {
 		return tunnel.DefaultAskRows
@@ -198,25 +203,26 @@ func askMaxRows(want int) int {
 	return want
 }
 
-// askRow traduit une PDU en ligne de response.
+// askRow translates a PDU into a response row.
 func askRow(pdu gosnmp.SnmpPDU) tunnel.AskRow {
 	return tunnel.AskRow{
-		// gosnmp prefix les OID d'un point ; le controleur, lui, en envoie sans.
-		// Rendre les deux formes selon la source obligerait l'appelant a normaliser
-		// avant toute comparaison, et il ne le ferait pas partout.
+		// gosnmp prefixes OIDs with a dot; the controller, for its part,
+		// sends them without one. Returning either form depending on the
+		// source would force the caller to normalize before any comparison,
+		// and it wouldn't do so everywhere.
 		OID:   strings.TrimPrefix(pdu.Name, "."),
 		Type:  pduTypeLabel(pdu.Type),
 		Value: pduValueText(pdu),
 	}
 }
 
-// pduTypeLabel nomme un type ASN.1 comme une MIB le nomme.
+// pduTypeLabel names an ASN.1 type the way a MIB would name it.
 //
-// Un exploitant doit pouvoir comprendre ce qu'il lit : « Counter64 » dit qu'une
-// valeur s'interprete en delta et peut boucler, « Gauge32 » qu'elle se lit telle
-// quelle, « TimeTicks » qu'elle compte des hundredths de seconde. Le number de tag
-// ne dit rien de tout ca. Un type inconnu rend son tag en hexadecimal rather
-// qu'un label faux.
+// An operator must be able to understand what they're reading: "Counter64"
+// says a value is interpreted as a delta and can wrap around, "Gauge32" says
+// it reads as-is, "TimeTicks" says it counts hundredths of a second. The
+// numeric tag says none of that. An unknown type renders its tag in
+// hexadecimal rather than a false label.
 func pduTypeLabel(t gosnmp.Asn1BER) string {
 	switch t {
 	case gosnmp.Boolean:
@@ -253,10 +259,10 @@ func pduTypeLabel(t gosnmp.Asn1BER) string {
 		return "OpaqueFloat"
 	case gosnmp.OpaqueDouble:
 		return "OpaqueDouble"
-	// Les trois exceptions de SNMPv2 ne sont pas des valeurs mais des REPONSES :
-	// « cet objet n'existe pas », « cette instance n'existe pas », « fin de vue ».
-	// Les rendre telles quelles est le cœur du diagnostic — c'est exactement ce
-	// qu'on cherche a savoir en demandant un walk.
+	// The three SNMPv2 exceptions aren't values but RESPONSES: "this object
+	// doesn't exist", "this instance doesn't exist", "end of view". Rendering
+	// them as-is is the whole point of the diagnostic — it's exactly what
+	// someone is trying to find out by requesting a walk.
 	case gosnmp.NoSuchObject:
 		return "NoSuchObject"
 	case gosnmp.NoSuchInstance:
@@ -267,30 +273,31 @@ func pduTypeLabel(t gosnmp.Asn1BER) string {
 	return "Type0x" + strconv.FormatUint(uint64(t), 16)
 }
 
-// pduValueText rend la valeur EN TEXTE.
+// pduValueText renders the value AS TEXT.
 //
-// Cette conversion reste ICI et ne rejoint PAS snmppoll, dont la session est
-// now partagee (cf. dialAskSNMP). Ce n'est pas un oubli : snmppoll.toFloat et
-// snmppoll.asString repondent a un autre besoin et doivent y rester. Elles
-// produisent des metriques — un float64, et le REFUS de ce qui n'en est pas un,
-// parce qu'un compteur converti en zero se lirait comme un lien inactif. Le
-// diagnostic, lui, doit rendre TOUT ce que the device a dit, exactement : un
-// Counter64 au-dela de 2⁵³ ne survit pas au float64, six octets d'adresse MAC ne
-// survivent pas a json.Marshal, et « NoSuchObject » est precisely la response
-// qu'on cherchait — there where la metrique doit l'ignorer.
+// This conversion stays HERE and does NOT join snmppoll, whose session is
+// now shared (see dialAskSNMP). This isn't an oversight: snmppoll.toFloat
+// and snmppoll.asString serve a different need and must stay there. They
+// produce metrics — a float64, and the REFUSAL of anything that isn't one,
+// because a counter converted to zero would read as a dead link. The
+// diagnostic, on the other hand, must render EXACTLY everything the device
+// said: a Counter64 beyond 2^53 doesn't survive a float64, six raw bytes of
+// a MAC address don't survive json.Marshal, and "NoSuchObject" is precisely
+// the answer that was being sought — right where the metric path must
+// ignore it.
 //
-// Deux besoins, donc deux conversions, et c'est la CONNEXION qu'il fallait unifier :
-// une convention de connexion written deux fois fait decrire deux devices
-// differents en silence ; deux conversions assumees, chacune flagged par l'autre,
-// ne trompent personne.
+// Two needs, hence two conversions, and it's the CONNECTION that had to be
+// unified: a connection convention written twice ends up silently describing
+// two different devices; two deliberate conversions, each one cross-checking
+// the other, fool no one.
 //
-// C'est la decision du contrat, et elle est structurante : un compteur de 64 bits
-// ne passe pas dans un float sans perte, et c'est precisely sur les compteurs
-// qu'on interroge. `ifHCInOctets` d'un lien charge depasse 2^53 au bout de
-// quelques mois, et un JSON qui l'aurait arrondi ne se voit pas — on lirait un
-// rate faux sans jamais savoir pourquoi. Hence le passage par big.Int
-// (gosnmp.ToBigInt) pour les entiers : exact, quel que soit le type Go que la
-// bibliotheque a choisi.
+// This is the contract's decision, and it's structural: a 64-bit counter
+// doesn't fit into a float without loss, and it's precisely counters that
+// get queried here. `ifHCInOctets` on a busy link exceeds 2^53 within a few
+// months, and a JSON payload that rounded it would show no sign of it — the
+// reader would see a wrong rate with no way to know why. Hence going
+// through big.Int (gosnmp.ToBigInt) for integers: exact, regardless of
+// whichever Go type the library chose.
 func pduValueText(pdu gosnmp.SnmpPDU) string {
 	switch pdu.Type {
 	case gosnmp.Boolean, gosnmp.Integer, gosnmp.Counter32, gosnmp.Gauge32,
@@ -312,12 +319,12 @@ func pduValueText(pdu gosnmp.SnmpPDU) string {
 			return strings.TrimPrefix(s, ".")
 		}
 	case gosnmp.Null, gosnmp.NoSuchObject, gosnmp.NoSuchInstance, gosnmp.EndOfMibView:
-		// Rien a rendre : l'information est ENTIRE dans le type. Fabriquer un
-		// « null » ou un « 0 » textuel se lirait comme une valeur.
+		// Nothing to render: the information is ENTIRELY in the type.
+		// Fabricating a textual "null" or "0" would read as a value.
 		return ""
 	}
-	// OctetString, IPAddress, NsapAddress, Opaque, et tout type inattendu :
-	// gosnmp rend soit des octets, soit une string already mise en forme.
+	// OctetString, IPAddress, NsapAddress, Opaque, and any unexpected type:
+	// gosnmp returns either raw bytes or an already formatted string.
 	if pdu.Value == nil {
 		return ""
 	}
@@ -332,102 +339,109 @@ func pduValueText(pdu gosnmp.SnmpPDU) string {
 	return gosnmp.ToBigInt(pdu.Value).String()
 }
 
-// octetStringText rend un OctetString sans jamais corrompre la response.
+// octetStringText renders an OctetString without ever corrupting the response.
 //
-// L'implementation a MIGRE dans `snmppoll.OctetText`, et ce qui reste ici est la
-// delegation. Le commentaire d'origine expliquait pourquoi cette conversion ne
-// rejoignait pas `snmppoll` — parce que `toFloat` et `asString` repondent a un autre
-// besoin, la metrique, where un compteur converti en zero se lirait comme un lien
-// inactif. Ce raisonnement reste juste et ces deux fonctions y restent separees.
+// The implementation MOVED into `snmppoll.OctetText`, and what remains here
+// is the delegation. The original comment explained why this conversion
+// didn't join `snmppoll` — because `toFloat` and `asString` serve a
+// different need, the metric one, where a counter converted to zero would
+// read as a dead link. That reasoning still holds and those two functions
+// stay separate there.
 //
-// Ce qui a changed, c'est qu'un SECOND appelant est apparu dans `snmppoll` lui-same :
-// la collecte du voisinage LLDP a exactement le same besoin de fidelite que le
-// diagnostic, et sur les memes octets — un `lldpRemChassisId` de six octets bruts. La
-// recopier aurait fait deux implementations d'une same rule, dont la divergence
-// n'aurait produit AUCUNE erreur : un chassis vu par le diagnostic simplement
-// incomparable avec le same chassis vu par la collecte. Le nom local est kept parce
-// que c'est celui que `pduValueText` lit, et parce que les tests de ce paquet
-// verify already la rule sur des octets reels.
+// What changed is that a SECOND caller appeared inside `snmppoll` itself:
+// LLDP neighbor collection has exactly the same fidelity requirement as the
+// diagnostic, and on the same kind of bytes — a `lldpRemChassisId` made of
+// six raw bytes. Duplicating it would have produced two implementations of
+// the same rule, whose divergence would have produced NO error at all: a
+// chassis seen by the diagnostic simply not comparable to the same chassis
+// seen by collection. The local name is kept because it's the one
+// `pduValueText` reads, and because this package's tests already verify the
+// rule against real bytes.
 func octetStringText(b []byte) string {
 	return snmppoll.OctetText(b)
 }
 
-// askOID valide la root a walker.
+// askOID validates the root to walk.
 //
-// La string vient du fil et part vers une bibliotheque network : on verifies
-// nous-memes qu'elle a la forme d'un OID, pour rendre « oid invalide » rather
-// qu'une erreur d'encodage de gosnmp que personne ne saura interpreter. Un OID
-// vide n'est pas remplace par une root par default : walker `1.3` parce que la
-// request was incomplete produirait des dizaines de milliers de lignes que
-// personne n'a demandees.
+// The string comes from the wire and heads into a networking library: we
+// check ourselves that it has the shape of an OID, so as to return "invalid
+// oid" rather than a gosnmp encoding error that nobody will be able to
+// interpret. An empty OID is not replaced by a default root: walking `1.3`
+// because the request was incomplete would produce tens of thousands of
+// rows that nobody asked for.
 func askOID(oid string) (string, error) {
-	// Le point de tete est accepted et retire : les deux notations circulent (gosnmp
-	// rend « .1.3.6… », les MIB s'write « 1.3.6… ») et refuser l'une des deux
-	// serait un trap gratuit.
+	// The leading dot is accepted and stripped: both notations circulate
+	// (gosnmp returns ".1.3.6...", MIBs are written "1.3.6...") and refusing
+	// one of the two would be a gratuitous trap.
 	var clean = strings.TrimPrefix(strings.TrimSpace(oid), ".")
 	if clean == "" {
-		return "", errors.New("oid manquant : il n'y a pas de root par default a walker")
+		return "", errors.New("missing oid: there is no default root to walk")
 	}
 	var seg string
 	for _, seg = range strings.Split(clean, ".") {
-		// Un segment est un entier non signe sur 32 bits, et sa notation est UNIQUE :
-		// « 1.00.3 » designe le same objet que « 1.0.3 » mais ne se compare pas au
-		// same texte, donc on le refuse au lieu de le laisser semer la confusion.
+		// A segment is an unsigned 32-bit integer, and its notation is
+		// UNIQUE: "1.00.3" designates the same object as "1.0.3" but doesn't
+		// compare equal as text, so it's refused instead of being left to
+		// sow confusion.
 		var _, err = strconv.ParseUint(seg, 10, 32)
 		if err != nil || (len(seg) > 1 && seg[0] == '0') {
-			return "", errors.New("oid invalide : " + strconv.Quote(clean))
+			return "", errors.New("invalid oid: " + strconv.Quote(clean))
 		}
 	}
 	return clean, nil
 }
 
-// askIP valide the device vise.
+// askIP validates the targeted device.
 //
-// Une ADRESSE, jamais un nom : le contrat en fait une adresse (le proxy ne connait
-// pas les identifiants du controleur), et laisser passer un nom ferait resoudre du
-// DNS sur une string arbitraire venue du fil. Unmap ramene une forme « ::ffff:… »
-// a sa notation v4, pour que le texte rendu soit comparable a celui de
-// l'inventaire.
+// An ADDRESS, never a name: the contract makes it an address (the proxy
+// doesn't know the controller's identifiers), and letting a name through
+// would resolve DNS against an arbitrary string coming off the wire. Unmap
+// brings a "::ffff:..." form back to its v4 notation, so the rendered text
+// is comparable to the inventory's.
 func askIP(ip string) (string, error) {
 	var addr, err = netip.ParseAddr(strings.TrimSpace(ip))
 	if err != nil {
-		return "", errors.New("adresse d'device invalide : " + strconv.Quote(ip))
+		return "", errors.New("invalid device address: " + strconv.Quote(ip))
 	}
 	return addr.Unmap().String(), nil
 }
 
-// dialAskSNMP ouvre la session SNMP d'une question.
+// dialAskSNMP opens the SNMP session for a question.
 //
-// AUCUNE convention de connexion ici, et c'est tout l'objet de cette fonction :
-// snmppoll.Dial est le SEUL endroit where le projet written comment on joint un
-// device (v2c, timeout 2 s, un seul reessai, community vide = public,
-// port 161). Une question de diagnostic et un poll de supervision doivent decrire
-// le SAME device : si le walk manuel reussissait avec des parameters plus
-// larges que le poll, on conclurait que the device expose des OID que la
-// supervision « perd », alors que c'est la question qui aurait triche.
+// NO connection convention here, and that's the whole point of this
+// function: snmppoll.Dial is the ONLY place where the project writes down
+// how a device is reached (v2c, 2 s timeout, a single retry, empty
+// community = public, port 161). A diagnostic question and a monitoring
+// poll must describe the SAME device: if a manual walk succeeded with wider
+// parameters than the poll, one would conclude that the device exposes OIDs
+// that monitoring is "losing", when in fact it would be the question that
+// cheated.
 //
-// Ces cinq valeurs ont been recopiees ici pendant un lot. La copie n'was pas le
-// danger — son INVISIBILITE l'was : rien n'aurait flagged qu'un timeout observed
-// d'un seul cote faisait decrire deux devices differents, et on aurait cherche
-// la panne dans the device.
+// These five values used to be copied here as a batch. The copy itself
+// wasn't the danger — its INVISIBILITY was: nothing would have flagged that
+// a timeout observed on only one side made the two sides describe different
+// devices, and the outage would have been chased inside the device instead.
 //
-// *snmppoll.Session satisfait askWalker sans adaptateur : sa method BulkWalk a la
-// signature de gosnmp, celle qui passe les PDU BRUTES dans l'ordre du walk — le
-// diagnostic doit rendre ce qu'il a lu. snmppoll.Client, l'autre vue de la same
-// session, agrege par index d'interface pour la metrique : ce n'est pas ce qu'il
-// faut ici, une table rendue a un exploitant ne se deduplique pas.
+// *snmppoll.Session satisfies askWalker with no adapter: its BulkWalk method
+// has gosnmp's signature, the one that passes RAW PDUs in walk order — the
+// diagnostic must render exactly what it read. snmppoll.Client, the other
+// view of the same session, aggregates by interface index for metrics: that
+// is not what's needed here, a table rendered to an operator must not be
+// deduplicated.
 func dialAskSNMP(req tunnel.AskRequest) (askWalker, error) {
-	// DeviceID reste vide : le proxy ne connait pas les identifiants du controleur
-	// (cf. tunnel.AskRequest.IP) et Dial n'en a pas l'usage — il n'tag rien.
+	// DeviceID stays empty: the proxy doesn't know the controller's
+	// identifiers (see tunnel.AskRequest.IP) and Dial has no use for it —
+	// it doesn't tag anything with it.
 	var s, err = snmppoll.Dial(snmppoll.Target{
 		IP:        req.IP,
 		Port:      req.Port,
 		Community: req.Community,
 	})
 	if err != nil {
-		// nil EXPLICITE, et non « return s, err » : un *Session nil range dans une
-		// interface donne un askWalker non nil, sur lequel un « if w != nil » futur se
-		// tromperait. La forme actuelle interdit ce trap au lieu de compter dessus.
+		// EXPLICIT nil, not "return s, err": a nil *Session boxed into an
+		// interface produces a non-nil askWalker, which a future "if w !=
+		// nil" would get wrong. The current form forbids that trap instead
+		// of relying on nobody hitting it.
 		return nil, err
 	}
 	return s, nil
@@ -435,19 +449,20 @@ func dialAskSNMP(req tunnel.AskRequest) (askWalker, error) {
 
 // --- AskSourceAddr ---
 
-// askSourceAddr rend l'adresse locale que le noyau EMPLOIERAIT pour joindre req.IP.
+// askSourceAddr returns the local address the kernel WOULD USE to reach req.IP.
 //
-// La method evidente — chercher, parmi les adresses declarees du proxy, celle du
-// sous-network de the device — est FAUSSE from que le proxy y accede par routage.
-// Releve sur l'installation reelle : le proxy expose 10.42.0.67/24 et
-// 172.17.0.1/16, the device de labo est en 10.99.200.101 — aucune
-// correspondance, et pourtant il l'atteint. L'algorithme evident ne rendrait rien
-// du tout, et un operator en conclurait que le proxy ne voit pas the device.
+// The obvious method — looking, among the proxy's declared addresses, for
+// the one on the device's subnet — is WRONG whenever the proxy reaches it
+// via routing. Observed on the real installation: the proxy exposes
+// 10.42.0.67/24 and 172.17.0.1/16, the lab device sits at 10.99.200.101 — no
+// match at all, and yet it reaches it. The obvious algorithm would return
+// nothing, and an operator would conclude the proxy can't see the device.
 //
-// Seule la table de routage sait. On l'interroge en « connectant » une socket UDP
-// vers la cible : aucun paquet n'est emis (UDP n'establishes rien), le noyau se
-// contente de resoudre la route pour choisir l'adresse source, et LocalAddr la dit.
-// Le port ne joue donc aucun role — on met 161 pour que le journal reste lisible.
+// Only the routing table knows. We query it by "connecting" a UDP socket to
+// the target: no packet is sent (UDP doesn't establish anything), the
+// kernel simply resolves the route to pick a source address, and LocalAddr
+// reports it. The port therefore plays no role at all — we use 161 just to
+// keep the log readable.
 func askSourceAddr(req tunnel.AskRequest) tunnel.AskResponse {
 	var ip, err = askIP(req.IP)
 	if err != nil {
@@ -456,34 +471,36 @@ func askSourceAddr(req tunnel.AskRequest) tunnel.AskResponse {
 	var c net.Conn
 	c, err = net.Dial("udp", net.JoinHostPort(ip, "161"))
 	if err != nil {
-		// Pas de route : le DIRE. Rendre une adresse vide passerait pour un success et
-		// on poserait une destination de traps que the device n'atteindrait jamais.
+		// No route: SAY SO. Returning an empty address would look like
+		// success, and we'd end up configuring a trap destination the
+		// device would never reach.
 		return tunnel.AskResponse{
-			Err: "aucune route vers " + ip + " depuis ce proxy : " + err.Error(),
+			Err: "no route to " + ip + " from this proxy: " + err.Error(),
 		}
 	}
 	defer c.Close() //nolint:errcheck
 
 	var local, ok = c.LocalAddr().(*net.UDPAddr)
 	if !ok || local.IP == nil {
-		return tunnel.AskResponse{Err: "adresse locale illisible pour " + ip}
+		return tunnel.AskResponse{Err: "unreadable local address for " + ip}
 	}
 	var addr netip.Addr
 	addr, ok = netip.AddrFromSlice(local.IP)
 	if !ok {
-		return tunnel.AskResponse{Err: "adresse locale illisible pour " + ip}
+		return tunnel.AskResponse{Err: "unreadable local address for " + ip}
 	}
-	// Unmap : une socket en dual-stack rend « ::ffff:10.42.0.67 » selon l'humeur de
-	// la pile de l'hote, et le controleur compare cette response a des adresses
-	// d'inventaire written en v4 (same precaution que classifyTrap).
+	// Unmap: a dual-stack socket returns "::ffff:10.42.0.67" depending on
+	// the mood of the host's stack, and the controller compares this
+	// response against inventory addresses written in v4 (same precaution
+	// as classifyTrap).
 	addr = addr.Unmap()
 	if !addr.IsValid() || addr.IsUnspecified() {
 		return tunnel.AskResponse{
-			Err: "le noyau n'a choisi aucune adresse source pour " + ip,
+			Err: "the kernel picked no source address for " + ip,
 		}
 	}
-	slog.Debug("question source_addr", "ip", ip, "source", addr.String())
-	// String() : sans masque, sans port, et sans zone — c'est ce que le controleur
-	// will write tel quel dans une destination de traps.
+	slog.Debug("source_addr question", "ip", ip, "source", addr.String())
+	// String(): no mask, no port, and no zone — this is exactly what the
+	// controller will write into a trap destination.
 	return tunnel.AskResponse{SourceAddr: addr.String()}
 }

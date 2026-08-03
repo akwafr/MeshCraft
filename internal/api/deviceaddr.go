@@ -1042,4 +1042,3 @@ func (s *Server) adoptWrittenMgmtIP(ctx context.Context, d model.Device,
 	})
 	return host, nil
 }
-

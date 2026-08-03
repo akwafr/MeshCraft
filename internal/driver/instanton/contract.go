@@ -345,7 +345,7 @@ func (d *Driver1930) Onboard(ctx context.Context,
 		return out, cfgErr
 	}
 	out.Steps = append(out.Steps, Step{OK: out.Changed,
-		What: "switch to local administration requested",
+		What:   "switch to local administration requested",
 		Detail: fmt.Sprintf("stage %q → %q — %s", out.Was, out.Stage, changedLabel(out.Changed))})
 	return out, nil
 }

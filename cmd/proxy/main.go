@@ -1,12 +1,12 @@
-// Le proxy meshcraft — squelette de la phase 0.
+// The meshcraft proxy — phase 0 skeleton.
 //
-// Il s'enrole aupres du controleur avec MESHCRAFT_ENROLL_TOKEN, persiste son
-// identity (proxy_id + secret) et maintient un heartbeat HTTP. Le controleur
-// peut lui ordonner de MIGRER vers une autre instance : le proxy s'enrole alors
-// sur la nouvelle URL, rewrites son etat local et bascule definitivement dessus
-// — sans aucune intervention sur la machine du proxy.
+// It enrolls with the controller using MESHCRAFT_ENROLL_TOKEN, persists its
+// identity (proxy_id + secret) and maintains an HTTP heartbeat. The
+// controller can order it to MIGRATE to another instance: the proxy then
+// enrolls on the new URL, rewrites its local state, and switches over to it
+// permanently — with no intervention on the proxy's machine.
 //
-// Le tunnel WSS multiplexe (yamux) remplacera ce heartbeat en phase 0bis.
+// The multiplexed WSS tunnel (yamux) will replace this heartbeat in phase 0bis.
 package main
 
 import (
@@ -24,56 +24,57 @@ import (
 	"time"
 )
 
-// Injectes au build par -ldflags (cf. Dockerfile) :
+// Injected at build time via -ldflags (see Dockerfile):
 //
-//	version = horodatage de build UTC AAAAMMJJ.HHMMSS — c'est LA version
-//	          technique, comparable en texte, celle que le controleur compare ;
-//	product = version produit (fichier VERSION), informative.
+//	version = UTC build timestamp YYYYMMDD.HHMMSS — this is THE technical
+//	          version, text-comparable, the one the controller compares against;
+//	product = product version (VERSION file), informational.
 //
-// LES DEFAUTS NE SONT PLUS « dev », et le mot avait un cost. Un proxy qui annonce
-// « dev » est lexicographiquement PLUS RECENT que tout horodatage — les chiffres se
-// trient avant les lettres — donc le controleur ne lui propose plus rien et l'affiche
-// « a jour », definitivement. Constate sur un proxy reel, et impossible a reparer
-// autrement qu'en allant sur sa machine, ce que cette architecture s'interdit.
+// THE DEFAULTS ARE NO LONGER "dev", and that word had a cost. A proxy that
+// announces "dev" is lexicographically NEWER than any timestamp — digits sort
+// before letters — so the controller no longer offers it anything and marks
+// it "up to date", permanently. Observed on a real proxy, and impossible to
+// fix other than by going to its machine, which this architecture forbids.
 //
-// Deux corrections tiennent ce default closed, et il faut les deux : la string de build
-// REFUSE now de produire un binaire sans horodatage (garde-fou du Dockerfile), et
-// [distrib.IsNewer] traite une version qui n'est pas un horodatage comme « a remplacer »
-// au lieu de la comparer. Ce default-ci ne subsiste donc que pour un `go run` : il est
-// named pour ce qu'il est, il ne ressemble pas a un canal de livraison, et il se fera
-// remplacer par le build empaquete au premier heartbeat.
+// Two fixes keep this bug closed, and both are needed: the build string now
+// REFUSES to produce a binary without a timestamp (Dockerfile guard rail),
+// and [distrib.IsNewer] treats a version that isn't a timestamp as "to be
+// replaced" instead of comparing it. This default therefore only survives for
+// a `go run`: it is named for what it is, it does not look like a delivery
+// channel, and it gets replaced by the packaged build on the first heartbeat.
 var (
-	version = "hors-build"
-	product = "hors-build"
+	version = "out-of-build"
+	product = "out-of-build"
 )
 
-// protocolVersion : compatibilite du protocole controleur ↔ proxy. Un horodatage
-// de build ne peut pas dire ce qu'on refuse — c'est le role de cet entier
-// (cf. docs/01-Architecture/Protocole controleur-proxy).
+// protocolVersion: controller <-> proxy protocol compatibility. A build
+// timestamp cannot say what we refuse — that's the role of this integer
+// (see docs/01-Architecture/Protocole controleur-proxy).
 const protocolVersion = 1
 
 const stateDir = "/var/lib/meshcraft"
 
-// State est state local du proxy : ce fichier suffit a le rattacher.
+// State is the proxy's local state: this file alone is enough to re-attach it.
 //
-// Aucun site : un proxy est un point de presence network de l'instance, il
-// n'appartient a aucun site (cf. docs/01-Architecture/Proxy).
+// No site: a proxy is a network point of presence for the instance, it
+// belongs to no site (see docs/01-Architecture/Proxy).
 type State struct {
 	Controller string `json:"controller"`
 	ProxyID    string `json:"proxy_id"`
 	Secret     string `json:"secret"`
-	// Binary : le binaire mis a jour que ce proxy doit executer. C'est cet
-	// ENREGISTREMENT — pas la presence d'un fichier — qui autorise l'execution :
-	// un binaire deapplied dans le volume par un tiers n'a ni ingress ni SHA expected.
+	// Binary: the updated binary this proxy must run. It is this RECORD —
+	// not the mere presence of a file — that authorizes execution: a binary
+	// dropped into the volume by a third party has neither provenance nor an
+	// expected SHA.
 	Binary *BinaryRecord `json:"binary,omitempty"`
 }
 
-// BinaryRecord describes le binaire enregistre et state de sa mise en service.
+// BinaryRecord describes the registered binary and the state of its rollout.
 type BinaryRecord struct {
 	Version string `json:"version"`
 	SHA256  string `json:"sha256"`
-	// BootAttempts compte les demarrages non confirmes : au-dela de deux, on
-	// retombe sur le binaire de l'image (anti-crash-loop).
+	// BootAttempts counts unconfirmed startups: beyond two, we fall back to
+	// the image's binary (anti-crash-loop).
 	BootAttempts int  `json:"boot_attempts"`
 	Confirmed    bool `json:"confirmed"`
 }
@@ -102,7 +103,7 @@ func saveState(st State) error {
 	return os.WriteFile(statePath(), data, 0o600)
 }
 
-// normalizeURL accepte ws:// et wss:// par confort : le heartbeat parle HTTP(S).
+// normalizeURL accepts ws:// and wss:// for convenience: the heartbeat speaks HTTP(S).
 func normalizeURL(u string) string {
 	u = strings.TrimSuffix(strings.TrimSpace(u), "/")
 	u = strings.Replace(u, "wss://", "https://", 1)
@@ -136,7 +137,7 @@ type enrollReply struct {
 	Error         string `json:"error"`
 }
 
-// enroll echange un token d'enrollment contre une identity durable.
+// enroll exchanges an enrollment token for a durable identity.
 func enroll(controller, token, name string) (State, error) {
 	var out enrollReply
 	var code, err = postJSON(controller+"/api/proxy/enroll",
@@ -147,7 +148,7 @@ func enroll(controller, token, name string) (State, error) {
 	if code != http.StatusOK || out.ProxyID == "" {
 		return State{}, fmt.Errorf("enrollment refused (HTTP %d): %s", code, out.Error)
 	}
-	// Le controleur peut annoncer son URL publique canonique.
+	// The controller may announce its canonical public URL.
 	var base = controller
 	if out.ControllerURL != "" {
 		base = normalizeURL(out.ControllerURL)
@@ -173,9 +174,9 @@ func main() {
 
 	var st, loadErr = loadState()
 	if loadErr != nil || st.ProxyID == "" {
-		// Premier demarrage : enrollment obligatoire.
+		// First startup: enrollment is mandatory.
 		if envController == "" || token == "" {
-			slog.Error("premier demarrage : MESHCRAFT_CONTROLLER et MESHCRAFT_ENROLL_TOKEN requis")
+			slog.Error("first startup: MESHCRAFT_CONTROLLER and MESHCRAFT_ENROLL_TOKEN are required")
 			os.Exit(1)
 		}
 		var attempt int
@@ -185,42 +186,42 @@ func main() {
 				st = newState
 				var saveErr = saveState(st)
 				if saveErr != nil {
-					slog.Error("etat local non persiste", "err", saveErr)
+					slog.Error("local state not persisted", "err", saveErr)
 				}
-				slog.Info("enrole", "controller", st.Controller, "proxy_id", st.ProxyID)
+				slog.Info("enrolled", "controller", st.Controller, "proxy_id", st.ProxyID)
 				break
 			}
-			slog.Error("enrollment impossible", "err", err, "attempt", attempt+1)
+			slog.Error("enrollment failed", "err", err, "attempt", attempt+1)
 			time.Sleep(backoff(attempt))
 		}
 	} else {
-		slog.Info("etat local charge", "controller", st.Controller, "proxy_id", st.ProxyID)
-		// MESHCRAFT_CONTROLLER ne rewrites jamais un etat existant : la bascule
-		// d'instance passe par un ordre de migration du controleur.
+		slog.Info("local state loaded", "controller", st.Controller, "proxy_id", st.ProxyID)
+		// MESHCRAFT_CONTROLLER never overwrites existing state: switching
+		// instance goes through a migration order from the controller.
 		if envController != "" && envController != st.Controller {
-			slog.Warn("MESHCRAFT_CONTROLLER differe de state local — state local prime",
+			slog.Warn("MESHCRAFT_CONTROLLER differs from local state — local state wins",
 				"env", envController, "state", st.Controller)
 		}
 	}
 
-	// AVANT toute autre chose : rebasculer sur le binaire mis a jour si state
-	// local en enregistre un (le reboot d'un conteneur relance toujours
-	// celui de l'image). En cas de success, ce processus est remplace ici.
+	// BEFORE anything else: switch back to the updated binary if the local
+	// state has one registered (a container reboot always relaunches the
+	// image's binary). On success, this process is replaced right here.
 	st = bootstrapBinary(st)
 
-	slog.Info("meshcraft proxy demarre", "version", version, "product", product,
+	slog.Info("meshcraft proxy starting up", "version", version, "product", product,
 		"protocol", protocolVersion, "controller", st.Controller)
 
-	// Le tunnel vit dans sa propre boucle : le heartbeat continue same si le
-	// WebSocket ne s'establishes pas (reverse-proxy recalcitrant, WS bloque), et
-	// c'est lui qui portera toujours les ordres de migration.
-	// Collecte SNMP : le controleur enverra les cibles par le canal de
-	// surveillance, le proxy interroge et pousse (cf. cmd/proxy/snmp.go).
+	// The tunnel lives in its own loop: the heartbeat keeps going even if the
+	// WebSocket fails to establish (uncooperative reverse proxy, WS blocked),
+	// and it is the tunnel that will always carry migration orders.
+	// SNMP collection: the controller sends targets over the monitoring
+	// channel, the proxy polls and pushes (see cmd/proxy/snmp.go).
 	snmpCollector = NewSNMPCollector(st.Controller, st.ProxyID, st.Secret)
-	// Les transitions de port sortent par le SAME canal que les transitions
-	// d'device : c'est already celui que le tunnel remonte, et il ne bloque
-	// jamais. Deux canaux pour deux evenements qui vont au same endroit
-	// n'apporteraient qu'un ordre a arbitrer (cf. cmd/proxy/trap.go).
+	// Port transitions go out over the SAME channel as device transitions:
+	// it's already the one the tunnel reports through, and it never blocks.
+	// Two channels for two events that go to the same place would only add
+	// an ordering to arbitrate (see cmd/proxy/trap.go).
 	snmpCollector.SetEmitter(monitor.emit)
 	go snmpCollector.Run(context.Background())
 
@@ -241,23 +242,23 @@ func main() {
 		switch {
 		case err != nil:
 			fails++
-			slog.Warn("controleur injoignable", "err", err, "fails", fails)
+			slog.Warn("controller unreachable", "err", err, "fails", fails)
 		case code == http.StatusUnauthorized:
-			// Revoque ou migre : on n'insiste pas en boucle serree.
+			// Revoked or migrated: don't hammer it in a tight loop.
 			fails++
-			slog.Error("proxy refused par le controleur (revoque ?)", "controller", st.Controller)
+			slog.Error("proxy refused by the controller (revoked?)", "controller", st.Controller)
 		case code != http.StatusOK:
 			fails++
-			slog.Warn("heartbeat en erreur", "status", code, "error", out.Error)
+			slog.Warn("heartbeat error", "status", code, "error", out.Error)
 		default:
 			fails = 0
-			// Un heartbeat accepted vaut confirmation : la version tient debout.
+			// An accepted heartbeat counts as confirmation: the version holds up.
 			pendingReport = nil
 			confirmBinary(&st)
 			if out.Upgrade != nil {
 				var upErr = applyUpgrade(st, *out.Upgrade)
 				if upErr != nil {
-					slog.Error("mise a jour impossible — on reste en place",
+					slog.Error("upgrade failed — staying on current version",
 						"version", out.Upgrade.Version, "err", upErr)
 					pendingReport = &upgradeReport{
 						State: "failed", Version: out.Upgrade.Version,
@@ -268,11 +269,11 @@ func main() {
 			if out.Status == "migrate" && out.Migrate.ControllerURL != "" {
 				var migrated, mErr = migrate(st, out.Migrate.ControllerURL, out.Migrate.EnrollToken, name)
 				if mErr != nil {
-					slog.Error("migration echouee — on reste sur l'instance actuelle",
-						"cible", out.Migrate.ControllerURL, "err", mErr)
+					slog.Error("migration failed — staying on current instance",
+						"target", out.Migrate.ControllerURL, "err", mErr)
 				} else {
 					st = migrated
-					slog.Info("migration terminee", "controller", st.Controller,
+					slog.Info("migration complete", "controller", st.Controller,
 						"proxy_id", st.ProxyID)
 				}
 			}
@@ -281,35 +282,35 @@ func main() {
 	}
 }
 
-// migrate enrole le proxy sur la nouvelle instance, persiste le nouvel etat,
-// puis warns l'ancienne (au mieux) qu'elle peut nous oublier.
+// migrate enrolls the proxy on the new instance, persists the new state,
+// then notifies the old one (best-effort) that it can forget us.
 func migrate(old State, targetURL, token, name string) (State, error) {
 	targetURL = normalizeURL(targetURL)
 	if token == "" {
-		return old, errors.New("ordre de migration sans token d'enrollment")
+		return old, errors.New("migration order without an enrollment token")
 	}
-	slog.Info("ordre de migration recu", "cible", targetURL)
+	slog.Info("migration order received", "target", targetURL)
 	var st, err = enroll(targetURL, token, name)
 	if err != nil {
 		return old, err
 	}
-	// State local bascule AVANT de warn l'ancienne instance : si le
-	// processus meurt ici, on redemarre already rattache a la nouvelle.
+	// Local state switches over BEFORE notifying the old instance: if the
+	// process dies here, it restarts already attached to the new one.
 	if err = saveState(st); err != nil {
-		return old, fmt.Errorf("nouvel etat non persiste: %w", err)
+		return old, fmt.Errorf("new state not persisted: %w", err)
 	}
 	var code, ackErr = postJSON(old.Controller+"/api/proxy/migrated", map[string]string{
 		"proxy_id": old.ProxyID, "secret": old.Secret, "new_controller": st.Controller,
 	}, nil)
 	if ackErr != nil || code != http.StatusOK {
-		slog.Warn("ancienne instance non warned (sans consequence)",
+		slog.Warn("old instance not notified (no consequence)",
 			"status", code, "err", ackErr)
 	}
 	return st, nil
 }
 
-// localIfaces annonce les IP locales : le controleur peut ainsi proposer les
-// subnets a scanner.
+// localIfaces announces the local IPs: the controller can then propose
+// subnets to scan.
 func localIfaces() []map[string]string {
 	var out = []map[string]string{}
 	var addrs, err = netInterfaceAddrs()
@@ -338,8 +339,8 @@ func heartbeatDelay(fails int) time.Duration {
 	return backoff(fails)
 }
 
-// goarch traduit l'architecture Go en suffixe d'artefact published par le
-// controleur. GOARM n'apparait pas dans runtime.GOARCH : « arm » suffit.
+// goarch translates the Go architecture into the artifact suffix published
+// by the controller. GOARM doesn't appear in runtime.GOARCH: "arm" is enough.
 func goarch() string { return runtime.GOARCH }
 
 func firstLine(s string) string {

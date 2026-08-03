@@ -55,6 +55,17 @@ func NewAutoApplier() *autoApplier {
 	return &autoApplier{pending: map[string]*time.Timer{}, busy: map[string]bool{}}
 }
 
+// applyingNow reports whether an automatic apply is running on this device right now.
+// Read by withSync so the device payload carries a live "provisioning" state.
+func (s *Server) applyingNow(deviceID string) bool {
+	if s.Apply == nil {
+		return false
+	}
+	s.Apply.mu.Lock()
+	defer s.Apply.mu.Unlock()
+	return s.Apply.busy[deviceID]
+}
+
 // schedule requests an apply for this device, after batching.
 func (s *Server) schedule(deviceID string) {
 	if s.Apply == nil {
@@ -80,10 +91,24 @@ func (s *Server) schedule(deviceID string) {
 		s.Apply.busy[deviceID] = true
 		s.Apply.mu.Unlock()
 
+		// Tell the screens an apply is now RUNNING on this device, so the dot and
+		// ports switch to a live "provisioning" animation instead of a still blue
+		// pending. The device payload reads busy through applyingNow.
+		var d, gErr = s.Store.GetDevice(context.Background(), deviceID)
+		if gErr == nil {
+			s.NotifySiteChanged(d.SiteID, ChangeSync)
+		}
+
 		defer func() {
 			s.Apply.mu.Lock()
 			delete(s.Apply.busy, deviceID)
 			s.Apply.mu.Unlock()
+			// And tell them it is over: applyingNow is false again, the dot settles
+			// on green (or drift). autoApplyDevice also notifies via emitDeviceBG on
+			// its outcome; this covers the paths that emit nothing.
+			if gErr == nil {
+				s.NotifySiteChanged(d.SiteID, ChangeSync)
+			}
 		}()
 
 		// Fresh context: the HTTP request that triggered the change finished long ago.

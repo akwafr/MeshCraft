@@ -57,7 +57,7 @@ func (d *Driver) Info() driver.Info {
 // requires no credentials.
 var (
 	reRouterOS = regexp.MustCompile(`(?i)RouterOS|ROSSSH`)
-	// SwOS shares the vendor but NOT the system: « MikroTik » alone does not
+	// SwOS shares the vendor but NOT the system: 'MikroTik' alone does not
 	// allow a conclusion, and picking the wrong connector means speaking REST to
 	// a device that only has forms.
 	reSwOS     = regexp.MustCompile(`(?i)SwOS`)
@@ -88,12 +88,12 @@ func (d *Driver) Fingerprint(ev driver.Evidence) int {
 //
 // The nomenclature is regular and documented in vendor product sheets: after the
 // family, each group is written `<count><type>` — `CRS326-24G-2S+` is
-// « 24 copper gigabit ports » then « 2 SFP+ ports ». Groups may be adjacent
+// '24 copper gigabit ports' then '2 SFP+ ports'. Groups may be adjacent
 // (`CRS354-48G-4S+2Q+`), hence a search for ALL occurrences rather than splitting
 // on hyphens.
 //
 // Alternative order matters: `S\+` must be tried before `S`, otherwise
-// « 2S+ » would be read as « 2 SFP » and throughput would be divided by ten.
+// '2S+' would be read as '2 SFP' and throughput would be divided by ten.
 var reDesignation = regexp.MustCompile(`(\d+)(XS\+|XQ\+|Q\+|S\+|XG|G|P|S)`)
 
 // designation is what a product model number says about the front panel.
@@ -111,7 +111,7 @@ type designation struct {
 
 // parseDesignation reads a MikroTik product model number.
 //
-// The leading family is SKIPPED before the search: « CRS326 » contains « 326 »,
+// The leading family is SKIPPED before the search: 'CRS326' contains '326',
 // and counting it would yield 326 ports. The first hyphen separates family from
 // port groups in the entire nomenclature.
 func parseDesignation(model string) designation {
@@ -160,8 +160,8 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 	// MaxLAGs is DERIVED from port count, and it is an arithmetic bound, not a
 	// vendor limit: an aggregate needs at least two ports, so 26 ports never
 	// allow more than 13. When the model number is not understood, we fall back
-	// to 4 — the prudent floor of the rule « an unknown capability is assumed
-	// absent ».
+	// to 4 — the prudent floor of the rule 'an unknown capability is assumed
+	// absent'.
 	var maxLAGs = 4
 	if face.Parsed && face.Ports >= 4 {
 		maxLAGs = face.Ports / 2
@@ -190,7 +190,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// What exists, OBSERVED in `/ip/neighbor/discovery-settings` :
 		// `"lldp-med-net-policy-vlan":"disabled"`. This setting ANNOUNCES a VLAN to
 		// LLDP-MED endpoints — it classifies no traffic, sets no PVID, and
-		// recognizes no phone. A « voice VLAN » intent would expect the device to
+		// recognizes no phone. A 'voice VLAN' intent would expect the device to
 		// place phone traffic in a VLAN without touching the port; this one merely
 		// tells the phone which VLAN to use, and relies on it to comply. Declaring
 		// the capability true on that basis would imply classification that will
@@ -200,11 +200,11 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// requests rather than one (cf. restStatusMeaning) :
 		//
 		//	/rest/interface/ethernet/poe          → 500 Internal Server Error
-		//	/rest/interface/ethernet/poe/settings → 400 « no such command prefix »
+		//	/rest/interface/ethernet/poe/settings → 400 'no such command prefix'
 		//
 		// Only the second concludes. The 500 alone proves nothing: `/interface/dot1x`
 		// also returns 500 while `/interface/dot1x/server` returns `[]`. The 400
-		// « no such command prefix », however, is the device response when the menu
+		// 'no such command prefix', however, is the device response when the menu
 		// PREFIX does not exist — the same class of response as an invented path.
 		// Independent confirmation: `/system/health` publishes only
 		// `cpu-temperature`, with no power rail.
@@ -217,7 +217,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// `"mode":"tx-and-rx"`. And proof that it WORKS rather than being only
 		// configured: `/ip/neighbor` contains a neighbor
 		// `"discovered-by":"lldp"` with its full `system-description`
-		// (« HPE Networking Instant On Switch 48p ... JL685A »).
+		// ('HPE Networking Instant On Switch 48p ... JL685A').
 		"LLDP": true,
 		// /interface/bridge/port `edge` = auto|yes|no (spanning-tree edge).
 		driver.FeatSTPEdge:     true,
@@ -247,7 +247,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// would apply. Declaring true here would accept an intent that nothing would
 		// apply.
 		"ARPProtection": false,
-		// No function named « DoS protection » on this platform.
+		// No function named 'DoS protection' on this platform.
 		//
 		// The firewall exists (`/ip/firewall/filter` OBSERVED present and empty) but it
 		// does NOT see switched traffic: `/interface/bridge/settings` returns
@@ -263,7 +263,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// records in `/interface/bridge/port`. What exists per port is
 		// `"learn":"auto"`, which disables learning entirely — that is not a limit,
 		// it is a switch. Port security in the sense of the key
-		// (« at most N MACs on this port ») has no setting here.
+		// ('at most N MACs on this port') has no setting here.
 		"PortSecurity": false,
 		// OBSERVED — `/interface/bridge/port` : `"horizon":"none"`. Bridge horizon
 		// IS RouterOS port isolation: two ports sharing the same horizon exchange
@@ -294,8 +294,8 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		//
 		// A methodological note, because it nearly cost a false declaration:
 		// `max-l2mtu` is NOT served by `/interface/ethernet`, whose 87 fields were
-		// enumerated first — it is served by `/interface`. Concluding « the ceiling
-		// is not published » from examining only the ethernet menu was an error,
+		// enumerated first — it is served by `/interface`. Concluding 'the ceiling
+		// is not published' from examining only the ethernet menu was an error,
 		// caught by testdata/ captures. That is exactly why this package stores
 		// observations in files rather than comments: a test replaying the capture
 		// showed the contradiction; a comment never would have.
@@ -366,9 +366,9 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// `rest-api` policy appears in all three factory groups of `/user/group`.
 		"RESTAPI": true,
 		// OBSERVED — `/interface/bridge` : `"vlan-filtering":"true"`. Named separately from
-		// Trunk8021Q because it is not the same thing: Trunk8021Q says « can carry
-		// tagged VLANs », BridgeVLANFiltering says « does so through a bridge table,
-		// with a CPU pseudo-port named `bridge` ». It is this second property that
+		// Trunk8021Q because it is not the same thing: Trunk8021Q says 'can carry
+		// tagged VLANs', BridgeVLANFiltering says 'does so through a bridge table,
+		// with a CPU pseudo-port named `bridge`'. It is this second property that
 		// governs operation order and cuts access when ignored.
 		"BridgeVLANFiltering": true,
 		// OBSERVED — `/interface/bridge/port` : `"hw":"true"` and `"hw-offload":"true"`
@@ -404,7 +404,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// disabled. Both ports accept the TCP connection but do not speak HTTP: this
 		// is MikroTik's binary protocol.
 		//
-		// This comment used to say « that this connector does not use »; api.go made
+		// This comment used to say 'that this connector does not use'; api.go made
 		// that false. The channel is implemented from MikroTik's published
 		// specification, and it brings the TWO things REST cannot render: negotiated
 		// link speed, and SFP cage optical diagnostics — both from
@@ -438,8 +438,8 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// OBSERVED — `/interface/bridge/msti` returns `"vlan-mapping":"1-4094"`: the
 		// device itself publishes the extent of its VLAN space.
 		VlanRange: [2]int{1, 4094},
-		// 4094, and this number means « no restriction beyond the identifier space »,
-		// not « 4094 measured entries ».
+		// 4094, and this number means 'no restriction beyond the identifier space',
+		// not '4094 measured entries'.
 		//
 		// What is OBSERVED is the IDENTIFIER space (1-4094, above). The number of
 		// SIMULTANEOUS entries the bridge table accepts is not measurable through a
@@ -477,10 +477,10 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// (OBSERVED). Hardware TCAM depth is published neither by MikroTik nor by the
 		// device, and cannot be measured through a read-only channel.
 		//
-		// The contract has no value for « no fixed limit »: 0 means refuse everything.
+		// The contract has no value for 'no fixed limit': 0 means refuse everything.
 		// That is what we keep, and it is the right choice HERE because this connector
 		// writes NO ACL — advertising a number would advertise a capability nobody
-		// honors, exactly the « capability that lies » that capabilities.go describes.
+		// honors, exactly the 'capability that lies' that capabilities.go describes.
 		// The contract gap is flagged in the delivery report, not filled with an
 		// invented number.
 		MaxACLs: 0,
@@ -516,9 +516,9 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		//
 		//  1. NO write could be exercised on this device. Yet the SNMPVersions comment
 		//     in the contract is unambiguous: advertising v3 would lead provisioning to
-		//     generate a v3 label and secret that deployment might reject, and « an
+		//     generate a v3 label and secret that deployment might reject, and 'an
 		//     identity that exists in the database and nowhere else is worse than a
-		//     missing identity ».
+		//     missing identity'.
 		//  2. The algorithms actually accepted could not be established. The MD5 and DES
 		//     values observed are field DEFAULTS, not the list of what it admits; this
 		//     API's enumeration validation was probed in read-only mode (GET filters on
@@ -605,8 +605,8 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// but its TRIGGER was not exercised, so this connector does not offer it
 			// (cf. the section on [driver.Persister] in contract.go).
 			//
-			// This field relaxes NO safeguard: it only stops the UI from reciting « the
-			// only fallback would be factory reset » to a platform that recovers with a
+			// This field relaxes NO safeguard: it only stops the UI from reciting 'the
+			// only fallback would be factory reset' to a platform that recovers with a
 			// console cable.
 			OutOfBand: true,
 			// Same REST Add/Set/Remove channel as port apply (proven). Same-VLAN
@@ -651,14 +651,14 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// named `mcadmin` there is the normal case, not an exception.
 			Custom: true,
 			// OBSERVED — the factory account is named `admin` and declares itself
-			// « system default user ».
+			// 'system default user'.
 			FixedName: "admin",
 			// 0 for both bounds, and here 0 is an OBSERVED value poorly served by the contract.
 			//
 			// OBSERVED — `/user/settings` : `{"minimum-password-length":"0",
 			// "minimum-categories":"0"}`. RouterOS therefore imposes NO factory minimum:
 			// it even accepts an empty password. The contract, however, reads 0 as
-			// « unknown » — the two are indistinguishable here, and that is flagged in the
+			// 'unknown' — the two are indistinguishable here, and that is flagged in the
 			// delivery report.
 			//
 			// What matters more than the value: these two bounds are a SITE SETTING, not a
@@ -770,7 +770,7 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 					"rereads an unchanged table.",
 			},
 			{
-				// Health at 60 s, and we must say what « health » means here — because it
+				// Health at 60 s, and we must say what 'health' means here — because it
 				// is little.
 				//
 				// Observed — `/system/health` returns ONLY ONE value on this board:
@@ -879,10 +879,10 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				// # THE FLOOR WAS CHANGED FROM 60 s TO 10 s, and we must say why
 				//
 				// The original 60 s were NOT a cost measurement. The comment they carried
-				// said frankly: they were high « so that `Best` always returns the REST
-				// channel », i.e. to DELIBERATELY LOSE an arbitration race, an unproven
-				// channel must not become the main path of a fleet « by the mere effect of a
-				// smaller number ». The intent was right; the means produced a defect.
+				// said frankly: they were high 'so that `Best` always returns the REST
+				// channel', i.e. to DELIBERATELY LOSE an arbitration race, an unproven
+				// channel must not become the main path of a fleet 'by the mere effect of a
+				// smaller number'. The intent was right; the means produced a defect.
 				//
 				// The defect: product periodic collection runs on the proxy and speaks ONLY
 				// SNMP. The REST channel therefore won no race — it was never used — it only
@@ -898,8 +898,8 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				//
 				// 10 s, and this is a DERIVED-BY-COMPARISON floor, assumed as such since
 				// nothing could be measured here: the Instant On connector declares 5 s on
-				// the faith of a measurement on a 1930 48-port (« a six-column walk on 52
-				// interfaces every five seconds does not move its supervision CPU »). This
+				// the faith of a measurement on a 1930 48-port ('a six-column walk on 52
+				// interfaces every five seconds does not move its supervision CPU'). This
 				// device is a 26-port dual-core ARM at 800 MHz (observed `cpu-count: 2`,
 				// `cpu-frequency: 800`): the walk is twice as short on a more capable CPU.
 				// 5 s would therefore be defensible; 10 s is kept because derivation is not
@@ -965,9 +965,9 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				// OBSERVED on 29 July 2026 on `lab-crs326` (10.99.0.54, RouterOS 7.21beta3),
 				// by read-only walk through the proxy:
 				//
-				//	lldpLocChassisId    « B8:69:F4:5B:A0:D2 » — TEXT, not bytes
-				//	lldpLocSysName      « lan-r4 »
-				//	lldpLocPortTable    2 entries (26 « sfp-sfpplus2 », 28 « vlan99 »)
+				//	lldpLocChassisId    'B8:69:F4:5B:A0:D2' — TEXT, not bytes
+				//	lldpLocSysName      'lan-r4'
+				//	lldpLocPortTable    2 entries (26 'sfp-sfpplus2', 28 'vlan99')
 				//	lldpRemTable        5 neighbors, columns 5, 6, 7, 9, 10, 11, 12
 				//	lldpRemPortDesc     ABSENT — column 8 walk empty
 				//
@@ -975,8 +975,8 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				// written in detail in docs/01-Architecture/Voisinage LLDP.md: chassis-id is
 				// served as TEXT here and as raw bytes by the 1930 for the same chassis, and
 				// `lldpLocPortTable` contains only interfaces where LLDP runs — two out of
-				// twenty-nine. « No neighbor on ether3 » is therefore not « nothing is plugged
-				// into ether3 ».
+				// twenty-nine. 'No neighbor on ether3' is therefore not 'nothing is plugged
+				// into ether3'.
 				//
 				// 30 s, and this is the best-founded floor in the file — the same as the `web`
 				// channel, for the same reason and it is not merely prudent:
@@ -1024,8 +1024,8 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 	// declare them impossible.
 	//
 	// A word on what is STILL NOT here and one might expect to find: optical power.
-	// This slot was occupied by a paragraph explaining why it had « neither channel nor
-	// entry here » — `monitor` being a POST, outside GET-only tool reach, it could not
+	// This slot was occupied by a paragraph explaining why it had 'neither channel nor
+	// entry here' — `monitor` being a POST, outside GET-only tool reach, it could not
 	// be exercised. This batch opened the channel (api.go, telemetry.go): it is now
 	// served by the `api` channel AND the `snmp` channel (mtxrOpticalTable), and its
 	// place here would be a contradiction that `Contradictions()` would reject.
@@ -1044,9 +1044,9 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 			Observed: true,
 			Source: "REST observation on CRS326-24G-2S+ / RouterOS 7.21beta3 (testing), " +
 				"serial 945509EF00B0: GET /rest/interface/ethernet/poe → 500, then " +
-				"GET /rest/interface/ethernet/poe/settings → 400 « no such command " +
-				"prefix » — the same response as an invented path (/rest/nimportequoi → " +
-				"400 « no such command or directory »), so the menu prefix does not exist. " +
+				"GET /rest/interface/ethernet/poe/settings → 400 'no such command " +
+				"prefix' — the same response as an invented path (/rest/whatever → " +
+				"400 'no such command or directory'), so the menu prefix does not exist. " +
 				"The second request is the one that concludes: the 500 alone proves nothing; " +
 				"/rest/interface/dot1x returns 500 while /rest/interface/dot1x/server returns []. " +
 				"Independent confirmation: GET /rest/system/health publishes only cpu-temperature, " +
@@ -1111,7 +1111,7 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 			"Do not confuse the two versions the device publishes: `/system/resource` gives RouterOS " +
 				"(observed `7.21beta3 (testing)`) and `/system/routerboard` gives RouterBOOT (observed " +
 				"`current-firmware: 6.42.5`). A configuration reset touches neither.",
-			"BEFORE resetting a device whose access was « lost », try MAC-winbox and the serial console " +
+			"BEFORE resetting a device whose access was 'lost', try MAC-winbox and the serial console " +
 				"(both observed available): on this platform, a lost address almost never justifies " +
 				"factory reset.",
 			"The reference device runs firmware from the `testing` branch (observed `7.21beta3 (testing)`, " +

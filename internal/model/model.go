@@ -81,20 +81,20 @@ type Device struct {
 	// online for three months carries a three-month-old date without anything being
 	// late. Reading it as freshness would alert on the healthiest fleet (cf.
 	// migration 0025).
-	StatusAt   *time.Time      `json:"status_at,omitempty"`
+	StatusAt *time.Time `json:"status_at,omitempty"`
 	// SnmpStatus / SnmpStatusNote / SnmpStatusAt: SNMP COLLECTION reachability,
 	// established by the proxy's poll transitions (and confirmed by metrics
 	// arrival). Distinct from Status, which is ICMP alone — a device can ping
 	// while its agent is mute, and the reverse when ICMP is filtered.
-	SnmpStatus     string     `json:"snmp_status"` // ok | off | unknown
-	SnmpStatusNote string     `json:"snmp_status_note"`
-	SnmpStatusAt   *time.Time `json:"snmp_status_at,omitempty"`
-	PoEBudgetW int             `json:"poe_budget_w"`
-	PosX       float64         `json:"pos_x"`
-	PosY       float64         `json:"pos_y"`
-	PortGroups json.RawMessage `json:"port_groups"`
-	Ports      json.RawMessage `json:"ports"`
-	Extra      json.RawMessage `json:"extra"`
+	SnmpStatus     string          `json:"snmp_status"` // ok | off | unknown
+	SnmpStatusNote string          `json:"snmp_status_note"`
+	SnmpStatusAt   *time.Time      `json:"snmp_status_at,omitempty"`
+	PoEBudgetW     int             `json:"poe_budget_w"`
+	PosX           float64         `json:"pos_x"`
+	PosY           float64         `json:"pos_y"`
+	PortGroups     json.RawMessage `json:"port_groups"`
+	Ports          json.RawMessage `json:"ports"`
+	Extra          json.RawMessage `json:"extra"`
 
 	// Observed: configuration ACTUALLY read on the device, as opposed to `Ports`
 	// which carries what meshcraft wants. Conflating them would never let you say
@@ -123,6 +123,16 @@ type Device struct {
 	// distinction, a half-configured device is indistinguishable from one being
 	// configured, and shows nothing.
 	ApplyStalled bool `json:"apply_stalled,omitempty"`
+	// Applying: an automatic apply is RUNNING on this device RIGHT NOW.
+	//
+	// Computed, never stored, and true only while the connector is actually writing
+	// to the device. It exists because "pending" conflates two very different
+	// moments: "queued, nothing happening yet" and "being provisioned on the wire".
+	// A template pushed via a tag applies in the background after a short debounce
+	// and can take tens of seconds over SSH; without this flag the screen shows a
+	// still blue dot and no port movement, so nothing tells the operator work is
+	// under way. The frontend turns this into a live "provisioning" animation.
+	Applying bool `json:"applying,omitempty"`
 	// WatchExcluded: NO proxy watches this device, and here is why.
 	//
 	// Refusing to watch an ambiguous address is the right tradeoff — a false state
@@ -472,6 +482,42 @@ type CredentialGeneration struct {
 
 // WatchedDevice: what a proxy needs to watch a device — nothing more than a name
 // and an address.
+// ProxyReach is ONE proxy's observation of one device (migration 0035).
+//
+// Reachability stopped being a single column the day a proxy that could not reach
+// a device overwrote the verdict of one that could. Each proxy now keeps its own,
+// and [ProxyReach.ConfirmedAt] is what decides whose counts: a proxy that has
+// matched sysDescr/sysObjectID against this device's vendor and model has PROVEN
+// it is talking to the right equipment, and its verdict outranks any other.
+type ProxyReach struct {
+	ProxyID   string `json:"proxy_id"`
+	ProxyName string `json:"proxy_name,omitempty"`
+	// Reachable is this proxy's own verdict. NIL means it watches the device but
+	// has not concluded yet — distinct from "it says down", and aggregating the
+	// two as one would report an outage the instant a proxy connects.
+	Reachable   *bool     `json:"reachable"`
+	ReachableAt time.Time `json:"reachable_at,omitempty"`
+	Misses      int       `json:"misses,omitempty"`
+	LatencyMS   int       `json:"latency_ms,omitempty"`
+	// ConfirmedAt is when this proxy last proved the device's identity. STICKY:
+	// it records that proof happened, not that it is happening now — an outage
+	// must not demote the only observer able to report it.
+	ConfirmedAt *time.Time `json:"confirmed_at,omitempty"`
+	// ConfirmedBy says what matched, for a screen: "sysObjectID → MikroTik".
+	ConfirmedBy string `json:"confirmed_by,omitempty"`
+}
+
+// Confirmed reports whether this proxy has ever proven the device's identity.
+func (p ProxyReach) Confirmed() bool { return p.ConfirmedAt != nil }
+
+// Up reports whether this proxy currently sees the device. False when it has not
+// concluded yet: "no opinion" is not "online".
+func (p ProxyReach) Up() bool { return p.Reachable != nil && *p.Reachable }
+
+// Down reports whether this proxy has CONCLUDED the device is unreachable.
+// A proxy with no verdict yet is neither up nor down.
+func (p ProxyReach) Down() bool { return p.Reachable != nil && !*p.Reachable }
+
 type WatchedDevice struct {
 	ID     string `json:"id"`
 	SiteID string `json:"-"`

@@ -140,8 +140,8 @@ func TestHealthReadFromRealCapture(t *testing.T) {
 
 // TestParseUptime — the RouterOS form, and refusals.
 //
-// A string with an illegible piece is refused WHOLE. « 4 h » where the device says
-// « 3 weeks and 4 h » would suggest a reboot that did not happen — exactly the event
+// A string with an illegible piece is refused WHOLE. '4 h' where the device says
+// '3 weeks and 4 h' would suggest a reboot that did not happen — exactly the event
 // this measurement exists to detect.
 func TestParseUptime(t *testing.T) {
 	var cases = []struct {
@@ -303,7 +303,7 @@ func TestNegotiatedRateComesFromMonitorAndOnlyFromMonitor(t *testing.T) {
 		for field = range r {
 			if field == "speed" || field == "rate" {
 				t.Errorf("`/interface/ethernet` carries field %q: the binary API channel "+
-					"justification (\u00ab negotiated rate is not in REST \u00bb) "+
+					"justification ('negotiated rate is not in REST') "+
 					"is no longer true", field)
 			}
 		}
@@ -397,7 +397,7 @@ func TestOpticalDiagnosticsReadFromBuiltFixture(t *testing.T) {
 			"a parser that rejected the sign would yield zero", populated.RxPowerDBM)
 	}
 	// Both alarm flags are PRESENT and false in the fixture: present and false is not
-	// the same as absent (« this firmware does not say »).
+	// the same as absent ('this firmware does not say').
 	if populated.RxLoss == nil || *populated.RxLoss {
 		t.Errorf("signal loss flag: %v — present and false expected", populated.RxLoss)
 	}
@@ -467,8 +467,8 @@ func TestMissingInterfaceIsAnErrorNotANote(t *testing.T) {
 //
 // The controller requires the `iftype` label to touch inventory (§2.1 of
 // [[Unified Monitoring and Pipelines]]). This channel having no interface index to give,
-// its samples feed curves WITHOUT ever being able to modify the facade: the rule « telemetry
-// never CREATES a port » is here a property of the channel, not a rule one must remember
+// its samples feed curves WITHOUT ever being able to modify the facade: the rule 'telemetry
+// never CREATES a port' is here a property of the channel, not a rule one must remember
 // to apply.
 //
 // Fabricating an index from a list rank would be the exact fault this test forbids: an
@@ -552,8 +552,8 @@ func TestEmptyCageProducesNoSample(t *testing.T) {
 // TestPortWithoutLinkStillPublishesItsState
 //
 // A port's state is ALWAYS published, including at zero: it is an observation, and
-// « this port carries no link » is a fact. That is the difference from a counter, whose
-// zero could mean « not read ».
+// 'this port carries no link' is a fact. That is the difference from a counter, whose
+// zero could mean 'not read'.
 func TestPortWithoutLinkStillPublishesItsState(t *testing.T) {
 	var tel = Telemetry{Ports: []PortCounters{{Name: "ether1", Running: false}}}
 	var seen bool

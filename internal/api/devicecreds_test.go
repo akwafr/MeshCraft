@@ -91,3 +91,41 @@ func TestAccountNamesOrderedAndDeduped(t *testing.T) {
 		})
 	}
 }
+
+// The discovery-origin pair (the secret the serial soft-reset actually typed on
+// the console) must SURVIVE the try budget on a freshly adopted device: placed
+// first among generations, bound to its account. The 2026-08-02 refusal came
+// from four guessed candidates while the one observed pair was never tried.
+func TestDiscoveryOriginPairSurvivesTheBudget(t *testing.T) {
+	var gens = []genSecret{
+		{Why: "discovery credential that opened the device (« akwa »)",
+			Secret: "AkwaSecret1", Username: "admin"},
+		{Why: "generation stepped back: device may not be updated yet", Secret: "gen2"},
+		{Why: "generation stepped back: device may not be updated yet", Secret: "gen1"},
+	}
+	var c = buildCandidates([]string{"mcadmin", "admin"}, "", gens)
+
+	if len(c) < 2 {
+		t.Fatalf("candidates=%v", c)
+	}
+	if c[0].Username != "admin" || c[0].Secret != "AkwaSecret1" {
+		t.Fatalf("the observed pair must be tried FIRST, got %+v", c[0])
+	}
+	// Factory reserve still holds: last candidate is admin with empty secret.
+	var last = c[len(c)-1]
+	if last.Username != "admin" || last.Secret != "" {
+		t.Errorf("factory account must stay last: %+v", last)
+	}
+	// The budget still caps admin at two tries total (origin + factory reserve):
+	// no stepped-back generation may squeeze in on that account.
+	var adminTries = 0
+	var cand = c[0]
+	for _, cand = range c {
+		if strings.EqualFold(cand.Username, "admin") {
+			adminTries++
+		}
+	}
+	if adminTries > 2 {
+		t.Errorf("admin tried %d times, budget is 2", adminTries)
+	}
+}

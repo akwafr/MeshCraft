@@ -22,7 +22,6 @@ type Driver interface {
     // Support
     BackupConfig(ctx context.Context, s Session) ([]byte, error)      // conf brute (archivage)
     ImportConfig(raw []byte) (*DeviceState, error)                    // conf brute → modèle standard
-    CollectLLDP(ctx context.Context, s Session) ([]LLDPNeighbor, error)  // JAMAIS livrée — cf. callout
     Fingerprint(ctx context.Context, probe ProbeResult) (score int)   // "cet équipement est-il pour moi ?"
     ResetProcedure() ResetProcedure                                   // retour usine : CLI + matériel
 }
@@ -32,16 +31,16 @@ type Driver interface {
 - `ImportConfig` est le pendant lecture de `Plan`/`Apply` : il alimente le choix « importer la configuration locale » proposé à l'adoption ([[Discovery]]). Sans session : il travaille sur du texte, ce qui permet aussi d'importer une configuration collée depuis une console série.
 - `ResetProcedure` est du **savoir**, pas une action : le driver décrit la remise à zéro (voie CLI, voie matérielle, ce qui est effacé, pièges), meshcraft ne l'exécute pas à la place de l'opérateur.
 
-> [!warning] `CollectLLDP` n'a jamais été livrée, et le voisinage est pourtant collecté
-> Le voisinage LLDP existe depuis le 29/07/2026 ([[Voisinage LLDP]]) — **sans passer par
-> cette méthode**, qui n'est implémentée par aucun connecteur et ne le sera probablement
-> jamais. Ce qui a été livré est un jeu d'OID de plus dans le **poller SNMP du proxy**
+> [!info] Le voisinage LLDP n'est **pas** une méthode de connecteur, et c'est délibéré
+> Une version aspirationnelle de ce contrat portait un `CollectLLDP`. Il n'a jamais existé
+> dans le code et n'existera pas : le voisinage LLDP, livré le 29/07/2026
+> ([[Voisinage LLDP]]), est un jeu d'OID de plus dans le **poller SNMP du proxy**
 > (`internal/snmppoll/lldp.go`), au même titre que `if_state`, `health` ou
 > `optical_power`.
 >
 > Ce n'est pas un raccourci mais la conséquence d'une règle déjà écrite ailleurs : la
 > **collecte périodique s'exécute sur le proxy et ne parle que SNMP**, là où un connecteur
-> s'exécute sur le contrôleur et dialogue par le tunnel. Une `CollectLLDP` appelée par le
+> s'exécute sur le contrôleur et dialogue par le tunnel. Une telle méthode appelée par le
 > contrôleur aurait fait traverser le WAN à chaque relevé de table, pour une donnée que
 > l'agent SNMP local sert déjà — et surtout elle aurait créé un **second chemin de
 > vérité** pour la même information, à arbitrer contre le poll (le raisonnement des traps,
@@ -934,7 +933,7 @@ recherché. En passant par la plateforme :
 |---|---|
 | Transport | **gRPC sur socket local**, greffon lancé par le contrôleur, façon `go-plugin`. Typé, bidirectionnel, streaming natif, multi-langage. |
 | Poignée de main | le greffon annonce `protocol` (entier), son `Info` et ses `Capabilities` ; un protocole trop ancien est **refusé au démarrage**, jamais dégradé en silence. |
-| Sens plateforme → greffon | `Fingerprint`, `Capabilities`, `ReadState`, `Plan`, `Apply`, `BackupConfig`, `ImportConfig`, `CollectLLDP`, `ResetProcedure`. |
+| Sens plateforme → greffon | `Fingerprint`, `Capabilities`, `ReadState`, `Plan`, `Apply`, `BackupConfig`, `ImportConfig`, `ResetProcedure`. Le voisinage LLDP n'y figure pas : collecté par le poller SNMP du proxy (`internal/snmppoll/lldp.go`), cf. callout. |
 | Sens greffon → plateforme | `Dial(host, port)` → flux TCP ; `Log` ; `Progress`. Rien d'autre : pas de disque, pas de base, pas de réseau direct. |
 | Secrets | passés **par opération**, jamais le coffre ([[Credentials]]). Un greffon voit l'identifiant dont il a besoin, à l'instant où il en a besoin. |
 | Isolation | processus séparé, utilisateur dédié, pas d'accès au système de fichiers du contrôleur. Un greffon reste du **code tiers exécuté à côté de données sensibles** : le dire, et le cloisonner. |

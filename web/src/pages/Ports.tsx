@@ -256,11 +256,11 @@ export default function Ports() {
                       <tr key={pr.name}>
                         <td>
                           <PortSquare
-                            name={pr.name} port={p} vm={vm} size={18} off={off}
+                            name={pr.name} displayName={pr.display} port={p} vm={vm} size={18} off={off}
                           />
                         </td>
                         <td>
-                          <span style={{ fontWeight: 600, fontSize: 12 }}>{pr.name}</span>
+                          <span style={{ fontWeight: 600, fontSize: 12 }}>{pr.display}</span>
                           <div className="note" style={{ fontSize: 10 }}>
                             {pr.speed}
                             {pr.poeCap ? " · PoE" : ""}

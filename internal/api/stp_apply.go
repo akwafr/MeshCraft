@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -57,6 +58,7 @@ func (s *Server) pushDeviceSTP(ctx context.Context, d model.Device,
 	var plan = driver.SpanningTreePlan{
 		Enabled: !disable,
 		Mode:    mode,
+		Region:  s.siteMSTRegion(ctx, d),
 		Ports:   portSTPIntents(d.Ports),
 	}
 	var err error
@@ -153,4 +155,77 @@ func (s *Server) handleApplyDeviceSTP(w http.ResponseWriter, r *http.Request) {
 		"notes": res.Notes,
 		"steps": transcriptOf(adm),
 	})
+}
+
+// siteMSTRegion derives the MST region every device of this site must share.
+//
+// # Why it is computed here and never entered anywhere
+//
+// 802.1s decides region membership on name + revision + a digest over the FULL
+// VLAN-to-instance table, and two bridges are in one region only if all three
+// match exactly. A mismatch is silent — the neighbour is simply treated as an
+// ordinary RSTP bridge — so the usual way of running MST, with an operator typing
+// the same three values on every switch, fails by typo and shows nothing.
+//
+// Deriving it removes the typo: the name is the site slug, and the map is built
+// from the site's own VLAN list, so every device of a site computes the same
+// region from the same data without anyone entering anything.
+//
+// ALL KNOWN VLANs GO INTO INSTANCE 1 (VLAN 1 excepted — it belongs to the CIST on
+// every platform, and mapping it is refused by some and ignored by others, which
+// is enough to break the digest). One instance means one tree for the site: no
+// per-VLAN load balancing, which needs redundant paths to be worth anything and
+// must be identical everywhere to be safe at all.
+//
+// THE COROLLARY THE CALLER MUST CARRY: the digest covers every VLAN, so adding a
+// site VLAN changes the region. Any device not re-pushed afterwards leaves the
+// region — still forwarding, still green, quietly out of the tree. Changing the
+// VLAN list of a site means re-applying STP across it.
+func (s *Server) siteMSTRegion(ctx context.Context, d model.Device) driver.MSTRegion {
+	var site, err = s.Store.GetSite(ctx, d.SiteID)
+	if err != nil {
+		return driver.MSTRegion{}
+	}
+	var slug = site.Slug
+	if slug == "" {
+		// A region needs a stable name and the slug is the only one guaranteed
+		// unique per site. Without it, deriving from the site name would produce
+		// a region that changes the day someone renames the site — which silently
+		// evicts every device not re-pushed.
+		return driver.MSTRegion{}
+	}
+	var vlans, vlanErr = s.Store.ListVlans(ctx, d.SiteID)
+	if vlanErr != nil {
+		return driver.MSTRegion{}
+	}
+	var ids = make([]int, 0, len(vlans))
+	var v model.Vlan
+	for _, v = range vlans {
+		ids = append(ids, v.VlanID)
+	}
+	// A plan read that fails is tolerated: a region without an explicit revision
+	// is still a region, and refusing to build one for a transient database error
+	// would leave the fleet unregioned.
+	var plan, _ = s.Store.GetSitePlan(ctx, d.SiteID)
+	return driver.SiteMSTRegion(slug, stpRegionRevisionOf(plan), ids)
+}
+
+// stpRegionRevisionOf reads the region revision from the site plan.
+//
+// A revision is NOT a version to bump for bookkeeping: raising it on one device
+// removes that device from the region until every other is re-pushed. It lives in
+// the site plan so a deliberate region change is possible, and defaults to 1 —
+// not 0, which is what an untouched device carries, so a meshcraft-managed region
+// is distinguishable from a factory one at a glance.
+func stpRegionRevisionOf(plan json.RawMessage) int {
+	if len(plan) == 0 {
+		return 1
+	}
+	var parsed struct {
+		Rev *int `json:"stp_mst_revision"`
+	}
+	if json.Unmarshal(plan, &parsed) != nil || parsed.Rev == nil {
+		return 1
+	}
+	return *parsed.Rev
 }

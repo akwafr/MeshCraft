@@ -25,7 +25,7 @@ import (
 //	10.99.0.54/24   on vlan99,                  dynamic false
 //
 // This CRS326 is therefore on a STATIC address, in the site's management subnet, on a
-// site whose plan says « external DHCP ». Same finding as on both CSS326 units, and the
+// site whose plan says 'external DHCP'. Same finding as on both CSS326 units, and the
 // case that motivated per-device addressing mode
 // (cf. docs/01-Architecture/Adressage de management, migration 0027).
 //
@@ -36,7 +36,7 @@ import (
 // not capture those two menus. Their field names come from RouterOS documentation, a
 // strong source but not an observation. The consequence is held here: their read is
 // OPTIONAL, failure does not fail the call, and absence is stated in a note rather than
-// rendered as « not configured », which would be an assertion.
+// rendered as 'not configured', which would be an assertion.
 
 // Compile-time check when the contract moves (cf. contract.go).
 var _ driver.MgmtAddrReader = (*Client)(nil)
@@ -70,8 +70,8 @@ func (c *Client) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, 
 			dnsErr.Error()+").")
 	}
 	c.step(true, "management addressing re-read",
-		"/ip/address, /ip/route and /ip/dns: mode « "+addrModeLabel(out.Mode)+
-			" », address "+orUnknown(out.Address))
+		"/ip/address, /ip/route and /ip/dns: mode '"+addrModeLabel(out.Mode)+
+			"', address "+orUnknown(out.Address))
 	return out, nil
 }
 
@@ -82,8 +82,8 @@ func (c *Client) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, 
 //
 // ADDRESS CHOICE IS NOT REDONE HERE: it is DELEGATED to [foldMgmt], the function state
 // read already uses. Not convenience — the only way to avoid two different answers to
-// the same question in one binary — a gap between « the address that matters on the detail
-// screen » and « the address that matters for apply guardrails » would only show the day
+// the same question in one binary — a gap between 'the address that matters on the detail
+// screen' and 'the address that matters for apply guardrails' would only show the day
 // one protects a VLAN the other does not designate. The `comment: defconf` sort that
 // drops factory address `192.168.88.1` is already there and need not be copied.
 func MgmtAddrOf(addrs, routes, dns []Row) driver.MgmtAddrState {
@@ -137,7 +137,7 @@ func rowByAddress(addrs []Row, address string) Row {
 
 // defaultGateway returns the gateway of the ACTIVE default route.
 //
-// « Active » matters: RouterOS willingly keeps several default routes at different
+// 'Active' matters: RouterOS willingly keeps several default routes at different
 // distances, only one of which is used. Showing a backup route as THE management gateway
 // would look for a routing problem where there is none.
 //
@@ -166,7 +166,7 @@ func defaultGateway(routes []Row) string {
 //
 // Both fields not just `servers`: RouterOS stores resolvers pushed by a DHCP lease in
 // `dynamic-servers`, separately from those an administrator entered. Reading only one
-// would show « no DNS » on a device that resolves perfectly — and conclude incomplete
+// would show 'no DNS' on a device that resolves perfectly — and conclude incomplete
 // configuration.
 func dnsServers(dns []Row) []string {
 	var out []string
@@ -182,7 +182,7 @@ func dnsServers(dns []Row) []string {
 }
 
 // appendSplit adds comma-separated list elements, deduplicated and skipping empties.
-// RouterOS serves these fields as one string (« 10.99.0.1,1.1.1.1 »).
+// RouterOS serves these fields as one string ('10.99.0.1,1.1.1.1').
 func appendSplit(out []string, csv string) []string {
 	if csv == "" {
 		return out

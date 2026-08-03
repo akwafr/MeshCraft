@@ -6,20 +6,21 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Ce que ce fichier tests : ce que le cliche de reannonce DIT, et surtout ce qu'il
-// TAIT.
+// What this file tests: what the re-announcement snapshot SAYS, and above
+// all what it STAYS SILENT about.
 //
-// Le cliche existe parce qu'une transition perdue ne se rejouait jamais (cf.
-// tunnel.Event.Resync). Mais reannoncer trop serait pire que de ne rien reannoncer :
-// une cible jamais pingee presented comme « en ligne » ferait write au controleur un
-// constat que personne n'a fait, et sur une plateforme sans console de secours c'est
-// le genre de statut qui fait renoncer a un deplacement.
+// The snapshot exists because a lost transition was never replayed (cf.
+// tunnel.Event.Resync). But re-announcing too much would be worse than not
+// re-announcing anything: a target that was never pinged, presented as
+// "online", would write to the controller a finding that nobody made, and on
+// a platform with no fallback console that's the kind of status that makes
+// someone cancel a site visit.
 
-// TestSnapshotSilentWhenUnobserved : une cible sans avis ne produit rien.
+// TestSnapshotSilentWhenUnobserved: a target with no verdict produces nothing.
 //
-// `up == nil` veut dire « pas encore pingee ». Ni en ligne, ni injoignable : il n'y a
-// aucun constat a reannoncer, et en inventer un serait affirmer plus que ce que la
-// surveillance sait.
+// `up == nil` means "not pinged yet". Neither online nor unreachable: there
+// is no finding to re-announce, and inventing one would assert more than
+// monitoring actually knows.
 func TestSnapshotSilentWhenUnobserved(t *testing.T) {
 	var m = NewMonitor()
 	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
@@ -28,24 +29,25 @@ func TestSnapshotSilentWhenUnobserved(t *testing.T) {
 
 	var snap = m.Snapshot()
 	if len(snap) != 0 {
-		t.Fatalf("cliche = %d evenement(s), expected 0 : une cible sans avis ne se "+
-			"reannonce pas", len(snap))
+		t.Fatalf("snapshot = %d event(s), expected 0: a target with no verdict "+
+			"is not re-announced", len(snap))
 	}
 }
 
-// TestSnapshotReturnsCurrentStateInOrder : un evenement par cible ayant un avis,
-// trie par adresse, marque `Resync`.
+// TestSnapshotReturnsCurrentStateInOrder: one event per target with a
+// verdict, sorted by address, marked `Resync`.
 //
-// L'ordre stable n'est pas une coquetterie : deux cliches du same etat doivent
-// produire la same suite d'octets, sinon comparer deux flux de reconnexion ne veut
-// plus rien dire — et un parcours de carte Go varie a chaque execution.
+// The stable order isn't cosmetic: two snapshots of the same state must
+// produce the same byte sequence, otherwise comparing two reconnection
+// streams stops meaning anything — and a Go map iteration order varies on
+// every run.
 func TestSnapshotReturnsCurrentStateInOrder(t *testing.T) {
 	var m = NewMonitor()
 	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
 		{DeviceID: "dev-c", IP: "10.0.0.30", Name: "c"},
 		{DeviceID: "dev-a", IP: "10.0.0.10", Name: "a"},
 		{DeviceID: "dev-b", IP: "10.0.0.20", Name: "b"},
-		// Sans DeviceID : le controleur n'aurait rien a en faire.
+		// No DeviceID: the controller would have nothing to do with it.
 		{DeviceID: "", IP: "10.0.0.40", Name: "anonyme"},
 	}})
 
@@ -59,7 +61,7 @@ func TestSnapshotReturnsCurrentStateInOrder(t *testing.T) {
 
 	var snap = m.Snapshot()
 	if len(snap) != 3 {
-		t.Fatalf("cliche = %d evenement(s), expected 3 (l'anonyme est passe)", len(snap))
+		t.Fatalf("snapshot = %d event(s), expected 3 (the anonymous one was skipped)", len(snap))
 	}
 
 	var expected = []struct {
@@ -74,33 +76,33 @@ func TestSnapshotReturnsCurrentStateInOrder(t *testing.T) {
 	var i int
 	for i = range expected {
 		if snap[i].IP != expected[i].ip {
-			t.Errorf("rang %d : adresse %s, expected %s — le cliche doit be trie",
+			t.Errorf("rank %d: address %s, expected %s — the snapshot must be sorted",
 				i+1, snap[i].IP, expected[i].ip)
 		}
 		if snap[i].Type != expected[i].typ {
-			t.Errorf("%s : type %s, expected %s", snap[i].IP, snap[i].Type, expected[i].typ)
+			t.Errorf("%s: type %s, expected %s", snap[i].IP, snap[i].Type, expected[i].typ)
 		}
 		if snap[i].Misses != expected[i].misses {
-			t.Errorf("%s : misses %d, expected %d", snap[i].IP, snap[i].Misses,
+			t.Errorf("%s: misses %d, expected %d", snap[i].IP, snap[i].Misses,
 				expected[i].misses)
 		}
 		if !snap[i].Resync {
-			t.Errorf("%s : non marque Resync — le controleur le prendrait pour une "+
-				"bascule fraiche et journaliserait une panne qui n'a pas eu lieu",
+			t.Errorf("%s: not marked Resync — the controller would mistake it for a "+
+				"fresh flip and log an outage that never happened",
 				snap[i].IP)
 		}
 		if snap[i].TS.IsZero() {
-			t.Errorf("%s : horodatage vide", snap[i].IP)
+			t.Errorf("%s: empty timestamp", snap[i].IP)
 		}
 	}
 }
 
-// TestSnapshotDropsRemovedTarget : une cible retiree de la consigne disparait du
-// cliche.
+// TestSnapshotDropsRemovedTarget: a target removed from the config
+// disappears from the snapshot.
 //
-// `SetConfig` oublie les cibles absentes de la nouvelle consigne, et le cliche doit
-// suivre : reannoncer state d'un device qu'on ne surveille plus ferait write un
-// statut que rien ne rafraichira jamais.
+// `SetConfig` forgets targets absent from the new config, and the snapshot
+// must follow suit: re-announcing the state of a device we no longer
+// monitor would write a status that nothing will ever refresh.
 func TestSnapshotDropsRemovedTarget(t *testing.T) {
 	var m = NewMonitor()
 	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
@@ -117,6 +119,6 @@ func TestSnapshotDropsRemovedTarget(t *testing.T) {
 
 	var snap = m.Snapshot()
 	if len(snap) != 1 || snap[0].DeviceID != "dev-a" {
-		t.Fatalf("cliche = %+v, expected le seul dev-a", snap)
+		t.Fatalf("snapshot = %+v, expected only dev-a", snap)
 	}
 }

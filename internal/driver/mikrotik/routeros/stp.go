@@ -36,7 +36,7 @@ func (c *Client) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState
 	default:
 		out.Mode = mode
 		out.Enabled = true
-		out.Notes = append(out.Notes, "unrecognised protocol-mode « "+mode+" »")
+		out.Notes = append(out.Notes, "unrecognised protocol-mode '"+mode+"'")
 	}
 	out.BridgePriority = parseHexOrDec(br.Get("priority"))
 	var mac = br.Get("mac-address")

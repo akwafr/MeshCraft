@@ -92,7 +92,7 @@ func TestUptimeFromCentisecondsToSeconds(t *testing.T) {
 //
 // Average, not maximum: one core at 100% on a dual-core is not a saturated device, it
 // is a half-busy device. This test locks that in, because it is exactly the kind of
-// aggregate a review « fixes » while believing it helps.
+// aggregate a review "fixes" while believing it helps.
 func TestCPULoadIsAverageOfCores(t *testing.T) {
 	var tables = table(oidHrProcessorLoad, map[string]gosnmp.SnmpPDU{
 		"1": {Name: oidHrProcessorLoad + ".1", Type: gosnmp.Integer, Value: 100},
@@ -225,12 +225,12 @@ func TestMtxrHealthSensorsAndScales(t *testing.T) {
 //
 // This is the only place in this file where getting it wrong INVERTS an alarm.
 // MIKROTIK-MIB `BoolValue` enumerates `true(1)` / `false(2)`: on `raw != 0`, value 2
-// (« PSU fault ») would be read as « true », therefore « healthy », and the series would
+// ("PSU fault") would be read as "true", therefore "healthy", and the series would
 // show a healthy device while its PSU is dead.
 //
-// And an out-of-enumeration value is rendered « not healthy »: on an alarm, unknown is
-// treated as fault, never as clearance. That is the « unknown capability is assumed
-// absent » rule applied to monitoring.
+// And an out-of-enumeration value is rendered "not healthy": on an alarm, unknown is
+// treated as fault, never as clearance. That is the "unknown capability is assumed
+// absent" rule applied to monitoring.
 func TestPSUStateNeverInverts(t *testing.T) {
 	var cases = []struct {
 		raw    uint
@@ -372,7 +372,7 @@ func TestOpticalAndPublishedScales(t *testing.T) {
 	}
 
 	// Port attachment: INDEX comes from the table, NAME from `mtxrOpticalName`. Without
-	// the name, an operator reads « received power of index 26 » and does not know which
+	// the name, an operator reads "received power of index 26" and does not know which
 	// port we mean.
 	var s int
 	for s = range samples {
@@ -412,7 +412,7 @@ func TestFaceplateBoundRejectsAberrantIndex(t *testing.T) {
 			"26": {Name: oidOpticalName + ".26", Type: gosnmp.OctetString,
 				Value: []byte("sfp-sfpplus2")},
 			"999999": {Name: oidOpticalName + ".999999", Type: gosnmp.OctetString,
-				Value: []byte("fantome")},
+				Value: []byte("ghost")},
 		}),
 		table(oidOpticalRxPower, map[string]gosnmp.SnmpPDU{
 			"26":     {Name: oidOpticalRxPower + ".26", Type: gosnmp.Integer, Value: -5575},
@@ -439,8 +439,8 @@ func TestFaceplateBoundRejectsAberrantIndex(t *testing.T) {
 // TestSensorSetsHaveDistinctOIDs
 //
 // A set that walked another set's OIDs would produce empty series with no error: the
-// device would answer « no such object », the poller would have no table, and the message
-// would be « no readable SNMP table » — sending you to diagnose agent failure where the
+// device would answer "no such object", the poller would have no table, and the message
+// would be "no readable SNMP table" -- sending you to diagnose agent failure where the
 // poller asked for the wrong OIDs.
 func TestSensorSetsHaveDistinctOIDs(t *testing.T) {
 	var health = oidsFor(MetricHealth)
@@ -451,10 +451,11 @@ func TestSensorSetsHaveDistinctOIDs(t *testing.T) {
 		t.Errorf("health set has only %d branch(es): MIKROTIK-MIB sensors are scalars "+
 			"walked one by one", len(health))
 	}
-	// Cost is documented in health.go and cmd/proxy/snmp.go — sixteen requests per cycle.
-	// If this number changes, both documents lie.
-	if len(health) != 16 {
-		t.Errorf("%d branch(es) in health set, 16 documented in health.go and "+
+	// Cost is documented in health.go and cmd/proxy/snmp.go. 22 = 16 MikroTik/
+	// HOST-RESOURCES branches + 6 Cisco enterprise-9 (cpu, mem name/used/free,
+	// temp descr/value). If this number changes, both documents lie.
+	if len(health) != 22 {
+		t.Errorf("%d branch(es) in health set, 22 documented in health.go and "+
 			"cmd/proxy/snmp.go: one of them is wrong", len(health))
 	}
 	if len(optical) != 9 {

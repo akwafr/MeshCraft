@@ -58,10 +58,10 @@ func TestParseIOS(t *testing.T) {
 		t.Fatalf("hostname %q", res.Hostname)
 	}
 
-	// VLANs : 1 (native), 10, 20, 30, 31.
+	// VLANs: 1 (native), 10, 20, 30, 31.
 	var want = []int{1, 10, 20, 30, 31}
 	if len(res.Vlans) != len(want) {
-		t.Fatalf("%d VLANs, expected %d : %+v", len(res.Vlans), len(want), res.Vlans)
+		t.Fatalf("%d VLANs, expected %d: %+v", len(res.Vlans), len(want), res.Vlans)
 	}
 	var i int
 	for i = range want {
@@ -70,69 +70,69 @@ func TestParseIOS(t *testing.T) {
 		}
 	}
 	if res.Vlans[1].Name != "Bureaux" {
-		t.Fatalf("nom du VLAN 10 : %q", res.Vlans[1].Name)
+		t.Fatalf("VLAN 10 name: %q", res.Vlans[1].Name)
 	}
 
-	// Un « name » qui porte sur plusieurs VLANs ne doit pas be applique.
+	// A "name" that applies to several VLANs must not be applied.
 	if res.Vlans[3].Name != "" || res.Vlans[4].Name != "" {
-		t.Fatalf("nom applique a une plage de VLANs : %+v", res.Vlans[3:])
+		t.Fatalf("name applied to a VLAN range: %+v", res.Vlans[3:])
 	}
 
-	// Port access avec VLAN voix tagge.
+	// Access port with a tagged voice VLAN.
 	var p1 = res.Ports["GigabitEthernet1/0/1"]
 	if p1.Mode != "access" || p1.PVID == nil || *p1.PVID != 10 {
-		t.Fatalf("Gi1/0/1 : %+v", p1)
+		t.Fatalf("Gi1/0/1: %+v", p1)
 	}
 	if p1.Label != "Accounting workstation" {
-		t.Fatalf("description : %q", p1.Label)
+		t.Fatalf("description: %q", p1.Label)
 	}
 	var tagged, ok = p1.Tagged.([]int)
 	if !ok || len(tagged) != 1 || tagged[0] != 20 {
-		t.Fatalf("VLAN voix non tagge : %+v", p1.Tagged)
+		t.Fatalf("voice VLAN not tagged: %+v", p1.Tagged)
 	}
 
-	// Trunk avec liste explicite.
+	// Trunk with an explicit list.
 	var up = res.Ports["GigabitEthernet1/0/24"]
 	if up.Mode != "trunk" || up.PVID == nil || *up.PVID != 1 {
-		t.Fatalf("uplink : %+v", up)
+		t.Fatalf("uplink: %+v", up)
 	}
 	tagged, ok = up.Tagged.([]int)
 	if !ok || len(tagged) != 4 {
-		t.Fatalf("VLANs du trunk : %+v", up.Tagged)
+		t.Fatalf("trunk VLANs: %+v", up.Tagged)
 	}
 
-	// Trunk sans liste : tous les VLANs, avec avertissement.
+	// Trunk without a list: all VLANs, with a warning.
 	var te = res.Ports["TenGigabitEthernet1/1/1"]
 	if te.Tagged != "all" {
-		t.Fatalf("trunk implicite : %+v", te.Tagged)
+		t.Fatalf("implicit trunk: %+v", te.Tagged)
 	}
 
-	// Interface logique exclue, port route exclu.
+	// Logical interface excluded, routed port excluded.
 	var _, hasVlanIface = res.Ports["Vlan10"]
 	if hasVlanIface {
-		t.Fatal("interface Vlan10 importee comme port physique")
+		t.Fatal("Vlan10 interface imported as a physical port")
 	}
 	var _, hasRouted = res.Ports["GigabitEthernet1/0/48"]
 	if hasRouted {
-		t.Fatal("port route importe")
+		t.Fatal("routed port imported")
 	}
 
-	// Facade : deux groupes, PoE vu sur le groupe gigabit.
+	// Front panel: two groups, PoE seen on the gigabit group.
 	if len(res.PortGroups) != 2 {
-		t.Fatalf("groupes : %+v", res.PortGroups)
+		t.Fatalf("groups: %+v", res.PortGroups)
 	}
 	var g = res.PortGroups[0]
 	if g.Prefix != "GigabitEthernet1/0/" || g.From != 1 || g.To != 24 {
-		t.Fatalf("groupe gigabit : %+v", g)
+		t.Fatalf("gigabit group: %+v", g)
 	}
 	if !g.PoE {
-		t.Fatal("PoE non detecte")
+		t.Fatal("PoE not detected")
 	}
 	if g.SpeedMbps != 1000 {
-		t.Fatalf("vitesse deduced : %d", g.SpeedMbps)
+		t.Fatalf("deduced speed: %d", g.SpeedMbps)
 	}
 	if res.PortGroups[1].SpeedMbps != 10000 {
-		t.Fatalf("vitesse 10G deduced : %d", res.PortGroups[1].SpeedMbps)
+		t.Fatalf("deduced 10G speed: %d", res.PortGroups[1].SpeedMbps)
 	}
 }
 
@@ -176,19 +176,19 @@ func TestParseComware(t *testing.T) {
 	}
 	var acc = res.Ports["GigabitEthernet0/0/1"]
 	if acc.Mode != "access" || acc.PVID == nil || *acc.PVID != 100 {
-		t.Fatalf("access port : %+v", acc)
+		t.Fatalf("access port: %+v", acc)
 	}
 	var tr = res.Ports["GigabitEthernet0/0/2"]
 	if tr.Mode != "trunk" || tr.PVID == nil || *tr.PVID != 100 {
-		t.Fatalf("trunk : %+v", tr)
+		t.Fatalf("trunk: %+v", tr)
 	}
 	var tagged, ok = tr.Tagged.([]int)
 	if !ok || len(tagged) != 4 {
 		// 100, 200, 201, 202
-		t.Fatalf("« 200 to 202 » mal etendu : %+v", tr.Tagged)
+		t.Fatalf("\"200 to 202\" badly expanded: %+v", tr.Tagged)
 	}
 	if res.Ports["GigabitEthernet0/0/3"].Tagged != "all" {
-		t.Fatalf("allow-pass vlan all : %+v", res.Ports["GigabitEthernet0/0/3"].Tagged)
+		t.Fatalf("allow-pass vlan all: %+v", res.Ports["GigabitEthernet0/0/3"].Tagged)
 	}
 }
 
@@ -217,24 +217,104 @@ func TestExpandVlanList(t *testing.T) {
 	for _, c = range cases {
 		var got, err = expandVlanList(c.in)
 		if c.ok != (err == nil) {
-			t.Fatalf("%q : err=%v, expected ok=%v", c.in, err, c.ok)
+			t.Fatalf("%q: err=%v, expected ok=%v", c.in, err, c.ok)
 		}
 		if c.ok && len(got) != c.want {
-			t.Fatalf("%q : %d valeurs, expected %d", c.in, len(got), c.want)
+			t.Fatalf("%q: %d values, expected %d", c.in, len(got), c.want)
 		}
 	}
 }
 
 func TestParseRejectsUnknownDialect(t *testing.T) {
-	var _, err = Parse("Ceci n'est pas une configuration de switch.", "")
+	var _, err = Parse("This is not a switch configuration.", "")
 	if err == nil {
-		t.Fatal("dialecte inconnu accepted")
+		t.Fatal("unknown dialect accepted")
 	}
 }
 
 func TestParseEmpty(t *testing.T) {
 	var _, err = Parse("   \n\t\n", "")
 	if err == nil {
-		t.Fatal("configuration vide accepted")
+		t.Fatal("empty configuration accepted")
+	}
+}
+
+// TestParseFsS3900: FSOS/Accton running-config as observed in lab testing,
+// OpCode 1.7.0 — two-word interface names ("ethernet 1/1"), VLAN named
+// inline in "vlan database", SVI "interface vlan 99", "craft" management
+// port.
+func TestParseFsS3900(t *testing.T) {
+	var raw = `
+!<Version>0.0.1</Version>
+!<stackingDB>000000000000</stackingDB>
+!
+snmp-server community public ro
+!
+hostname test-fs-s3900
+!
+vlan database
+ VLAN 1 name DefaultVlan media ethernet
+ VLAN 99 name LAN99_Management media ethernet
+!
+interface ethernet 1/1
+
+!
+interface ethernet 1/25
+ no negotiation
+ switchport mode trunk
+ switchport trunk allowed vlan add 99
+!
+interface ethernet 1/28
+ no negotiation
+!
+interface vlan 1
+ ip add dhcp
+!
+interface vlan 99
+ ip add 10.99.0.240 255.255.0.0
+!
+interface craft
+ ip add 192.168.1.1 255.255.255.0
+!
+ip route 0.0.0.0 0.0.0.0 10.99.0.1
+!
+end
+`
+	var res, err = Parse(raw, "")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if res.Hostname != "test-fs-s3900" {
+		t.Errorf("hostname=%q", res.Hostname)
+	}
+	if len(res.Vlans) != 2 {
+		t.Fatalf("vlans=%v", res.Vlans)
+	}
+	if res.Vlans[0].VlanID != 1 || res.Vlans[0].Name != "DefaultVlan" {
+		t.Errorf("vlan 1: %+v", res.Vlans[0])
+	}
+	if res.Vlans[1].VlanID != 99 || res.Vlans[1].Name != "LAN99_Management" {
+		t.Errorf("vlan 99: %+v", res.Vlans[1])
+	}
+	if len(res.Ports) != 3 {
+		t.Fatalf("ports=%v", res.Ports)
+	}
+	var trunk, ok = res.Ports["ethernet 1/25"]
+	if !ok || trunk.Mode != "trunk" {
+		t.Fatalf("ethernet 1/25: %+v", trunk)
+	}
+	var tagged, isList = trunk.Tagged.([]int)
+	if !isList || len(tagged) != 1 || tagged[0] != 99 {
+		t.Errorf("ethernet 1/25 tagged=%v", trunk.Tagged)
+	}
+	if _, ok = res.Ports["vlan 99"]; ok {
+		t.Error("SVI \"vlan 99\" imported as a physical port")
+	}
+	if _, ok = res.Ports["craft"]; ok {
+		t.Error("\"craft\" imported as a front-panel port")
+	}
+	if len(res.PortGroups) != 1 || res.PortGroups[0].Prefix != "ethernet 1/" ||
+		res.PortGroups[0].From != 1 || res.PortGroups[0].To != 28 {
+		t.Errorf("groups=%+v", res.PortGroups)
 	}
 }

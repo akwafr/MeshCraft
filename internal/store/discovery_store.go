@@ -921,3 +921,27 @@ func (s *Store) PurgeStaleDiscovered(ctx context.Context, olderThan time.Duratio
 	}
 	return tag.RowsAffected(), nil
 }
+
+// RevealKnownCredential returns ONE instance credential's ciphertext, by id.
+//
+// Deliberately narrow where [Store.CredentialSecrets] is broad: that one answers
+// "does the key still open these?" over the whole table and its caller keeps only
+// a boolean. This one exists to put a secret on an operator's screen, so it reads
+// exactly one row and the caller has to name which.
+//
+// Disabled credentials are returned too. A credential taken out of the discovery
+// try order is still the one sitting on every device it was ever applied to — and
+// disabling it is a common way to stop trying an old password, not a statement
+// that nobody needs to read it again. Refusing here would hide the secret that
+// opens the very devices left behind.
+func (s *Store) RevealKnownCredential(ctx context.Context, id string) (EncCredential, error) {
+	var c EncCredential
+	var err = s.pool.QueryRow(ctx,
+		`select id::text, name, kind, username, secret_enc
+		   from known_credentials where id = $1::uuid`, id).
+		Scan(&c.ID, &c.Name, &c.Kind, &c.Username, &c.SecretEnc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, ErrNotFound
+	}
+	return c, err
+}

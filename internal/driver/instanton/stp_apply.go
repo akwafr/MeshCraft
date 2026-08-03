@@ -47,6 +47,36 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 	out.Notes = append(out.Notes,
 		fmt.Sprintf("SpanningTreeGlobalParam enabled=%s STPOperationMode=%s", enabled, opMode))
 
+	// THE REGION, and only in MSTP mode. Writing a region name on a device running
+	// RSTP configures a field nothing reads, and would show as "applied" on a
+	// screen where nothing changed.
+	//
+	// Name and revision are written; the VLAN-to-instance map is NOT, and the
+	// result says so rather than staying quiet (cf. parseIonRegion for why the
+	// entry shape is not guessed). That is an honest partial: two devices sharing
+	// a name and revision but differing on the digest are still in DIFFERENT
+	// regions, so the caller must not read this as "region homogenised".
+	if mode == "mstp" && plan.Region.Configured() {
+		var region = "<regionName>" + xmlEscape(plan.Region.Name) + "</regionName>" +
+			"<revisionNo>" + fmt.Sprintf("%d", plan.Region.Revision) + "</revisionNo>"
+		var regErr = a.writeSection(ctx, sectionMSTP, "set", region,
+			"MST region via "+sectionMSTP)
+		if regErr != nil {
+			return out, regErr
+		}
+		out.Notes = append(out.Notes, fmt.Sprintf(
+			"MSTP region name=%q revision=%d", plan.Region.Name, plan.Region.Revision))
+		if len(plan.Region.InstanceVLANs) > 0 {
+			out.Skipped = append(out.Skipped,
+				"MST instance-to-VLAN mapping NOT written: the InstanceEntry field "+
+					"shape has never been observed on this range (every unit surveyed "+
+					"serves an empty element), and guessing it produces this platform's "+
+					"silent failure — statusCode 0, no change, no message. Name and "+
+					"revision are set; devices still differ on the VLAN digest and are "+
+					"therefore NOT yet in one region.")
+		}
+	}
+
 	if plan.BridgePriority != nil && enabled == "1" {
 		var p = *plan.BridgePriority
 		if p < 0 {

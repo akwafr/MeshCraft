@@ -151,7 +151,7 @@ func (c *Client) ReadSNMP(ctx context.Context) (SNMPState, error) {
 		return out.Communities[i].Name < out.Communities[j].Name
 	})
 	c.step(true, "SNMP configuration read",
-		fmt.Sprintf("enabled=%t, %d community(ies), traps to « %s » (generators: %s)",
+		fmt.Sprintf("enabled=%t, %d community(ies), traps to '%s' (generators: %s)",
 			out.Enabled, len(out.Communities), out.TrapTarget,
 			JoinList(out.TrapGenerators)))
 	return out, nil
@@ -180,9 +180,9 @@ func (c *Client) EnsureCommunity(ctx context.Context, name, addresses string) er
 		return fmt.Errorf("empty community name")
 	}
 	if addresses == "" {
-		// No default invented here: « all sources » is an operational choice, not a
+		// No default invented here: 'all sources' is an operational choice, not a
 		// technical default. The caller must say it.
-		return fmt.Errorf("no source bound for community « %s »: "+
+		return fmt.Errorf("no source bound for community '%s': "+
 			"leaving SNMP open to all addresses must be requested explicitly", name)
 	}
 
@@ -219,7 +219,7 @@ func (c *Client) EnsureCommunity(ctx context.Context, name, addresses string) er
 		_, err = c.Set(ctx, "snmp/community", existing.RowID, fields)
 	case fallback != nil:
 		c.step(true, "reusing the device's default community",
-			"« "+fallback.Name+" » is renamed rather than left active alongside: "+
+			"'"+fallback.Name+"' is renamed rather than left active alongside: "+
 				"RouterOS refuses to delete its default entry")
 		_, err = c.Set(ctx, "snmp/community", fallback.RowID, fields)
 	default:
@@ -239,7 +239,7 @@ func (c *Client) EnsureCommunity(ctx context.Context, name, addresses string) er
 		}
 		c.step(true, "SNMP enabled", "")
 	}
-	c.step(true, "SNMP community « "+name+" » set",
+	c.step(true, "SNMP community '"+name+"' set",
 		"read-only, sources "+addresses)
 	return nil
 }
@@ -260,7 +260,7 @@ const trapPort = 162
 //
 // THREE REFUSALS, and all three arrive BEFORE the device is contacted for what
 // they can. That is what the contract asks: an identity the platform cannot carry
-// is REFUSED, never approximated to the « nearest ».
+// is REFUSED, never approximated to the 'nearest'.
 //
 //  1. v3 IS REFUSED. Not because the platform does not have it — it does, and the
 //     observation is clear: `/snmp` carries an `engine-id` (`80003a8c04`), which only
@@ -278,13 +278,13 @@ const trapPort = 162
 //     RouterOS carries an `addresses` field on every community, and the observation
 //     shows `::/0` on the reference device — therefore ALL sources, including outside
 //     the management VLAN. That is not a platform constraint, it is a SETTING, and
-//     « leave SNMP open to all addresses » is a choice an operator must make
+//     'leave SNMP open to all addresses' is a choice an operator must make
 //     knowingly. Inventing `::/0` as a default would be deciding for them, and doing
 //     it in silence. The difference in nature with the Instant On line is
 //     instructive: that one confines SNMP to the administration VLAN by construction,
 //     there is nothing to bound.
-//  3. AN EMPTY IDENTITY SETS NOTHING, and says so. An empty field means « nothing to
-//     do here », never « remove »: an apply is not a reset, and erasing what one is
+//  3. AN EMPTY IDENTITY SETS NOTHING, and says so. An empty field means 'nothing to
+//     do here', never 'remove': an apply is not a reset, and erasing what one is
 //     not asked to set would cut a third party's supervision.
 //
 // THE AGENT IS TURNED ON ALONG THE WAY when it is not: setting an identity on a
@@ -314,7 +314,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	}
 
 	if strings.TrimSpace(want.Community) != "" && len(want.Sources) == 0 {
-		return out, fmt.Errorf("SNMP community « %s » not set: no source bound "+
+		return out, fmt.Errorf("SNMP community '%s' not set: no source bound "+
 			"was supplied, and RouterOS requires filling the community `addresses` field. "+
 			"MISSING GESTURE: indicate the prefixes allowed to query the agent — typically "+
 			"that of the supervising proxy. Leaving SNMP open to ALL addresses is possible "+
@@ -344,7 +344,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 		// Going back over an already-qualified fleet must rewrite NOTHING: that is one
 		// fewer round-trip, and on a platform that persists immediately, a write one
 		// does not need to do is a chance to err that one does not take.
-		c.step(true, "SNMP community « "+want.Community+" » already conforming",
+		c.step(true, "SNMP community '"+want.Community+"' already conforming",
 			"sources "+addresses+", read-only, agent active — nothing to write")
 		return out, nil
 	}
@@ -366,7 +366,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 // The four conditions are those [Client.EnsureCommunity] writes, and all four are
 // needed: a community of the right name but open to all addresses, or authorized
 // for write, or switched to v3 by a previous configuration, is not the requested
-// identity — and leaving it in place while reporting « already conforming » would
+// identity — and leaving it in place while reporting 'already conforming' would
 // leave a door open that nobody would see.
 func snmpConformant(state SNMPState, name, addresses string) bool {
 	if !state.Enabled {
@@ -400,7 +400,7 @@ func snmpConformant(state SNMPState, name, addresses string) bool {
 // EXISTING GENERATORS ARE PRESERVED. Writing `trap-generators=interfaces` alone
 // would remove `temp-exception`, therefore temperature alerts, which nobody asked
 // to cut. Same principle as mergeMembers in apply.go: on a field that is written as
-// a block, « leave alone » demands an explicit effort. And THIRD-PARTY DESTINATIONS
+// a block, 'leave alone' demands an explicit effort. And THIRD-PARTY DESTINATIONS
 // TOO are preserved — cutting someone else's supervision to install one's own would
 // be the worst of services.
 //
@@ -417,13 +417,13 @@ func snmpConformant(state SNMPState, name, addresses string) bool {
 // THE COMMUNITY IS MANDATORY, and the constraint comes from THE COLLECTOR and not
 // the device: the proxy only accepts a trap if the community it carries equals the
 // one with which it QUERIES the device. A distinct trap community, even dedicated,
-// even « clean », would make 100 % of the fleet's traps be rejected. The firmware,
+// even 'clean', would make 100 % of the fleet's traps be rejected. The firmware,
 // for its part, does not require it — `trap-community` is free text that it does
 // not match against any `/snmp/community` entry.
 //
 // `Replaced` STAYS FALSE, always, and that is a platform fact: on RouterOS a
 // destination is a simple address in a list, with no attached identity. There is
-// therefore no « divergent entry carrying the same address » that would need to be
+// therefore no 'divergent entry carrying the same address' that would need to be
 // removed before adding one's own — the case that field describes does not exist
 // here.
 //
@@ -511,7 +511,7 @@ func (c *Client) ApplyTrapReceiver(ctx context.Context,
 			JoinList(state.TrapGenerators)))
 	}
 	if state.TrapVersion != "2" {
-		out.Notes = append(out.Notes, fmt.Sprintf("`trap-version` was « %s » and is "+
+		out.Notes = append(out.Notes, fmt.Sprintf("`trap-version` was '%s' and is "+
 			"forced to 2: meshcraft only sets v2c, and a collector configured for v2c "+
 			"ignores v1 traps IN SILENCE, which do not carry the same fields.",
 			state.TrapVersion))
@@ -526,8 +526,8 @@ func (c *Client) ApplyTrapReceiver(ctx context.Context,
 	if sameMembers(targets, newTargets) && state.TrapVersion == "2" &&
 		state.TrapCommunity == want.Community &&
 		containsString(state.TrapGenerators, "interfaces") {
-		c.step(true, "trap destination already declared", "« "+want.Address+
-			" », community « "+want.Community+" », v2c — nothing to write")
+		c.step(true, "trap destination already declared", "'"+want.Address+
+			"', community '"+want.Community+"', v2c — nothing to write")
 		out.Notes = append(out.Notes, "The device already carried this destination: "+
 			"nothing was rewritten. That does not prove that its traps ARRIVE — the only "+
 			"proof is the first trap received by the collector.")
@@ -559,8 +559,8 @@ func (c *Client) ApplyTrapReceiver(ctx context.Context,
 		containsString(after.TrapGenerators, "interfaces")
 	if !out.Set {
 		out.Notes = append(out.Notes, fmt.Sprintf("WRITE ACCEPTED BUT NOT CONFIRMED "+
-			"by the reread: the device carries trap-target « %s », trap-version « %s », "+
-			"generators « %s ». A 2xx that changes nothing is a silent failure, and that "+
+			"by the reread: the device carries trap-target '%s', trap-version '%s', "+
+			"generators '%s'. A 2xx that changes nothing is a silent failure, and that "+
 			"is what this reread exists to catch.",
 			after.TrapTarget, after.TrapVersion, JoinList(after.TrapGenerators)))
 		return out, nil
@@ -570,7 +570,7 @@ func (c *Client) ApplyTrapReceiver(ctx context.Context,
 		"management VLAN suffice to emit into the void. The proof is the first trap "+
 		"received.")
 	c.step(true, "trap destination declared",
-		"« "+want.Address+" » on "+JoinList(generators)+", v2c")
+		"'"+want.Address+"' on "+JoinList(generators)+", v2c")
 	return out, nil
 }
 

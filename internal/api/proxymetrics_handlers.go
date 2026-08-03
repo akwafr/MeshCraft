@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"meshcraft/internal/auth"
+	"meshcraft/internal/driver"
 	"meshcraft/internal/metricbuf"
 	"meshcraft/internal/model"
 	"meshcraft/internal/snmppoll"
@@ -296,6 +297,16 @@ type facade struct {
 	// requiring character-perfect equality. An AMBIGUOUS normalized form is removed:
 	// matching at random is worse than not matching.
 	norm map[string]string
+	// namer: the connector's own translation from a PLATFORM port name to the
+	// standard-model one, when it declares that capability (driver.PortNamer).
+	//
+	// THIS IS WHAT KEEPS A NUMBERING CONNECTOR RESOLVABLE. On such a platform the
+	// facade carries standard names ("GE11") while SNMP `ifDescr` carries the
+	// hardware's own ("Ethernet1/11"): the three purely textual steps below all
+	// miss, and every sample would be skipped — a switch whose ports all read as
+	// down, and whose every LLDP neighbor is dropped, while the device is fine.
+	// Observed on an FS S3900 the day its connector adopted GE-style names.
+	namer driver.PortNamer
 }
 
 // normalizePort reduces a port name to what distinguishes it: lowercase, and only
@@ -325,7 +336,11 @@ func normalizePort(s string) string {
 //  1. exact equality — MikroTik name interfaces like their facade ("ether1", "sfp-sfpplus1");
 //  2. normalized equality — same name modulo case and punctuation;
 //  3. facade prefix + label — Instant On returns a bare number ("1"), which the facade
-//     calls "GE1".
+//     calls "GE1";
+//  4. the CONNECTOR's own translation (driver.PortNamer) — the only step that can
+//     bridge two different vocabularies, e.g. FS S3900's "Ethernet1/11" to the
+//     standard-model "GE11". Last because it is the only one that needs the driver
+//     registry; a connector that declares no translation simply never reaches it.
 func (f facade) resolve(descr string) string {
 	if descr == "" {
 		return ""
@@ -342,6 +357,15 @@ func (f facade) resolve(descr string) string {
 	}
 	if name, seen = f.norm[normalizePort(f.prefix+descr)]; seen {
 		return name
+	}
+	if f.namer != nil {
+		var std, ok = f.namer.StandardPortName(descr)
+		// The translation is only trusted when the facade actually carries the
+		// port it names: a connector answering for a stacking unit this device
+		// does not expose must not conjure an inventory port.
+		if ok && f.ports[std] {
+			return std
+		}
 	}
 	return ""
 }
@@ -374,6 +398,16 @@ func facadeOf(d model.Device) facade {
 		prefix: portPrefix(d),
 		ports:  map[string]bool{},
 		norm:   map[string]string{},
+	}
+	// The connector's port-name translation, when it has one. Resolved from the
+	// registry by the driver the device was identified as; absent driver, absent
+	// capability, or unknown driver simply leaves it nil (cf. resolve step 4).
+	var drv, known = driver.Get(driver.DriverNameFromExtra(d.Extra))
+	if known {
+		var namer, canName = driver.AsPortNamer(drv)
+		if canName {
+			out.namer = namer
+		}
 	}
 	// ambigus: normalized forms shared by several ports. They can only serve one purpose
 	// — picking the wrong port.

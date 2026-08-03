@@ -23,7 +23,7 @@ func TestUplinksFromMgmtFallbackToLinkUp(t *testing.T) {
 		BridgeName: "bridge",
 		MgmtVLAN:   1,
 		VLANs:      nil,
-		LinkUp:     map[string]bool{"bridge": true, "ether3": true, "ether4": false},
+		LinkUp:     map[string]bool{"bridge": true, "ether3": true},
 	}
 	var got = uplinksFromMgmt(st)
 	if len(got) != 1 || got[0] != "ether3" {

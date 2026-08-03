@@ -1,50 +1,50 @@
 package main
 
-// La garde de la key du coffre : decider QUELLE key sert, et refuser de demarrer
-// quand ce n'est pas la bonne.
+// The vault key guard: decide WHICH key is in use, and refuse to start
+// when it isn't the right one.
 //
-// LE TRAP QU'ON DESARME ICI. Le controleur prenait MESHCRAFT_SECRET_KEY from
-// qu'elle was definie et ne regardait plus jamais la key rangee en base. Sur
-// une instance neuve, tres bien. Sur une instance EN SERVICE, definir cette
-// variable rendait tout le coffre illisible — et en silence, ce qui est le vrai
-// probleme : le controleur demarrait, servait ses pages, repondait a son
-// healthcheck, et le produit avait l'air de marcher. Ce qui s'arretait ne se
-// voyait pas tout de suite :
+// THE TRAP THIS DISARMS. The controller used to pick up MESHCRAFT_SECRET_KEY
+// as soon as it was set and never looked at the key stored in the database
+// again. On a brand-new instance, that's fine. On an instance ALREADY IN
+// SERVICE, setting that variable made the whole vault unreadable — silently,
+// which is the real problem: the controller would start, serve its pages,
+// answer its healthcheck, and the product looked like it was working. What
+// stopped working wasn't visible right away:
 //
-//   - la supervision SNMP disparaissait sans un message, parce que
-//     snmpWatchesFor (internal/api/watch_handlers.go) ecarte silencieusement
-//     the device dont la community ne se dechiffre pas ;
-//   - les mots de passe d'administration du parc devenaient inaccessibles, y
-//     compris ceux que meshcraft a lui-same applied sur les devices — donc,
-//     sur une gamme sans serial port, un retour aux reglages d'usine ;
-//   - l'historique des generations, seul moyen de joindre un device reste en
-//     arriere, partait avec.
+//   - SNMP monitoring vanished without a single message, because
+//     snmpWatchesFor (internal/api/watch_handlers.go) silently drops any
+//     device whose community string fails to decrypt;
+//   - fleet administration passwords became inaccessible, including the ones
+//     meshcraft itself had applied to the devices — meaning, on a product
+//     line with no serial port, a factory reset;
+//   - the generation history, the only way to reach a device left behind,
+//     went down with it.
 //
-// Et la discovery se faisait UI par UI, des jours plus tard, souvent
-// after que les sauvegardes contenant encore l'ancienne key aient tourne.
+// And discovery would happen one site at a time, days later, often after
+// backups still containing the old key had already run.
 //
-// LE RAISONNEMENT. Le controleur enregistre en base une EMPREINTE a sens unique
-// de la key qui a scelle (jamais la key, jamais de quoi la retrouver — cf.
-// secretbox.Fingerprint), puis compare a chaque demarrage :
+// THE REASONING. The controller stores in the database a one-way FINGERPRINT
+// of the key that sealed it (never the key itself, never anything that could
+// recover it — see secretbox.Fingerprint), then compares it on every startup:
 //
-//   - egales → rien a dire, on demarre ;
-//   - differentes → on REFUSE de demarrer, en nommant la cause et le geste.
-//     Demarrer serait PIRE que refuser : un refus costs une indisponibilite
-//     bruyante de quelques minutes, un demarrage costs la supervision, les
-//     access au parc et le contenu du coffre, decouverts un UI a la fois ;
-//   - absente (instance anterieure a la migration 0024) → on l'enregistre, sans
-//     bruit… mais seulement after avoir VERIFIED que la key active ouvre bien ce
-//     qui est already scelle. Enregistrer l'empreinte sans cette verification
-//     rejouerait exactement le trap d'origine : quelqu'un qui met a jour le
-//     code ET definit la variable dans le same geste ferait graver l'empreinte
-//     de la mauvaise key, et la garde benirait la catastrophe.
+//   - equal → nothing to say, start up;
+//   - different → REFUSE to start, naming both the cause and the fix.
+//     Starting would be WORSE than refusing: a refusal costs a few minutes of
+//     noisy downtime, whereas starting costs monitoring, fleet access, and
+//     the contents of the vault, discovered one site at a time;
+//   - missing (instance predates migration 0024) → record it, quietly... but
+//     only after VERIFYING that the active key does open what is already
+//     sealed. Recording the fingerprint without that check would replay
+//     exactly the original trap: someone who updates the code AND sets the
+//     variable in the same move would get the fingerprint of the wrong key
+//     etched in stone, and the guard would bless the disaster.
 //
-// LE CAS INVERSE, aussi dangereux, que la same comparaison attrape : une
-// instance basculee vers l'environnement puis redemarree SANS la variable
-// tirerait une key neuve et rescellerait par-dessus. Ici on va plus loin que
-// refuser — on ne tire same pas la key neuve (cf. InstanceSecretValue) : laisser
-// une key bidon dans instance_secrets, c'est laisser le prochain lecteur la
-// prendre pour la vraie.
+// THE REVERSE CASE, just as dangerous, that this same comparison catches: an
+// instance switched over to the environment and then restarted WITHOUT the
+// variable would draw a fresh key and reseal on top of everything. Here we go
+// further than just refusing — we also do NOT draw a fresh key (see
+// InstanceSecretValue): leaving a bogus key in instance_secrets means letting
+// the next reader mistake it for the real one.
 
 import (
 	"context"
@@ -57,12 +57,12 @@ import (
 	"meshcraft/internal/store"
 )
 
-// keyStore est le strict necessary que la garde demande a la base.
+// keyStore is the strict minimum the guard asks of the database.
 //
-// L'interface existe pour une raison precise : la decision de REFUSER est la
-// partie qu'il faut absolument tester, et la tester contre un vrai PostgreSQL
-// ferait un test qu'on n'execute pas. Avec elle, les quatre chemins de refus se
-// verify en memory.
+// The interface exists for a precise reason: the decision to REFUSE is the
+// part that absolutely must be tested, and testing it against a real
+// PostgreSQL would produce a test nobody runs. With it, the four refusal
+// paths are verified in memory.
 type keyStore interface {
 	CredentialsKeyFingerprint(ctx context.Context) ([]byte, error)
 	SetCredentialsKeyFingerprint(ctx context.Context, fingerprint []byte) error
@@ -71,20 +71,21 @@ type keyStore interface {
 	SealedSample(ctx context.Context, perColumn int) ([][]byte, error)
 }
 
-// ErrKeyMismatch : la key presented n'est pas celle qui a scelle cette base.
-// C'est un refus de demarrer, pas un avertissement.
-var ErrKeyMismatch = errors.New("key de chiffrement incompatible avec cette base")
+// ErrKeyMismatch: the key presented is not the one that sealed this database.
+// It is a refusal to start, not a warning.
+var ErrKeyMismatch = errors.New("encryption key incompatible with this database")
 
-// sampleSize : combien de valeurs scellees on sonde par colonne quand la base
-// ne porte pas encore d'empreinte. Trois suffisent — il s'agit de savoir si la
-// key ouvre le coffre, pas de le valider ligne a ligne (c'est le travail du
-// rechiffrement, qui relit tout).
+// sampleSize: how many sealed values to probe per column when the database
+// does not yet carry a fingerprint. Three is enough — the point is to know
+// whether the key opens the vault, not to validate it row by row (that is the
+// job of the rekey process, which rereads everything).
 const sampleSize = 3
 
-// resolveVaultKey choisit la key du coffre et verifies qu'elle est la bonne.
+// resolveVaultKey picks the vault key and verifies it is the right one.
 //
-// Renvoie la key (32 octets) et si elle vient de l'environnement. Toute erreur
-// renvoyee ici doit faire echouer le demarrage : c'est le sens de la garde.
+// Returns the key (32 bytes) and whether it came from the environment. Any
+// error returned here must fail startup: that is the whole point of the
+// guard.
 func resolveVaultKey(ctx context.Context, ks keyStore, envKey string) ([]byte, bool, error) {
 	var stored, err = ks.CredentialsKeyFingerprint(ctx)
 	if err != nil {
@@ -114,29 +115,31 @@ func resolveVaultKey(ctx context.Context, ks keyStore, envKey string) ([]byte, b
 		return nil, false, mismatchError(ctx, ks, stored, fingerprint, fromEnv)
 	}
 
-	// Pas d'empreinte enregistree : il n'y a rien a comparer, donc on interroge le
-	// coffre lui-same. C'est le seul juge fiable — si la key active ouvre ce qui
-	// est already scelle, elle est bien celle qui a scelle.
+	// No fingerprint on record: there is nothing to compare against, so we
+	// interrogate the vault itself. It is the only reliable judge — if the
+	// active key opens what is already sealed, it is indeed the key that
+	// sealed it.
 	if err = probeVault(ctx, ks, key, fromEnv); err != nil {
 		return nil, false, err
 	}
 	if err = ks.SetCredentialsKeyFingerprint(ctx, fingerprint); err != nil {
 		return nil, false, err
 	}
-	slog.Info("empreinte de la key du coffre enregistree : un demarrage avec une "+
-		"autre key sera now refused au lieu de rendre les secrets illisibles",
+	slog.Info("vault key fingerprint recorded: starting up with a different "+
+		"key will now be refused instead of making the secrets unreadable",
 		"key_id", secretbox.ShortID(fingerprint), "key_external", fromEnv)
 	return key, fromEnv, nil
 }
 
-// resolveKeyFromDB lit la key rangee en base, et ne la CREATES que si son absence
-// est legitime : premier demarrage d'une base vierge.
+// resolveKeyFromDB reads the key stored in the database, and only CREATES one
+// if its absence is legitimate: the first startup of a virgin database.
 //
-// `hasFingerprint` dit que cette base a already been scellee par une key connue. Si
-// la ligne manque alors qu'une empreinte existe, la conclusion est nette : la
-// bascule vers l'environnement a eu lieu (le rechiffrement supprime la key) et
-// on vient de reboot sans la variable. Tirer une key neuve ici serait le
-// scenario inverse du trap d'origine, avec le same result.
+// `hasFingerprint` says that this database has already been sealed by a
+// known key. If the row is missing while a fingerprint exists, the
+// conclusion is clear: the switchover to the environment happened (the
+// rekey process removes the key) and we just rebooted without the variable.
+// Drawing a fresh key here would be the reverse scenario of the original
+// trap, with the same result.
 func resolveKeyFromDB(ctx context.Context, ks keyStore, hasFingerprint bool) ([]byte, error) {
 	var key, err = ks.InstanceSecretValue(ctx, store.CredentialsKeyName)
 	if err == nil {
@@ -149,26 +152,26 @@ func resolveKeyFromDB(ctx context.Context, ks keyStore, hasFingerprint bool) ([]
 	if hasFingerprint {
 		return nil, fmt.Errorf(`%w
 
-MESHCRAFT_SECRET_KEY n'est pas definie, et il n'y a plus de key en base.
+MESHCRAFT_SECRET_KEY is not set, and there is no longer a key in the database.
 
-Cette instance a been basculee vers une key fournie par l'environnement : le
-rechiffrement a retire l'ancienne key de la table instance_secrets, parce qu'une
-key devenue inutile n'est plus qu'un secret qui attend de fuiter.
+This instance has been switched over to a key supplied by the environment:
+the rekey process removed the old key from the instance_secrets table,
+because a key that has become useless is nothing but a secret waiting to
+leak.
 
-Le controleur REFUSE de demarrer rather que de tirer une key neuve : cette key
-neuve ne dechiffrerait rien, et le premier secret enregistre ensuite rescellerait
-par-dessus l'empreinte — la base deviendrait un melange irreparable.
+The controller REFUSES to start rather than draw a fresh key: that fresh key
+would decrypt nothing, and the first secret saved afterward would reseal on
+top of the fingerprint — the database would become an irreparable mix.
 
-CE QU'IL FAUT FAIRE : redefinissez MESHCRAFT_SECRET_KEY (64 caracteres
-hexadecimaux) avec la key used lors de la bascule, puis redemarrez. Elle est
-dans le .env de l'instance, et dans le coffre where vous l'avez rangee. Sans elle,
-seule une restauration de sauvegarde anterieure a la bascule recupere les
-secrets.`, ErrKeyMismatch)
+WHAT TO DO: set MESHCRAFT_SECRET_KEY (64 hexadecimal characters) back to the
+key used during the switchover, then restart. It is in the instance's .env
+file, and in the vault wherever you stored it. Without it, only restoring a
+backup from before the switchover recovers the secrets.`, ErrKeyMismatch)
 	}
 
-	// Ni empreinte, ni key. Base vierge ? On verifies avant de l'affirmer : un
-	// coffre non vide sans key pour l'ouvrir n'est pas un premier demarrage, et
-	// tirer une key au hasard le condamnerait.
+	// Neither fingerprint nor key. A virgin database? We verify before
+	// assuming so: a non-empty vault with no key to open it is not a first
+	// startup, and drawing a random key would condemn it.
 	var sample [][]byte
 	if sample, err = ks.SealedSample(ctx, 1); err != nil {
 		return nil, err
@@ -176,21 +179,20 @@ secrets.`, ErrKeyMismatch)
 	if len(sample) > 0 {
 		return nil, fmt.Errorf(`%w
 
-MESHCRAFT_SECRET_KEY n'est pas definie, la table instance_secrets ne contient
-aucune key, et le coffre contient pourtant des secrets scelles.
+MESHCRAFT_SECRET_KEY is not set, the instance_secrets table contains no key,
+and yet the vault contains sealed secrets.
 
-Aucune key de cette base ne peut donc les ouvrir. Tirer une key neuve les
-condamnerait definitivement, le controleur refuse donc de demarrer.
+No key in this database can therefore open them. Drawing a fresh key would
+condemn them permanently, so the controller refuses to start.
 
-CE QU'IL FAUT FAIRE : definissez MESHCRAFT_SECRET_KEY avec la key qui a scelle
-ces valeurs, ou restaurez une sauvegarde contenant la ligne
-instance_secrets/credentials-key.`, ErrKeyMismatch)
+WHAT TO DO: set MESHCRAFT_SECRET_KEY to the key that sealed these values, or
+restore a backup that contains the instance_secrets/credentials-key row.`, ErrKeyMismatch)
 	}
 
-	// Premier demarrage reel : on tire la key et on la range. La relecture after
-	// write n'est pas une coquetterie — `on conflict do nothing` veut dire que
-	// deux demarrages simultanes en write une seule, et c'est CELLE-LA qu'il
-	// faut utiliser.
+	// A genuine first startup: draw the key and store it. Rereading it after
+	// the write is not a mere formality — `on conflict do nothing` means that
+	// two simultaneous startups will write only one, and that is the ONE
+	// that must be used.
 	var fresh []byte
 	if fresh, err = secretbox.NewRandomKey(); err != nil {
 		return nil, err
@@ -201,12 +203,12 @@ instance_secrets/credentials-key.`, ErrKeyMismatch)
 	return ks.InstanceSecretValue(ctx, store.CredentialsKeyName)
 }
 
-// probeVault verifies que `key` ouvre au moins une valeur already scellee.
+// probeVault verifies that `key` opens at least one already-sealed value.
 //
-// Un coffre vide passe : il n'y a rien a contredire. Un coffre plein dont rien
-// ne s'ouvre est le trap d'origine pris la main dans le sac — typiquement une
-// mise a jour du code et une definition de MESHCRAFT_SECRET_KEY dans le same
-// geste, sur une instance en service.
+// An empty vault passes: there is nothing to contradict. A non-empty vault
+// where nothing opens is the original trap caught red-handed — typically a
+// code update and a MESHCRAFT_SECRET_KEY assignment happening in the same
+// move, on an instance already in service.
 func probeVault(ctx context.Context, ks keyStore, key []byte, fromEnv bool) error {
 	var sample, err = ks.SealedSample(ctx, sampleSize)
 	if err != nil {
@@ -229,45 +231,47 @@ func probeVault(ctx context.Context, ks keyStore, key []byte, fromEnv bool) erro
 	}
 	return fmt.Errorf(`%w
 
-Les secrets de cette base ont been scelles avec une AUTRE key que celle fournie.
-Aucune des %d valeurs sondees ne s'ouvre avec la key active (empreinte %s).
+The secrets in this database were sealed with a DIFFERENT key than the one
+supplied. None of the %d probed values open with the active key (fingerprint
+%s).
 
-Cette base n'avait pas encore d'empreinte de key enregistree, le controleur a
-donc interroge le coffre lui-same — et le coffre repond non.
+This database did not yet have a key fingerprint on record, so the
+controller queried the vault itself — and the vault says no.
 
-CE QUI SE PASSE PROBABLEMENT : MESHCRAFT_SECRET_KEY vient d'be definie sur une
-instance existante dont les secrets were scelles par la key rangee en base
-(instance_secrets/credentials-key). Demarrer ainsi ferait bien plus de degats que
-refuser : le produit fonctionnerait EN APPARENCE, puis perdrait la supervision
-SNMP (les devices dont la community ne se dechiffre pas sont ecartes sans
-message), les mots de passe d'administration du parc et tout le contenu du
-coffre — un UI a la fois, sur plusieurs jours.
+WHAT LIKELY HAPPENED: MESHCRAFT_SECRET_KEY was just set on an existing
+instance whose secrets were sealed with the key stored in the database
+(instance_secrets/credentials-key). Starting up this way would cause far more
+damage than refusing: the product would APPEAR to work, then lose SNMP
+monitoring (devices whose community string fails to decrypt are dropped
+without a message), fleet administration passwords, and the entire contents
+of the vault — one site at a time, over several days.
 
-CE QU'IL FAUT FAIRE, l'une des deux :
+WHAT TO DO, one of the following two:
 
- 1. BASCULER POUR DE BON — rechiffrer le coffre avec la nouvelle key. Sauvegardez
-    d'abord la base, arretez le controleur, puis lancez le rechiffrement avec la
-    NOUVELLE key dans l'environnement :
+ 1. COMMIT TO THE SWITCHOVER — rekey the vault with the new key. Back up the
+    database first, stop the controller, then run the rekey process with the
+    NEW key in the environment:
 
         docker compose stop controller
         docker compose run --rm controller -rekey
 
-    Le rechiffrement lit chaque valeur avec l'ancienne key (celle de la base),
-    la rescelle avec la nouvelle, relit tout pour verify, et does not write qu'en une
-    seule transaction : une coupure au milieu ne laisse rien a half fait.
+    The rekey process reads each value with the old key (the one in the
+    database), reseals it with the new one, rereads everything to verify,
+    and writes only as a single transaction: an interruption partway through
+    leaves nothing half-done.
 
- 2. REVENIR EN ARRIERE — retirer MESHCRAFT_SECRET_KEY de l'environnement et
-    reboot. L'instance repart sur la key en base, exactement comme avant, et
-    rien n'a been perdu : le controleur a refused de demarrer AVANT to write quoi
-    que ce soit.`,
+ 2. ROLL BACK — remove MESHCRAFT_SECRET_KEY from the environment and reboot.
+    The instance goes back to using the key in the database, exactly as
+    before, and nothing has been lost: the controller refused to start
+    BEFORE writing anything at all.`,
 		ErrKeyMismatch, len(sample), secretbox.KeyShortID(key))
 }
 
-// mismatchError construit le refus quand une empreinte EXISTE et differe.
+// mismatchError builds the refusal when a fingerprint EXISTS and differs.
 //
-// Le message dit dans quel sens ca s'est passe, parce que le geste de
-// reparation n'est pas le same : si la key est encore en base, la bascule reste
-// possible ; sinon, il faut retrouver la key.
+// The message states which direction this happened in, because the fix is
+// not the same: if the key is still in the database, switching over is
+// still possible; otherwise, the key needs to be recovered.
 func mismatchError(ctx context.Context, ks keyStore, stored, active []byte, fromEnv bool) error {
 	var keyInDB = true
 	var _, err = ks.InstanceSecretValue(ctx, store.CredentialsKeyName)
@@ -275,7 +279,7 @@ func mismatchError(ctx context.Context, ks keyStore, stored, active []byte, from
 		keyInDB = false
 	}
 
-	var source = "la key rangee en base (instance_secrets/credentials-key)"
+	var source = "the key stored in the database (instance_secrets/credentials-key)"
 	if fromEnv {
 		source = "MESHCRAFT_SECRET_KEY"
 	}
@@ -283,71 +287,73 @@ func mismatchError(ctx context.Context, ks keyStore, stored, active []byte, from
 	var remedy string
 	switch {
 	case fromEnv && keyInDB:
-		remedy = `L'ancienne key est TOUJOURS en base : la bascule est donc encore possible et
-sans risque de perte. Sauvegardez la base, arretez le controleur, puis rechiffrez
-le coffre avec la nouvelle key dans l'environnement :
+		remedy = `The old key is STILL in the database: switching over is therefore still
+possible with no risk of loss. Back up the database, stop the controller,
+then rekey the vault with the new key in the environment:
 
     docker compose stop controller
     docker compose run --rm controller -rekey
 
-Ou, pour repartir immediatement en service : retirez MESHCRAFT_SECRET_KEY et
-redemarrez. Rien n'aura been perdu.`
+Or, to get back into service immediately: remove MESHCRAFT_SECRET_KEY and
+restart. Nothing will have been lost.`
 	case fromEnv:
-		remedy = `Il n'y a plus de key en base : cette instance a already been basculee, et la valeur
-de MESHCRAFT_SECRET_KEY n'est pas celle qui a servi.
+		remedy = `There is no longer a key in the database: this instance has already been
+switched over, and the value of MESHCRAFT_SECRET_KEY is not the one that was
+used.
 
-Remettez la key de la bascule (celle notee au moment du rechiffrement) et
-redemarrez. Si elle est definitivement perdue, seule une restauration de
-sauvegarde anterieure a la bascule recupere les secrets — le rechiffrement est
-impossible sans key de lecture.`
+Restore the switchover key (the one noted at the time of the rekey) and
+restart. If it is permanently lost, only restoring a backup from before the
+switchover recovers the secrets — the rekey process is impossible without a
+readable key.`
 	default:
-		remedy = `MESHCRAFT_SECRET_KEY n'est pas definie : le controleur est reparti sur la key de
-la base, alors que le coffre a been scelle avec une autre — typiquement une
-bascule vers l'environnement, suivie d'un reboot sans la variable.
+		remedy = `MESHCRAFT_SECRET_KEY is not set: the controller started up using the key in
+the database, while the vault was sealed with a different one — typically a
+switchover to the environment, followed by a reboot without the variable.
 
-Redefinissez MESHCRAFT_SECRET_KEY avec la key de la bascule et redemarrez.`
+Set MESHCRAFT_SECRET_KEY back to the switchover key and restart.`
 	}
 
 	return fmt.Errorf(`%w
 
-Empreinte enregistree en base : %s
-Empreinte de la key active   : %s   (source : %s)
+Fingerprint recorded in the database: %s
+Fingerprint of the active key       : %s   (source: %s)
 
-Les secrets de cette base ont been scelles avec une autre key que celle que le
-controleur vient de recevoir. Il REFUSE de demarrer.
+The secrets in this database were sealed with a different key than the one
+the controller just received. It REFUSES to start.
 
-Ce refus est deliberate, et il est le contraire d'une regression : demarrer
-laisserait le produit fonctionner en apparence tout en perdant, un UI a la
-fois, la supervision SNMP (les devices dont la community ne se dechiffre pas
-sont ecartes sans message), les mots de passe d'administration du parc et le
-contenu du coffre. Pire encore, le premier secret enregistre ensuite serait
-scelle avec la nouvelle key : la base deviendrait un melange des deux, que plus
-aucun rechiffrement ne peut demeler.
+This refusal is deliberate, and is the opposite of a regression: starting up
+would leave the product apparently working while losing, one site at a
+time, SNMP monitoring (devices whose community string fails to decrypt are
+dropped without a message), fleet administration passwords, and the contents
+of the vault. Worse still, the first secret saved afterward would be sealed
+with the new key: the database would become a mix of the two that no rekey
+process can ever untangle.
 
 %s`,
 		ErrKeyMismatch, secretbox.ShortID(stored), secretbox.ShortID(active), source, remedy)
 }
 
-// initSecrets prepare le chiffrement des identifiants du coffre.
+// initSecrets prepares encryption for the vault's credentials.
 //
-// MESHCRAFT_SECRET_KEY (64 caracteres hexadecimaux) garde la key HORS de la
-// base : c'est le mode a privilegier. Sans elle, une key est tiree au premier
-// demarrage et rangee dans la base — le controleur le dit clairement rather que
-// de laisser croire a une protection qu'il n'offre pas.
+// MESHCRAFT_SECRET_KEY (64 hexadecimal characters) keeps the key OUT of the
+// database: that is the preferred mode. Without it, a key is drawn on first
+// startup and stored in the database — the controller says so clearly
+// rather than letting anyone believe in a protection it doesn't offer.
 //
-// Le choix de la key et le refus de demarrer sur la mauvaise sont dans
-// resolveVaultKey ci-dessus, avec le raisonnement complet.
+// The choice of key and the refusal to start on the wrong one are handled
+// in resolveVaultKey above, with the full reasoning.
 func initSecrets(ctx context.Context, cfg config.Config, st *store.Store) (*secretbox.Service, error) {
 	var key, fromEnv, err = resolveVaultKey(ctx, st, cfg.SecretKey)
 	if err != nil {
 		return nil, err
 	}
 	if !fromEnv {
-		slog.Warn("MESHCRAFT_SECRET_KEY absente : la key de chiffrement des " +
-			"identifiants est stockee dans la base. Une fuite du dump exposerait " +
-			"les secrets. Definissez MESHCRAFT_SECRET_KEY (64 caracteres hex) en " +
-			"production, puis rechiffrez le coffre avec « controller -rekey » — " +
-			"definir la variable SEULE ne bascule rien et sera refused au demarrage.")
+		slog.Warn("MESHCRAFT_SECRET_KEY not set: the encryption key for the " +
+			"credentials is stored in the database. A leak of the dump would " +
+			"expose the secrets. Set MESHCRAFT_SECRET_KEY (64 hex characters) in " +
+			"production, then rekey the vault with \"controller -rekey\" — " +
+			"setting the variable ALONE switches nothing over and will be " +
+			"refused at startup.")
 	}
 	return secretbox.New(key, fromEnv)
 }

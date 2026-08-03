@@ -1,18 +1,19 @@
 package main
 
-// Les tests du refus de demarrer.
+// Tests for the refusal to start.
 //
-// Ce qu'ils protegent : la garde de key n'a de valeur que si elle refuse
-// vraiment. Un garde-fou qui laisse passer est pire que pas de garde-fou, parce
-// qu'on cesse de se mefier. Les deux sens du trap sont couverts :
+// What they protect: the key guard has value only if it actually refuses.
+// A safeguard that lets things through is worse than no safeguard, because
+// it makes people stop being wary. Both directions of the trap are covered:
 //
-//   - MESHCRAFT_SECRET_KEY definie (ou changee) sur une base scellee autrement ;
-//   - variable RETIREE after une bascule, ce qui autrefois tirait une key neuve
-//     et rescellait par-dessus.
+//   - MESHCRAFT_SECRET_KEY set (or changed) on a database sealed with a
+//     different key;
+//   - the variable REMOVED after a switchover, which used to draw a fresh
+//     key and reseal on top of everything.
 //
-// Aucune base n'est necessary : c'est tout l'interet de l'interface keyStore.
-// Un test de refus de demarrer qu'on n'execute pas faute de PostgreSQL sous la
-// main ne protege rien.
+// No database is needed: that is the whole point of the keyStore interface.
+// A test for the refusal to start that doesn't run for lack of a PostgreSQL
+// at hand protects nothing.
 
 import (
 	"context"
@@ -24,19 +25,19 @@ import (
 	"meshcraft/internal/store"
 )
 
-// fakeKeyStore imite le strict necessary : la ligne instance_secrets, la ligne
-// d'empreinte, et un sample de valeurs scellees.
+// fakeKeyStore mimics the strict minimum: the instance_secrets row, the
+// fingerprint row, and a sample of sealed values.
 type fakeKeyStore struct {
 	instance    map[string][]byte
 	fingerprint []byte
 	algoErr     error
 	sealed      [][]byte
 
-	// setCalls compte les enregistrements d'empreinte : un refus qui would write
-	// quand same l'empreinte serait un desastre deguise en refus.
+	// setCalls counts fingerprint recordings: a refusal that would still
+	// write the fingerprint would be a disaster disguised as a refusal.
 	setCalls int
-	// putCalls compte les creations de key : la garde ne doit JAMAIS tirer une
-	// key neuve sur une base already scellee.
+	// putCalls counts key creations: the guard must NEVER draw a fresh key
+	// on a database that is already sealed.
 	putCalls int
 }
 
@@ -67,7 +68,7 @@ func (f *fakeKeyStore) InstanceSecretValue(ctx context.Context, name string) ([]
 
 func (f *fakeKeyStore) PutInstanceSecret(ctx context.Context, name string, value []byte) error {
 	f.putCalls++
-	// `on conflict do nothing` du vrai store : on ne remplace pas.
+	// `on conflict do nothing` as in the real store: we don't overwrite.
 	var _, exists = f.instance[name]
 	if !exists {
 		f.instance[name] = value
@@ -82,7 +83,7 @@ func (f *fakeKeyStore) SealedSample(ctx context.Context, perColumn int) ([][]byt
 	return f.sealed[:perColumn], nil
 }
 
-// hexKey rend la forme hexadecimale attendue dans MESHCRAFT_SECRET_KEY.
+// hexKey produces the hexadecimal form expected in MESHCRAFT_SECRET_KEY.
 func hexKey(t *testing.T, key []byte) string {
 	t.Helper()
 	var out = ""
@@ -93,7 +94,7 @@ func hexKey(t *testing.T, key []byte) string {
 	return out
 }
 
-// sealWith remplit l'sample avec des valeurs scellees par `key`.
+// sealWith fills the sample with values sealed by `key`.
 func sealWith(t *testing.T, f *fakeKeyStore, key []byte, clairs ...string) {
 	t.Helper()
 	var box, err = secretbox.New(key, false)
@@ -120,40 +121,44 @@ func newKey(t *testing.T) []byte {
 	return k
 }
 
-// --- Sens 1 : on present une key d'environnement qui n'a pas scelle ---
+// --- Direction 1: an environment key is presented that did not seal the vault ---
 
-// Le trap central du lot : une instance en service, dont le coffre est scelle
-// par la key rangee en base, et sur laquelle on definit MESHCRAFT_SECRET_KEY.
-// Avant l'empreinte, le controleur demarrait, le produit avait l'air de
-// fonctionner, et la supervision disparaissait sans un mot.
+// The central trap of the set: an instance in service, whose vault is
+// sealed by the key stored in the database, on which MESHCRAFT_SECRET_KEY
+// gets set. Before the fingerprint existed, the controller would start, the
+// product would look like it was working, and monitoring would disappear
+// without a word.
 func TestRefuseWhenEnvSetOnSealedDB(t *testing.T) {
 	var f = newFake()
 	var enBase = newKey(t)
 	f.instance[store.CredentialsKeyName] = enBase
-	sealWith(t, f, enBase, "snmp-community", "MotDePasseAdmin42")
-	// Cas reel de la mise a jour : la base n'a pas encore d'empreinte.
+	sealWith(t, f, enBase, "snmp-community", "AdminPassword42")
+	// The real scenario at update time: the database does not have a
+	// fingerprint yet.
 	f.fingerprint = nil
 
 	var autre = newKey(t)
 	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, autre))
 	if err == nil {
-		t.Fatal("demarrage accepted avec une key qui n'ouvre pas le coffre")
+		t.Fatal("startup accepted with a key that does not open the vault")
 	}
 	if !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("mauvaise erreur : %v", err)
+		t.Fatalf("wrong error: %v", err)
 	}
-	// Le message doit nommer la cause ET le geste : « ca ne demarre pas » sans
-	// mode d'emploi laisse l'exploitant retirer la variable au hasard.
-	assertMentions(t, err.Error(), "-rekey", "scelles avec une AUTRE key", "Sauvegardez")
-	// Et surtout : l'empreinte de la MAUVAISE key ne doit pas avoir been gravee.
+	// The message must name both the cause AND the fix: "this won't start"
+	// with no instructions leaves the operator to remove the variable at
+	// random.
+	assertMentions(t, err.Error(), "-rekey", "sealed with a DIFFERENT key", "Back up")
+	// And above all: the fingerprint of the WRONG key must not have been
+	// engraved.
 	if f.setCalls != 0 {
-		t.Fatal("l'empreinte a been enregistree despite le refus")
+		t.Fatal("the fingerprint was recorded despite the refusal")
 	}
 }
 
-// Meme trap, une etape plus tard : l'empreinte existe, et on change la valeur
-// de la variable (rotation manuelle, copier-coller d'un autre environnement,
-// restauration d'un .env d'une autre instance).
+// Same trap, one step later: the fingerprint exists, and the value of the
+// variable changes (manual rotation, copy-paste from another environment,
+// restoring a .env from another instance).
 func TestRefuseWhenFingerprintDiffers(t *testing.T) {
 	var f = newFake()
 	var sealing = newKey(t)
@@ -164,143 +169,144 @@ func TestRefuseWhenFingerprintDiffers(t *testing.T) {
 	var autre = newKey(t)
 	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, autre))
 	if err == nil {
-		t.Fatal("demarrage accepted despite une empreinte differente")
+		t.Fatal("startup accepted despite a differing fingerprint")
 	}
 	if !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("mauvaise erreur : %v", err)
+		t.Fatalf("wrong error: %v", err)
 	}
-	// Les deux empreintes doivent apparaitre : c'est ce qui rend le diagnostic
-	// possible sans deviner.
+	// Both fingerprints must appear: that is what makes the diagnosis
+	// possible without guessing.
 	assertMentions(t, err.Error(),
 		secretbox.ShortID(f.fingerprint), secretbox.KeyShortID(autre),
 		"MESHCRAFT_SECRET_KEY", "-rekey")
 	if f.setCalls != 0 {
-		t.Fatal("l'empreinte a been rewritten despite le refus")
+		t.Fatal("the fingerprint was rewritten despite the refusal")
 	}
 }
 
-// --- Sens 2 : la variable est RETIREE after la bascule ---
+// --- Direction 2: the variable is REMOVED after the switchover ---
 
-// Le cas inverse, aussi dangereux : after une bascule reussie, la key n'est plus
-// en base. Un reboot sans la variable tirait autrefois une key NEUVE, la
-// rangeait, et rescellait par-dessus au premier secret enregistre — melange
-// irreparable. Ici : refus, et AUCUNE key neuve tiree.
+// The reverse case, just as dangerous: after a successful switchover, the
+// key is no longer in the database. A reboot without the variable used to
+// draw a FRESH key, store it, and reseal on top at the first secret saved
+// afterward — an irreparable mix. Here: refusal, and NO fresh key drawn.
 func TestRefuseWhenEnvRemovedAfterSwitch(t *testing.T) {
 	var f = newFake()
 	var switched = newKey(t)
-	// Etat laisse par le rechiffrement : empreinte enregistree, plus de key en
-	// base, coffre scelle avec la key d'environnement.
+	// State left by the rekey process: fingerprint recorded, no more key in
+	// the database, vault sealed with the environment key.
 	f.fingerprint = secretbox.Fingerprint(switched)
 	sealWith(t, f, switched, "snmp-community")
 
 	var _, _, err = resolveVaultKey(context.Background(), f, "")
 	if err == nil {
-		t.Fatal("demarrage accepted sans key alors que le coffre est scelle")
+		t.Fatal("startup accepted with no key while the vault is sealed")
 	}
 	if !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("mauvaise erreur : %v", err)
+		t.Fatalf("wrong error: %v", err)
 	}
-	assertMentions(t, err.Error(), "MESHCRAFT_SECRET_KEY", "plus de key en base")
-	// LE point du test : pas de key bidon written en base. Une key neuve laissee
-	// there serait prise pour la vraie par le lecteur suivant.
+	assertMentions(t, err.Error(), "MESHCRAFT_SECRET_KEY", "no longer a key in the database")
+	// THE point of the test: no bogus key written to the database. A fresh
+	// key left there would be mistaken for the real one by the next reader.
 	if f.putCalls != 0 {
-		t.Fatal("une key neuve a been tiree et rangee en base")
+		t.Fatal("a fresh key was drawn and stored in the database")
 	}
 	if f.setCalls != 0 {
-		t.Fatal("l'empreinte a been rewritten despite le refus")
+		t.Fatal("the fingerprint was rewritten despite the refusal")
 	}
 }
 
-// Variante sans empreinte : quelqu'un a supprime la ligne de key a la main sur
-// une base dont le coffre n'est pas vide. Il n'y a plus rien pour lire, et tirer
-// une key neuve condamnerait les secrets.
+// Variant with no fingerprint: someone manually deleted the key row on a
+// database whose vault is not empty. There is nothing left to read, and
+// drawing a fresh key would condemn the secrets.
 func TestRefuseWhenKeyGoneWithoutFingerprint(t *testing.T) {
 	var f = newFake()
 	sealWith(t, f, newKey(t), "snmp-community")
 
 	var _, _, err = resolveVaultKey(context.Background(), f, "")
 	if err == nil {
-		t.Fatal("demarrage accepted sans key sur un coffre non vide")
+		t.Fatal("startup accepted with no key on a non-empty vault")
 	}
 	if !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("mauvaise erreur : %v", err)
+		t.Fatalf("wrong error: %v", err)
 	}
 	if f.putCalls != 0 {
-		t.Fatal("une key neuve a been tiree sur une base dont le coffre est plein")
+		t.Fatal("a fresh key was drawn on a database whose vault is full")
 	}
 }
 
-// --- Les chemins qui doivent PASSER, sans bruit ---
+// --- Paths that must PASS, silently ---
 
-// Une base already scellee par la key en base, sans empreinte : c'est state de
-// toute instance existante au moment de la mise a jour. L'empreinte est
-// enregistree, silencieusement, after verification que la key ouvre le coffre.
+// A database already sealed by the key in the database, with no
+// fingerprint: this is the state of every existing instance at the moment
+// of the update. The fingerprint is recorded, silently, after verifying
+// that the key opens the vault.
 func TestRecordFingerprintWhenAbsent(t *testing.T) {
 	var f = newFake()
 	var enBase = newKey(t)
 	f.instance[store.CredentialsKeyName] = enBase
-	sealWith(t, f, enBase, "snmp-community", "MotDePasseAdmin42")
+	sealWith(t, f, enBase, "snmp-community", "AdminPassword42")
 
 	var key, fromEnv, err = resolveVaultKey(context.Background(), f, "")
 	if err != nil {
-		t.Fatalf("demarrage refused sur une base saine : %v", err)
+		t.Fatalf("startup refused on a healthy database: %v", err)
 	}
 	if fromEnv {
-		t.Fatal("fromEnv devrait be faux")
+		t.Fatal("fromEnv should be false")
 	}
 	if string(key) != string(enBase) {
-		t.Fatal("mauvaise key retenue")
+		t.Fatal("wrong key retained")
 	}
 	if f.setCalls != 1 {
-		t.Fatalf("empreinte enregistree %d fois, expected 1", f.setCalls)
+		t.Fatalf("fingerprint recorded %d times, expected 1", f.setCalls)
 	}
 	if !secretbox.SameFingerprint(f.fingerprint, secretbox.Fingerprint(enBase)) {
-		t.Fatal("l'empreinte enregistree n'est pas celle de la key active")
+		t.Fatal("the recorded fingerprint is not that of the active key")
 	}
 }
 
-// Premier demarrage d'une base vierge, sans variable : la key est tiree et
-// rangee, l'empreinte enregistree. C'est le comportement historique, il ne doit
-// pas regresser.
+// First startup of a virgin database, with no variable: the key is drawn
+// and stored, the fingerprint recorded. This is the historical behavior; it
+// must not regress.
 func TestFirstStartEmptyDB(t *testing.T) {
 	var f = newFake()
 	var key, fromEnv, err = resolveVaultKey(context.Background(), f, "")
 	if err != nil {
-		t.Fatalf("premier demarrage refused : %v", err)
+		t.Fatalf("first startup refused: %v", err)
 	}
 	if fromEnv || len(key) != 32 {
-		t.Fatalf("key inattendue : fromEnv=%v len=%d", fromEnv, len(key))
+		t.Fatalf("unexpected key: fromEnv=%v len=%d", fromEnv, len(key))
 	}
 	if f.putCalls != 1 {
-		t.Fatalf("key rangee %d fois, expected 1", f.putCalls)
+		t.Fatalf("key stored %d times, expected 1", f.putCalls)
 	}
 	if f.setCalls != 1 {
-		t.Fatalf("empreinte enregistree %d fois, expected 1", f.setCalls)
+		t.Fatalf("fingerprint recorded %d times, expected 1", f.setCalls)
 	}
 }
 
-// Premiere installation AVEC la variable : coffre vide, rien a contredire. La
-// garde ne doit pas transformer le mode recommande en obstacle.
+// First installation WITH the variable: empty vault, nothing to contradict.
+// The guard must not turn the recommended mode into an obstacle.
 func TestFirstStartWithEnvVar(t *testing.T) {
 	var f = newFake()
 	var env = newKey(t)
 	var key, fromEnv, err = resolveVaultKey(context.Background(), f, hexKey(t, env))
 	if err != nil {
-		t.Fatalf("first installation avec la variable refused : %v", err)
+		t.Fatalf("first installation with the variable refused: %v", err)
 	}
 	if !fromEnv || string(key) != string(env) {
-		t.Fatal("la key de l'environnement n'a pas been retenue")
+		t.Fatal("the environment key was not retained")
 	}
 	if f.putCalls != 0 {
-		t.Fatal("une key a been rangee en base alors que l'environnement en fournit une")
+		t.Fatal("a key was stored in the database even though the environment supplies one")
 	}
 	if !secretbox.SameFingerprint(f.fingerprint, secretbox.Fingerprint(env)) {
-		t.Fatal("empreinte incorrecte")
+		t.Fatal("incorrect fingerprint")
 	}
 }
 
-// Apres la bascule, avec la bonne key : demarrage normal, et l'empreinte n'est
-// pas rewritten (rien a changer).
+// After the switchover, with the right key: normal startup, and the
+// fingerprint is not rewritten (nothing to change).
 func TestAfterSwitchWithCorrectKey(t *testing.T) {
 	var f = newFake()
 	var switched = newKey(t)
@@ -309,64 +315,64 @@ func TestAfterSwitchWithCorrectKey(t *testing.T) {
 
 	var key, fromEnv, err = resolveVaultKey(context.Background(), f, hexKey(t, switched))
 	if err != nil {
-		t.Fatalf("demarrage refused avec la bonne key : %v", err)
+		t.Fatalf("startup refused with the correct key: %v", err)
 	}
 	if !fromEnv || string(key) != string(switched) {
-		t.Fatal("key incorrecte")
+		t.Fatal("incorrect key")
 	}
 	if f.setCalls != 0 {
-		t.Fatal("empreinte rewritten inutilement")
+		t.Fatal("fingerprint rewritten needlessly")
 	}
 }
 
-// Une base rechiffree a la main hors de meshcraft — le coffre s'ouvre avec la
-// key d'environnement, mais l'ancienne ligne de key traine encore et il n'y a
-// pas d'empreinte. Le coffre est le juge : il repond oui, on demarre.
+// A database rekeyed manually outside of meshcraft — the vault opens with
+// the environment key, but the old key row is still lying around and there
+// is no fingerprint. The vault is the judge: it says yes, so we start.
 func TestManualSwitchRecognized(t *testing.T) {
 	var f = newFake()
 	var env = newKey(t)
-	f.instance[store.CredentialsKeyName] = newKey(t) // ancienne key oubliee
+	f.instance[store.CredentialsKeyName] = newKey(t) // forgotten old key
 	sealWith(t, f, env, "snmp-community")
 
 	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, env))
 	if err != nil {
-		t.Fatalf("demarrage refused alors que la key ouvre le coffre : %v", err)
+		t.Fatalf("startup refused even though the key opens the vault: %v", err)
 	}
 	if !secretbox.SameFingerprint(f.fingerprint, secretbox.Fingerprint(env)) {
-		t.Fatal("empreinte incorrecte")
+		t.Fatal("incorrect fingerprint")
 	}
 }
 
-// Une key hexadecimale invalide doit be refused AVANT tout access a la base :
-// une variable mal collee (63 caracteres, un espace) ne doit pas declencher un
-// diagnostic de coffre illisible, qui enverrait l'exploitant sur une fausse
-// piste.
+// An invalid hex key must be refused BEFORE any access to the database: a
+// mistyped variable (63 characters, a stray space) must not trigger an
+// "unreadable vault" diagnosis, which would send the operator down the
+// wrong path.
 func TestInvalidHexKeyRejected(t *testing.T) {
 	var f = newFake()
 	var _, _, err = resolveVaultKey(context.Background(), f, "not-a-key")
 	if err == nil {
-		t.Fatal("key invalide accepted")
+		t.Fatal("invalid key accepted")
 	}
 	if !errors.Is(err, secretbox.ErrKeySize) {
-		t.Fatalf("mauvaise erreur : %v", err)
+		t.Fatalf("wrong error: %v", err)
 	}
 	if errors.Is(err, ErrKeyMismatch) {
-		t.Fatal("une key mal formee ne doit pas se present  comme une key incompatible")
+		t.Fatal("a malformed key must not present itself as an incompatible key")
 	}
 }
 
-// Une empreinte written par une derivation inconnue (base venue d'une version
-// plus recente) doit produire un message franc, pas un refus « key
-// incompatible » qui enverrait rechiffrer une base parfaitement saine.
+// A fingerprint written by an unknown derivation (database from a more
+// recent version) must produce a plain message, not an "incompatible key"
+// refusal that would send someone to rekey a perfectly healthy database.
 func TestUnknownDerivationSurfaces(t *testing.T) {
 	var f = newFake()
-	f.algoErr = errors.New("empreinte de key calculee par une derivation inconnue")
+	f.algoErr = errors.New("key fingerprint computed by an unknown derivation")
 	var _, _, err = resolveVaultKey(context.Background(), f, "")
 	if err == nil {
-		t.Fatal("erreur d'algorithme avalee")
+		t.Fatal("algorithm error swallowed")
 	}
-	if !strings.Contains(err.Error(), "derivation inconnue") {
-		t.Fatalf("message perdu : %v", err)
+	if !strings.Contains(err.Error(), "unknown derivation") {
+		t.Fatalf("message lost: %v", err)
 	}
 }
 
@@ -375,7 +381,7 @@ func assertMentions(t *testing.T, s string, fragments ...string) {
 	var frag string
 	for _, frag = range fragments {
 		if !strings.Contains(s, frag) {
-			t.Errorf("le message ne mentionne pas %q.\nMessage :\n%s", frag, s)
+			t.Errorf("message does not mention %q.\nMessage:\n%s", frag, s)
 		}
 	}
 }

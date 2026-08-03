@@ -47,6 +47,30 @@ const (
 	oidLLDPLocChassisID = "1.0.8802.1.1.2.1.3.2"
 	oidLLDPLocSysName   = "1.0.8802.1.1.2.1.3.3"
 
+	// MIB-II IDENTITY, walked alongside the neighbor tables so a proxy can PROVE
+	// which device it is polling.
+	//
+	// Not an LLDP concern, and here anyway. The controller uses these two to
+	// decide whose reachability verdict counts (cf. internal/api/reachability.go,
+	// and migration 0035 for the outage that made it necessary): a proxy that has
+	// matched them against the inventory's vendor and model is talking to the
+	// right equipment, and a proxy that has not cannot mark a device down. This
+	// poll is the only one that already runs every cycle, is already restricted
+	// to each device's declared collector, and already carries a per-device
+	// report — adding two scalars to it costs one round trip and needs no new
+	// endpoint, no new scope, and no second schedule.
+	//
+	// A SERIAL NUMBER WOULD BE BETTER AND IS NOT AVAILABLE. `entPhysicalSerialNum`
+	// (ENTITY-MIB) is the standard place for one, and neither SwOS nor the Instant
+	// On 1930 implements it — so requiring it would make confirmation a property
+	// of the vendor rather than of the observation, and split the fleet into
+	// devices this rule protects and devices it silently does not. sysObjectID is
+	// an enterprise number assigned by IANA and sysDescr carries the model on
+	// every agent surveyed; together they answer "is this the right equipment?"
+	// well enough to outrank a proxy that answers nothing at all.
+	oidSysDescr    = "1.3.6.1.2.1.1.1"
+	oidSysObjectID = "1.3.6.1.2.1.1.2"
+
 	// lldpLocPortTable: LOCAL port names where LLDP runs.
 	//
 	// Essential, central MIB trap. `lldpRemTable` attaches neighbor to `lldpLocPortNum`, NOT
@@ -118,6 +142,15 @@ type LLDPReport struct {
 	// ChassisID / SysName: identity announced by THIS device.
 	ChassisID string `json:"chassis_id,omitempty"`
 	SysName   string `json:"sys_name,omitempty"`
+	// SysDescr / SysObjectID: MIB-II identity, as the agent serves it.
+	//
+	// Carried on the LLDP snapshot because that is the report already pushed on
+	// every poll cycle by the device's declared collector. The controller matches
+	// them against the inventory's vendor and model, and a proxy that matches has
+	// PROVEN it is polling the right equipment — which is what decides whose
+	// reachability verdict counts (cf. internal/api/reachability.go).
+	SysDescr    string `json:"sys_descr,omitempty"`
+	SysObjectID string `json:"sys_object_id,omitempty"`
 	// PortIDs: this device's `lldpLocPortId` values, as-is.
 	//
 	// Field looks useless and saves the fleet's only bilateral link. Survey: 1930 declares
@@ -248,6 +281,11 @@ func LLDPReportFrom(deviceID string, walk map[string]gosnmp.SnmpPDU) LLDPReport 
 	// Local identity. Both OIDs are SCALARS: instance ".0", tolerated missing so we do not depend on agent formatting.
 	out.ChassisID = scalarAt(walk, oidLLDPLocChassisID)
 	out.SysName = scalarAt(walk, oidLLDPLocSysName)
+	// Identity, for the controller's reachability arbitration. Absent on an agent
+	// that serves no MIB-II — left empty rather than guessed, which simply means
+	// this proxy never gets to confirm the device.
+	out.SysDescr = scalarAt(walk, oidSysDescr)
+	out.SysObjectID = scalarAt(walk, oidSysObjectID)
 
 	// Local ports. Three columns indexed by `lldpLocPortNum`, single arc.
 	var subtypes = columnInts(walk, oidLLDPLocPortIDSubtype)
@@ -504,6 +542,7 @@ func lldpOIDs() []string {
 		oidLLDPLocPortIDSubtype, oidLLDPLocPortID, oidLLDPLocPortDesc,
 		oidLLDPRemChassisID, oidLLDPRemPortID, oidLLDPRemPortDesc,
 		oidLLDPRemSysName, oidLLDPRemSysDesc,
+		oidSysDescr, oidSysObjectID,
 	}
 }
 

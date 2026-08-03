@@ -27,8 +27,8 @@ import (
 //	                     station that tags its own traffic leaves the VLAN we
 //	                     thought we had given it.
 //
-// MikroTik's documentation is explicit on the first point: « it is better to
-// drop packets on an ingress port rather than on an egress port », and
+// MikroTik's documentation is explicit on the first point: 'it is better to
+// drop packets on an ingress port rather than on an egress port', and
 // `ingress-filtering` is what drops traffic for a non-member VLAN as soon as it
 // is received. On a Marvell Prestera chip — the one in this product line,
 // OBSERVED `Marvell-98DX3236` — both settings stay IN hardware: writing them does
@@ -64,14 +64,14 @@ const (
 
 // PortFiltering is what a port must admit on ingress.
 type PortFiltering struct {
-	// FrameTypes is the `frame-types` value, or empty for « leave it alone ».
+	// FrameTypes is the `frame-types` value, or empty for 'leave it alone'.
 	FrameTypes string
 	// Ingress is the `ingress-filtering` value.
 	Ingress bool
 	// SetIngress says whether there is something to write for `ingress-filtering`.
 	//
 	// ONE EXTRA BOOLEAN, and for the same reason as on SwOS: the interesting value
-	// is `false`, so « field at zero » cannot mean « unchanged ». Confusing the two
+	// is `false`, so 'field at zero' cannot mean 'unchanged'. Confusing the two
 	// would TURN OFF ingress filtering on ports we did not mean to touch.
 	SetIngress bool
 	// Refused carries refusal reasons, in plain language, for the operator.
@@ -83,15 +83,15 @@ type PortFiltering struct {
 //
 // # WHY `admit-only-vlan-tagged` IS NEVER WRITTEN
 //
-// That is the value a « clean » trunk should carry, and it is INEXPRESSIBLE in
+// That is the value a 'clean' trunk should carry, and it is INEXPRESSIBLE in
 // meshcraft's model — not by oversight, by construction:
 //
 //   - a meshcraft trunk ALWAYS has a native VLAN. When the intent does not name
 //     one, `recon.ParsePorts` puts VLAN 1 there, and that is a project rule written
-//     at length (docs: default VLAN architecture note §2): « the device
-//     always reports a native; if it received none, it reports 1 »;
-//   - a native VLAN MEANS « traffic for this VLAN leaves this port without a
-//     tag », and therefore also enters without a tag. `admit-only-vlan-tagged`
+//     at length (docs: default VLAN architecture note §2): 'the device
+//     always reports a native; if it received none, it reports 1';
+//   - a native VLAN MEANS 'traffic for this VLAN leaves this port without a
+//     tag', and therefore also enters without a tag. `admit-only-vlan-tagged`
 //     drops precisely those frames.
 //
 // Writing `admit-only-vlan-tagged` on a trunk would therefore cut the native VLAN
@@ -157,7 +157,7 @@ func planFiltering(name string, want PortState, now BridgePort, members map[int]
 		if len(missing) > 0 {
 			out.SetIngress = false
 			out.Refused = append(out.Refused, fmt.Sprintf(
-				"%s : `ingress-filtering` left INACTIVE. It carries an ACTIVE link and is "+
+				"%s: `ingress-filtering` left INACTIVE. It carries an ACTIVE link and is "+
 					"not a member of management VLAN %s in any of the bridge lists: "+
 					"enabling ingress filtering would drop traffic for that VLAN on "+
 					"reception, and would close administration if the session goes through "+
@@ -177,7 +177,7 @@ func planFiltering(name string, want PortState, now BridgePort, members map[int]
 		var tagged = protectedTagged(now, protected)
 		if len(tagged) > 0 {
 			out.Refused = append(out.Refused, fmt.Sprintf(
-				"%s : `frame-types` left at « %s ». The plan makes it an ACCESS port, which "+
+				"%s: `frame-types` left at '%s'. The plan makes it an ACCESS port, which "+
 					"would require dropping tagged frames on ingress — yet management VLAN "+
 					"%s arrives TAGGED there and the port carries an ACTIVE link. "+
 					"Administration would fall if the session goes through there. Recovery "+
@@ -271,7 +271,7 @@ func hwOffloadNote(s DeviceState) string {
 	}
 	sortPortNames(plain)
 	return fmt.Sprintf("HARDWARE OFFLOAD LOST on %d port(s): %s. The other %d ports "+
-		"of bridge « %s » switch in the chip (`hw-offload: true`); these go through "+
+		"of bridge '%s' switch in the chip (`hw-offload: true`); these go through "+
 		"the CPU. `hw-offload` is not a setting but a RESULT: RouterOS sets it to "+
 		"false on its own as soon as a bridge configuration requires the CPU to see "+
 		"frames — a bridge firewall, `use-ip-firewall`, certain filtering combinations. "+
@@ -289,7 +289,7 @@ func hwOffloadNote(s DeviceState) string {
 // ONE SINGLE REASON, and it is the most insidious on this platform: the `tagged`
 // and `untagged` lists belong to the RECORD, not to each VLAN it declares. A row
 // `vlan-ids: "10-20"` declares eleven VLANs and has only one set of lists. Writing
-// membership « for VLAN 10 » on it rewrites membership for all ELEVEN, in a single
+// membership 'for VLAN 10' on it rewrites membership for all ELEVEN, in a single
 // `set`, without error and without a trace.
 //
 // meshcraft reasons per VLAN and cannot compose a membership common to eleven

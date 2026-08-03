@@ -26,6 +26,12 @@ type SpanningTreeState struct {
 	IsRoot bool `json:"is_root"`
 	// RootPathCost: cost from this bridge to the root (0 when IsRoot).
 	RootPathCost int `json:"root_path_cost,omitempty"`
+	// Region is the MST region the device reports being in. Read back because a
+	// region that does not match is invisible any other way: 802.1s handles a
+	// mismatch by silently treating the neighbour as an ordinary RSTP bridge, so
+	// comparing the intended region with the observed one is the only place the
+	// divergence can be caught (cf. MSTRegion).
+	Region MSTRegion `json:"region,omitempty"`
 	// Ports: per-port role and cost. Ports without STP (edge, disabled) may be omitted.
 	Ports []SpanningTreePort `json:"ports,omitempty"`
 	Notes []string           `json:"notes,omitempty"`
@@ -73,7 +79,7 @@ const (
 
 	// Feature keys in Capabilities.Features.
 	FeatSTPEdge       = "STPEdge"       // can set per-port edge policy
-	FeatSTPEdgeAuto   = "STPEdgeAuto"   // edge policy includes « auto » (RouterOS, Instant On)
+	FeatSTPEdgeAuto   = "STPEdgeAuto"   // edge policy includes "auto" (RouterOS, Instant On)
 	FeatSTPPortEnable = "STPPortEnable" // can enable/disable STP per port (SwOS ena, Instant On STP State)
 	FeatBPDUGuard     = "BPDUGuard"     // can set per-port BPDU Guard (RouterOS, Instant On — not SwOS)
 )
@@ -112,8 +118,104 @@ type SpanningTreePortIntent struct {
 	PathCost  *int  `json:"path_cost,omitempty"`
 }
 
+// MSTRegion is the MST region three switches must agree on, character for
+// character, to be in the SAME region.
+//
+// # Why this is a type and not three loose fields
+//
+// 802.1s does not decide region membership by asking. Each bridge advertises a
+// DIGEST: an MD5 over the full 4096-entry VLAN-to-instance table, sent with the
+// region name and revision. Two bridges are in one region only if all three match
+// EXACTLY. Anything else — one VLAN mapped differently, a revision off by one, a
+// name with different capitalisation — and they are in different regions, which
+// they handle by falling back to the CST as if the neighbour were an ordinary
+// RSTP bridge.
+//
+// That failure is SILENT. Nothing errors, no link goes down, no log line appears;
+// the topology simply stops behaving the way the design says it does, and the
+// only symptom is a blocked port somewhere nobody expected. Keeping the three
+// values in one type, computed in one place ([SiteMSTRegion]), is what makes it
+// possible to say they are identical rather than hope so.
+//
+// # The operational consequence, which the caller must carry
+//
+// The digest covers EVERY VLAN, so the region stays coherent only while every
+// member is pushed the same map. Add a VLAN to the site and any switch not
+// re-pushed leaves the region — still forwarding, still green, quietly no longer
+// part of the same tree. A caller that changes the site VLAN list must re-apply
+// STP fleet-wide, and this is the reason.
+type MSTRegion struct {
+	// Name is the region name, up to 32 characters on every platform surveyed.
+	Name string `json:"name,omitempty"`
+	// Revision is the region revision level (0-65535). It is NOT a version to
+	// bump for bookkeeping: changing it on one device removes that device from
+	// the region.
+	Revision int `json:"revision"`
+	// InstanceVLANs maps MST instance id → the VLANs it carries. Instance 0 (the
+	// CIST) is implicit and never listed: it holds every VLAN not named here.
+	//
+	// A map and not a list of pairs because the same VLAN cannot be in two
+	// instances, and a shape that can express the impossible invites it.
+	InstanceVLANs map[int][]int `json:"instance_vlans,omitempty"`
+}
+
+// Configured reports whether a region is worth applying. A nameless region is
+// not a region: the default name on most platforms is derived from the bridge
+// MAC, which makes every device its own region.
+func (r MSTRegion) Configured() bool {
+	return strings.TrimSpace(r.Name) != ""
+}
+
+// SiteMSTRegion derives the region from what the SITE already knows, so that
+// every device computes the same digest without anyone typing anything.
+//
+// THIS IS THE WHOLE MECHANISM by which regions stay homogeneous. The alternative
+// — an operator-entered name, revision and map per device — is how MST is
+// normally run and is exactly how it normally breaks: a value typed twice is a
+// value typed differently once.
+//
+//   - name: the site slug. Stable, unique per site, already validated to a safe
+//     character set, and meaningful when read off a switch;
+//   - revision: supplied by the caller from the site plan, so a deliberate
+//     region change is possible without renaming;
+//   - map: every site VLAN into instance 1, everything else left in the CIST.
+//     One instance means one tree for the site — no per-VLAN load balancing,
+//     which needs redundant paths to be worth anything and must be identical
+//     everywhere to be safe at all.
+//
+// VLANs are SORTED and deduplicated, and VLAN 1 is excluded: it belongs to the
+// CIST on every platform and mapping it into an instance is refused by some and
+// silently ignored by others — either way the digests would stop matching.
+func SiteMSTRegion(siteSlug string, revision int, vlanIDs []int) MSTRegion {
+	var name = strings.TrimSpace(siteSlug)
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	var seen = map[int]bool{}
+	var members []int
+	var v int
+	for _, v = range vlanIDs {
+		if v <= 1 || v > 4094 || seen[v] {
+			continue
+		}
+		seen[v] = true
+		members = append(members, v)
+	}
+	sortInts(members)
+	var region = MSTRegion{Name: name, Revision: revision}
+	if len(members) > 0 {
+		region.InstanceVLANs = map[int][]int{1: members}
+	}
+	return region
+}
+
 // SpanningTreePlan is what meshcraft asks a connector to apply for STP.
 type SpanningTreePlan struct {
+	// Region is the MST region to place the device in. Meaningful only when Mode
+	// is "mstp"; connectors that cannot carry a region ignore it and SAY so in
+	// their ApplyResult, so a boundary device is visible rather than assumed
+	// (cf. ApplyResult.Skipped).
+	Region MSTRegion `json:"region,omitempty"`
 	// Mode: "stp", "rstp", or "mstp". Empty when Enabled is false.
 	Mode string `json:"mode,omitempty"`
 	// Enabled: false turns spanning tree off on platforms that can.
@@ -175,7 +277,7 @@ func NormalizeSTPMode(mode string) string {
 }
 
 // NormalizeSTPEdge maps UI / JSON edge values onto auto|yes|no.
-// Empty input stays empty (meaning « leave alone » on intents).
+// Empty input stays empty (meaning "leave alone" on intents).
 func NormalizeSTPEdge(raw string) string {
 	var m = strings.ToLower(strings.TrimSpace(raw))
 	switch m {
@@ -240,4 +342,17 @@ func SanitizeSTPPreference(in []string) []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+// sortInts sorts in place, ascending. A local helper rather than a sort import
+// in a file that otherwise needs none.
+func sortInts(v []int) {
+	var i, j int
+	for i = 1; i < len(v); i++ {
+		var x = v[i]
+		for j = i; j > 0 && v[j-1] > x; j-- {
+			v[j] = v[j-1]
+		}
+		v[j] = x
+	}
 }

@@ -94,6 +94,9 @@ const (
 	// therefore sees ghost "reboot" every sixteen months. SNMP type limit, not this collection,
 	// and `sysUpTimeInstance` from SNMPv2-MIB does not fix it either.
 	oidSysUpTime = "1.3.6.1.2.1.1.3"
+)
+
+const (
 	// oidHrProcessorLoad: HOST-RESOURCES-MIB, percent, one entry per core.
 	//
 	// One entry PER CORE decides translation: CRS326 survey shows `cpu-count: "2"`. Two indexed
@@ -113,6 +116,35 @@ const (
 	oidHrStorageUsed  = "1.3.6.1.2.1.25.2.3.1.6"
 )
 
+// --- CISCO enterprise-9 health, SURVEYED on hardware ---
+//
+// IOS serves NONE of the HOST-RESOURCES cpu/memory OIDs above; it carries them in
+// its own enterprise tree. Walked on a WS-C2960X-24TD-L (15.2(6)E) 2026-08-02, and
+// every scale here is READ FROM THE DEVICE, not borrowed:
+//
+//	cpmCPUTotal5minRev  .109.1.1.1.1.8.1   = 23     → percent, no scale
+//	ciscoMemoryPoolUsed .48.1.1.1.5.1      = 69157616  (Processor pool)
+//	ciscoMemoryPoolFree .48.1.1.1.6.1      = 296576052 → bytes, no scale
+//	ciscoEnvMonTempValue .13.1.3.1.3.1008  = 43     → Celsius, no scale
+//	                     .13.1.3.1.2.1008  = "SW#1, Sensor#1, GREEN"
+//
+// Walking these on a MikroTik returns nothing, exactly as walking the mtxr
+// sensors returns nothing on a Cisco: the poller reads the union and publishes
+// what answered, which is the pattern this whole file already follows.
+const (
+	// oidCiscoCPU5min: cpmCPUTotal5minRev — a percentage gauge, 0..100. The
+	// "Rev" column is the one to use: the pre-Rev cpmCPUTotal5min saturates at
+	// 100 on some platforms and this one does not.
+	oidCiscoCPU5min = "1.3.6.1.4.1.9.9.109.1.1.1.1.8"
+	// ciscoMemoryPool: name column identifies the pool, Used/Free carry bytes.
+	oidCiscoMemName = "1.3.6.1.4.1.9.9.48.1.1.1.2"
+	oidCiscoMemUsed = "1.3.6.1.4.1.9.9.48.1.1.1.5"
+	oidCiscoMemFree = "1.3.6.1.4.1.9.9.48.1.1.1.6"
+	// ciscoEnvMonTemperature: description names the sensor, value is Celsius.
+	oidCiscoTempDescr = "1.3.6.1.4.1.9.9.13.1.3.1.2"
+	oidCiscoTempValue = "1.3.6.1.4.1.9.9.13.1.3.1.3"
+)
+
 // --- MikroTik proprietary OIDs: mtxrHealth ---
 //
 // Each sensor is a SCALAR, full OID followed by `.0`. That forces walking them ONE BY ONE
@@ -122,7 +154,8 @@ const (
 // screen can flag.
 //
 // COST of split, priced because device pays: ten walks for `mtxrHealth`, one for `sysUpTime`,
-// one for `hrProcessorLoad`, four for `hrStorage` -- sixteen requests per cycle. At health
+// one for `hrProcessorLoad`, four for `hrStorage`, plus six Cisco enterprise-9 branches --
+// twenty-two requests per cycle, of which any given device answers only its own half. At health
 // cadence (five minutes, cf. `wantedHealthInterval`), one packet every twenty seconds per
 // device. Compare six `if_counters` columns every five seconds: health costs two orders of
 // magnitude less than traffic.
@@ -266,7 +299,10 @@ var opticalColumns = []struct {
 // healthOIDs returns branches to walk for `health` set.
 func healthOIDs() []string {
 	var out = []string{oidSysUpTime, oidHrProcessorLoad,
-		oidHrStorageDescr, oidHrStorageUnits, oidHrStorageSize, oidHrStorageUsed}
+		oidHrStorageDescr, oidHrStorageUnits, oidHrStorageSize, oidHrStorageUsed,
+		// Cisco enterprise-9: empty on every other platform, cf. the constants.
+		oidCiscoCPU5min, oidCiscoMemName, oidCiscoMemUsed, oidCiscoMemFree,
+		oidCiscoTempDescr, oidCiscoTempValue}
 	var i int
 	for i = range healthSensors {
 		out = append(out, healthSensors[i].OID)
@@ -319,13 +355,21 @@ func HealthSamples(deviceID string, tables map[string]map[string]gosnmp.SnmpPDU,
 		total += load
 		n++
 	}
+	var cpuDone bool
 	if n > 0 {
 		out = append(out, metricbuf.Sample{
 			Name: metricbuf.MetricCPULoad, Labels: base, Value: total / float64(n), TS: at,
 		})
+		cpuDone = true
 	}
 
-	out = append(out, memorySamples(deviceID, tables, at)...)
+	var mem = memorySamples(deviceID, tables, at)
+	out = append(out, mem...)
+
+	// Cisco enterprise-9, published only for the axes HOST-RESOURCES did not
+	// cover on this device. On IOS that is all of them; on a MikroTik the tables
+	// are empty and this adds nothing.
+	out = append(out, ciscoHealthSamples(deviceID, tables, at, cpuDone, len(mem) > 0)...)
 
 	// Proprietary sensors.
 	var i int
@@ -525,4 +569,96 @@ func scalarOf(table map[string]gosnmp.SnmpPDU) (float64, bool) {
 		return toFloat(pdu)
 	}
 	return 0, false
+}
+
+// ciscoHealthSamples publishes CPU, memory and temperature from the Cisco
+// enterprise-9 tree.
+//
+// PURE, like the rest of this file. `cpuDone` / `memDone` say whether the
+// HOST-RESOURCES path already covered those axes — on a device serving both
+// (none in this fleet does), the standard MIB wins and this stays quiet, so a
+// metric is never published twice with the same labels and timestamp.
+//
+// Scales are the DEVICE'S, surveyed 2026-08-02: CPU is a percentage, memory is
+// bytes, temperature is Celsius — none needs adjusting (cf. the OID constants).
+func ciscoHealthSamples(deviceID string, tables map[string]map[string]gosnmp.SnmpPDU,
+	at time.Time, cpuDone, memDone bool) []metricbuf.Sample {
+	var out []metricbuf.Sample
+	var base = map[string]string{"device": deviceID}
+
+	// CPU: cpmCPUTotal5minRev. One row per CPU entity; a switch has one, and the
+	// MAX is the honest summary if a stack ever reports several — a busy member
+	// is not hidden by an idle one.
+	if !cpuDone {
+		var best float64
+		var have bool
+		var pdu gosnmp.SnmpPDU
+		for _, pdu = range tables[oidCiscoCPU5min] {
+			var v, ok = toFloat(pdu)
+			if !ok {
+				continue
+			}
+			if !have || v > best {
+				best, have = v, true
+			}
+		}
+		if have {
+			out = append(out, metricbuf.Sample{
+				Name: metricbuf.MetricCPULoad, Labels: base, Value: best, TS: at,
+			})
+		}
+	}
+
+	// Memory: the "Processor" pool. A 2960-X also lists an "I/O" pool and a
+	// "Driver text" pool — reporting those as system memory would draw a curve
+	// that has nothing to do with how much RAM the switch has left. FREE is
+	// published (the question is how much remains), TOTAL is Used+Free.
+	if !memDone {
+		var names = tables[oidCiscoMemName]
+		var idx string
+		var pdu gosnmp.SnmpPDU
+		var found string
+		for idx, pdu = range names {
+			if strings.EqualFold(strings.TrimSpace(asString(pdu)), "Processor") {
+				found = idx
+				break
+			}
+		}
+		if found != "" {
+			var used, okU = toFloat(tables[oidCiscoMemUsed][found])
+			var free, okF = toFloat(tables[oidCiscoMemFree][found])
+			if okF {
+				out = append(out, metricbuf.Sample{
+					Name: metricbuf.MetricMemoryFree, Labels: base, Value: free, TS: at,
+				})
+			}
+			if okU && okF {
+				out = append(out, metricbuf.Sample{
+					Name: metricbuf.MetricMemoryTotal, Labels: base, Value: used + free, TS: at,
+				})
+			}
+		}
+	}
+
+	// Temperature: one sample per sensor, labelled by its description so a
+	// multi-sensor or stacked switch does not collapse onto one curve.
+	var descrs = tables[oidCiscoTempDescr]
+	var idx string
+	var pdu gosnmp.SnmpPDU
+	for idx, pdu = range descrs {
+		var v, ok = toFloat(tables[oidCiscoTempValue][idx])
+		if !ok {
+			continue
+		}
+		var name = strings.TrimSpace(asString(pdu))
+		if name == "" {
+			name = "sensor " + idx
+		}
+		out = append(out, metricbuf.Sample{
+			Name:   metricbuf.MetricTemperature,
+			Labels: map[string]string{"device": deviceID, "sensor": name},
+			Value:  v, TS: at,
+		})
+	}
+	return out
 }

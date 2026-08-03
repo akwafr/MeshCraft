@@ -1,6 +1,7 @@
 package swos
 
 import (
+	"meshcraft/internal/driver"
 	"reflect"
 	"strings"
 	"testing"
@@ -395,7 +396,7 @@ func planDeReference(t *testing.T) (State, []*Page) {
 	// Reference device state: managed on VLAN 99, and a SINGLE port with link — cage SFP2, SFP2.
 	return State{
 		VLANs: []VLAN{{ID: 99}, {ID: 100}}, Ports: st,
-		MgmtVLAN: 99, LinkUp: map[string]bool{"SFP2": true},
+		MgmtVLAN: 99, Links: map[string]driver.LinkState{"SFP2": driver.LinkUpState},
 	}, rows
 }
 
@@ -476,7 +477,7 @@ func TestSafeguardProtectsManagementTagging(t *testing.T) {
 	// The reason must be actionable for an operator: which port, that admin arrives TAGGED,
 	// and that there is no fallback console.
 	var expected string
-	for _, expected = range []string{"SFP2", "lien ACTIF", "TAGGED", "serial"} {
+	for _, expected = range []string{"SFP2", "ACTIVE link", "TAGGED", "serial"} {
 		if !strings.Contains(skipped[0], expected) {
 			t.Errorf("refusal reason must contain %q; got: %q", expected, skipped[0])
 		}
@@ -516,7 +517,7 @@ func TestSafeguardProtectsClassicUntaggedCase(t *testing.T) {
 	if len(changes) != 0 {
 		t.Errorf("port carrying untagged admin was modified: %+v", changes)
 	}
-	if len(skipped) != 1 || !strings.Contains(skipped[0], "NON TAGGED") {
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "UNTAGGED") {
 		t.Fatalf("reason must say admin arrives untagged: %v", skipped)
 	}
 }
@@ -653,7 +654,7 @@ func TestPlanSparesAllActivePortsWhenAdminVLANUnknown(t *testing.T) {
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "SFP2") {
 		t.Errorf("active port should be spared: %v", skipped)
 	}
-	if !strings.Contains(skipped[0], "n'importe quel VLAN") {
+	if !strings.Contains(skipped[0], "any VLAN whatsoever") {
 		t.Errorf("reason must explain WHY we do not know: %q", skipped[0])
 	}
 	if len(changes) != 1 || changes[0].Port != "Port1" {

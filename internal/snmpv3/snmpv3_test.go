@@ -57,7 +57,7 @@ func TestNoAuthenticationNoV3(t *testing.T) {
 	if ok {
 		t.Error("without authentication, there is no usable v3")
 	}
-	_, _, ok = Negotiate([]string{"kangourou"}, nil, floorAuth, floorPriv)
+	_, _, ok = Negotiate([]string{"kangaroo"}, nil, floorAuth, floorPriv)
 	if ok {
 		t.Error("an unknown algorithm must be ignored, not accepted")
 	}
@@ -84,7 +84,7 @@ func TestParseTag(t *testing.T) {
 	if c, ok = ParseTag("snmpv3-sha-nopriv"); !ok || c.Priv != "" {
 		t.Errorf("nopriv must parse as no encryption: %+v", c)
 	}
-	var reject = []string{"regie", "snmpv3", "snmpv3-truc-bidule", "snmpv3-sha", ""}
+	var reject = []string{"widget", "snmpv3", "snmpv3-thingy-doodad", "snmpv3-sha", ""}
 	var s string
 	for _, s = range reject {
 		if _, ok = ParseTag(s); ok {
@@ -110,7 +110,7 @@ func TestSupported(t *testing.T) {
 	if !Supported("SHA-256", "AES-128") || !Supported("md5", "none") {
 		t.Error("known algorithms must be accepted")
 	}
-	if Supported("kangourou", "aes128") || Supported("sha256", "rot13") {
+	if Supported("kangaroo", "aes128") || Supported("sha256", "rot13") {
 		t.Error("an unknown algorithm must not be accepted")
 	}
 }

@@ -9,59 +9,61 @@ import (
 	"time"
 )
 
-// Pre-vol de joignabilite : est-ce qu'un proxy atteint vraiment un network ?
+// Reachability preflight: does a proxy actually reach a network?
 //
-// C'est la verification qu'exige la bascule d'adressage de management
-// (docs/01-Architecture/Adressage de management §5) : envoyer un device dans
-// un sous-network que personne ne joint, c'est le perdre.
+// This is the check required by the management-addressing switch
+// (docs/01-Architecture/Adressage de management §5): sending a device into a
+// subnet nobody can reach means losing it.
 //
-// Le point subtil, et c'est tout l'interet de ce code : **un port closed est une
-// bonne nouvelle**. Un `connection refused` signifie que le paquet est arrive et
-// que l'hote a repondu par un RST — donc la route existe. Un `timeout`, lui, ne
-// distingue pas « pas de route » de « filtre en silence ». Confondre les deux
-// ferait echouer un pre-vol parfaitement valide.
+// The subtle point, and it's the entire reason this code exists: **a closed port
+// is good news**. A `connection refused` means the packet arrived and the host
+// answered with an RST — so the route exists. A `timeout`, on the other hand,
+// does not distinguish "no route" from "silently filtered." Conflating the two
+// would fail a perfectly valid preflight check.
 
-// ReachOutcome : ce qu'une tentative de connexion apprend.
+// ReachOutcome: what a connection attempt learned.
 type ReachOutcome string
 
 const (
-	// ReachOpen : quelque chose ecoute. L'hote existe.
+	// ReachOpen: something is listening. The host exists.
 	ReachOpen ReachOutcome = "open"
-	// ReachRefused : l'hote a repondu RST. Il existe, la route existe.
+	// ReachRefused: the host answered with an RST. It exists, and the route
+	// exists.
 	ReachRefused ReachOutcome = "refused"
-	// ReachUnreachable : ICMP unreachable — the device network a repondu que
-	// personne n'est there. La route existe, l'hote non.
+	// ReachUnreachable: ICMP unreachable — a network device answered that
+	// nobody is there. The route exists, the host doesn't.
 	ReachUnreachable ReachOutcome = "unreachable"
-	// ReachTimeout : silence. Pas de route, ou filtrage muet — indecidable.
+	// ReachTimeout: silence. No route, or silent filtering — undecidable.
 	ReachTimeout ReachOutcome = "timeout"
 )
 
-// ReachResult describes le result d'un pre-vol vers un hote.
+// ReachResult describes the outcome of a preflight check against a host.
 //
-// DEUX questions distinctes, qu'il ne faut pas confondre — et c'est un trap dans
-// lequel ce code est tombe avant d'be corrige :
+// TWO distinct questions, which must not be conflated — and this code fell into
+// that exact trap before being fixed:
 //
-//	Reachable   : l'hote LUI-SAME a repondu (open ou refused).
-//	RouteExists : un device du chemin a repondu, same pour dire que l'hote
-//	              est absent (ICMP unreachable). Le network est route ; l'hote,
-//	              non. Utile pour valider un sous-network, jamais pour conclure
-//	              qu'une adresse repond.
+//	Reachable   : the host ITSELF answered (open or refused).
+//	RouteExists : a device along the path answered, only to say the host is
+//	              absent (ICMP unreachable). The network is routed; the host is
+//	              not. Useful to validate a subnet, never to conclude that an
+//	              address answers.
 type ReachResult struct {
 	Host string `json:"host"`
-	// Probes : le detail par port, pour que le diagnostic soit lisible.
+	// Probes: the per-port detail, so the diagnosis is legible.
 	Probes      map[string]ReachOutcome `json:"probes"`
 	Reachable   bool                    `json:"reachable"`
 	RouteExists bool                    `json:"route_exists"`
-	// Verdict est la phrase a afficher : elle doit suffire a decider.
+	// Verdict is the sentence to display: it must be enough on its own to
+	// decide.
 	Verdict string `json:"verdict"`
 }
 
-// ReachPorts : des ports courants sur une passerelle ou un device network. On
-// n'en attend aucun ouvert — seule la NATURE de failure compte.
+// ReachPorts: common ports on a gateway or network device. None of them is
+// expected to be open — only the NATURE of the failure matters.
 var ReachPorts = []int{443, 80, 22, 179}
 
-// CheckReach teste la joignabilite d'un hote depuis le dialer fourni (donc
-// depuis le proxy, quand c'est celui d'un tunnel).
+// CheckReach tests the reachability of a host from the supplied dialer (so from
+// the proxy, when it's the one behind a tunnel).
 func CheckReach(ctx context.Context, host string, d Dialer, timeout time.Duration) ReachResult {
 	if timeout <= 0 {
 		timeout = 2 * time.Second
@@ -73,30 +75,31 @@ func CheckReach(ctx context.Context, host string, d Dialer, timeout time.Duratio
 		res.Probes[strconv.Itoa(port)] = outcome
 		switch outcome {
 		case ReachOpen, ReachRefused:
-			// L'hote a parle : presence et route established.
+			// The host spoke: presence and route both established.
 			res.Reachable = true
 			res.RouteExists = true
 		case ReachUnreachable:
-			// Un routeur a parle A LA PLACE de l'hote : la route existe, pas l'hote.
+			// A router spoke IN PLACE of the host: the route exists, the host
+			// doesn't.
 			res.RouteExists = true
 		}
-		// Une response de l'hote suffit ; un ICMP unreachable, non — on continue
-		// d'essayer les autres ports au cas where seul celui-ci soit filtre.
+		// One answer from the host is enough; an ICMP unreachable is not — keep
+		// trying the other ports in case only this one is filtered.
 		if res.Reachable {
 			break
 		}
 	}
 	switch {
 	case res.Reachable:
-		res.Verdict = "hote joignable depuis ce proxy : il a repondu, la route existe"
+		res.Verdict = "host reachable from this proxy: it answered, the route exists"
 	case res.RouteExists:
-		res.Verdict = "un device du chemin a repondu que cet hote est absent " +
-			"(ICMP unreachable) : le network est route depuis ce proxy, mais rien ne " +
-			"repond a cette adresse"
+		res.Verdict = "a device along the path answered that this host is absent " +
+			"(ICMP unreachable): the network is routed from this proxy, but nothing " +
+			"answers at this address"
 	default:
-		res.Verdict = "aucune response : soit il n'y a pas de route depuis ce proxy, " +
-			"soit le trafic est filtre en silence. Impossible de conclure que le network " +
-			"est joignable."
+		res.Verdict = "no response: either there is no route from this proxy, " +
+			"or traffic is being silently filtered. Cannot conclude that the network " +
+			"is reachable."
 	}
 	return res
 }
@@ -121,9 +124,9 @@ func probeReach(ctx context.Context, host string, port int, d Dialer, timeout ti
 	return classify(err)
 }
 
-// classify traduit une erreur de connexion en verdict. Le tunnel remonte le
-// message du proxy sous forme de texte : on reconnait donc aussi les labels,
-// pas seulement les erreurs typees.
+// classify translates a connection error into a verdict. The tunnel surfaces the
+// proxy's message as plain text: string patterns are therefore recognized too,
+// not just typed errors.
 func classify(err error) ReachOutcome {
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return ReachRefused

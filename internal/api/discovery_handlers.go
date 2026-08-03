@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +76,65 @@ func (s *Server) handleListKnownCredentials(w http.ResponseWriter, r *http.Reque
 //
 // A database read error does not fail the screen: return an empty list, the screen
 // shows credentials, and nobody is blocked for an accessory diagnostic.
+// handleRevealKnownCredential puts ONE instance credential's secret on screen,
+// and journals that it happened.
+//
+// # Why this exists, and what it repairs
+//
+// Site credentials have had an audited reveal from the start
+// (cf. sitecreds_handlers.go). Instance credentials had none — and they are the
+// ones actually sitting on any device provisioned over the serial console but not
+// yet adopted, because the soft-reset wizard places THEM: the browser has to type
+// a secret on a UART the controller cannot open, so it uses the instance
+// credential, and the site credential is only pushed later by the adoption path.
+//
+// The practical consequence, observed on a Catalyst 2960-X and an FS S3900 whose
+// adoption had not completed: the operator holds a device whose password exists in
+// meshcraft, is displayed nowhere, and cannot be recovered except by re-running the
+// serial wizard — the only path that ever returned it
+// (cf. handleSerialCredential, which materializes it for typing). A vault that
+// cannot show you the password on the device in front of you is not doing its job.
+//
+// # The same gesture as the site reveal, deliberately
+//
+// Same severity (warning), same shape of event, same "it is logged" wording on
+// screen. Two reveal paths that journal differently would make the audit trail
+// depend on which page someone happened to open, and the whole value of the trail
+// is that it does not.
+//
+// Global-admin, inherited from the route group: instance credentials are not
+// scoped to a site, so no site role can bound who reads them.
+func (s *Server) handleRevealKnownCredential(w http.ResponseWriter, r *http.Request) {
+	if s.Secrets == nil {
+		respondErr(w, http.StatusServiceUnavailable, "secret key not configured")
+		return
+	}
+	var c, err = s.Store.RevealKnownCredential(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	var secret string
+	secret, err = s.Secrets.Open(c.SecretEnc)
+	if err != nil {
+		// An unreadable secret is not a server fault to hide behind a 500: the
+		// instance key has changed since this credential was written, the admin
+		// screen already flags the row (cf. unreadableCredentials), and saying so
+		// here is what connects the two.
+		respondErr(w, http.StatusUnprocessableEntity,
+			"this credential no longer decrypts with the instance key in use: "+
+				"it was written with another one, and its secret is unrecoverable")
+		return
+	}
+	var me = auth.UserFrom(r.Context())
+	s.emitInstance(r, "credential.revealed", model.SevWarning,
+		"Instance credential \""+c.Name+"\" revealed by "+me.Email)
+	respond(w, http.StatusOK, map[string]any{
+		"id": c.ID, "name": c.Name, "kind": c.Kind,
+		"username": c.Username, "secret": secret,
+	})
+}
+
 func (s *Server) unreadableCredentials(ctx context.Context) []string {
 	var out = []string{}
 	if s.Secrets == nil {
@@ -842,6 +902,42 @@ func onlyCredential(creds []discovery.Credential, id string) []discovery.Credent
 	return out
 }
 
+// handleSerialCredential decrypts one instance credential for Web Serial
+// soft-reset / adopt scripts. Secrets otherwise never leave the controller;
+// this path exists because the browser holds the UART and must type the
+// password. Prefer a specific credential_id; empty = highest-priority enabled.
+func (s *Server) handleSerialCredential(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CredentialID string `json:"credential_id"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if s.Secrets == nil {
+		respondErr(w, http.StatusServiceUnavailable, "secret key not configured")
+		return
+	}
+	var creds, err = s.discoveryCredentials(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if in.CredentialID != "" {
+		creds = onlyCredential(creds, in.CredentialID)
+	}
+	if len(creds) == 0 {
+		respondErr(w, http.StatusNotFound, "no usable discovery credential")
+		return
+	}
+	var c = creds[0]
+	respond(w, http.StatusOK, map[string]any{
+		"id":       c.ID,
+		"name":     c.Name,
+		"username": c.Username,
+		"secret":   c.Secret,
+	})
+}
+
 // storeCandidate turns a probe result into a candidate.
 //
 // `domainID` is the network in which the observed address makes sense. Not guessed:
@@ -984,7 +1080,7 @@ func (s *Server) handleProbeIP(w http.ResponseWriter, r *http.Request) {
 		// interface — never tried at all on a web-only line. Whoever enters a password for
 		// "this switch" should not guess which transport meshcraft will use.
 		creds = []discovery.Credential{{
-			ID: "", Name: "saisi manuellement", Kind: "",
+			ID: "", Name: "manually entered", Kind: "",
 			Username: in.Username, Secret: in.Password,
 		}}
 	case in.CredentialID != "":
@@ -1216,7 +1312,16 @@ func (s *Server) handleAdoptDiscovered(w http.ResponseWriter, r *http.Request) {
 				"import failed: "+err.Error())
 			return
 		}
+		// On a NUMBERING connector (driver.PortNamer), a device adopted by pasting
+		// its configuration must carry the SAME port vocabulary as one adopted by
+		// push or read live over the connector — otherwise devices.ports is keyed
+		// on the raw platform name here and on the standard name there, and every
+		// later apply / diff / telemetry lookup silently misses.
+		var remapWarnings []string
+		parsed.Ports, parsed.PortGroups, remapWarnings =
+			remapPortsToStandardModel(cand.Driver, parsed.Ports, parsed.PortGroups)
 		ports, portGroups, vlans, warnings = fromParsed(parsed)
+		warnings = append(warnings, remapWarnings...)
 		if parsed.Hostname != "" && strings.TrimSpace(in.Name) == "" {
 			name = parsed.Hostname
 		}
@@ -1344,6 +1449,72 @@ func (s *Server) handleAdoptDiscovered(w http.ResponseWriter, r *http.Request) {
 		"vlans_kept":    len(vlansKept),
 		"warnings":      warnings,
 	})
+}
+
+// remapPortsToStandardModel translates parsed port names and groups from the
+// RAW platform vocabulary ("ethernet 1/11") into the standard-model
+// vocabulary the connector uses everywhere else ("GE11"), when the resolved
+// driver declares that translation (driver.PortNamer). Absent that capability
+// — most drivers, which already name ports in the standard model, or a
+// connector unknown to this binary — it returns the input unchanged.
+//
+// A group's naming is proven translatable by testing its FIRST and LAST port:
+// on every numbering connector shipped today the mapping is affine (same
+// trailing number, different prefix), so success on both ends of the range
+// carries the whole group. A group that fails is DROPPED with a warning
+// naming it — never imported under a name nothing else in the product
+// recognizes, and never guessed port by port.
+func remapPortsToStandardModel(driverName string, ports map[string]confimport.Port,
+	groups []confimport.PortGroup) (map[string]confimport.Port, []confimport.PortGroup, []string) {
+	var drv, known = driver.Get(driverName)
+	if !known {
+		return ports, groups, nil
+	}
+	var namer, canName = driver.AsPortNamer(drv)
+	if !canName {
+		return ports, groups, nil
+	}
+
+	var outPorts = map[string]confimport.Port{}
+	var outGroups = []confimport.PortGroup{}
+	var droppedGroups []string
+	var g confimport.PortGroup
+	for _, g = range groups {
+		var first, okFirst = namer.StandardPortName(g.Prefix + strconv.Itoa(g.From))
+		var last, okLast = namer.StandardPortName(g.Prefix + strconv.Itoa(g.To))
+		if !okFirst || !okLast {
+			droppedGroups = append(droppedGroups,
+				fmt.Sprintf("%s%d-%d", g.Prefix, g.From, g.To))
+			continue
+		}
+		var stdPrefix = strings.TrimSuffix(first, strconv.Itoa(g.From))
+		_ = last
+		outGroups = append(outGroups, confimport.PortGroup{
+			Prefix: stdPrefix, From: g.From, To: g.To,
+			SpeedMbps: g.SpeedMbps, PoE: g.PoE, Label: g.Label,
+		})
+		var n int
+		for n = g.From; n <= g.To; n++ {
+			var raw = g.Prefix + strconv.Itoa(n)
+			var std, ok = namer.StandardPortName(raw)
+			if !ok {
+				continue
+			}
+			var p, seen = ports[raw]
+			if !seen {
+				p = confimport.Port{Mode: "libre"}
+			}
+			outPorts[std] = p
+		}
+	}
+	var warnings []string
+	if len(droppedGroups) > 0 {
+		sort.Strings(droppedGroups)
+		warnings = append(warnings, fmt.Sprintf(
+			"port group(s) outside this connector's standard-model mapping were not "+
+				"imported: %s", strings.Join(droppedGroups, ", ")))
+	}
+	return outPorts, outGroups, warnings
 }
 
 // fromParsed maps parser output to device columns.

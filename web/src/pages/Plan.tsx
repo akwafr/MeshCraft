@@ -68,19 +68,20 @@ const linkDiagColor = (status: DeviceLink["status"]) =>
 const NODE_W = 176;
 const NODE_CX = 88;
 const NODE_CY = 38;
-// DEFAULT height of a node, by the time it is rendered and measured. A switch
-// loaded with ports largely exceeds this value: being satisfied with this would bring out
-// the equipment of the framework of its place. The actual height is measured (nodeH).
+// DEFAULT height of a node, until it has been rendered and measured. A
+// switch loaded with ports comfortably exceeds this value: settling for it
+// would make the device spill out of its zone frame. The actual height is
+// measured afterwards (nodeH).
 const NODE_H = 104;
 const ZONE_PAD = 16;
 const ZONE_PAD_TOP = 26;
 
-// LLDP_OFFSET: by how much an OBSERVED link shifts from the entered link that it doubles.
+// LLDP_OFFSET: by how much an OBSERVED link shifts from the entered link it duplicates.
 //
-// The two join the same box edges: without offset, an observation which confirms a
-// statement would be superimposed to the pixel, and one of the two would disappear.
-// Five pixels are enough to distinguish them without the line appearing to join
-// two other pieces of equipment.
+// Both join the same box edges: without an offset, an observation that confirms
+// a declared link would be superimposed pixel-for-pixel, and one of the two
+// would disappear. Five pixels are enough to tell them apart without the line
+// looking like it connects to different equipment.
 const LLDP_OFFSET = 5;
 
 // Zoom: essential when a site has a lot of equipment.
@@ -88,12 +89,12 @@ const ZOOM_KEY = "meshcraft.planZoom";
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 1.2;
-// Below this factor the nodes switch to compact view: the boxes of
-// port are no longer readable, you might as well not draw them (and not pay the
-// rendu de plusieurs milliers d'entre elles).
+// Below this factor, nodes switch to compact view: port boxes are no longer
+// readable, so we might as well not draw them (and skip paying the
+// rendering cost for several thousand of them).
 const LOD_ZOOM = 0.6;
-// Sliding margin still available beyond the rightmost switch /
-// the lowest: the plane therefore never has an impassable edge.
+// Sliding margin still available beyond the rightmost or lowest switch: the
+// plan therefore never has a hard edge.
 const WORLD_SLACK = 280;
 const WORLD_MAX = 12000;
 
@@ -197,11 +198,11 @@ export default function Plan() {
   /**
    * ACTUAL height of each node, measured after rendering.
    *
-   * A place frame calculated on a guessed height does not contain what it
-   * claims to contain: as soon as a switch has more ports than average, it
-   * overflows from its own place. The frame being the only thing that says “these
-   * equipment is there”, an overflow is not a cosmetic defect — it
-   * fait mentir le plan.
+   * A zone frame computed from a guessed height doesn't actually contain
+   * what it claims to: as soon as a switch has more ports than average, it
+   * overflows its own zone. Since the frame is the only thing saying "this
+   * device lives here", an overflow is not a cosmetic glitch — it makes the
+   * plan lie.
    */
   const [nodeH, setNodeH] = useState<Record<string, number>>({});
   // ONE observer for all nodes, released when unmounted: create one
@@ -236,8 +237,8 @@ export default function Plan() {
   };
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  // Scrolling to apply just after a zoom change, to keep under
-  // the cursor the point of the plan which was there.
+  // Scroll offset to apply right after a zoom change, so the point of the
+  // plan that was under the cursor stays under the cursor.
   const scrollFix = useRef<{ left: number; top: number } | null>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(() => {
@@ -320,8 +321,8 @@ export default function Plan() {
     setZoom(z);
   };
 
-  // Ctrl/⌘ + wheel: zoom. Non-passive listener, otherwise impossible to prevent
-  // le zoom du navigateur.
+  // Ctrl/⌘ + wheel: zoom. Non-passive listener, otherwise the browser's own
+  // zoom cannot be prevented.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -334,9 +335,9 @@ export default function Plan() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoom]);
 
-  // Real time. Significant bonus here: the flow is not sent back to
-  // the tab that writes (see TAB_ID in api.ts), so drag and drop does not
-  // does not trigger a reload per saved move.
+  // Real-time. A meaningful bonus here: the update is not echoed back to
+  // the tab that wrote it (see TAB_ID in api.ts), so drag-and-drop does not
+  // trigger a reload on every saved move.
   const refetchInterval = useSiteLive(siteId);
 
   const { data: devices, error } = useQuery({
@@ -357,18 +358,21 @@ export default function Plan() {
     refetchInterval,
   });
   /**
-   * The LLDP neighborhood OBSERVED, query SEPARATE from that of the links entered.
+   * The OBSERVED LLDP neighborhood, in a query SEPARATE from the one for
+   * entered links.
    *
-   * Separated and not merged, for the reason which also applies to the base: they are two
-   * natures of fact. A seized connection is an intention that survives unplugging;
-   * a neighbor is a minute-old observation. Serve them with the same request
-   * would have invited them to display the same — and above all, the absence of findings should not
-   * never remove the declared site plan.
+   * Kept separate rather than merged, for the same reason that applies to
+   * the inventory: these are two different natures of fact. A hand-entered
+   * link is an intention that survives the cable being unplugged; a
+   * neighbor is a minute-old observation. Serving them from the same
+   * request would have invited them to be displayed the same way — and
+   * above all, the absence of an LLDP observation must never erase the
+   * declared site plan.
    *
-   * `refetchInterval` is that of the site, as for links: the controller does not
-   * notifie PAS les changements de voisinage (cf. handleProxyLLDP, qui explique
-   * why wake up all browsers twice per minute and per switch would have
-   * cost more than it brings).
+   * `refetchInterval` is the site's, same as for links: the controller does
+   * NOT notify neighborhood changes (see handleProxyLLDP, which explains
+   * why waking up every browser twice a minute per switch would cost more
+   * than it would bring).
    */
   const { data: lldp } = useQuery({
     queryKey: ["lldp", siteId],
@@ -494,9 +498,9 @@ export default function Plan() {
   })();
 
   /**
-   * Scope of the plan. It FOLLOWS the content (plus a sliding margin) and
-   * couvre au minimum la zone visible : aucune bande visible mais interdite au
-   * deposit, regardless of screen width or zoom.
+   * Extent of the plan. It FOLLOWS the content (plus a sliding margin) and
+   * covers at minimum the visible area: no strip that is visible but off
+   * limits for placement, regardless of screen width or zoom.
    */
   const extent = (() => {
     let mx = 0;
@@ -573,8 +577,8 @@ export default function Plan() {
   const onPointerMove = (e: React.PointerEvent) => {
     const dr = dragRef.current;
     if (!dr || role === "viewer") return;
-    // The pointer coordinates are in screen pixels: we return to space
-    // of the plan by dividing by the zoom factor of the start of the drag.
+    // Pointer coordinates are in screen pixels: we convert back to plan
+    // space by dividing by the zoom factor captured at the start of the drag.
     const x = Math.max(0, Math.min(WORLD_MAX - NODE_W, e.clientX / dr.zoom - dr.dx));
     const y = Math.max(0, Math.min(WORLD_MAX - NODE_H, e.clientY / dr.zoom - dr.dy));
     const prev = dragPos[dr.id];
@@ -679,8 +683,8 @@ export default function Plan() {
   };
 
   /**
-   * Rates of a port: same seeds as the switch view, so that the values
-   * match from one screen to another.
+   * Port rates: computed the same way as in the switch view, so the
+   * values match from one screen to another.
    */
   const portRates = (dev: Device | undefined, portName: string) => {
     if (!dev) return null;
@@ -766,8 +770,8 @@ export default function Plan() {
 
   /**
    * The dotted frames are DERIVED from the equipment: one zone per
-   * location, drawn around its switches. Moving a distorted switch
-   * donc son cadre, et changer son emplacement le fait changer de zone —
+   * location, drawn around its switches. Moving a switch therefore
+   * distorts its frame, and changing its location makes it change zone —
    * no geometry to maintain by hand.
    */
   const measure = (id: string) => (el: HTMLDivElement | null) => {
@@ -788,8 +792,9 @@ export default function Plan() {
     return [...byLocation].map(([label, members]) => {
       const xs = members.map((d) => posOf(d).x);
       const ys = members.map((d) => posOf(d).y);
-      // The bottom of the frame follows the LOWEST descending node, actual height
-      // understood — and not the lowest knot placed, which may be the shortest.
+      // The bottom of the frame follows the LOWEST-reaching node, actual
+      // height included — not the node placed lowest on screen, which
+      // might be the shortest one.
       const bottoms = members.map((d) => posOf(d).y + (nodeH[d.id] ?? NODE_H));
       const left = Math.min(...xs) - ZONE_PAD;
       const top = Math.min(...ys) - ZONE_PAD_TOP;
@@ -1308,7 +1313,7 @@ export default function Plan() {
                     </QuickTip>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginLeft: 15 }}>
                       {devPorts.map((pr) => (
-                        <PortSquare key={pr.name} name={pr.name} port={pr.p} vm={vm} size={9} off={off} />
+                        <PortSquare key={pr.name} name={pr.name} displayName={pr.display} port={pr.p} vm={vm} size={9} off={off} />
                       ))}
                     </div>
                     <div className="note" style={{ fontSize: 9, margin: "6px 0 0 15px" }}>

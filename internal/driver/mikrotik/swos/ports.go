@@ -27,7 +27,7 @@ import (
 //	                            comprises : il n'est plus un trunk, quoi que la
 //	                            table dise de lui.
 //
-// La lecture state les taisait aussi, sauf `vlan`. Un UI pouvait donc present 
+// La lecture state les taisait aussi, sauf `vlan`. Un UI pouvait donc present
 // un trunk de trois VLAN sur un port qui force tout dans le VLAN 1.
 //
 // # CE QUE CE FICHIER WRITES, ET CE QU'IL REFUSE WRITE

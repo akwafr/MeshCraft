@@ -61,8 +61,14 @@ var resetProcedures = []ResetProcedure{
 			"switch: del flash:config.text   (et del flash:vlan.dat si besoin)",
 			"switch: boot",
 		},
-		Erases:   "configuration de demarrage ; la base VLAN (vlan.dat) et les images IOS restent, sauf suppression explicite",
-		Caveats:  []string{"Sur IOS-XE recent, preferer « erase startup-config » puis « reload » ; le bouton MODE n'ouvre pas d'invite bootloader sur tous les modeles."},
+		Erases: "configuration de demarrage ; la base VLAN (vlan.dat) et les images IOS restent, sauf suppression explicite",
+		Caveats: []string{
+			"Sur IOS-XE recent, preferer « erase startup-config » puis « reload » ; le bouton MODE n'ouvre pas d'invite bootloader sur tous les modeles.",
+			"Connector: internal/driver/cisco/ios (MgmtPushCmds) ; the Web Serial soft reset " +
+				"replays the same commands. Console is 9600 8N1 on this range, NOT 115200.",
+			"After the reboot the switch offers its initial configuration dialog: it must be " +
+				"declined (« no ») before any command is accepted.",
+		},
 		Verified: true,
 	},
 	{
@@ -213,6 +219,42 @@ var resetProcedures = []ResetProcedure{
 		Erases:   "configuration ; the device peut repasser en attente d'autorisation FortiLink",
 		Caveats:  []string{"Un FortiSwitch managed en FortiLink doit be re-autorise sur le FortiGate after reinitialisation."},
 		Verified: false,
+	},
+	{
+		Driver: "fs-s3900", Vendor: "FS.com", Family: "S3900 / S3900-R",
+		Aliases: []string{
+			"fs", "fs.com", "s3900", "s3900-r", "fs3900", "fs-3900",
+			"s3900-24t4s", "s3900-48t4s", "s3900-24f4s",
+		},
+		Software: []string{
+			"Console : 115200 8N1 — apres reset : admin (password vide, OpCode ~1.7) ou admin/admin",
+			"conf t",
+			"boot system config:Factory_Default_Config.cfg",
+			"exit",
+			"delete file unit 1 name startup1.cfg   — confirmer « y » si demande",
+			"reboot | restart (OpCode ~1.7) | reload  — confirmer « y » si demande",
+			"vlan database → vlan N name X media ethernet",
+			"interface vlan N → ip add A.B.C.D/nn",
+			"ip route 0.0.0.0 0.0.0.0 <gw>",
+			"ip http server ; ip ssh server enable",
+			"username U privilege 15 ; username U password 0 <secret> ; enable password 0 <secret>",
+			"interface Eth U/P(-Q) → switchport mode trunk ; switchport trunk allowed vlan add N",
+			"no interface vlan 1 (optionnel)",
+			"copy running-config startup-config — repondre au prompt « Startup configuration " +
+				"file name: » par un nom explicite (startup1.cfg), JAMAIS Factory_Default_Config.cfg",
+		},
+		Hardware: []string{
+			"Bouton Reset : appui court (< 10 s) = reboot ; procedure usine selon fiche model (souvent appui long).",
+			"Voie monitor (Ctrl+P au demarrage) documentee pour recovery / TFTP sur S3900-R.",
+		},
+		Erases: "configuration active (startup1.cfg) ; boot sur Factory_Default_Config.cfg ; images flash conservees",
+		Caveats: []string{
+			"Guide reset S3900 : https://img-en.fs.com/file/user_manual/s3900-series-switches-reset-and-recovery-system-configuration-guide.pdf",
+			"CLI verifiee lab OpCode 1.7 — pas Cisco « delete startup-config » / « write » / « ip sshd ».",
+			"Le VLAN de management doit etre porte sur l'uplink (trunk allowed vlan add) sinon le probe IP echoue.",
+			"Connecteur : internal/driver/fs/s3900 (MgmtPushCmds) ; soft-reset Web Serial reutilise les memes commandes.",
+		},
+		Verified: true,
 	},
 	{
 		Driver: "zyxel", Vendor: "Zyxel", Family: "GS / XGS (ZyNOS)",

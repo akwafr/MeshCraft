@@ -1,20 +1,21 @@
-// Package confimport traduit la configuration lue sur un device vers le
-// model de data standard de meshcraft (VLANs + intent par port).
+// Package confimport translates the configuration read from a device into
+// meshcraft's standard data model (VLANs + per-port intent).
 //
-// C'est le chemin « import de la configuration locale » propose a l'adoption :
-// au lieu d'ecraser the device avec ce que la plateforme croit juste, on lit
-// ce qui existe et on le fait entrer dans le model. L'utilisateur voit donc
-// from l'adoption son plan de VLAN reel.
+// This is the "import the local configuration" path offered at adoption
+// time: instead of overwriting the device with whatever the platform thinks
+// is right, we read what already exists and bring it into the model. So the
+// user sees their real VLAN plan right from adoption.
 //
-// Deux dialectes sont couverts, ceux qui cadrent la majorite des CLI de switchs :
+// Two dialects are covered, which together account for the majority of
+// switch CLIs:
 //
-//   - « ios » : Cisco IOS/IOS-XE/NX-OS, et les nombreuses CLI qui l'imitent
-//     (Aruba/HPE, Dell, Netgear, TP-Link JetStream, Zyxel…) ;
-//   - « comware » : Huawei VRP et H3C/Comware.
+//   - "ios": Cisco IOS/IOS-XE/NX-OS, and the many CLIs that mimic it
+//     (Aruba/HPE, Dell, Netgear, TP-Link JetStream, Zyxel...);
+//   - "comware": Huawei VRP and H3C/Comware.
 //
-// Ce qui n'est pas reconnu n'est pas invented : chaque ligne de configuration
-// ignored qui portait pourtant du sens VLAN produit un avertissement, et
-// l'utilisateur voit exactement ce qui a been importe avant de valider.
+// Whatever isn't recognized isn't invented: every configuration line that is
+// ignored despite carrying VLAN meaning produces a warning, and the user
+// sees exactly what was imported before confirming.
 package confimport
 
 import (
@@ -30,15 +31,15 @@ type Vlan struct {
 	Name   string `json:"name"`
 }
 
-// Port suit le model standard : mode, PVID, VLANs tagges.
+// Port follows the standard model: mode, PVID, tagged VLANs.
 type Port struct {
 	Label  string `json:"label,omitempty"`
 	Mode   string `json:"mode"` // libre | access | trunk
 	PVID   *int   `json:"pvid,omitempty"`
-	Tagged any    `json:"tagged,omitempty"` // []int ou "all"
+	Tagged any    `json:"tagged,omitempty"` // []int or "all"
 }
 
-// PortGroup describes la front panel physique deduced des noms d'interfaces.
+// PortGroup describes the physical front panel deduced from interface names.
 type PortGroup struct {
 	Prefix    string `json:"prefix"`
 	From      int    `json:"from"`
@@ -57,7 +58,7 @@ type Result struct {
 	Warnings   []string        `json:"warnings"`
 }
 
-// DetectDialect devine le dialecte a partir de marqueurs de syntaxe.
+// DetectDialect guesses the dialect from syntax markers.
 func DetectDialect(text string) string {
 	var lower = strings.ToLower(text)
 	if strings.Contains(lower, "port link-type") || strings.Contains(lower, "allow-pass") ||
@@ -71,10 +72,18 @@ func DetectDialect(text string) string {
 }
 
 var (
-	reHostname     = regexp.MustCompile(`(?i)^\s*(?:hostname|sysname)\s+"?([^\s"]+)"?`)
-	reVlanDecl     = regexp.MustCompile(`(?i)^\s*vlan\s+([0-9,\s\-]+?)\s*$`)
-	reVlanName     = regexp.MustCompile(`(?i)^\s*name\s+"?(.+?)"?\s*$`)
-	reInterface    = regexp.MustCompile(`(?i)^\s*interface\s+(\S+)\s*$`)
+	reHostname = regexp.MustCompile(`(?i)^\s*(?:hostname|sysname)\s+"?([^\s"]+)"?`)
+	reVlanDecl = regexp.MustCompile(`(?i)^\s*vlan\s+([0-9,\s\-]+?)\s*$`)
+	// reVlanInline: inline named declaration from the Accton/FSOS dialect
+	// (FS S3900, observed in lab testing, OpCode 1.7.0): inside the "vlan
+	// database" block, "VLAN 99 name LAN99_Management media ethernet".
+	reVlanInline = regexp.MustCompile(`(?i)^\s*vlan\s+(\d+)\s+name\s+"?([^\s"]+)"?(?:\s+media\s+\S+)?(?:\s+state\s+\S+)?\s*$`)
+	reVlanName   = regexp.MustCompile(`(?i)^\s*name\s+"?(.+?)"?\s*$`)
+	// reInterface also accepts the TWO-word interface names of the
+	// Accton/FSOS dialect: "interface ethernet 1/1", "interface vlan 99".
+	// The second word is restricted to indices (digits, "/") so it doesn't
+	// swallow "interface range GigabitEthernet1/0/1 - 24".
+	reInterface    = regexp.MustCompile(`(?i)^\s*interface\s+(\S+(?:\s+[\d/]+)?)\s*$`)
 	reDescription  = regexp.MustCompile(`(?i)^\s*description\s+"?(.+?)"?\s*$`)
 	reSwMode       = regexp.MustCompile(`(?i)^\s*switchport\s+mode\s+(access|trunk)`)
 	reSwAccess     = regexp.MustCompile(`(?i)^\s*switchport\s+access\s+vlan\s+(\d+)`)
@@ -91,31 +100,31 @@ var (
 	reIfaceIndex   = regexp.MustCompile(`^(.*?)(\d+)$`)
 )
 
-// Parse lit une configuration et la traduit. dialect vide = detection auto.
+// Parse reads a configuration and translates it. Empty dialect = auto-detect.
 func Parse(text, dialect string) (Result, error) {
 	if strings.TrimSpace(text) == "" {
-		return Result{}, fmt.Errorf("configuration vide")
+		return Result{}, fmt.Errorf("empty configuration")
 	}
 	if dialect == "" {
 		dialect = DetectDialect(text)
 	}
 	if dialect == "" {
 		return Result{}, fmt.Errorf(
-			"dialecte non reconnu : aucune syntaxe VLAN connue trouvee. " +
-				"Collez la sortie de « show running-config » (Cisco/Aruba/Dell…) " +
-				"ou « display current-configuration » (Huawei/H3C)")
+			"unrecognized dialect: no known VLAN syntax found. " +
+				"Paste the output of \"show running-config\" (Cisco/Aruba/Dell...) " +
+				"or \"display current-configuration\" (Huawei/H3C)")
 	}
 
 	var res = Result{
 		Dialect: dialect,
 		Vlans:   []Vlan{},
 		Ports:   map[string]Port{},
-		// PortGroups reste non nil : l'UI itere dessus sans garde.
+		// PortGroups stays non-nil: the UI iterates over it without a guard.
 		PortGroups: []PortGroup{},
 		Warnings:   []string{},
 	}
 
-	// Contexte courant : on est soit dans un bloc vlan, soit dans une interface.
+	// Current context: we're either inside a vlan block or inside an interface.
 	var curVlans []int
 	var curIface string
 	var poeSeen = map[string]bool{}
@@ -127,7 +136,7 @@ func Parse(text, dialect string) (Result, error) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		// Un « ! » ou « return » seul ferme le bloc courant.
+		// A lone "!" or "return" closes the current block.
 		var trimmed = strings.TrimSpace(line)
 		if trimmed == "!" || trimmed == "#" || strings.EqualFold(trimmed, "return") ||
 			strings.EqualFold(trimmed, "exit") || strings.EqualFold(trimmed, "quit") {
@@ -146,8 +155,8 @@ func Parse(text, dialect string) (Result, error) {
 		if m = reInterface.FindStringSubmatch(line); m != nil {
 			curVlans = nil
 			curIface = m[1]
-			// Les interfaces logiques (Vlan10, Loopback0, Null0…) ne sont pas
-			// des ports physiques : on ne les fait pas entrer dans la front panel.
+			// Logical interfaces (Vlan10, Loopback0, Null0...) aren't physical
+			// ports: we don't bring them into the front panel.
 			if isLogicalIface(curIface) {
 				curIface = ""
 				continue
@@ -159,11 +168,25 @@ func Parse(text, dialect string) (Result, error) {
 			continue
 		}
 
+		// Inline name (Accton/FSOS) before the list form: "vlan 99 name X ..."
+		// would otherwise match reVlanDecl on its ID alone.
+		if m = reVlanInline.FindStringSubmatch(line); m != nil && curIface == "" {
+			var id, idErr = strconv.Atoi(m[1])
+			if idErr == nil && id >= 1 && id <= 4094 {
+				res.Vlans = ensureVlan(res.Vlans, id)
+				var idx = findVlan(res.Vlans, id)
+				if idx >= 0 && res.Vlans[idx].Name == "" {
+					res.Vlans[idx].Name = m[2]
+				}
+				continue
+			}
+		}
+
 		if m = reVlanDecl.FindStringSubmatch(line); m != nil && curIface == "" {
 			var ids, err = expandVlanList(m[1])
 			if err != nil {
 				res.Warnings = append(res.Warnings,
-					fmt.Sprintf("liste de VLAN illisible ignored : %q", trimmed))
+					fmt.Sprintf("unreadable VLAN list ignored: %q", trimmed))
 				continue
 			}
 			curVlans = ids
@@ -176,7 +199,7 @@ func Parse(text, dialect string) (Result, error) {
 			continue
 		}
 
-		// Dans un bloc vlan : « name » nomme le VLAN.
+		// Inside a vlan block: "name" names the VLAN.
 		if curVlans != nil && curIface == "" {
 			if m = reVlanName.FindStringSubmatch(line); m != nil {
 				if len(curVlans) == 1 {
@@ -186,7 +209,7 @@ func Parse(text, dialect string) (Result, error) {
 					}
 				} else {
 					res.Warnings = append(res.Warnings,
-						fmt.Sprintf("« name %s » porte sur %d VLANs a la fois : nom non applique",
+						fmt.Sprintf("\"name %s\" applies to %d VLANs at once: name not applied",
 							m[1], len(curVlans)))
 				}
 				continue
@@ -197,16 +220,16 @@ func Parse(text, dialect string) (Result, error) {
 			continue
 		}
 
-		// --- Dans une interface ---
+		// --- Inside an interface ---
 		var p = res.Ports[curIface]
 
 		switch {
 		case reNoSwitchport.MatchString(line):
-			// Port route : hors du model L2, on le sort de la front panel pour ne
-			// pas afficher un port « libre » qui ne l'est pas.
+			// Routed port: outside the L2 model, we remove it from the front
+			// panel so we don't show a "free" port that isn't one.
 			delete(res.Ports, curIface)
 			res.Warnings = append(res.Warnings,
-				fmt.Sprintf("%s est un port route (no switchport) : non importe", curIface))
+				fmt.Sprintf("%s is a routed port (no switchport): not imported", curIface))
 			curIface = ""
 			continue
 
@@ -216,7 +239,7 @@ func Parse(text, dialect string) (Result, error) {
 		case rePoE.MatchString(line):
 			poeSeen[curIface] = true
 
-		// --- dialecte ios ---
+		// --- ios dialect ---
 		case reSwMode.MatchString(line):
 			p.Mode = strings.ToLower(reSwMode.FindStringSubmatch(line)[1])
 
@@ -248,20 +271,20 @@ func Parse(text, dialect string) (Result, error) {
 				var ids, err = expandVlanList(spec)
 				if err != nil {
 					res.Warnings = append(res.Warnings,
-						fmt.Sprintf("%s : liste de VLAN trunk illisible (%q)", curIface, spec))
+						fmt.Sprintf("%s: unreadable trunk VLAN list (%q)", curIface, spec))
 				} else {
 					p.Tagged = addTagged(p.Tagged, ids)
 					res.Vlans = ensureVlans(res.Vlans, ids)
 				}
 			}
 
-		// --- dialecte comware / VRP ---
+		// --- comware / VRP dialect ---
 		case reCwLinkType.MatchString(line):
 			var t = strings.ToLower(reCwLinkType.FindStringSubmatch(line)[1])
 			if t == "hybrid" {
 				p.Mode = "trunk"
 				res.Warnings = append(res.Warnings,
-					fmt.Sprintf("%s est en mode hybrid : importe en trunk, a verify", curIface))
+					fmt.Sprintf("%s is in hybrid mode: imported as trunk, please verify", curIface))
 			} else {
 				p.Mode = t
 			}
@@ -289,7 +312,7 @@ func Parse(text, dialect string) (Result, error) {
 				var ids, err = expandVlanList(spec)
 				if err != nil {
 					res.Warnings = append(res.Warnings,
-						fmt.Sprintf("%s : liste de VLAN trunk illisible (%q)", curIface, spec))
+						fmt.Sprintf("%s: unreadable trunk VLAN list (%q)", curIface, spec))
 				} else {
 					p.Tagged = addTagged(p.Tagged, ids)
 					res.Vlans = ensureVlans(res.Vlans, ids)
@@ -307,8 +330,8 @@ func Parse(text, dialect string) (Result, error) {
 		res.Ports[curIface] = p
 	}
 
-	// Un trunk sans liste explicite laisse passer tous les VLANs sur la
-	// plupart des plateformes : le dire rather que d'afficher un trunk vide.
+	// A trunk without an explicit list lets all VLANs through on most
+	// platforms: better to say so than to show an empty trunk.
 	var name string
 	var p Port
 	for name, p = range res.Ports {
@@ -316,7 +339,7 @@ func Parse(text, dialect string) (Result, error) {
 			p.Tagged = "all"
 			res.Ports[name] = p
 			res.Warnings = append(res.Warnings,
-				fmt.Sprintf("%s : trunk sans liste de VLAN, interprete comme « tous »", name))
+				fmt.Sprintf("%s: trunk without a VLAN list, interpreted as \"all\"", name))
 		}
 	}
 
@@ -324,7 +347,7 @@ func Parse(text, dialect string) (Result, error) {
 	sort.Slice(res.Vlans, func(i, j int) bool { return res.Vlans[i].VlanID < res.Vlans[j].VlanID })
 
 	if len(res.Ports) == 0 {
-		return res, fmt.Errorf("aucun port trouve dans la configuration fournie")
+		return res, fmt.Errorf("no port found in the supplied configuration")
 	}
 	return res, nil
 }
@@ -335,9 +358,12 @@ func isLogicalIface(name string) bool {
 	for _, prefix = range []string{
 		"vlan", "loopback", "lo", "null", "tunnel", "port-channel", "po",
 		"bridge-aggregation", "eth-trunk", "management", "mgmt", "bvi", "nve",
+		// "craft": the FS S3900's dedicated out-of-band management port
+		// (observed in lab testing) — not a front-panel port.
+		"craft",
 	} {
 		if strings.HasPrefix(lower, prefix) {
-			// « ethernet » commence par « eth » mais n'est pas « eth-trunk ».
+			// "ethernet" starts with "eth" but is not "eth-trunk".
 			if prefix == "lo" && strings.HasPrefix(lower, "log") {
 				continue
 			}
@@ -347,7 +373,7 @@ func isLogicalIface(name string) bool {
 	return false
 }
 
-// expandVlanList accepte « 10,20,30-35 » (ios) et « 10 20 30 to 35 » (comware).
+// expandVlanList accepts "10,20,30-35" (ios) and "10 20 30 to 35" (comware).
 func expandVlanList(spec string) ([]int, error) {
 	var norm = strings.ToLower(strings.TrimSpace(spec))
 	norm = strings.ReplaceAll(norm, " to ", "-")
@@ -361,7 +387,7 @@ func expandVlanList(spec string) ([]int, error) {
 			var lo, errLo = strconv.Atoi(strings.TrimSpace(parts[0]))
 			var hi, errHi = strconv.Atoi(strings.TrimSpace(parts[1]))
 			if errLo != nil || errHi != nil || lo < 1 || hi > 4094 || hi < lo {
-				return nil, fmt.Errorf("intervalle invalide %q", tok)
+				return nil, fmt.Errorf("invalid range %q", tok)
 			}
 			var v int
 			for v = lo; v <= hi; v++ {
@@ -374,7 +400,7 @@ func expandVlanList(spec string) ([]int, error) {
 		}
 		var v, err = strconv.Atoi(tok)
 		if err != nil || v < 1 || v > 4094 {
-			return nil, fmt.Errorf("identifiant de VLAN invalide %q", tok)
+			return nil, fmt.Errorf("invalid VLAN identifier %q", tok)
 		}
 		if !seen[v] {
 			seen[v] = true
@@ -382,7 +408,7 @@ func expandVlanList(spec string) ([]int, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("liste vide")
+		return nil, fmt.Errorf("empty list")
 	}
 	sort.Ints(out)
 	return out, nil
@@ -413,8 +439,8 @@ func ensureVlans(list []Vlan, ids []int) []Vlan {
 	return list
 }
 
-// addTagged fusionne des VLANs tagges. « all » absorbe tout : une fois qu'un
-// port laisse tout passer, ajouter des identifiants ne veut plus rien dire.
+// addTagged merges tagged VLANs. "all" absorbs everything: once a port lets
+// everything through, adding identifiers no longer means anything.
 func addTagged(cur any, ids []int) any {
 	var asAll, isAll = cur.(string)
 	if isAll && asAll == "all" {
@@ -440,9 +466,9 @@ func addTagged(cur any, ids []int) any {
 	return out
 }
 
-// deriveGroups reconstitue la front panel physique a partir des noms d'interfaces :
-// « GigabitEthernet1/0/1 … 1/0/24 » devient un groupe de 24 ports. La vitesse
-// est deduced du prefix, faute d'information dans la configuration.
+// deriveGroups reconstructs the physical front panel from interface names:
+// "GigabitEthernet1/0/1 ... 1/0/24" becomes a group of 24 ports. The speed
+// is deduced from the prefix, for lack of information in the configuration.
 func deriveGroups(ports map[string]Port, poe map[string]bool) []PortGroup {
 	type acc struct {
 		min, max int
@@ -488,8 +514,8 @@ func deriveGroups(ports map[string]Port, poe map[string]bool) []PortGroup {
 	return out
 }
 
-// speedOf deduit un rate du nom d'interface. C'est une convention de nommage
-// constructeur, pas une mesure : la configuration ne porte pas la vitesse.
+// speedOf deduces a rate from the interface name. This is a vendor naming
+// convention, not a measurement: the configuration doesn't carry the speed.
 func speedOf(prefix string) int {
 	var lower = strings.ToLower(prefix)
 	switch {

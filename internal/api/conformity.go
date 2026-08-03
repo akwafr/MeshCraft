@@ -414,6 +414,8 @@ func (s *Server) withConformity(ctx context.Context, devices []model.Device) []d
 		// Computed here rather than in withSyncVLANs, which is pure and has no access
 		// to proxy state.
 		enriched.WatchExcluded = s.WatchExcl.reasonFor(d.ID)
+		// Live provisioning state, so the list badge animates while an apply runs.
+		enriched.Applying = s.applyingNow(d.ID)
 		// Addressing is computed on `d`, not on `enriched`: withSyncVLANs REMOVES
 		// observed state to avoid loading a list of two hundred devices, and the
 		// "observed and kept" mode comes from observed state.

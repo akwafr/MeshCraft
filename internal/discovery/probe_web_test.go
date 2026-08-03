@@ -271,8 +271,8 @@ func TestTryWebNoHTTPAuth(t *testing.T) {
 	if sawAuthHeader {
 		t.Error("aucun identifiant ne doit partir vers une interface qui n'en demande pas")
 	}
-	if !strings.Contains(att.detail, "formulaire") {
-		t.Errorf("le detail doit dire where est la limite (connecteur / formulaire) : %q",
+	if !strings.Contains(att.detail, "form") {
+		t.Errorf("the detail must say where the limit is (connector / form): %q",
 			att.detail)
 	}
 	if att.cred.ID != "" {
@@ -353,8 +353,8 @@ func TestProbeWebAuthLiftsIdentification(t *testing.T) {
 		t.Errorf("confiance = %d, expected %d (page authentifiee de the device)",
 			res.Confidence, ConfDeviceSelfReport)
 	}
-	if !strings.Contains(res.Evidence, "authentifiee") {
-		t.Errorf("l'indice retenu doit dire hence il vient : %q", res.Evidence)
+	if !strings.Contains(res.Evidence, "authenticated") {
+		t.Errorf("the retained clue must say where it comes from: %q", res.Evidence)
 	}
 }
 
@@ -376,8 +376,8 @@ func TestProbeDeclaresTelnetNotTried(t *testing.T) {
 		[]Credential{{ID: "c1", Name: "telnet d'usine", Kind: "telnet",
 			Username: "admin", Secret: "x"}})
 
-	if !strings.Contains(res.Notes, "telnet") || !strings.Contains(res.Notes, "NON essayes") {
-		t.Errorf("les notes doivent declare l'absence d'essai telnet : %q", res.Notes)
+	if !strings.Contains(res.Notes, "telnet") || !strings.Contains(res.Notes, "NOT attempted") {
+		t.Errorf("the notes must declare that telnet was not attempted: %q", res.Notes)
 	}
 }
 

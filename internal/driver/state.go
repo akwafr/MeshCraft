@@ -1,210 +1,300 @@
 package driver
 
-// Les types que la couche API echange avec un connecteur : state lu, l'intention a
-// poser, et ce qu'une pose a produit.
+// The types the API layer exchanges with a connector: state read, the intent to
+// set, and what a write produced.
 //
-// # Ils sont COMMUNS parce qu'ils l'were already, en trois copies
+// # They are SHARED because they already were, in three copies
 //
-// Les trois connecteurs livres portaient chacun leur `VLAN`, leur `PortState`, leur
-// `State`, leur `ApplyResult` et leur `Step`, et deux d'entre eux le disaient
-// explicitement dans leurs commentaires — « same forme que celle du connecteur
-// Instant On, pour que l'API n'ait qu'une way de present  une pose », « c'est ce
-// qui permet a la couche de reconciliation de comparer deux plateformes sans les
-// distinguer ». Trois definitions identiques par convention tiennent jusqu'au jour where
-// l'une gagne un champ : ce jour-there, la conversion silencieuse de l'API perd ce champ
-// sans qu'aucun test ne le voie, et un ecart de configuration devient invisible.
+// The three shipped connectors each carried their own `VLAN`, `PortState`,
+// `State`, `ApplyResult`, and `Step`, and two of them said so explicitly in their
+// comments — "same shape as the Instant On connector's, so the API has only one
+// way to present a write," "this is what lets the reconciliation layer compare
+// two platforms without telling them apart." Three identical definitions kept in
+// sync by convention hold up only until the day one of them gains a field: that
+// day, the API's silent conversion drops that field without any test noticing,
+// and a configuration drift becomes invisible.
 //
-// La migration cote connecteur ne costs rien et ne demande PAS de rewrite leur
-// code : un ALIAS suffit — `type PortState = driver.PortState` — et leurs champs, leurs
-// fonctions pures et leurs tests continuent de compiler tels quels.
+// The migration on the connector side costs nothing and does NOT require
+// rewriting their code: an ALIAS is enough — `type PortState = driver.PortState`
+// — and their fields, their pure functions, and their tests keep compiling as-is.
 //
-// # Les tags JSON sont ceux d'origine, et ce n'est pas cosmetique
+// # The JSON tags are the original ones, and this is not cosmetic
 //
-// Deux d'entre eux traversent une frontiere que Go ne surveille pas :
+// Two of them cross a boundary Go does not watch over:
 //
-//   - `State` est serialise dans `devices.observed` (via api.observedState) et relu
-//     par tout ce qui calcule la derive de configuration. Renommer un tag ferait
-//     lire « zero VLAN, aucun port » sur TOUT LE PARC already observed, ce qui se
-//     presenterait comme une derive massive et declencherait des poses ;
-//   - `ApplyResult`, `SNMPResult`, `TrapResult` et `Step` partent dans les responses
-//     HTTP que le frontend affiche. Un tag changed n'y casse rien de visible : il
-//     affiche simplement du vide, ce qui est le pire des deux.
+//   - `State` is serialized into `devices.observed` (via api.observedState) and
+//     read back by everything that computes configuration drift. Renaming a tag
+//     would make it read "zero VLANs, no ports" for the ENTIRE FLEET already
+//     observed, which would look like a massive drift and trigger writes;
+//   - `ApplyResult`, `SNMPResult`, `TrapResult`, and `Step` go into the HTTP
+//     responses the frontend displays. A changed tag breaks nothing visibly
+//     there: it simply displays emptiness, which is the worse of the two
+//     failure modes.
 //
-// # Ce qui n'est PAS ici, et pourquoi
+// # What is NOT here, and why
 //
-// Rien de ce qui est propre a une plateforme : ni les sections `wcd`, ni les pages
-// `*.b`, ni les `.id` de RouterOS. Ce qui est propre a une plateforme mais que
-// l'exploitant DOIT savoir passe par les champs de texte planned pour ca
-// ([State.Notes], [ApplyResult.Skipped], [ApplyResult.Notes], [SNMPResult.Skipped], [TrapResult.Notes]) —
-// des phrases written par le connecteur, affichees telles quelles, sans que la
-// couche API ait a comprendre de quelle plateforme elles parlent.
+// Nothing platform-specific: no `wcd` sections, no `*.b` pages, no RouterOS
+// `.id`s. What is platform-specific but that the operator MUST know goes through
+// the text fields planned for that purpose ([State.Notes], [ApplyResult.Skipped],
+// [ApplyResult.Notes], [SNMPResult.Skipped], [TrapResult.Notes]) — sentences
+// written by the connector, displayed as-is, without the API layer having to
+// understand which platform they're talking about.
 
-// VLAN est un VLAN declared sur the device.
+// VLAN is a VLAN declared on the device.
 type VLAN struct {
 	ID int `json:"id"`
-	// Name est le label que the device porte, quand il en porte un.
+	// Name is the label the device carries, when it carries one.
 	//
-	// A NE PAS PRENDRE POUR UN IDENTIFIANT : RouterOS ne NOMME pas ses VLAN — son
-	// menu de VLAN de bridge n'a pas de champ de nom, et ce qui en tient lieu est un
-	// `comment` de texte libre (observed : « added by pvid » sur une ingress que
-	// the device s'est created tout seul). Un connecteur remonte ce qu'il a ; un
-	// appelant qui comparerait des noms pour decider d'une write se tromperait.
+	// DO NOT TREAT AS AN IDENTIFIER: RouterOS does not NAME its VLANs — its
+	// bridge VLAN menu has no name field, and what stands in for one is a
+	// free-text `comment` (observed: "added by pvid" on an entry the device
+	// created entirely on its own). A connector reports back whatever it has; a
+	// caller that compared names to decide on a write would be making a
+	// mistake.
 	Name string `json:"name"`
 }
 
-// PortState est la configuration d'UN port telle que the device la porte, ou telle
-// que meshcraft la veut.
+// PortState is the configuration of ONE port as the device carries it, or as
+// meshcraft wants it.
 //
-// Volontairement limitee a ce qui est CONFIGURE. Le rate, state du lien, la
-// consommation PoE et la temperature sont de la TELEMETRY : les faire entrer ici les
-// ferait comparer par le calcul de derive, et tout le parc clignoterait en
-// permanence.
+// Deliberately limited to what is CONFIGURED. Rate, link state, PoE draw, and
+// temperature are TELEMETRY: bringing them in here would make them get compared
+// by the drift calculation, and the whole fleet would blink constantly.
 //
-// Le same type sert en lecture et en intention, ce qui est ce qui rend le diff
-// possible sans traduction — a un champ pres, flagged ci-dessous.
+// The same type serves both reads and intents, which is what makes diffing
+// possible without translation — with one field's exception, flagged below.
 type PortState struct {
-	// Mode : access | trunk | libre. « libre » et le vide valent « non managed » : le
-	// connecteur ne touche pas a ce port, ce qui est la seule way d'adopter un
-	// device sans reclamer ses quarante-huit prises.
+	// Mode: access | trunk | empty. "empty" (and the zero value) both mean "not
+	// managed": the connector leaves this port alone, which is the only way to
+	// adopt a device without claiming all forty-eight of its jacks.
 	Mode string `json:"mode"`
-	// PVID est le VLAN natif, celui dont le trafic sort SANS tag.
+	// PVID is the native VLAN, the one whose traffic leaves WITHOUT a tag.
 	PVID int `json:"pvid,omitempty"`
-	// Tagged est la liste des VLAN que le port transporte etiquetes, TRIEE.
+	// Tagged is the list of VLANs the port carries tagged, SORTED.
 	//
-	// Triee parce que deux executions doivent produire exactement la same request :
-	// sinon comparer deux transcripts ne veut plus rien dire, et un diff signalerait
-	// un ecart a chaque relecture.
+	// Sorted because two runs must produce exactly the same request: otherwise
+	// comparing two transcripts stops meaning anything, and a diff would report
+	// a discrepancy on every re-read.
 	Tagged []int `json:"tagged,omitempty"`
-	// TaggedAtLeast : do not remove tagged VLANs on this port (unresolved « all »).
+	// TaggedAtLeast: do not remove tagged VLANs on this port (unresolved "all").
 	//
 	// Set ONLY on intent, never on a read state. After ResolveTaggedAll, a normal
-	// « all » carries the exact site VLAN list in Tagged and this flag is false —
+	// "all" carries the exact site VLAN list in Tagged and this flag is false —
 	// apply adds and removes until the device matches. True only while the site
 	// declares no VLANs yet: stripping tagged membership would be guessing.
 	TaggedAtLeast bool `json:"tagged_at_least,omitempty"`
 }
 
-// State est state observe d'un device.
+// State is the observed state of a device.
 type State struct {
 	VLANs []VLAN               `json:"vlans"`
 	Ports map[string]PortState `json:"ports"`
-	// MgmtVLAN est le VLAN par lequel the device se dit administrable, tel qu'IL le
-	// declares — et non tel que le plan du site le souhaite.
+	// MgmtVLAN is the VLAN through which the device says it is administrable,
+	// as IT declares it — not as the site plan wants it to be.
 	//
-	// La distinction est vitale, pas cosmetique : un device pas encore migre vers
-	// le plan est joignable par SON VLAN. Proteger celui du plan protegerait un VLAN
-	// que the device n'utilise pas, en laissant rewrite celui qui porte la session
-	// en cours. Constate sur un 1930 : plan a 99, device a 1.
+	// The distinction is vital, not cosmetic: a device not yet migrated to the
+	// plan is reachable through ITS OWN VLAN. Protecting the plan's VLAN would
+	// protect a VLAN the device isn't using, while letting the one carrying the
+	// current session be overwritten. Observed on a 1930: plan says 99, device
+	// says 1.
 	//
-	// ZERO NE VEUT PAS DIRE LA SAME CHOSE PARTOUT, et c'est au connecteur de le
-	// traduire en garde-fou, pas a l'appelant de l'interpreter. Sur l'Instant On, zero
-	// est une ignorance et writing est refused. Sur SwOS, zero est un etat
-	// LEGITIME — « administration accepted depuis n'importe quel VLAN », celui d'un
-	// device sorti d'usine — et refuser to write empecherait d'adopter un switch
-	// neuf ; la protection se reporte alors sur le seul etat des liens. Sur RouterOS,
-	// zero veut dire que l'administration n'arrive pas par un VLAN tagged.
+	// ZERO DOES NOT MEAN THE SAME THING EVERYWHERE, and it's up to the connector
+	// to translate it into a safeguard, not up to the caller to interpret it. On
+	// Instant On, zero means ignorance and writes are refused. On SwOS, zero is
+	// a LEGITIMATE state — "administration accepted from any VLAN," the state
+	// of a device fresh from the factory — and refusing to write would prevent
+	// adopting a new switch; protection then falls back to link state alone. On
+	// RouterOS, zero means administration is not arriving through a tagged
+	// VLAN.
 	MgmtVLAN int `json:"mgmt_vlan"`
-	// LinkUp : les ports qui portent un lien.
+	// Links: the OPERATIONAL STATE of each port, richer than a link/no-link bool.
 	//
-	// Un port SANS lien ne peut pas porter la session d'administration en cours :
-	// c'est ce qui permet de reconfigurer un parc neuf, where tous les ports sont non
-	// tagged dans le VLAN de management et where les epargner tous reviendrait a ne rien
-	// pouvoir faire.
+	// The previous model was `LinkUp map[string]bool`, and it conflated three
+	// facts that call for opposite reactions: a port with nothing plugged in, a
+	// port an operator shut on purpose, and a port the SWITCH shut itself
+	// (err-disabled — a refused optic, a bpduguard trip, a security violation).
+	// All three read as "no link" and only one is a problem. This carries the
+	// distinction the connectors already observe.
 	//
-	// Seuls les ports AVEC lien y figurent : l'absence vaut « pas de lien », ce qui
-	// est aussi le default prudent quand la lecture n'a rien dit.
-	LinkUp map[string]bool `json:"link_up,omitempty"`
-	// Notes porte ce que le connecteur a compris et que ce type ne sait pas dire.
+	// [LinkUp] and [HasLink] preserve the old meaning for the apply guardrail:
+	// only a port that is genuinely UP can carry the current administration
+	// session, and that is what allows reconfiguring a brand-new fleet where
+	// every port is untagged in the management VLAN. A missing entry means "not
+	// read / unknown", the cautious default.
+	Links map[string]LinkState `json:"links,omitempty"`
+	// Notes carries what the connector understood that this type cannot
+	// otherwise express.
 	//
-	// LE CHAMP QUI EVITE DE MENTIR, et il est ne d'un fait observed sur les deux
-	// nouvelles plateformes : une configuration VLAN peut be present et INERTE.
-	// Sur SwOS, un port dont le mode VLAN est « disabled » ne filtre rien — son PVID
-	// et son appartenance sont configures mais sans effet sur le trafic. Sur RouterOS,
-	// un bridge dont `vlan-filtering` est inactif laisse tout passer partout, et un
-	// port peut etiqueter en VLAN 100 sans be membre du VLAN 100 (observed sur
-	// l'reference device, parfaitement accepted et silencieux).
+	// THE FIELD THAT AVOIDS LYING, and it was born from a fact observed on the
+	// two newer platforms: a VLAN configuration can be PRESENT and INERT. On
+	// SwOS, a port whose VLAN mode is "disabled" filters nothing — its PVID and
+	// membership are configured but have no effect on traffic. On RouterOS, a
+	// bridge whose `vlan-filtering` is off lets everything through everywhere,
+	// and a port can tag VLAN 100 without being a member of VLAN 100 (observed
+	// on the reference device, perfectly accepted and silent).
 	//
-	// Sans ce champ, the UI presenterait ces cas comme une segmentation en place. Ce
-	// sont des PHRASES pour un exploitant, pas des codes : l'appelant les affiche, il
-	// n'en tire aucune decision — un connecteur qui voudrait qu'une decision soit
-	// prise doit refuser lui-same.
+	// Without this field, the UI would present these cases as segmentation
+	// actually in place. These are SENTENCES for an operator, not codes: the
+	// caller displays them, and draws no decision from them — a connector that
+	// wants a decision to be made must refuse on its own.
 	Notes []string `json:"notes,omitempty"`
 }
 
-// PortPlan est ce qu'une pose de configuration doit obtenir.
+// LinksFromUp converts an "up ports" boolean map — the shape several connectors
+// build internally — into the shared [LinkState] vocabulary. Only ports present
+// and true become [LinkUpState]; everything else is simply absent, meaning
+// "unknown / no link", exactly as the old boolean map behaved. A platform that
+// can distinguish disabled from unplugged builds the richer map directly instead.
+func LinksFromUp(up map[string]bool) map[string]LinkState {
+	if up == nil {
+		return nil
+	}
+	var out = map[string]LinkState{}
+	var name string
+	var v bool
+	for name, v = range up {
+		if v {
+			out[name] = LinkUpState
+		}
+	}
+	return out
+}
+
+// LinkState is a port's operational state, as the fleet's switches actually
+// report it. Deliberately a small, closed vocabulary shared by every connector:
+// a platform that cannot tell two of these apart reports the coarser one rather
+// than inventing a distinction it did not observe.
+type LinkState string
+
+const (
+	// LinkUpState: a forwarding link is present. The only state that carries an
+	// administration session, and therefore the only one the apply guardrail
+	// treats as "do not cut".
+	LinkUpState LinkState = "up"
+	// LinkDown: the port is down for a reason the connector could not narrow to
+	// one of the more specific states below. The honest fallback.
+	LinkDown LinkState = "down"
+	// LinkDisabled: administratively shut (« shutdown », « disable »). Down
+	// because someone chose it, not because anything is wrong.
+	LinkDisabled LinkState = "disabled"
+	// LinkUnplugged: no cable / no signal (« notconnect »). Down because nothing
+	// is connected — not a fault, and not a configuration to worry about.
+	LinkUnplugged LinkState = "unplugged"
+	// LinkErrDisabled: the SWITCH shut the port itself. A refused transceiver, a
+	// bpduguard trip, a port-security violation — always something to look at,
+	// and the one state that must be surfaced on the interface rather than
+	// hidden inside "no link".
+	LinkErrDisabled LinkState = "err-disabled"
+)
+
+// HasLink reports whether a port carries a usable link — the apply guardrail's
+// question, and the exact meaning the old `LinkUp[name]` map carried. True only
+// for [LinkUpState]: a disabled, unplugged or err-disabled port carries no
+// session and may be reconfigured.
+func (s State) HasLink(name string) bool {
+	return s.Links[name] == LinkUpState
+}
+
+// LinkUp rebuilds the old boolean map, for the persisted DTO and for callers
+// that only need "does this port have a link". One entry per UP port, matching
+// the previous field's semantics exactly so `devices.observed` and conformity
+// checks keep reading the same thing.
+func (s State) LinkUp() map[string]bool {
+	if s.Links == nil {
+		return nil
+	}
+	var out = map[string]bool{}
+	var name string
+	var st LinkState
+	for name, st = range s.Links {
+		if st == LinkUpState {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// PortPlan is what a configuration write must achieve.
 //
-// Un agregat rather que cinq parameters, et pas seulement pour la lisibilite : le
-// jour where la pose a besoin d'une contrainte de plus, les trois connecteurs changent
-// leur signature en same temps ou pas du tout — un parameter ajoute a trois endroits
-// se fait oublier au troisieme, et la pose de cette plateforme-there would write autre
-// chose que ce que the UI annonce.
+// An aggregate rather than five parameters, and not just for readability: the
+// day the write needs one more constraint, the three connectors change their
+// signature together or not at all — a parameter added in three places gets
+// forgotten at the third, and that platform's write would set something other
+// than what the UI advertises.
 type PortPlan struct {
-	// Desired est la configuration voulue, par NOM DE PORT du model standard.
+	// Desired is the wanted configuration, keyed by PORT NAME in the standard
+	// model.
 	//
-	// Un port ABSENT de cette carte n'est pas « a vider » : il est NON MANAGED, et le
-	// connecteur n'y touche pas. C'est la same rule que `Mode` vide, et elle est ce
-	// qui permet d'adopter un device dont on ne configure que trois prises.
+	// A port ABSENT from this map is not "to be cleared": it is NOT MANAGED,
+	// and the connector leaves it alone. Same rule as an empty `Mode`, and it's
+	// what allows adopting a device on which only three jacks are configured.
 	Desired map[string]PortState
-	// MgmtVLAN est le VLAN de management que le PLAN DU SITE souhaite.
+	// MgmtVLAN is the management VLAN the SITE PLAN wants.
 	//
-	// Le connecteur y AJOUTE celui que the device declares ([State.MgmtVLAN]) et
-	// protege les deux : ils different tant qu'un device n'a pas been migre, et ne
-	// proteger que le premier laisserait rewrite celui qui porte la session.
+	// The connector ADDS to it the one the device declares ([State.MgmtVLAN])
+	// and protects both: they differ as long as a device hasn't been migrated
+	// yet, and protecting only the first would let the one carrying the
+	// session get overwritten.
 	//
-	// Zero veut dire « le site n'a pas de plan exploitable ». Ce n'est pas une
-	// autorisation to write a l'aveugle : c'est au connecteur de decider si sa
-	// plateforme permet encore de se proteger autrement (cf. [State.MgmtVLAN]).
+	// Zero means "the site has no actionable plan." This is not authorization
+	// to write blindly: it's up to the connector to decide whether its
+	// platform can still protect itself some other way (cf. [State.MgmtVLAN]).
 	MgmtVLAN int
-	// SiteVLANs sont les VLAN que le site declares, et qui doivent EXISTER sur
-	// the device same si aucun port ne les utilise encore.
+	// SiteVLANs are the VLANs the site declares, which must EXIST on the
+	// device even if no port uses them yet.
 	//
-	// Ce n'est pas du zele : un device adopte doit connaitre les VLAN de son site,
-	// sans quoi y affecter un port depuis l'interface de the device — ou brancher un
-	// trunk dessus — ne proposerait rien et ne transporterait rien. C'est la
-	// difference entre un device « adopte » et un device « simplement
-	// joignable ».
+	// This isn't overzealousness: an adopted device must know its site's
+	// VLANs, or assigning a port to one from the device's own interface — or
+	// plugging a trunk into it — would offer nothing and carry nothing. This
+	// is the difference between a device that is "adopted" and one that is
+	// "merely reachable."
 	SiteVLANs []VLAN
-	// Force leve les garde-fous qui protegent les ports portant l'administration.
+	// Force lifts the safeguards that protect ports carrying administration.
 	//
-	// JAMAIS enabled par default, ni par la pose automatique : c'est un geste explicite
-	// de l'exploitant, qui connait sa topologie mieux que meshcraft et accepte le
-	// risque de devoir se deplacer. Un connecteur qui l'ignorerait rendrait le bouton
-	// « forcer » de the UI inoperant sans le dire ; un connecteur qui forcerait sans
-	// qu'on le demande n'aurait plus de garde-fou du tout.
+	// NEVER enabled by default, nor by an automatic write: it's an explicit
+	// gesture by the operator, who knows their topology better than meshcraft
+	// and accepts the risk of having to travel on site. A connector that
+	// ignored it would make the UI's "force" button silently useless; a
+	// connector that forced without being asked would have no safeguard left
+	// at all.
 	Force bool
 }
 
-// ApplyResult dit ce qu'une pose a fait, et surtout ce qu'elle n'a pas fait.
+// ApplyResult says what a write did, and above all what it did NOT do.
 type ApplyResult struct {
-	// VLANsCreated : les VLAN qu'il a fallu create avant d'y affecter des ports.
+	// VLANsCreated: the VLANs that had to be created before ports could be
+	// assigned to them.
 	VLANsCreated []int `json:"vlans_created"`
-	// PortsWritten : les ports actually reconfigures. Un port already conforme n'y
-	// figure pas — ne rien envoyer vaut mieux qu'un aller-retour.
+	// PortsWritten: the ports actually reconfigured. A port already compliant
+	// does not appear here — sending nothing is better than a round trip that
+	// changes nothing.
 	PortsWritten []string `json:"ports_written"`
-	// Skipped : ce que meshcraft a REFUSED de faire, avec la raison — decisions
-	// de security que l'exploitant peut lever en forcant (port d'administration…).
+	// Skipped: what meshcraft REFUSED to do, with the reason — safety
+	// decisions the operator can lift by forcing (an administration port,
+	// etc.).
 	//
-	// LE CHAMP LE PLUS IMPORTANT DE LA STRUCTURE : un apply partiel presented comme
-	// complet laisserait croire a une configuration qui n'est pas en place.
+	// THE MOST IMPORTANT FIELD OF THE STRUCT: a partial apply presented as
+	// complete would suggest a configuration that isn't actually in place.
 	//
-	// A ne pas confondre avec Notes (faits sans decision : offload perdu…) ni avec
-	// ce que la plateforme ne sait pas WRITE (cf. [Connector.WritesExtra]) :
-	// melanger proposerait un bouton « forcer » qui ne changerait rien.
+	// Not to be confused with Notes (facts with no decision behind them: lost
+	// offload, etc.) nor with what the platform cannot WRITE at all
+	// (cf. [Connector.WritesExtra]): mixing them up would offer a "force"
+	// button that would change nothing.
 	Skipped []string `json:"skipped,omitempty"`
-	// Notes : faits d'apply qui demandent d'etre dits et aucune decision.
+	// Notes: apply facts that need to be stated, with no decision attached.
 	Notes []string `json:"notes,omitempty"`
-	// Backup est la configuration de the device AVANT write, telle que la
-	// plateforme l'a rendue, ou vide.
+	// Backup is the device's configuration BEFORE the write, exactly as the
+	// platform returned it, or empty.
 	//
-	// Existe pour une plateforme et une raison : SwOS applique et persiste d'un seul
-	// geste, une coupure d'alimentation n'annule rien, et cette copie est le SEUL
-	// retour arriere qui existe. Le connecteur la prend juste avant la first
-	// write ; elle ne se reconstitue pas after.
+	// Exists for one platform and one reason: SwOS applies and persists in a
+	// single gesture, a power outage undoes nothing, and this copy is the ONLY
+	// way back that exists. The connector takes it right before the first
+	// write; it cannot be reconstructed afterward.
 	//
-	// Vide n'est pas un manque : sur une plateforme en `apply_then_save`, le filet est
-	// ailleurs — ne pas persister (cf. [Persister]). Ce que l'appelant en fait est de
-	// sa responsabilite, mais la laisser tomber en silence reviendrait a annoncer un
-	// filet qu'on a jete.
+	// Empty is not a gap: on a platform running `apply_then_save`, the safety
+	// net is elsewhere — not persisting (cf. [Persister]). What the caller
+	// does with it is the caller's responsibility, but letting it drop
+	// silently would amount to advertising a safety net that was thrown away.
 	Backup string `json:"backup,omitempty"`
 }
 

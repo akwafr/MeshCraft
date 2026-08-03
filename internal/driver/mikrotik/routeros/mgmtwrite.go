@@ -68,7 +68,7 @@ func (c *Client) ApplyMgmtAddressing(ctx context.Context, want driver.MgmtAddrIn
 		err = nil
 	}
 	c.step(true, "management addressing applied",
-		"mode « "+want.Mode+" » on "+iface)
+		"mode '"+want.Mode+"' on "+iface)
 	return out, nil
 }
 

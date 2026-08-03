@@ -1,9 +1,9 @@
-// mkoci construit un layout OCI multi-arch pour l'image du proxy, sans
-// docker buildx : chaque binaire statique devient une image single-layer
-// (binaire + CA certs), le tout agrege dans un index multi-plateforme.
-// Le registre integrated du controleur sert ensuite ce layout tel quel.
+// mkoci builds a multi-arch OCI layout for the proxy image, without docker
+// buildx: each static binary becomes a single-layer image (binary + CA
+// certs), all aggregated into a multi-platform index. The controller's
+// built-in registry then serves this layout as-is.
 //
-// Usage :
+// Usage:
 //
 //	mkoci --out /out/oci --cacert /etc/ssl/certs/ca-certificates.crt \
 //	      --bin amd64=/out/meshcraft-proxy_linux_amd64 \
@@ -38,7 +38,7 @@ func (b *binFlag) String() string { return "" }
 func (b *binFlag) Set(v string) error {
 	var platform, path, ok = strings.Cut(v, "=")
 	if !ok {
-		return fmt.Errorf("format expected: arch[/variant]=chemin, recu %q", v)
+		return fmt.Errorf("format expected: arch[/variant]=path, got %q", v)
 	}
 	b.entries[platform] = path
 	return nil
@@ -52,10 +52,10 @@ type descriptor struct {
 }
 
 func main() {
-	var out = flag.String("out", "", "repertoire de sortie du layout OCI")
-	var cacert = flag.String("cacert", "", "fichier ca-certificates.crt a embarquer")
+	var out = flag.String("out", "", "output directory for the OCI layout")
+	var cacert = flag.String("cacert", "", "ca-certificates.crt file to embed")
 	var bins = binFlag{entries: map[string]string{}}
-	flag.Var(&bins, "bin", "arch[/variant]=chemin (repetable)")
+	flag.Var(&bins, "bin", "arch[/variant]=path (repeatable)")
 	flag.Parse()
 	if *out == "" || len(bins.entries) == 0 {
 		flag.Usage()
@@ -89,7 +89,7 @@ func build(out, cacert string, bins map[string]string) error {
 	for platform, binPath = range bins {
 		var desc, buildErr = buildPlatform(blobsDir, platform, binPath, caData)
 		if buildErr != nil {
-			return fmt.Errorf("plateforme %s: %w", platform, buildErr)
+			return fmt.Errorf("platform %s: %w", platform, buildErr)
 		}
 		manifests = append(manifests, desc)
 	}
@@ -107,13 +107,14 @@ func build(out, cacert string, bins map[string]string) error {
 	if err = os.WriteFile(filepath.Join(out, "index.json"), indexJSON, 0o644); err != nil {
 		return err
 	}
-	// L'index est AUSSI written comme blob, adressable par son propre digest.
+	// The index is ALSO written as a blob, addressable by its own digest.
 	//
-	// Sans ca, `docker pull` resout le tag, receives le digest de l'index dans
-	// Docker-Content-Digest, puis redemande le manifeste PAR DIGEST — et prend
-	// un 404. `docker pull` s'en sort par un repli « pull by tag » deprecie (avec
-	// avertissement), mais `docker compose up` fails franchement. Un registre
-	// doit rendre son index adressable par contenu, comme tout le reste.
+	// Without this, `docker pull` resolves the tag, gets the index's digest
+	// in Docker-Content-Digest, then requests the manifest again BY DIGEST —
+	// and gets a 404. `docker pull` recovers via a deprecated "pull by tag"
+	// fallback (with a warning), but `docker compose up` fails outright. A
+	// registry must make its index content-addressable, like everything
+	// else.
 	var indexDigest, indexWriteErr = writeBlob(blobsDir, indexJSON)
 	if indexWriteErr != nil {
 		return indexWriteErr
@@ -122,13 +123,13 @@ func build(out, cacert string, bins map[string]string) error {
 		[]byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("layout OCI written dans %s (%d plateformes, index %s)\n",
+	fmt.Printf("OCI layout written to %s (%d platform(s), index %s)\n",
 		out, len(manifests), indexDigest)
 	return nil
 }
 
-// buildPlatform produit layer + config + manifest pour une plateforme
-// et renvoie le descripteur du manifest (avec platform) pour l'index.
+// buildPlatform produces the layer + config + manifest for one platform
+// and returns the manifest descriptor (with platform) for the index.
 func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descriptor, error) {
 	var arch, variant, _ = strings.Cut(platform, "/")
 
@@ -137,7 +138,7 @@ func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descripto
 		return descriptor{}, err
 	}
 
-	// Layer : tar reproductible (dates epoch, uid/gid 0) puis gzip.
+	// Layer: reproducible tar (epoch dates, uid/gid 0) then gzip.
 	var rawTar bytes.Buffer
 	var tw = tar.NewWriter(&rawTar)
 	var epoch = time.Unix(0, 0)
@@ -186,7 +187,7 @@ func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descripto
 		return descriptor{}, writeErr
 	}
 
-	// Config de l'image.
+	// Image config.
 	var configObj = map[string]any{
 		"created":      "1970-01-01T00:00:00Z",
 		"architecture": arch,
@@ -209,7 +210,7 @@ func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descripto
 		return descriptor{}, cfgWriteErr
 	}
 
-	// Manifest de la plateforme.
+	// Platform manifest.
 	var manifestObj = map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     mtManifest,

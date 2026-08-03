@@ -18,23 +18,24 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Les questions ponctuelles du contrôleur, éprouvées SANS réseau ni équipement.
+// The controller's one-off questions, tested WITHOUT a network or any device.
 //
-// Ce qui se teste ici est ce qui se trompe : la borne de lignes (une réponse
-// tronquée qui passerait pour complète est l'erreur exacte que ce mécanisme existe
-// pour éviter), la traduction des types SNMP, et le format de fil.
+// What's under test here is what tends to go wrong: the row limit (a
+// truncated response that passes for complete is exactly the bug this
+// mechanism exists to prevent), the translation of SNMP types, and the wire
+// format.
 
-// --- Interlocuteur factice ---
+// --- Fake counterpart ---
 
-// walkerFactice rejoue une liste de PDU, puis une erreur optionnelle. Le walk
-// s'arrête net dès que la fonction de rappel rend une erreur, exactement comme
-// gosnmp.
+// walkerFactice replays a list of PDUs, then an optional error. The walk
+// stops dead as soon as the callback returns an error, exactly like gosnmp.
 type walkerFactice struct {
 	pdus []gosnmp.SnmpPDU
 	err  error
-	// vues : PDU réellement passées à la fonction de rappel. C'est ce qui permet de
-	// vérifier que la borne coupe le WALK, et pas seulement la réponse — un walk qui
-	// continue en jetant ses lignes coûterait à l'équipement pour rien.
+	// vues: PDUs actually passed to the callback. This is what lets us
+	// verify that the limit cuts off the WALK itself, not just the
+	// response — a walk that keeps going while discarding its rows would
+	// cost the device for nothing.
 	vues   int
 	racine string
 	fermé  bool
@@ -58,7 +59,7 @@ func (w *walkerFactice) Close() error {
 	return nil
 }
 
-// pdusCompteur fabrique n lignes d'une table de compteurs 64 bits.
+// pdusCompteur builds n rows of a 64-bit counter table.
 func pdusCompteur(n int) []gosnmp.SnmpPDU {
 	var out = make([]gosnmp.SnmpPDU, 0, n)
 	var i int
@@ -72,14 +73,14 @@ func pdusCompteur(n int) []gosnmp.SnmpPDU {
 	return out
 }
 
-// avecWalker installe un interlocuteur factice pour la durée d'un test.
+// avecWalker installs a fake counterpart for the duration of a test.
 func avecWalker(t *testing.T, w *walkerFactice, err error) {
 	t.Helper()
 	askDial = func(tunnel.AskRequest) (askWalker, error) { return w, err }
 	t.Cleanup(func() { askDial = nil })
 }
 
-// --- Bornes ---
+// --- Limits ---
 
 func TestAskMaxRowsAppliqueDefautEtPlafond(t *testing.T) {
 	type cas struct {
@@ -88,11 +89,11 @@ func TestAskMaxRowsAppliqueDefautEtPlafond(t *testing.T) {
 	}
 	var cases = []cas{
 		{nom: "absent", demandé: 0, attendu: tunnel.DefaultAskRows},
-		{nom: "négatif", demandé: -1, attendu: tunnel.DefaultAskRows},
-		{nom: "raisonnable", demandé: 12, attendu: 12},
-		{nom: "au plafond", demandé: tunnel.MaxAskRows, attendu: tunnel.MaxAskRows},
-		// Une borne qu'on peut relever depuis l'appelant n'est pas une borne.
-		{nom: "au-delà du plafond", demandé: 10 * tunnel.MaxAskRows,
+		{nom: "negative", demandé: -1, attendu: tunnel.DefaultAskRows},
+		{nom: "reasonable", demandé: 12, attendu: 12},
+		{nom: "at the ceiling", demandé: tunnel.MaxAskRows, attendu: tunnel.MaxAskRows},
+		// A limit the caller can raise isn't a limit.
+		{nom: "beyond the ceiling", demandé: 10 * tunnel.MaxAskRows,
 			attendu: tunnel.MaxAskRows},
 	}
 	var k cas
@@ -100,7 +101,7 @@ func TestAskMaxRowsAppliqueDefautEtPlafond(t *testing.T) {
 		t.Run(k.nom, func(t *testing.T) {
 			var got = askMaxRows(k.demandé)
 			if got != k.attendu {
-				t.Errorf("askMaxRows(%d) = %d, attendu %d", k.demandé, got, k.attendu)
+				t.Errorf("askMaxRows(%d) = %d, expected %d", k.demandé, got, k.attendu)
 			}
 		})
 	}
@@ -110,38 +111,38 @@ func TestAskRowsCoupeEtSignaleLaTroncature(t *testing.T) {
 	var w = &walkerFactice{pdus: pdusCompteur(10)}
 	var rows, truncated, err = askRows(context.Background(), w, "1.3.6.1.2.1", 4)
 	if err != nil {
-		t.Fatalf("erreur inattendue : %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(rows) != 4 {
-		t.Fatalf("4 lignes attendues, obtenu %d", len(rows))
+		t.Fatalf("expected 4 rows, got %d", len(rows))
 	}
 	if !truncated {
-		t.Error("Truncated doit être positionné : sans lui, une table tronquée " +
-			"passerait pour complète")
+		t.Error("Truncated must be set: without it, a truncated table " +
+			"would pass for complete")
 	}
-	// La borne arrête le WALK : on n'a lu qu'une PDU de plus, celle qui a établi
-	// qu'il en restait.
+	// The limit stops the WALK: only one extra PDU was read, the one that
+	// established there was more.
 	if w.vues != 5 {
-		t.Errorf("le walk doit s'arrêter à la 5e PDU, %d lues", w.vues)
+		t.Errorf("the walk must stop at the 5th PDU, %d read", w.vues)
 	}
 	if rows[0].Value != "1" || rows[3].Value != "4" {
-		t.Errorf("lignes dans l'ordre du walk attendues, obtenu %+v", rows)
+		t.Errorf("expected rows in walk order, got %+v", rows)
 	}
 }
 
 func TestAskRowsPasDeTroncaturePileSurLaBorne(t *testing.T) {
-	// Un walk qui tombe exactement sur la borne n'est PAS tronqué : la ligne de trop
-	// est ce qui prouve qu'il en restait, et il n'y en a pas eu.
+	// A walk that lands exactly on the limit is NOT truncated: the one row
+	// too many is what proves there was more, and there wasn't any.
 	var w = &walkerFactice{pdus: pdusCompteur(4)}
 	var rows, truncated, err = askRows(context.Background(), w, "1.3.6.1.2.1", 4)
 	if err != nil || len(rows) != 4 || truncated {
-		t.Fatalf("4 lignes non tronquées attendues, obtenu %d lignes, tronqué=%v, err=%v",
+		t.Fatalf("expected 4 untruncated rows, got %d rows, truncated=%v, err=%v",
 			len(rows), truncated, err)
 	}
 }
 
 func TestAskWalkPlafondDurNonContournable(t *testing.T) {
-	// Le contrôleur demande dix fois le plafond ; le proxy en rend le plafond.
+	// The controller asks for ten times the ceiling; the proxy returns the ceiling.
 	var w = &walkerFactice{pdus: pdusCompteur(tunnel.MaxAskRows + 1)}
 	avecWalker(t, w, nil)
 
@@ -150,22 +151,22 @@ func TestAskWalkPlafondDurNonContournable(t *testing.T) {
 		MaxRows: 10 * tunnel.MaxAskRows,
 	})
 	if resp.Err != "" {
-		t.Fatalf("aucune erreur attendue, obtenu %q", resp.Err)
+		t.Fatalf("expected no error, got %q", resp.Err)
 	}
 	if len(resp.Rows) != tunnel.MaxAskRows || !resp.Truncated {
-		t.Errorf("%d lignes tronquées attendues, obtenu %d (tronqué=%v)",
+		t.Errorf("expected %d truncated rows, got %d (truncated=%v)",
 			tunnel.MaxAskRows, len(resp.Rows), resp.Truncated)
 	}
 	if !w.fermé {
-		t.Error("la session SNMP doit être refermée : un proxy qui fuit ses sockets " +
-			"finit par ne plus pouvoir interroger personne")
+		t.Error("the SNMP session must be closed: a proxy that leaks its sockets " +
+			"eventually can't query anyone anymore")
 	}
 }
 
 func TestAskWalkRendCeQuIlALuAvantUnEchec(t *testing.T) {
-	// Un équipement qui répond puis se tait : les lignes déjà lues partent AVEC
-	// l'erreur. « Voilà les deux premières lignes et voilà pourquoi ça s'est
-	// arrêté » se répare ; une réponse vide, non.
+	// A device that responds and then goes silent: the rows already read go
+	// out WITH the error. "Here are the first two rows and here's why it
+	// stopped" is fixable; an empty response isn't.
 	var w = &walkerFactice{pdus: pdusCompteur(2), err: errors.New("request timeout")}
 	avecWalker(t, w, nil)
 
@@ -173,15 +174,15 @@ func TestAskWalkRendCeQuIlALuAvantUnEchec(t *testing.T) {
 		Ask: tunnel.AskSNMPWalk, IP: "10.99.200.101", OID: "1.3.6.1.2.1",
 	})
 	if len(resp.Rows) != 2 {
-		t.Errorf("2 lignes attendues malgré l'échec, obtenu %d", len(resp.Rows))
+		t.Errorf("expected 2 rows despite the failure, got %d", len(resp.Rows))
 	}
 	if !strings.Contains(resp.Err, "request timeout") {
-		t.Errorf("la cause doit remonter en clair, obtenu %q", resp.Err)
+		t.Errorf("the cause must surface plainly, got %q", resp.Err)
 	}
-	// Truncated ne parle que de la borne : un walk coupé par une panne n'est pas une
-	// réponse bornée, et confondre les deux masquerait la panne.
+	// Truncated speaks only of the limit: a walk cut short by a failure is
+	// not a bounded response, and conflating the two would mask the failure.
 	if resp.Truncated {
-		t.Error("Truncated ne doit pas signaler un échec")
+		t.Error("Truncated must not signal a failure")
 	}
 }
 
@@ -191,62 +192,64 @@ func TestAskWalkRespecteLeContexte(t *testing.T) {
 	var w = &walkerFactice{pdus: pdusCompteur(10)}
 	var rows, truncated, err = askRows(ctx, w, "1.3.6.1.2.1", tunnel.DefaultAskRows)
 	if err == nil {
-		t.Fatal("un contexte annulé doit arrêter le walk")
+		t.Fatal("a canceled context must stop the walk")
 	}
 	if len(rows) != 0 || truncated {
-		t.Errorf("aucune ligne attendue, obtenu %d (tronqué=%v)", len(rows), truncated)
+		t.Errorf("expected no rows, got %d (truncated=%v)", len(rows), truncated)
 	}
 }
 
-// --- Conventions de connexion ---
+// --- Connection conventions ---
 
-// TestAskDialHeriteDesConventionsDuPoll : le diagnostic n'a PLUS de conventions de
-// connexion à lui.
+// TestAskDialHeriteDesConventionsDuPoll: the diagnostic no longer has its
+// OWN connection conventions.
 //
-// Ce fichier a recopié celles de snmppoll (v2c, timeout 2 s, un seul réessai,
-// communauté vide = public, port 161). La copie n'était pas le danger, son
-// invisibilité l'était : un timeout relevé d'un seul côté, et un walk de
-// diagnostic décrit un autre équipement qu'un poll ordinaire sans que rien ne le
-// signale — on cherche alors la panne dans l'équipement. Le TYPE de la session est
-// donc vérifié : elle sort de snmppoll.Dial, et de nulle part ailleurs. Un dialeur
-// local réintroduit ici ferait échouer ce test avant d'avoir pu diverger.
+// This file used to duplicate snmppoll's (v2c, 2 s timeout, a single retry,
+// empty community = public, port 161). The copy wasn't the danger, its
+// invisibility was: a timeout tweaked on only one side, and a diagnostic
+// walk describes a different device than an ordinary poll with nothing to
+// flag it — the outage then gets chased inside the device. So the session's
+// TYPE is checked here: it comes from snmppoll.Dial, and nowhere else. A
+// local dialer reintroduced here would fail this test before it could ever
+// diverge.
 func TestAskDialHeriteDesConventionsDuPoll(t *testing.T) {
-	// Aucun paquet n'est émis : en UDP, « connecter » une socket ne fait que résoudre
-	// la route. Ce test ne parle donc à aucun équipement.
+	// No packet is sent: in UDP, "connecting" a socket only resolves the
+	// route. This test therefore talks to no device at all.
 	var w, err = dialAskSNMP(tunnel.AskRequest{IP: "127.0.0.1", Port: 1161})
 	if err != nil {
-		t.Fatalf("session : %v", err)
+		t.Fatalf("session: %v", err)
 	}
 	defer w.Close() //nolint:errcheck
 
 	var _, ok = w.(*snmppoll.Session)
 	if !ok {
-		t.Fatalf("la session du walk doit venir de snmppoll.Dial — unique endroit où "+
-			"les conventions de connexion du projet sont écrites (cf. "+
-			"snmppoll.TestConventionsDeConnexionUniques) ; obtenu %T", w)
+		t.Fatalf("the walk's session must come from snmppoll.Dial — the only place "+
+			"where the project's connection conventions are written down (see "+
+			"snmppoll.TestConventionsDeConnexionUniques); got %T", w)
 	}
 }
 
-// TestAskWalkSurLeFilPorteLesConventionsDuPoll vérifie ces conventions SUR LE FIL,
-// depuis ce côté-ci, sans équipement.
+// TestAskWalkSurLeFilPorteLesConventionsDuPoll verifies these conventions ON
+// THE WIRE, from this side, with no device.
 //
-// Une socket UDP qui ne répond jamais suffit : en v2c, le datagramme porte la
-// version et la communauté EN CLAIR — c'est toute la « sécurité » de SNMPv2c — et
-// le nombre de datagrammes dit le nombre d'essais. Le test précédent vérifie d'où
-// vient la session ; celui-ci vérifie ce qu'elle met réellement sur le réseau, donc
-// il tient même si un jour la session est obtenue autrement.
+// A UDP socket that never replies is enough: in v2c, the datagram carries
+// the version and the community IN THE CLEAR — that's the entirety of
+// SNMPv2c's "security" — and the number of datagrams tells the number of
+// attempts. The previous test checks where the session comes from; this one
+// checks what it actually puts on the network, so it holds even if the
+// session is obtained some other way one day.
 //
-// Il dure les ~4 s de la séquence d'essais, et c'est le prix exact de ce qu'il
-// mesure : on ne peut pas constater un timeout sans l'attendre.
+// It runs for the ~4 s of the retry sequence, and that's the exact price of
+// what it measures: you can't observe a timeout without waiting for it.
 func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 	var conn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
-		t.Fatalf("socket d'écoute : %v", err)
+		t.Fatalf("listening socket: %v", err)
 	}
 	var local = conn.LocalAddr().(*net.UDPAddr)
 
-	// Un seul lecteur, et la fin de sa vie sert de barrière : les datagrammes ne se
-	// lisent qu'après <-fini, sans verrou et sans course.
+	// A single reader, and its termination serves as a barrier: the
+	// datagrams are only read after <-fini, with no lock and no race.
 	var datagrammes [][]byte
 	var fini = make(chan struct{})
 	go func() {
@@ -263,13 +266,14 @@ func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 		}
 	}()
 
-	// Communauté ABSENTE dans la requête : c'est le repli qu'on veut voir passer sur
-	// le fil, parce que c'est celui qu'on serait tenté de réécrire ailleurs.
+	// Community ABSENT from the request: that's the fallback we want to see
+	// go out on the wire, because it's the one someone would be tempted to
+	// rewrite elsewhere.
 	var w, errDial = dialAskSNMP(tunnel.AskRequest{IP: "127.0.0.1", Port: local.Port})
 	if errDial != nil {
 		_ = conn.Close()
 		<-fini
-		t.Fatalf("session : %v", errDial)
+		t.Fatalf("session: %v", errDial)
 	}
 	var début = time.Now()
 	var walkErr = w.BulkWalk("1.3.6.1.2.1.1", func(gosnmp.SnmpPDU) error { return nil })
@@ -279,63 +283,65 @@ func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 	<-fini
 
 	if walkErr == nil {
-		t.Fatal("un équipement qui ne répond jamais doit rendre une erreur")
+		t.Fatal("a device that never replies must return an error")
 	}
-	// Retries: 1 — l'essai initial et UN réessai. Un réessai de plus coûterait un
-	// cycle de collecte à chaque équipement muet ; un de moins et la moindre perte
-	// de datagramme passerait pour une panne.
+	// Retries: 1 — the initial attempt plus ONE retry. One more retry would
+	// cost a full collection cycle for every silent device; one fewer and
+	// the slightest dropped datagram would pass for an outage.
 	if len(datagrammes) != 2 {
-		t.Fatalf("2 envois attendus (essai + 1 réessai), obtenu %d", len(datagrammes))
+		t.Fatalf("expected 2 sends (attempt + 1 retry), got %d", len(datagrammes))
 	}
-	// « 02 01 01 » : INTEGER version = 1, soit v2c. « 04 06 public » : OCTET STRING
-	// de la communauté de repli. Les deux se suivent dans l'en-tête du message, donc
-	// une seule recherche les atteste ensemble.
+	// "02 01 01": INTEGER version = 1, i.e. v2c. "04 06 public": OCTET
+	// STRING of the fallback community. The two follow each other in the
+	// message header, so a single search attests to both together.
 	var entête = []byte("\x02\x01\x01\x04\x06public")
 	if !bytes.Contains(datagrammes[0], entête) {
-		t.Errorf("v2c + communauté « public » attendues sur le fil, datagramme : %x",
+		t.Errorf("expected v2c + \"public\" community on the wire, datagram: %x",
 			datagrammes[0])
 	}
-	// Timeout: 2 s par essai, donc ~4 s pour la séquence. La fenêtre est large à
-	// dessein — ce qui doit échouer, c'est un timeout devenu franchement autre :
-	// trop court, un équipement lent passerait pour muet ; trop long, un équipement
-	// muet retiendrait un cycle de collecte.
+	// Timeout: 2 s per attempt, so ~4 s for the sequence. The window is
+	// deliberately wide — what must fail is a timeout that has become
+	// something genuinely different: too short, a slow device would pass
+	// for silent; too long, a silent device would hold up a collection
+	// cycle.
 	if écoulé < 3*time.Second || écoulé > 8*time.Second {
-		t.Errorf("séquence d'essais de ~4 s attendue (2 s × 2), obtenu %v", écoulé)
+		t.Errorf("expected a ~4 s retry sequence (2 s x 2), got %v", écoulé)
 	}
 }
 
-// --- Question inconnue ---
+// --- Unknown question ---
 
 func TestAskQuestionInconnue(t *testing.T) {
-	// Un proxy plus ancien que son contrôleur est un cas NORMAL : il doit le dire.
+	// A proxy older than its controller is a NORMAL case: it must say so.
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
 		Ask: "arp_table", IP: "10.99.200.101",
 	})
 	if resp.Err == "" {
-		t.Fatal("une question inconnue doit rendre une Err, pas un silence")
+		t.Fatal("an unknown question must return an Err, not silence")
 	}
-	if !strings.Contains(resp.Err, "arp_table") || !strings.Contains(resp.Err, "inconnue") {
-		t.Errorf("Err doit nommer la question inconnue, obtenu %q", resp.Err)
+	if !strings.Contains(resp.Err, "arp_table") || !strings.Contains(resp.Err, "unknown") {
+		t.Errorf("Err must name the unknown question, got %q", resp.Err)
 	}
 	if resp.Rows != nil || resp.SourceAddr != "" || resp.Truncated {
-		t.Errorf("aucune donnée ne doit accompagner un refus : %+v", resp)
+		t.Errorf("no data must accompany a refusal: %+v", resp)
 	}
 
-	// Un champ vide (contrôleur qui bafouille) suit le même chemin.
+	// An empty field (a controller talking gibberish) follows the same path.
 	if handleAsk(context.Background(), tunnel.AskRequest{}).Err == "" {
-		t.Error("une question vide doit rendre une Err")
+		t.Error("an empty question must return an Err")
 	}
 
-	// Le nom vient du fil : il est borné et échappé avant d'atteindre un journal.
+	// The name comes from the wire: it is bounded and escaped before
+	// reaching a log.
 	var long = handleAsk(context.Background(),
 		tunnel.AskRequest{Ask: strings.Repeat("x", 500) + "\n\x1b[2J"})
 	if len(long.Err) > 200 || strings.ContainsAny(long.Err, "\n\x1b") {
-		t.Errorf("Err doit rester bornée et échappée, obtenu %d octets : %q",
+		t.Errorf("Err must stay bounded and escaped, got %d bytes: %q",
 			len(long.Err), long.Err)
 	}
 }
 
-// --- Traduction des types et des valeurs ---
+// --- Type and value translation ---
 
 func TestAskTraductionDesTypes(t *testing.T) {
 	type cas struct {
@@ -344,54 +350,54 @@ func TestAskTraductionDesTypes(t *testing.T) {
 		typ, valeur string
 	}
 	var cases = []cas{
-		{nom: "libellé de port", typ: "OctetString", valeur: "GigabitEthernet1/0/1",
+		{nom: "port label", typ: "OctetString", valeur: "GigabitEthernet1/0/1",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 				Value: []byte("GigabitEthernet1/0/1")}},
-		// Le cas qui justifie le rendu en TEXTE : ce compteur ne survit pas à un
-		// float64, et c'est précisément sur les compteurs qu'on interroge.
-		{nom: "compteur 64 bits au maximum", typ: "Counter64",
+		// The case that justifies rendering as TEXT: this counter doesn't
+		// survive a float64, and it's precisely counters that get queried.
+		{nom: "64-bit counter at maximum", typ: "Counter64",
 			valeur: "18446744073709551615",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Counter64,
 				Value: uint64(18446744073709551615)}},
-		{nom: "compteur 64 bits au-delà de 2^53", typ: "Counter64",
+		{nom: "64-bit counter beyond 2^53", typ: "Counter64",
 			valeur: "9007199254740993",
 			pdu:    gosnmp.SnmpPDU{Type: gosnmp.Counter64, Value: uint64(9007199254740993)}},
-		{nom: "état de port", typ: "Integer", valeur: "1",
+		{nom: "port status", typ: "Integer", valeur: "1",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Integer, Value: 1}},
-		{nom: "jauge", typ: "Gauge32", valeur: "1000",
+		{nom: "gauge", typ: "Gauge32", valeur: "1000",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Gauge32, Value: uint(1000)}},
 		{nom: "uptime", typ: "TimeTicks", valeur: "4294967295",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.TimeTicks, Value: uint32(4294967295)}},
-		{nom: "compteur 32 bits", typ: "Counter32", valeur: "17",
+		{nom: "32-bit counter", typ: "Counter32", valeur: "17",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Counter32, Value: uint(17)}},
-		// gosnmp préfixe les OID d'un point, le contrôleur non : une seule notation
-		// sort d'ici, sinon rien ne se compare.
-		{nom: "identifiant d'objet", typ: "ObjectIdentifier",
+		// gosnmp prefixes OIDs with a dot, the controller doesn't: only one
+		// notation comes out of here, otherwise nothing compares.
+		{nom: "object identifier", typ: "ObjectIdentifier",
 			valeur: "1.3.6.1.4.1.11.2.3.7.11.253",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.ObjectIdentifier,
 				Value: ".1.3.6.1.4.1.11.2.3.7.11.253"}},
-		{nom: "adresse", typ: "IPAddress", valeur: "10.99.200.101",
+		{nom: "address", typ: "IPAddress", valeur: "10.99.200.101",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.IPAddress, Value: "10.99.200.101"}},
-		// Les trois exceptions de SNMPv2 sont des réponses, pas des valeurs : toute
-		// l'information est dans le type, et inventer un « 0 » se lirait comme une
-		// mesure.
-		{nom: "objet absent", typ: "NoSuchObject", valeur: "",
+		// The three SNMPv2 exceptions are responses, not values: all the
+		// information is in the type, and inventing a "0" would read as a
+		// measurement.
+		{nom: "missing object", typ: "NoSuchObject", valeur: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.NoSuchObject, Value: nil}},
-		{nom: "instance absente", typ: "NoSuchInstance", valeur: "",
+		{nom: "missing instance", typ: "NoSuchInstance", valeur: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.NoSuchInstance, Value: nil}},
-		{nom: "fin de vue", typ: "EndOfMibView", valeur: "",
+		{nom: "end of view", typ: "EndOfMibView", valeur: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.EndOfMibView, Value: nil}},
-		{nom: "nul", typ: "Null", valeur: "",
+		{nom: "null", typ: "Null", valeur: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Null, Value: nil}},
-		{nom: "flottant opaque", typ: "OpaqueFloat", valeur: "36.75",
+		{nom: "opaque float", typ: "OpaqueFloat", valeur: "36.75",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OpaqueFloat, Value: float32(36.75)}},
-		{nom: "double opaque", typ: "OpaqueDouble", valeur: "-3.5",
+		{nom: "opaque double", typ: "OpaqueDouble", valeur: "-3.5",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OpaqueDouble, Value: float64(-3.5)}},
-		// Un type qu'on ne connaît pas rend son TAG, pas un libellé faux : un
-		// exploitant qui lit « Type0x2b » sait qu'il doit aller voir la MIB, là où un
-		// libellé inventé l'enverrait dans le mur.
-		{nom: "type inattendu", typ: "Type0x2b", valeur: "peu importe",
-			pdu: gosnmp.SnmpPDU{Type: gosnmp.Asn1BER(0x2b), Value: "peu importe"}},
+		// An unrecognized type renders its TAG, not a false label: an
+		// operator reading "Type0x2b" knows to go check the MIB, whereas a
+		// made-up label would send them straight into a wall.
+		{nom: "unexpected type", typ: "Type0x2b", valeur: "doesn't matter",
+			pdu: gosnmp.SnmpPDU{Type: gosnmp.Asn1BER(0x2b), Value: "doesn't matter"}},
 	}
 	var k cas
 	for _, k = range cases {
@@ -399,22 +405,22 @@ func TestAskTraductionDesTypes(t *testing.T) {
 			k.pdu.Name = ".1.3.6.1.2.1.1.1.0"
 			var row = askRow(k.pdu)
 			if row.OID != "1.3.6.1.2.1.1.1.0" {
-				t.Errorf("OID sans point de tête attendu, obtenu %q", row.OID)
+				t.Errorf("expected OID without leading dot, got %q", row.OID)
 			}
 			if row.Type != k.typ {
-				t.Errorf("type %q attendu, obtenu %q", k.typ, row.Type)
+				t.Errorf("expected type %q, got %q", k.typ, row.Type)
 			}
 			if row.Value != k.valeur {
-				t.Errorf("valeur %q attendue, obtenue %q", k.valeur, row.Value)
+				t.Errorf("expected value %q, got %q", k.valeur, row.Value)
 			}
 		})
 	}
 }
 
 func TestAskOctetStringBinaire(t *testing.T) {
-	// Une adresse MAC : six octets bruts. json.Marshal remplacerait silencieusement
-	// tout octet non UTF-8 par U+FFFD, ce qui la rendrait illisible POUR TOUJOURS
-	// sans que rien ne signale la substitution. D'où l'hexadécimal préfixé.
+	// A MAC address: six raw bytes. json.Marshal would silently replace any
+	// non-UTF-8 byte with U+FFFD, which would make it unreadable FOREVER
+	// with nothing to signal the substitution. Hence the prefixed hex.
 	var mac = gosnmp.SnmpPDU{
 		Name:  ".1.3.6.1.2.1.2.2.1.6.1",
 		Type:  gosnmp.OctetString,
@@ -422,54 +428,53 @@ func TestAskOctetStringBinaire(t *testing.T) {
 	}
 	var row = askRow(mac)
 	if row.Value != "0x001b2fff000a" {
-		t.Errorf("hexadécimal préfixé attendu, obtenu %q", row.Value)
+		t.Errorf("expected prefixed hex, got %q", row.Value)
 	}
 
-	// Le préfixe n'est pas décoratif : sans lui, « 001b2f » se confondrait avec un
-	// libellé de port qui s'appellerait vraiment comme ça.
+	// The prefix isn't decorative: without it, "001b2f" would be confused
+	// with a port label that genuinely happened to be named that.
 	if !strings.HasPrefix(row.Value, "0x") {
-		t.Error("le rendu binaire doit être reconnaissable")
+		t.Error("the binary rendering must be recognizable")
 	}
 
-	// Et la valeur rendue traverse le JSON sans altération, ce qui est le but.
+	// And the rendered value travels through JSON unaltered, which is the goal.
 	var data, err = json.Marshal(row)
 	if err != nil {
-		t.Fatalf("sérialisation : %v", err)
+		t.Fatalf("serialization: %v", err)
 	}
 	if !strings.Contains(string(data), "0x001b2fff000a") {
-		t.Errorf("valeur altérée par le JSON : %s", data)
+		t.Errorf("value altered by JSON: %s", data)
 	}
 
-	// Un texte multiligne (sysDescr de la plupart des constructeurs) reste du
-	// TEXTE : json.Marshal l'échappe correctement, et l'hexadécimaliser le rendrait
-	// illisible pour rien.
+	// Multiline text (sysDescr on most vendors' devices) stays TEXT:
+	// json.Marshal escapes it correctly, and hex-encoding it would make it
+	// unreadable for nothing.
 	var descr = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 		Value: []byte("Instant On 1930\r\nfirmware 2.7.0")})
 	if descr.Value != "Instant On 1930\r\nfirmware 2.7.0" {
-		t.Errorf("texte multiligne conservé attendu, obtenu %q", descr.Value)
+		t.Errorf("expected multiline text preserved, got %q", descr.Value)
 	}
-	// De l'UTF-8 valide accentué aussi : ce n'est pas parce que ce n'est pas de
-	// l'ASCII que c'est du binaire.
+	// Valid accented UTF-8 too: it isn't binary just because it isn't ASCII.
 	var accent = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 		Value: []byte("liaison secours — étage 2")})
 	if accent.Value != "liaison secours — étage 2" {
-		t.Errorf("UTF-8 conservé attendu, obtenu %q", accent.Value)
+		t.Errorf("expected UTF-8 preserved, got %q", accent.Value)
 	}
-	// Un octet 0x80 isolé n'est pas de l'UTF-8 : hexadécimal, y compris quand le
-	// reste de la chaîne est parfaitement lisible — une valeur à moitié traduite
-	// serait pire qu'illisible.
+	// A lone 0x80 byte isn't UTF-8: hex, even when the rest of the string is
+	// perfectly readable — a half-translated value would be worse than
+	// unreadable.
 	var invalide = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 		Value: []byte{'p', 'o', 'r', 't', 0x80}})
 	if invalide.Value != "0x706f727480" {
-		t.Errorf("UTF-8 invalide → hexadécimal, obtenu %q", invalide.Value)
+		t.Errorf("expected invalid UTF-8 -> hex, got %q", invalide.Value)
 	}
-	// Chaîne vide : vide, et non « 0x ».
+	// Empty string: empty, not "0x".
 	if askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString, Value: []byte{}}).Value != "" {
-		t.Error("un OctetString vide rend une valeur vide")
+		t.Error("an empty OctetString renders an empty value")
 	}
 }
 
-// --- Validation des entrées ---
+// --- Input validation ---
 
 func TestAskOIDEtIPInvalides(t *testing.T) {
 	var w = &walkerFactice{pdus: pdusCompteur(3)}
@@ -479,11 +484,11 @@ func TestAskOIDEtIPInvalides(t *testing.T) {
 		nom, ip, oid string
 	}
 	var cases = []cas{
-		{nom: "oid manquant", ip: "10.99.200.101", oid: ""},
-		{nom: "oid non numérique", ip: "10.99.200.101", oid: "1.3.6.sysDescr"},
-		{nom: "oid à segment vide", ip: "10.99.200.101", oid: "1.3..6"},
-		{nom: "adresse manquante", ip: "", oid: "1.3.6.1"},
-		{nom: "nom au lieu d'une adresse", ip: "switch-labo", oid: "1.3.6.1"},
+		{nom: "missing oid", ip: "10.99.200.101", oid: ""},
+		{nom: "non-numeric oid", ip: "10.99.200.101", oid: "1.3.6.sysDescr"},
+		{nom: "oid with an empty segment", ip: "10.99.200.101", oid: "1.3..6"},
+		{nom: "missing address", ip: "", oid: "1.3.6.1"},
+		{nom: "name instead of an address", ip: "switch-labo", oid: "1.3.6.1"},
 	}
 	var k cas
 	for _, k = range cases {
@@ -492,19 +497,19 @@ func TestAskOIDEtIPInvalides(t *testing.T) {
 				Ask: tunnel.AskSNMPWalk, IP: k.ip, OID: k.oid,
 			})
 			if resp.Err == "" {
-				t.Fatalf("une Err explicite est attendue, obtenu %+v", resp)
+				t.Fatalf("expected an explicit Err, got %+v", resp)
 			}
 			if len(resp.Rows) != 0 {
-				t.Errorf("aucune ligne ne doit accompagner un refus : %+v", resp.Rows)
+				t.Errorf("no rows must accompany a refusal: %+v", resp.Rows)
 			}
 		})
 	}
 	if w.vues != 0 {
-		t.Errorf("une requête invalide ne doit rien demander à l'équipement, %d PDU lues",
+		t.Errorf("an invalid request must not query the device at all, %d PDUs read",
 			w.vues)
 	}
 
-	// Le point de tête est accepté des deux notations, et une seule sort.
+	// The leading dot is accepted in both notations, and only one comes out.
 	var oid, err = askOID(".1.3.6.1.2.1")
 	if err != nil || oid != "1.3.6.1.2.1" {
 		t.Errorf("askOID(\".1.3.6.1.2.1\") = %q, %v", oid, err)

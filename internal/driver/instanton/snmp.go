@@ -14,48 +14,49 @@ import (
 // SNMP configuration of an Instant On — step 4 of §5 of
 // docs/03-SNMP Security/Identity.
 //
-// This is the last step in the chain, and the only one that affects the park:
-// `snmpprov` decides what SHOULD be, this file sets it. The separation is not
-// not cosmetic — it allows you to verify a decision on an entire park before
-// only one writing leaves.
+// This is the last step in the chain, and the only one that touches the
+// fleet: `snmpprov` decides what SHOULD be, this file sets it. The
+// separation is not cosmetic — it lets a decision be verified against an
+// entire fleet before a single write goes out.
 //
-// The writing conventions are those already established for this framework
-// (cf. admin.go/SetPassword et apply.go) : URL portant la liste des sections,
-// enveloppe `DeviceConfiguration`, action en ATTRIBUT de la section, et
-// REVIEW verification after each write — on this range, a
+// The writing conventions are the ones already established for this range
+// (cf. admin.go/SetPassword and apply.go): URL carrying the list of
+// sections, `DeviceConfiguration` envelope, action as an ATTRIBUTE of the
+// section, and REREAD verification after each write — on this range, a
 // `statusCode 0` with no effect is a proven case.
 //
-// # Digital codes, and where they come from
+// # Numeric codes, and where they come from
 //
-// All of the following is noted on the lab equipment (1930 JL685A), in its
-// own bundle and its own dictionary — never guessed:
+// Everything below is observed on lab hardware (1930 JL685A), in its own
+// bundle and its own dictionary — never guessed:
 //
-//   - `/hpe/js/modules.js` : `_TRUE = '1'`, `_FALSE = '2'` ;
-//   - `/hpe/js/out/mainpage.js`, page « Get Connected → SNMP Management » :
-//     the EXACT gesture that the equipment makes to activate SNMP and place a
-//     community (see Communities section below);
-//   - `/hpe/js/out/pages2.js`, page « Switching → SNMP » : les listes de
-//     boutons radio, qui donnent le code de chaque algorithme et le jeton de
+//   - `/hpe/js/modules.js`: `_TRUE = '1'`, `_FALSE = '2'`;
+//   - `/hpe/js/out/mainpage.js`, page "Get Connected → SNMP Management":
+//     the EXACT gesture the device makes to enable SNMP and set a
+//     community (see the Communities section below);
+//   - `/hpe/js/out/pages2.js`, page "Switching → SNMP": the radio-button
+//     lists, which give the code for each algorithm and the token for the
 //     associated label;
-//   - `/hpe/english/dictionary1.xml` : la traduction de ces jetons.
+//   - `/hpe/english/dictionary1.xml`: the translation of these tokens.
 //
 // Hence the table, which is the heart of this file:
 //
-//SNMPEnbl 1 = enabled 2 = disabled
+// SNMPEnbl 1 = enabled 2 = disabled
+//
 //	authenticationMethod   0 = None   1 = MD5    2 = SHA
 //	privacyMethod          1 = None              2 = DES
 //	accessMode (v2c)       1 = DefaultRead  2 = DefaultWrite  3 = DefaultSuper
-//	securityModel (groupe) 1 = SNMPv1  2 = SNMPv2  3 = SNMPv3  (0 = groupe d'usine)
-//	securityType (niveau)  1 = noAuthNoPriv  2 = authNoPriv  3 = authPriv
-//	engineIDType           1 = local             2 = distant
+//	securityModel (group)  1 = SNMPv1  2 = SNMPv2  3 = SNMPv3  (0 = factory group)
+//	securityType (level)   1 = noAuthNoPriv  2 = authNoPriv  3 = authPriv
+//	engineIDType           1 = local             2 = remote
 //
-// TRAP: “none” is not the same code depending on the field — 0 for
-// l'authentification, 1 pour le chiffrement. Un connecteur qui poserait
-// `privacyMethod = 0` by symmetry would send a value out of enumeration.
+// TRAP: "none" is not the same code depending on the field — 0 for
+// authentication, 1 for encryption. A connector that set `privacyMethod = 0`
+// by symmetry would send a value outside the enumeration.
 //
 // The v2c communities section is called `CommunityList`, not
-// `SNMPCommunityList` — the latter name responds to `statusCode -1` (“Cannot find
-// the section »), exactement comme une section inexistante.
+// `SNMPCommunityList` — the latter name gets `statusCode -1` ("Cannot find
+// the section"), exactly like a section that does not exist.
 const (
 	sectionSNMPGlobal       = "SNMPGlobalSetting"
 	sectionCommunities      = "CommunityList"
@@ -73,30 +74,30 @@ const (
 	securityLevelAuthNoPriv = "2"
 	securityLevelAuthPriv   = "3"
 	engineIDTypeLocal       = "1"
-	// viewReadOnly est la vue de LECTURE d'usine : elle expose l'arbre `iso`
-	// mais masque `usmUser`, `snmpVacmMIB` et `snmpCommunityMIB` — autrement dit
-	// anything that would allow reading the SNMP secrets themselves. It is
-	// exactly what we want to give to a collector (read in `ViewOIDList`
-	// on the equipment).
+	// viewReadOnly is the factory READ view: it exposes the `iso` tree but
+	// hides `usmUser`, `snmpVacmMIB` and `snmpCommunityMIB` — in other
+	// words, anything that would allow reading the SNMP secrets themselves.
+	// It is exactly what we want to give a collector (read from
+	// `ViewOIDList` on the device).
 	viewReadOnly = "Default"
-	// stationAny: the community applies to any administration station. It is
-	// what the equipment itself poses from its “Get Connected” page. THE
-	// filtrage par adresse ne remplace pas un secret — il se contourne en
-	// spoofing the address — and the actual containment of SNMP on this range is
+	// stationAny: the community applies to any administration station. This
+	// is what the device itself sets from its "Get Connected" page. ADDRESS
+	// FILTERING does not replace a secret — it is bypassed by spoofing the
+	// address — and the real containment of SNMP on this range lies
 	// elsewhere: it only listens on the management VLAN.
 	stationAny = "0.0.0.0"
-	// stationTypeAll is the value that the device interface sends
-	// systematically in `managementStationType`, including with
-	// `managementStationIPAddress = 0.0.0.0`. On la reproduit telle quelle : on
-	// does not know its enumeration, and a field copied identically to this
-	// what the equipment is doing cannot be "the wrong code".
+	// stationTypeAll is the value the device interface sends systematically
+	// in `managementStationType`, including with
+	// `managementStationIPAddress = 0.0.0.0`. It is reproduced as-is: its
+	// enumeration is unknown, and a field copied identically from what the
+	// device does cannot be "the wrong code".
 	stationTypeAll = "1"
 )
 
-// Input terminals, repeating the validation rules for forms
-// the equipment (`pages2.js`). Check them HERE rather than leaving
-// refusing the equipment avoids a round trip whose error message does not say
-// pas quel champ est en cause.
+// Input limits, mirroring the validation rules of the device's own forms
+// (`pages2.js`). Checking them HERE rather than letting the device refuse
+// avoids a round trip whose error message does not say which field is at
+// fault.
 const (
 	communityMaxLen = 20
 	userMaxLen      = 20
@@ -104,18 +105,18 @@ const (
 	secretMaxLen    = 32
 )
 
-// defaultV3Group names the access group that meshcraft creates for its
-// users v3. A DEDICATED group, rather than reusing a group
-// d'usine : les groupes d'usine sont en `securityModel 0` (v1/v2c) et portent
-// a WRITING view for two of them. Attach a v3 user to it
-// would amount to giving him the writing without having asked for it.
+// defaultV3Group names the access group that meshcraft creates for its v3
+// users. A DEDICATED group, rather than reusing a factory group: factory
+// groups are in `securityModel 0` (v1/v2c) and two of them carry a WRITE
+// view. Attaching a v3 user to one would grant it write access without
+// that having been requested.
 const defaultV3Group = "meshcraft-ro"
 
-// ---What the equipment carries---
+// --- What the device carries ---
 
 // SNMPCommunity is a community declared on the device.
-// AccessMode is left in CODE: translating it here would lose the information
-// exact, and it is on the code that the verification is carried out.
+// AccessMode is left in CODE: translating it here would lose exact
+// information, and it is on the code that verification is performed.
 type SNMPCommunity struct {
 	Name       string `json:"name"`
 	AccessMode string `json:"access_mode"`
@@ -132,18 +133,18 @@ type SNMPGroup struct {
 	SecurityLevel string `json:"security_level"`
 	ReadView      string `json:"read_view,omitempty"`
 	WriteView     string `json:"write_view,omitempty"`
-	// NotifyView decides if the equipment can ADDRESS a trap to users of
-	// this group. It is read and not only written because it conditions
-	// all the way back: a v3 user attached to a group without view of
-	// notification can be designated as a recipient of traps without any
-	// trap does not go away, and nothing in the equipment interface shows it
+	// NotifyView decides whether the device can ADDRESS a trap to users of
+	// this group. It is read and not only written because it governs
+	// everything downstream: a v3 user attached to a group with no
+	// notification view can be designated as a trap recipient without any
+	// trap ever going out, and nothing in the device interface shows it
 	// (cf. ApplyTrapReceiver).
 	NotifyView string `json:"notify_view,omitempty"`
 }
 
-// SNMPUser is a v3 user. Auth and Priv are the CODES of the equipment,
-// not algorithm names: that's what it renders, and the verification compares
-// what we sent to what he returns.
+// SNMPUser is a v3 user. Auth and Priv are the device's CODES, not
+// algorithm names: that is what it renders, and verification compares what
+// we sent against what it returns.
 type SNMPUser struct {
 	Name  string `json:"name"`
 	Group string `json:"group,omitempty"`
@@ -151,9 +152,9 @@ type SNMPUser struct {
 	Priv  string `json:"priv"`
 }
 
-// SNMPState is the observed SNMP state. There is no secret: the equipment is not
-// does not return v3 passwords, and the community — which IS the secret — is not
-// carried only by its name, which is never journalized.
+// SNMPState is the observed SNMP state. There is no secret in it: the
+// device does not return v3 passwords, and the community — which IS the
+// secret — is carried only by its name, which is never logged.
 type SNMPState struct {
 	Enabled     bool            `json:"enabled"`
 	EngineID    string          `json:"engine_id,omitempty"`
@@ -173,7 +174,7 @@ func (s SNMPState) Community(name string) (SNMPCommunity, bool) {
 	return SNMPCommunity{}, false
 }
 
-// Group retrouve un groupe par son nom.
+// Group finds a group by name.
 func (s SNMPState) Group(name string) (SNMPGroup, bool) {
 	var g SNMPGroup
 	for _, g = range s.Groups {
@@ -184,7 +185,7 @@ func (s SNMPState) Group(name string) (SNMPGroup, bool) {
 	return SNMPGroup{}, false
 }
 
-// User retrouve un utilisateur v3 par son nom.
+// User finds a v3 user by name.
 func (s SNMPState) User(name string) (SNMPUser, bool) {
 	var u SNMPUser
 	for _, u = range s.Users {
@@ -195,28 +196,29 @@ func (s SNMPState) User(name string) (SNMPUser, bool) {
 	return SNMPUser{}, false
 }
 
-// --- Ce que meshcraft veut poser ---
+// --- What meshcraft wants to set ---
 
 // `SNMPIdentity` and `SNMPResult` are now the contract types
-// (`driver.SNMPIdentity`, `driver.SNMPResult`), par ALIAS : cf. contract.go. Les
-// fields that this packet carried are there, with the same JSON tags, and both
-// halves — v2c and v3 — remain independent: an empty field means “nothing to
-// faire ici », jamais « retirer ». Le groupe vide vaut toujours [defaultV3Group].
+// (`driver.SNMPIdentity`, `driver.SNMPResult`), by ALIAS: cf. contract.go.
+// The fields this package carried are there, with the same JSON tags, and
+// both halves — v2c and v3 — remain independent: an empty field means
+// "nothing to do here", never "remove". An empty group always defaults to
+// [defaultV3Group].
 //
-// `SNMPIdentity` gagne un champ `Sources`, que ce connecteur IGNORE, et c'est le
-// behavior that the contract requires. It was born from a refusal of RouterOS, one of which
-// community has an `addresses` field which should not be left open to all
-// addresses without being asked. This range does not have this setting: it
-// confines SNMP to the administration VLAN by construction, there is nothing to confine.
-// Pretending to read it would give the operator the idea of ​​a restriction which
-// n'existe pas.
+// `SNMPIdentity` gains a `Sources` field, which this connector IGNORES, and
+// that is the behavior the contract requires. It was born from a RouterOS
+// refusal, whose community has an `addresses` field that must not be left
+// open to all addresses without being asked. This range has no such
+// setting: it confines SNMP to the management VLAN by construction, there
+// is nothing to confine. Pretending to read it would give the operator the
+// idea of a restriction that does not exist.
 
-// --- Traduction des algorithmes en codes ---
+// --- Translating algorithms into codes ---
 
-// authAlgCode traduit un nom d'algorithme d'authentification en code
-// equipment. An unknown algorithm is REFUSED, never brought closer to “more
-// close": placing MD5 where the caller wanted SHA-256 would give a
-// supervision that works and false compliance.
+// authAlgCode translates an authentication algorithm name into a device
+// code. An unknown algorithm is REFUSED, never rounded to "closest":
+// placing MD5 where the caller wanted SHA-256 would produce monitoring
+// that works and false compliance.
 func authAlgCode(alg string) (string, error) {
 	switch snmpv3.Normalize(alg) {
 	case "md5":
@@ -229,9 +231,9 @@ func authAlgCode(alg string) (string, error) {
 		"in the equipment bundle)", alg)
 }
 
-// privAlgCode traduit un nom d'algorithme de chiffrement. Le vide et « none »
-// are “no encryption” — it’s a degraded, but legitimate, v3 pair:
-// Authentication alone already protects against theft.
+// privAlgCode translates an encryption algorithm name. Empty and "none"
+// both mean "no encryption" — a degraded but legitimate v3 pair:
+// authentication alone already protects against theft.
 func privAlgCode(alg string) (string, error) {
 	var n = snmpv3.Normalize(alg)
 	switch n {
@@ -245,17 +247,17 @@ func privAlgCode(alg string) (string, error) {
 		"equipment bundle)", alg)
 }
 
-// --- Lecture ---
+// --- Reading ---
 
 var (
 	reCommunityEntry = regexp.MustCompile(`(?is)<CommunityEntry>(.*?)</CommunityEntry>`)
 	reSNMPGroupBlock = regexp.MustCompile(`(?is)<SNMPGroup>(.*?)</SNMPGroup>`)
 )
 
-// sectionOf isolates ONE section from the response. Indispensable as soon as you read
-// several sections at once: v3 users are arranged in sections
-// `<Entry>`, a name so generic that you can search for it in the entire document
-// would pick up entries from any other section.
+// sectionOf isolates ONE section from the response. Indispensable as soon
+// as several sections are read at once: v3 users are arranged in `<Entry>`
+// sections, a name so generic that searching for it across the whole
+// document would pick up entries from any other section.
 func sectionOf(body, name string) string {
 	var re = regexp.MustCompile(`(?is)<` + regexp.QuoteMeta(name) +
 		`(?:\s[^>]*)?>(.*?)</` + regexp.QuoteMeta(name) + `>`)
@@ -266,13 +268,13 @@ func sectionOf(body, name string) string {
 	return m[1]
 }
 
-// ReadSNMP reads the SNMP status of the device. READ ONLY: also replayable
-// souvent qu'on veut, y compris sur un parc en production.
+// ReadSNMP reads the device's SNMP state. READ ONLY: also replayable as
+// often as wanted, including on a fleet in production.
 //
-// All four sections go into ONE query. It's not a micro
-// optimization: this range only accepts five simultaneous web sessions, and
-// reading by section would amount to ousting the human administrator from his or her
-// propre interface.
+// All four sections go into ONE query. This is not a micro-optimization:
+// this range only accepts five simultaneous web sessions, and reading
+// section by section would amount to ousting the human administrator from
+// their own interface.
 func (a *Admin) ReadSNMP(ctx context.Context) (SNMPState, error) {
 	var out = SNMPState{
 		Communities: []SNMPCommunity{}, Groups: []SNMPGroup{}, Users: []SNMPUser{},
@@ -321,8 +323,8 @@ func (a *Admin) ReadSNMP(ctx context.Context) (SNMPState, error) {
 		})
 	}
 
-	// The transcript bears COUNTS, never the names: on this range,
-	// the name of a community IS the secret that grants access to the equipment.
+	// The transcript carries COUNTS, never the names: on this range, the
+	// name of a community IS the secret that grants access to the device.
 	a.step(true, "SNMP configuration read", fmt.Sprintf(
 		"SNMP %s — %d community(s), %d group(s), %d user(s) v3",
 		enabledLabel(out.Enabled), len(out.Communities), len(out.Groups), len(out.Users)))
@@ -342,22 +344,24 @@ func enabledLabel(on bool) string {
 //
 // The order is not negotiable, and follows from §4 of the spec:
 //
-//  1. ENABLE SNMP. Equipment leaving the factory carries `SNMPEnbl = 2`: both
-//     that it is not activated, ask a community or a user
-//     will collect nothing, and the operator will look for the fault on the collector side.
+//  1. ENABLE SNMP. Devices leaving the factory carry `SNMPEnbl = 2`: as long
+//     as it is not enabled, asking for a community or a user will collect
+//     nothing, and the operator will look for the fault on the collector
+//     side.
 //  2. the v2c community, read-only;
-//  3. the v3 access group then the user — in that order, the device
-//     indexant l'utilisateur par son groupe ;
-//  4. flash backup, without which everything disappears on reboot.
+//  3. the v3 access group then the user — in that order, since the device
+//     indexes the user by its group;
+//  4. flash save, without which everything disappears on reboot.
 //
-// Each writing is followed by a REREADING. On this range, `statusCode 0`
-// does not mean “done”: this is the characteristic failure mode of this
-// interface, already encountered on `VLANInterfaceMembershipTable` (see apply.go).
+// Each write is followed by a REREAD. On this range, `statusCode 0` does
+// not mean "done": this is the characteristic failure mode of this
+// interface, already encountered on `VLANInterfaceMembershipTable` (see
+// apply.go).
 //
-// Which is NOT done here, and intentionally: nothing is ever REMOVED. A
-// champ vide vaut « je ne m'en occupe pas », pas « supprime ». Retirer la
-// community of an operator because meshcraft does not know the value
-// would cut supervision that he did not ask to lose.
+// What is NOT done here, deliberately: nothing is ever REMOVED. An empty
+// field means "I'm not touching this", not "delete". Removing an
+// operator's community because meshcraft does not know its value would cut
+// monitoring they never asked to lose.
 func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, error) {
 	var out SNMPResult
 
@@ -381,9 +385,9 @@ func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, e
 		if privCode, err = privAlgCode(want.PrivAlg); err != nil {
 			return out, err
 		}
-		// “noAuthNoPriv” exists in the standard and does not protect anything: refuse it
-		// is better than letting people believe in v3 (same rule as
-		// snmpv3.Negotiate, qui ne le propose jamais).
+		// "noAuthNoPriv" exists in the standard and protects nothing:
+		// refusing it is better than letting people believe in v3 (same rule
+		// as snmpv3.Negotiate, which never offers it).
 		if authCode == authCodeNone || want.AuthSecret == "" {
 			return out, fmt.Errorf("SNMPv3 user without authentication " +
 				"protects nothing: meshcraft refuses to install it")
@@ -413,7 +417,7 @@ func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, e
 		return out, err
 	}
 
-	// 1. Activer SNMP.
+	// 1. Enable SNMP.
 	if !st.Enabled {
 		if err = a.writeSection(ctx, sectionSNMPGlobal, "set",
 			"<SNMPEnbl>"+snmpEnabledCode+"</SNMPEnbl>",
@@ -459,16 +463,16 @@ func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, e
 		}
 
 		var have, seen = st.User(want.User)
-		// “Already compliant” is judged on the NAME, the TWO algorithm codes and the
-		// band. A homonymous user placed with MD5 where we want SHA-1 is not
-		// not the same user: his keys are derived differently.
+		// "Already compliant" is judged on the NAME, the TWO algorithm codes
+		// and the GROUP. A homonymous user set up with MD5 where we want
+		// SHA-1 is not the same user: its keys are derived differently.
 		var conform = seen && have.Auth == authCode && have.Priv == privCode &&
 			have.Group == want.Group
 		if conform {
-			// We are NOT rewriting it: the equipment does not offer a `set` on this
-			// section — son interface ne propose que `add` et `delete` — et le
-			// remplacer supposerait de le supprimer d'abord, donc d'interrompre la
-			// collecte pour rien.
+			// We do NOT rewrite it: the device does not offer a `set` on
+			// this section — its interface offers only `add` and `delete`
+			// — and replacing it would mean deleting it first, hence
+			// interrupting collection for nothing.
 			a.step(true, "SNMPv3 user already in place",
 				"same algorithms and same group: no writing necessary")
 		} else {
@@ -502,14 +506,14 @@ func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, e
 		}
 	}
 
-	// VERIFICATION proofreading. It is she who distinguishes “the equipment has
-	// answered 0” of “the equipment did something”.
+	// VERIFICATION by reread. It is this that distinguishes "the device
+	// answered 0" from "the device did something".
 	if err = a.verifySNMP(ctx, want, authCode, privCode); err != nil {
 		return out, err
 	}
 
-	// 4. Make it sustainable. An apply that a reboot cancels is worse than an apply
-	//    refused, because it was found to be successful.
+	// 4. Make it durable. An apply that a reboot cancels is worse than an
+	//    apply refused, because it was believed to have succeeded.
 	a.SaveConfig(ctx) //nolint:errcheck // logged in the transcript
 	return out, nil
 }
@@ -585,10 +589,10 @@ func (a *Admin) verifySNMP(ctx context.Context, want SNMPIdentity,
 //	CommunityList.set.CommunityEntry = {communityString, managementStationType:'1',
 //	  managementStationIPAddress:'0.0.0.0', Basic:{accessMode:'1', viewName:''}}
 //
-// `accessMode` 1 is `DefaultRead`. The other two codes in the enumeration — 2
-// `DefaultWrite` et 3 `DefaultSuper` — n'apparaissent NULLE PART dans ce
-// fichier, et c'est la garantie la plus simple qu'aucun chemin de code ne peut
-// establish a community in writing.
+// `accessMode` 1 is `DefaultRead`. The other two codes in the enumeration —
+// 2 `DefaultWrite` and 3 `DefaultSuper` — appear NOWHERE in this file, and
+// that is the simplest guarantee that no code path can set up a community
+// with write access.
 //
 // `viewName` remains empty: this is what the device sends, `accessMode` sufficient
 // to designate the factory reading view.
@@ -604,11 +608,10 @@ func communityEntry(name string) string {
 
 // groupEntry makes a v3 access group READ-ONLY.
 //
-// `writeView` est vide, et c'est le point important : c'est lui, et non le
-// password, which decides that a v3 user cannot write. `notifyView`
-// is entered so that the equipment can send its traps to this group —
-// c'est ce que fait son interface, qui coche « Notify » d'office pour un groupe
-// v3.
+// `writeView` is empty, and that is the important point: it is THIS,
+// not the password, that decides a v3 user cannot write. `notifyView` is
+// set so the device can send its traps to this group — this is what its
+// own interface does, checking "Notify" by default for a v3 group.
 func groupEntry(name, level string) string {
 	return "<SNMPGroup>" +
 		"<SNMPGroupName>" + xmlEscape(name) + "</SNMPGroupName>" +
@@ -620,18 +623,17 @@ func groupEntry(name, level string) string {
 		"</SNMPGroup>"
 }
 
-// userEntry rend un utilisateur v3, dans la forme du formulaire « Add SNMP
-// User » of the equipment (`hpe/js/out/pages2.js`, `addUserSubmit`).
+// userEntry renders a v3 user, in the form of the device's own "Add SNMP
+// User" form (`hpe/js/out/pages2.js`, `addUserSubmit`).
 //
-// `engineIDType` 1 = LOCAL: the user is attached to the SNMP engine of
-// the equipment itself, the identifier of which serves as salt for the derivation of
-// keys. Remote mode (2) is used for information trap receivers and
-// would require an entry in `SNMPRemoteEngineIDList` — useless for a
-// collecteur qui interroge.
+// `engineIDType` 1 = LOCAL: the user is attached to the SNMP engine of the
+// device itself, whose identifier serves as salt for key derivation. Remote
+// mode (2) is used for Inform trap receivers and would require an entry in
+// `SNMPRemoteEngineIDList` — useless for a collector that only polls.
 //
-// Les mots de passe partent EN CLAIR, sans le marqueur `$` du mot de passe
-// administration: this marker is specific to `AdminUserSetting`, and add it
-// here would derive a key from an incorrect password.
+// Passwords go out IN CLEAR TEXT, without the `$` marker used for the
+// administration password: that marker is specific to `AdminUserSetting`,
+// and adding it here would derive a key from an incorrect password.
 func userEntry(want SNMPIdentity, engineID, authCode, privCode string) string {
 	var entry = "<Entry>" +
 		"<userName>" + xmlEscape(want.User) + "</userName>" +
@@ -658,14 +660,13 @@ func privLabel(code string) string {
 	return "no privacy"
 }
 
-// checkName verifies an identifier before sending it. The terminals are those
-// equipment forms: applying them here gives a message that
-// names the faulty field, where the equipment just gives an error code.
+// checkName verifies an identifier before sending it. The limits are those
+// of the device's own forms: applying them here gives a message that names
+// the faulty field, where the device just gives an error code.
 //
-// Spaces and control characters are rejected because a name
-// community which contains it is indistinguishable, in a newspaper, from that which
-// does not contain any — and that no collector would be able to seize it in a way
-// fiable.
+// Spaces and control characters are rejected because a community name
+// containing one is indistinguishable, in a log, from one that doesn't —
+// and no collector would be able to grab it reliably.
 func checkName(what, v string, max int) error {
 	if v == "" {
 		return fmt.Errorf("%s is empty", what)
@@ -683,9 +684,9 @@ func checkName(what, v string, max int) error {
 	return nil
 }
 
-// checkSecret checks a v3 password. No complexity floor here:
-// c'est le coffre de meshcraft qui engendre ces secrets (pwgen), et lui imposer
-// one more ruler in the connector would make two places to change it.
+// checkSecret checks a v3 password. No complexity floor here: it is
+// meshcraft's own vault that generates these secrets (pwgen), and imposing
+// one more rule in the connector would create two places to change it.
 func checkSecret(what, v string) error {
 	if strings.TrimSpace(v) == "" {
 		return fmt.Errorf("%s is empty", what)
@@ -699,65 +700,66 @@ func checkSecret(what, v string) error {
 
 // --- Le chemin RETOUR : les destinataires de traps ---
 //
-// The above teaches meshcraft to QUERY equipment. What follows him
-// learns to make him SPEAK — the last missing level of the trap channel: the
-// proxy knows how to receive, the controller knows how to correlate, and no equipment had
-// never received the order to issue.
+// The above teaches meshcraft to QUERY the device. What follows teaches it
+// to make the device SPEAK — the last missing layer of the trap channel:
+// the proxy knows how to receive, the controller knows how to correlate,
+// and no device had ever received the order to send.
 //
-// Everything is recorded on `sw-labo-1930` (JL685A, firmware 3.4.0.0) in READ ONLY
-// and recorded in docs/01-Architecture/Connecteurs.md, section “Recipients of
-// traps SNMP ». Quatre faits gouvernent ce code :
+// Everything is recorded on `sw-labo-1930` (JL685A, firmware 3.4.0.0) in
+// READ ONLY and recorded in docs/01-Architecture/Connecteurs.md, section
+// "SNMP trap recipients". Four facts govern this code:
 //
-//  1. Il y a DEUX sections, pas une. Le v1/v2c vit dans `SNMPTrap`, dont
-//     `SNMPTrapReceiverList` / `SNMPTrapReceiverEntry` are CHILDREN — the same
-//     trap that `CommunityList` which is not `SNMPCommunityList`: ask
-//     `SNMPTrapReceiverList` like section responds to `statusCode -1`, exactly
-//     comme une section inexistante. Le v3 vit dans `NotificationReceiverList`,
-//     which IS the list, with `Receiver` entries — and there are no
-//     section « SNMPTrapV3 ».
-//  2. Two form DEFECTS are traps. `SNMPVersion` is 1 (SNMPv1)
-//     default: omitting it declares a v1 recipient, which the v2c collector does not
-//     saura pas exploiter. Et `notificationType = 1` (Trap) impose des `timeout`
-//     et `retries` VIDES — c'est ce que fait l'interface avant d'envoyer.
-//  3. Nothing needs to be activated per port. The 68 interfaces of the equipment carry
-//     already `linkStateTrapEnabled = 1` (`Standard802_3List`): just
+//  1. There are TWO sections, not one. v1/v2c lives in `SNMPTrap`, whose
+//     `SNMPTrapReceiverList` / `SNMPTrapReceiverEntry` are CHILDREN — the
+//     same trap as `CommunityList`, which is not `SNMPCommunityList`:
+//     asking for `SNMPTrapReceiverList` as a section responds with
+//     `statusCode -1`, exactly like a section that does not exist. v3 lives
+//     in `NotificationReceiverList`, which IS the list, with `Receiver`
+//     entries — and there is no section named "SNMPTrapV3".
+//  2. Two form DEFAULTS are traps. `SNMPVersion` defaults to 1 (SNMPv1):
+//     omitting it declares a v1 recipient, which the v2c collector will not
+//     be able to make use of. And `notificationType = 1` (Trap) forces
+//     `timeout` and `retries` to be EMPTY — this is what the interface does
+//     before sending.
+//  3. Nothing needs to be enabled per port. The device's 68 interfaces
+//     already carry `linkStateTrapEnabled = 1` (`Standard802_3List`): just
 //     declare a recipient.
-//  4. The gesture of WRITING is a RECONSTITUTION, never executed. She is
-//     deduced from `tmpl.post()`/`tmpl.json2xml()` (`modules.js`) composed with the
-//     objets de `addTrapReceiversV1V2Submit` / `addTrapReceiversV3Submit`
-//     (`pages2.js`). Hence the rule that structures this entire file — and the reason
-//     pour laquelle un refus est traduit ICI en un message qui distingue « la
-//     table is full” of “the writing hypothesis is false”: these are the
-//     only two things that failure can mean, and they do not call for
-//     the same sequence at all.
+//  4. The WRITE gesture is a RECONSTRUCTION, never executed. It is deduced
+//     from `tmpl.post()`/`tmpl.json2xml()` (`modules.js`) composed with the
+//     objects from `addTrapReceiversV1V2Submit` / `addTrapReceiversV3Submit`
+//     (`pages2.js`). Hence the rule that structures this entire file — and
+//     the reason a refusal is translated HERE into a message that
+//     distinguishes "the table is full" from "the write hypothesis is
+//     false": these are the only two things a failure can mean, and they
+//     do not call for the same follow-up at all.
 const (
-	// sectionSNMPTrap porte les destinataires v1/v2c. `SNMPTrapReceiverList` n'est
-	// NOT a section name: it therefore only appears in BODY, never in
-	// a URL — it is this asymmetry that the constant makes visible.
+	// sectionSNMPTrap carries the v1/v2c recipients. `SNMPTrapReceiverList`
+	// is NOT a section name: it therefore only appears in the BODY, never
+	// in a URL — it is this asymmetry that the constant makes visible.
 	sectionSNMPTrap = "SNMPTrap"
-	// sectionTrapReceiversV3: the section IS the list, without `SNMP` prefix.
+	// sectionTrapReceiversV3: the section IS the list, without an `SNMP` prefix.
 	sectionTrapReceiversV3 = "NotificationReceiverList"
-	// notificationType : Trap ou Inform. meshcraft ne pose que des TRAPS.
+	// notificationType: Trap or Inform. meshcraft only sets TRAPS.
 	//
-	// The Inform is acknowledged by the receiver, which makes it more reliable on the
-	// paper — but in v3 it drifts against the SNMP engine OF THE RECEIVER, so
-	// requires a `SNMPRemoteEngineIDList` entry and a user
-	// `engineIDType 2`. This point is deduced from the bundle and not verified on
-	// material: as long as it is not, putting an Inform would be putting what we do not
-	// sait pas tenir.
+	// The Inform is acknowledged by the receiver, which makes it more
+	// reliable on paper — but in v3 it depends on the RECEIVER's SNMP
+	// engine, so it requires a `SNMPRemoteEngineIDList` entry and a user
+	// with `engineIDType 2`. This point is deduced from the bundle and not
+	// verified on hardware: as long as it isn't, using an Inform would mean
+	// using something we do not know how to sustain.
 	notifyTypeTrap   = "1"
 	notifyTypeInform = "2"
 	// SNMPRecipient version v1/v2c. The 2 is ALWAYS sent explicitly.
 	snmpVersionV1 = "1"
 	snmpVersionV2 = "2"
 	// filterEnabled: 1 = an OID filter is attached, 2 = none. meshcraft
-	// never apply a filter — a filter that hides link events
-	// would give silently incomplete supervision.
+	// never applies a filter — a filter that hides link events would
+	// produce silently incomplete monitoring.
 	filterAttached = "1"
 	filterNone     = "2"
-	// defaultTrapPort: the form default, and the standard port. The beach
-	// admise est 1–65535, et le champ est une saisie ordinaire : le collecteur
-	// is therefore not obliged to listen on a privileged port.
+	// defaultTrapPort: the form default, and the standard port. The
+	// accepted range is 1–65535, and the field is an ordinary input: the
+	// collector is therefore not obliged to listen on a privileged port.
 	defaultTrapPort = 162
 )
 
@@ -767,32 +769,32 @@ var (
 	reTrapReceiverV3 = regexp.MustCompile(`(?is)<Receiver>(.*?)</Receiver>`)
 )
 
-// TrapReceiver is a trap receiver as EQUIPMENT renders it.
+// TrapReceiver is a trap receiver as the DEVICE renders it.
 //
-// The codes are not translated, and it is the same choice as for SNMPCommunity:
-// it is on them that the verification is carried out. A `SNMPVersion` rendered to 1 where 2 has
-// been sent is precisely the difference that a translation to “SNMPv2c” would make
-// disappear.
+// The codes are not translated, and it is the same choice as for
+// SNMPCommunity: it is on them that verification is performed. A
+// `SNMPVersion` rendered as 1 where 2 was sent is precisely the difference
+// a translation to "SNMPv2c" would make disappear.
 type TrapReceiver struct {
 	Address    string `json:"address"`
 	Port       string `json:"port"`
 	NotifyType string `json:"notify_type"`
-	// Community: the community whose v1/v2c traps will be marked. It's a
-	// SECRET in the same way as the reading community: it never goes to
-	// transcript.
+	// Community: the community that will tag this receiver's v1/v2c traps.
+	// It's a SECRET in the same way as the read community: it never goes
+	// into the transcript.
 	Community   string `json:"-"`
 	SNMPVersion string `json:"snmp_version,omitempty"`
-	// User / SecurityType: the v3 identity under which the equipment will sign its
-	// traps.
+	// User / SecurityType: the v3 identity under which the device will sign
+	// its traps.
 	User         string `json:"user,omitempty"`
 	SecurityType string `json:"security_type,omitempty"`
-	// Filter / FilterName: filtering by OID attached to this recipient.
+	// Filter / FilterName: OID filtering attached to this recipient.
 	Filter     string `json:"filter,omitempty"`
 	FilterName string `json:"filter_name,omitempty"`
-	// Station est `managementStationIPAddress`. Il n'existe PAS dans le formulaire
-	// add: the equipment makes it, and it is part of the delete key
-	// d'un destinataire v1/v2c. On le lit pour cette seule raison — une
-	// deletion constructed without prior reading cannot designate its target.
+	// Station is `managementStationIPAddress`. It does NOT exist in the add
+	// form: the device generates it, and it is part of the delete key for a
+	// v1/v2c recipient. We read it for this reason alone — a deletion
+	// constructed without a prior read cannot target its entry.
 	Station string `json:"station,omitempty"`
 }
 
@@ -800,85 +802,90 @@ type TrapReceiver struct {
 type TrapState struct {
 	// SNMPEnabled: `SNMPEnbl`. SNMP off, nothing comes out — not even a trap.
 	SNMPEnabled bool `json:"snmp_enabled"`
-	// Emitting / AuthTraps / V1V2Enabled sont les trois interrupteurs qu'AUCUNE
-	// interface page does not write: the equipment makes them readable, but no
-	// of the three bundles served does not pose them. The connector therefore CHECKS them and does not
-	// not try to write them (a field that no interface path writes
-	// is a field for which we do not know whether writing is accepted).
+	// Emitting / AuthTraps / V1V2Enabled are the three switches that NO
+	// interface page writes: the device makes them readable, but none of
+	// the three bundles served ever sets them. The connector therefore
+	// CHECKS them and does not try to write them (a field that no interface
+	// path writes is a field for which we do not know whether writing is
+	// accepted).
 	//
-	// Kept in BRUT CODE, and this is deliberate: “ ” (field missing from the response) does not
-	// does not mean the same thing as “2” (the equipment says no). A boolean
-	// confondrait les deux, et ferait refuser la pose sur tout firmware qui ne
-	// rendrait pas le champ.
+	// Kept as RAW CODE, and this is deliberate: "" (field missing from the
+	// response) does not mean the same thing as "2" (the device says no).
+	// A boolean would conflate the two, and would make the write refused on
+	// any firmware that does not render the field.
 	Emitting    string `json:"traps_enabled"`
 	AuthTraps   string `json:"auth_traps_enabled"`
 	V1V2Enabled string `json:"v1v2_enabled"`
-	// V2c et V3 sont DEUX tables distinctes, dans deux sections distinctes.
+	// V2c and V3 are TWO distinct tables, in two distinct sections.
 	V2c []TrapReceiver `json:"v2c"`
 	V3  []TrapReceiver `json:"v3"`
 }
 
 // `TrapDestination` and `TrapResult` are now the contract types
-// (`driver.TrapDestination`, `driver.TrapResult`), par ALIAS : cf. contract.go.
+// (`driver.TrapDestination`, `driver.TrapResult`), by ALIAS: cf. contract.go.
 //
-// Deux faits de cette gamme, que le type commun ne dit plus mais qui n'ont pas
-// disparu pour autant :
+// Two facts about this range, which the common type no longer states but
+// which have not disappeared for all that:
 //
-//   - l'IP SOURCE des traps n'est pas un choix. Il n'y a pas de `source-interface`
-//     SNMP ici, et une seule interface IP exploitable : les traps partent de
-//     the management address. Moving the management VLAN therefore changes
-//     the sender seen by the proxy and silently invalidates its list of
-//     surveillance ;
-//   - the trap community is not necessarily that of READING. The field is a
-//     free text of the form, which the firmware does not match with any entry of
-//     `CommunityList` ; exiger qu'elle y figure serait inventer une contrainte que
-//     the equipment does not have. It is the COLLECTOR who imposes one (cf.
-//     driver.TrapDestination.Community).
+//   - the SOURCE IP of traps is not a choice. There is no SNMP
+//     `source-interface` here, and only one usable IP interface: traps go
+//     out from the management address. Moving the management VLAN
+//     therefore changes the sender seen by the proxy and silently
+//     invalidates its watch list;
+//   - the trap community is not necessarily the READ one. The field is
+//     free text on the form, which the firmware does not match against any
+//     entry in `CommunityList`; requiring it to appear there would be
+//     inventing a constraint the device does not have. It is the COLLECTOR
+//     that imposes one (cf. driver.TrapDestination.Community).
 //
 // ONLY ONE COUNTER WHERE THIS PACKAGE HAD TWO: `Known` replaces
-// `KnownV2c`/`KnownV3`. « Deux tables distinctes » est un fait de cette gamme, qui
-// has no meaning on any other — and these two fields were not read by any Go code,
-// only serialized. `Known` therefore bears the size of the FAMILY table
-// concerned by the pose, and the number from the other table goes into `Notes`: it is a
-// fait de la plateforme, il ne doit pas se perdre (cf. ApplyTrapReceiver).
+// `KnownV2c`/`KnownV3`. "Two distinct tables" is a fact of this range,
+// which has no meaning on any other — and these two fields were not read
+// by any Go code, only serialized. `Known` therefore carries the size of
+// the FAMILY table concerned by the write, and the count from the other
+// table goes into `Notes`: it is a fact about the platform, and it must
+// not be lost (cf. ApplyTrapReceiver).
 
 // TrapTableFullError: the device refused one more recipient.
 //
-// This is THE hole in the survey, and it can only be filled like this. No cap
-// does not exist on the client side — no validation, no dictionary message, no counter —
-// et le firmware n'applique le sien qu'au moment de l'ajout. Le refus est donc la
-// only way to find out the number of admitted recipients, which makes this
-// error CARRIER OF INFORMATION: `Accepted` is the observed ceiling.
+// This is THE gap in the survey, and it can only be filled this way. No
+// ceiling exists on the client side — no validation, no dictionary
+// message, no counter — and the firmware only applies its own at the
+// moment of adding. The refusal is therefore the only way to find out the
+// number of admitted recipients, which makes this error CARRY INFORMATION:
+// `Accepted` is the observed ceiling.
 //
-// It is a type, not a message, so a caller can recognize it
-// (`errors.As`) and draw the only useful conclusion: do not try again on this
-// equipment, and enter the capability once and for all.
+// It is a type, not a message, so a caller can recognize it (`errors.As`)
+// and draw the only useful conclusion: do not try again on this device,
+// and record the capability once and for all.
 //
-// # Pourquoi il n'y a PAS encore de capability « nombre de destinataires »
+// # Why there is NOT yet a "number of recipients" capability
 //
-// `driver.MonitoringCapabilities` carries a boolean `Traps` and nothing more, and this
-// lot did not complete it — deliberately. The only number that could be written there
-// today is 1, and this 1 is not measured: no recipient writing has
-// never been performed on this range, not even the first. A capability is a
-// PROMISE made to the operator; this one would promise a poseable recipient, this
-// qu'on ne sait pas encore tenir. Son absence, elle, laisse l'appelant sur le
-// careful behavior — a collector, the one that the proxy declares — which is
-// exactement ce qu'un 1 lui imposerait, sans affirmer un nombre que personne n'a
-// observed. The gesture which will inform this capability is the one which will measure it:
-// the first real pose, then this refusal.
+// `driver.MonitoringCapabilities` carries a boolean `Traps` and nothing
+// more, and this range did not extend it — deliberately. The only number
+// that could be written there today is 1, and this 1 is not measured: no
+// recipient write has ever been performed on this range, not even the
+// first. A capability is a PROMISE made to the operator; this one would
+// promise a settable recipient count that we do not yet know how to
+// honor. Its absence, on the other hand, leaves the caller with the
+// cautious behavior — one collector, the one the proxy declares — which
+// is exactly what a 1 would impose on it anyway, without asserting a
+// number nobody has observed. The gesture that will inform this
+// capability is the one that will measure it: the first real write, then
+// this refusal.
 type TrapTableFullError struct {
-	// Family : « v1/v2c » ou « v3 » — les deux tables sont distinctes, et rien ne
-	// dit que le plafond soit commun.
+	// Family: "v1/v2c" or "v3" — the two tables are distinct, and nothing
+	// says the ceiling is shared.
 	Family string
 	// Accepted: how many recipients this family already had, so how many
 	// the platform at least accepts. Accepted+1 is the first rejected number.
 	Accepted int
 	// Other: the other table, in case the ceiling is global.
 	Other int
-	// Silent: the device responded `statusCode 0` and did nothing. It's his
-	// characteristic failure mode, and it doesn't change the conclusion.
+	// Silent: the device responded `statusCode 0` and did nothing. This is
+	// its characteristic failure mode, and it does not change the conclusion.
 	Silent bool
-	// Cause: What the equipment responded, when it responded something.
+	// Cause: what the device responded, when it responded something.
 	Cause error
 }
 
@@ -904,15 +911,15 @@ func (e *TrapTableFullError) Error() string {
 
 func (e *TrapTableFullError) Unwrap() error { return e.Cause }
 
-// --- Lecture ---
+// --- Reading ---
 
-// ReadTrapReceivers relit le chemin retour : les deux tables de destinataires et
-// the transmit switches. READ ONLY, replayable on a park in
-// production.
+// ReadTrapReceivers rereads the return path: the two recipient tables and
+// the emission switches. READ ONLY, replayable on a fleet in production.
 //
 // The three sections go into ONE request, for the same reason as ReadSNMP:
-// cette gamme n'accepte que cinq sessions web, et une lecture par section
-// would amount to ousting the human administrator from his own interface.
+// this range only accepts five web sessions, and reading section by
+// section would amount to ousting the human administrator from their own
+// interface.
 func (a *Admin) ReadTrapReceivers(ctx context.Context) (TrapState, error) {
 	var out = TrapState{V2c: []TrapReceiver{}, V3: []TrapReceiver{}}
 	var url = a.wcdURL() + "?{" + sectionSNMPGlobal + "}{" + sectionSNMPTrap +
@@ -928,10 +935,11 @@ func (a *Admin) ReadTrapReceivers(ctx context.Context) (TrapState, error) {
 	out.Emitting = xmlField(global, "trapsEnbl")
 	out.AuthTraps = xmlField(global, "authTrapsEnbl")
 
-	// Section isolation TRAP: `sectionOf` terminal on `<SNMPTrap>` and
-	// `</SNMPTrap>` exactement, ce qui ne peut pas attraper `<SNMPTrapReceiverList>`
-	// (you need a `>` or a space just after the name). Without this accuracy, the
-	// liste enfant serait prise pour la section et le reste du document avec elle.
+	// TRAP section isolation: `sectionOf` matches exactly `<SNMPTrap>` and
+	// `</SNMPTrap>`, which cannot catch `<SNMPTrapReceiverList>` (you need a
+	// `>` or a space right after the name). Without this precision, the
+	// child list would be mistaken for the section, and the rest of the
+	// document along with it.
 	var v1v2 = sectionOf(resp.Body, sectionSNMPTrap)
 	out.V1V2Enabled = xmlField(v1v2, "enabled")
 
@@ -961,8 +969,9 @@ func (a *Admin) ReadTrapReceivers(ctx context.Context) (TrapState, error) {
 		})
 	}
 
-	// The transcript bears COUNTS and addresses, never the community
-	// traps: it opens the equipment in SNMP like the reading one.
+	// The transcript carries COUNTS and addresses, never the trap
+	// community: it exposes the device to SNMP the same way the read one
+	// does.
 	a.step(true, "trap receivers read", fmt.Sprintf(
 		"%d in v1/v2c, %d in v3 — emission %s, section v1/v2c %s",
 		len(out.V2c), len(out.V3), switchLabel(out.Emitting),
@@ -970,10 +979,10 @@ func (a *Admin) ReadTrapReceivers(ctx context.Context) (TrapState, error) {
 	return out, nil
 }
 
-// switchLabel makes a THREE-state switch readable. The third is the
-// only interesting: a field absent from the response is not a “2” field, and
-// confusing them would either wrongly refuse or pass over in silence a
-// equipment that will not emit anything.
+// switchLabel makes a THREE-state switch readable. The third is the only
+// interesting one: a field absent from the response is not the same as a
+// "2" field, and confusing them would either wrongly refuse, or silently
+// pass over, a device that will not emit anything.
 func switchLabel(code string) string {
 	switch code {
 	case snmpEnabledCode:

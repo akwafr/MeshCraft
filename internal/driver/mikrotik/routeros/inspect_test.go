@@ -27,16 +27,16 @@ func TestReferenceHardwareFacade(t *testing.T) {
 	// Facade ORDER: ether1 first, and especially ether2 BEFORE ether10 — alphabetical sort
 	// would invert them and the drawing would no longer match the device in front of you.
 	if ports[0].Name != "ether1" {
-		t.Errorf("first port = %q, expected \u00ab ether1 \u00bb", ports[0].Name)
+		t.Errorf("first port = %q, expected 'ether1'", ports[0].Name)
 	}
 	if ports[1].Name != "ether2" {
-		t.Errorf("second port = %q, expected \u00ab ether2 \u00bb — alphabetical sort "+
+		t.Errorf("second port = %q, expected 'ether2' — alphabetical sort "+
 			"would have put ether10 here", ports[1].Name)
 	}
 	// Optical cages END the facade, as on the hardware.
 	if ports[24].Name != "sfp-sfpplus1" || ports[25].Name != "sfp-sfpplus2" {
-		t.Errorf("last two ports are %q and %q, expected \u00ab sfp-sfpplus1 \u00bb "+
-			"and \u00ab sfp-sfpplus2 \u00bb", ports[24].Name, ports[25].Name)
+		t.Errorf("last two ports are %q and %q, expected 'sfp-sfpplus1' "+
+			"and 'sfp-sfpplus2'", ports[24].Name, ports[25].Name)
 	}
 
 	// Copper versus optical, and rates, both READ on the device.
@@ -63,7 +63,7 @@ func TestReferenceHardwareFacade(t *testing.T) {
 // TestFrameCeilingReadFromDevice
 //
 // This test exists because of an error that had to be fixed: the connector first declared
-// that this firmware « does not publish `max-l2mtu` », a conclusion drawn from enumerating
+// that this firmware 'does not publish `max-l2mtu`', a conclusion drawn from enumerating
 // the 87 fields of `/interface/ethernet` — where it is indeed absent. It is actually
 // served by `/interface`, at 10218 bytes, and replaying the captures showed it.
 //
@@ -96,7 +96,7 @@ func TestFrameCeilingReadFromDevice(t *testing.T) {
 // TestMeshcraftNamesAreRouterOSNames — a design decision, locked down.
 //
 // The Instant On connector must TRANSLATE: its device numbers ports 1 to 52 and meshcraft
-// names them « GE1 », hence a prefix to add then remove on every read and write. Here RouterOS
+// names them 'GE1', hence a prefix to add then remove on every read and write. Here RouterOS
 // NAMES its ports, and those names are already stable identifiers. Reusing the same removes
 // all translation, therefore a whole class of bug: writing to port 3 believing one writes to
 // port 4. On a VLAN table, that kind of error cuts off a customer.
@@ -109,11 +109,11 @@ func TestMeshcraftNamesAreRouterOSNames(t *testing.T) {
 
 	// Returned names must be EXACTLY those of the device, the ones used for writing.
 	if names[0] != "ether1" || names[23] != "ether24" {
-		t.Errorf("port names = %q…%q, expected \u00ab ether1 \u00bb…\u00ab ether24 \u00bb without "+
+		t.Errorf("port names = %q…%q, expected 'ether1'…'ether24' without "+
 			"conventional prefix", names[0], names[23])
 	}
 	if names[25] != "sfp-sfpplus2" {
-		t.Errorf("last name = %q, expected \u00ab sfp-sfpplus2 \u00bb", names[25])
+		t.Errorf("last name = %q, expected 'sfp-sfpplus2'", names[25])
 	}
 
 	// And they must match read-state keys: that correspondence makes placement possible
@@ -132,7 +132,7 @@ func TestMeshcraftNamesAreRouterOSNames(t *testing.T) {
 
 // TestPortGroupsContiguous: facade in groups, for the interface.
 //
-// Groups are verified CONTIGUOUS. Announcing « ether, 24 ports from 1 » when one is missing
+// Groups are verified CONTIGUOUS. Announcing 'ether, 24 ports from 1' when one is missing
 // in the middle would draw a socket that does not exist, and meshcraft would eventually write
 // to it.
 func TestPortGroupsContiguous(t *testing.T) {
@@ -154,7 +154,7 @@ func TestPortGroupsContiguous(t *testing.T) {
 		t.Errorf("copper group: PoE expected false on this model, got %v",
 			groups[0]["poe"])
 	}
-	// Optical cages. Prefix is the device's, not a conventional « GE »: that is why the
+	// Optical cages. Prefix is the device's, not a conventional 'GE': that is why the
 	// interface reconstructs (`prefix` + number) as `sfp-sfpplus1`.
 	if groups[1]["prefix"] != "sfp-sfpplus" || groups[1]["count"] != 2 ||
 		groups[1]["from"] != 1 || groups[1]["speed"] != "10G" {
@@ -162,7 +162,7 @@ func TestPortGroupsContiguous(t *testing.T) {
 			"speed=10G", groups[1])
 	}
 	if groups[1]["label"] != "SFP+" {
-		t.Errorf("optical group label = %v, expected \u00ab SFP+ \u00bb", groups[1]["label"])
+		t.Errorf("optical group label = %v, expected 'SFP+'", groups[1]["label"])
 	}
 }
 
@@ -215,15 +215,15 @@ func TestIdentityReadFromCaptures(t *testing.T) {
 			"the two fields were confused")
 	}
 	if board.Get("current-firmware") != "6.42.5" {
-		t.Errorf("RouterBOOT version = %q, expected \u00ab 6.42.5 \u00bb",
+		t.Errorf("RouterBOOT version = %q, expected '6.42.5'",
 			board.Get("current-firmware"))
 	}
 	if identity.Get("name") != "lan-r4" {
-		t.Errorf("system name = %q, expected \u00ab lan-r4 \u00bb", identity.Get("name"))
+		t.Errorf("system name = %q, expected 'lan-r4'", identity.Get("name"))
 	}
 }
 
-// TestHealthPublishesOnlyTemperature: what justifies the « health » channel floor.
+// TestHealthPublishesOnlyTemperature: what justifies the 'health' channel floor.
 //
 // Observed: `/system/health` returns ONLY ONE value on this board. No voltage, no fan, no
 // power rail. That grounds both the 60 s cadence and — independently — the PoE absence conclusion.
@@ -233,14 +233,14 @@ func TestHealthPublishesOnlyTemperature(t *testing.T) {
 		t.Fatalf("%d sensors in /system/health, 1 expected", len(rows))
 	}
 	if rows[0].Get("name") != "cpu-temperature" {
-		t.Errorf("sensor = %q, expected \u00ab cpu-temperature \u00bb", rows[0].Get("name"))
+		t.Errorf("sensor = %q, expected 'cpu-temperature'", rows[0].Get("name"))
 	}
 }
 
 // TestMikroTikNomenclature: product reference read as MikroTik writes it.
 //
 // Used to derive facade and PoE when only the model name is known — i.e. in Capabilities,
-// which receives only a string. The main trap is the family prefix: « CRS326 » contains « 326 »,
+// which receives only a string. The main trap is the family prefix: 'CRS326' contains '326',
 // and counting it would yield 326 ports.
 func TestMikroTikNomenclature(t *testing.T) {
 	var cases = []struct {
@@ -281,7 +281,7 @@ func TestMikroTikNomenclature(t *testing.T) {
 
 // TestUnknownModelFallsBackToFloor: the project rule, applied.
 //
-// « An unknown capability is assumed absent. » A model we know nothing about must not inherit
+// 'An unknown capability is assumed absent.' A model we know nothing about must not inherit
 // CRS326 limits: it must inherit the floor, even at the cost of refusing an intent the device
 // would have accepted. That is inconvenient; the opposite is an outage.
 func TestUnknownModelFallsBackToFloor(t *testing.T) {
@@ -334,7 +334,7 @@ func TestConnectorRegisteredAndRecognizes(t *testing.T) {
 	// Recognized vendor, undetermined system: candidate, never certainty.
 	var vague = d.Fingerprint(driver.Evidence{SysDescr: "MikroTik"})
 	if vague == 0 || vague >= 90 {
-		t.Errorf("\u00ab MikroTik \u00bb alone = %d, expected intermediate score", vague)
+		t.Errorf("'MikroTik' alone = %d, expected intermediate score", vague)
 	}
 }
 

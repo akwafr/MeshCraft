@@ -25,7 +25,7 @@ import (
 // TestNoCredentialToTryIsAnExplicitRefusal
 //
 // RouterOS REST answers 401 on ALL its resources. Authentication without a candidate can
-// therefore try nothing, and saying so beats a « failure »: the gesture that fixes it is
+// therefore try nothing, and saying so beats a 'failure': the gesture that fixes it is
 // to provide credentials, and the message must name that.
 //
 // No request is emitted, which is the meaning of `nil` here: if this code touched the
@@ -67,7 +67,7 @@ func TestNoCredentialToTryIsAnExplicitRefusal(t *testing.T) {
 // An Instant On carries its sysDescr and serial in hidden fields of its login page; a
 // SwOS announces its model in the realm of its Digest challenge. RouterOS says NOTHING:
 // the REST API answers 401 everywhere, model included. This test prevents someone from
-// « harmonizing » the three connectors by making this one appear to identify without
+// 'harmonizing' the three connectors by making this one appear to identify without
 // credentials — it would then return empty without error, and discovery would rank a
 // device without model believing it had been read.
 func TestIdentifyRequiresCandidates(t *testing.T) {
@@ -94,12 +94,12 @@ func TestIdentifyRequiresCandidates(t *testing.T) {
 //
 // v3 machinery EXISTS on this firmware (observed: `/snmp` carries an `engine-id`, which
 // only makes sense for v3). This connector nevertheless does not declare it, and must
-// therefore REFUSE a v3 identity instead of approximating it to the « closest » v2c.
+// therefore REFUSE a v3 identity instead of approximating it to the 'closest' v2c.
 //
 // What is at stake is not code cleanliness: accepting silently would produce on the device
 // an identity meshcraft believes placed, therefore supervision the fleet believes
-// authenticated. « An identity that exists in the database and nowhere else is worse than
-// a missing identity. »
+// authenticated. 'An identity that exists in the database and nowhere else is worse than
+// a missing identity.'
 func TestV3IsRefusedNotApproximated(t *testing.T) {
 	var c = &Client{}
 	var _, err = c.ApplySNMP(nil, SNMPIdentity{
@@ -124,10 +124,10 @@ func TestV3IsRefusedNotApproximated(t *testing.T) {
 	}
 	if refusal.Connector != "mikrotik-routeros" {
 		t.Errorf("refusal must name the connector (%q): without that, the screen says "+
-			"\u00ab unsupported \u00bb without saying by what", refusal.Connector)
+			"'unsupported' without saying by what", refusal.Connector)
 	}
 	if refusal.Because == "" {
-		t.Error("`Because` must not be empty: it answers \u00ab is there anything to wait for? \u00bb")
+		t.Error("`Because` must not be empty: it answers 'is there anything to wait for?'")
 	}
 	// And it must say there IS something to wait for, which is the case here: this is
 	// the only declaration of this connector that a successful write campaign must change.
@@ -144,7 +144,7 @@ func TestV3IsRefusedNotApproximated(t *testing.T) {
 // not a platform constraint, it is a SETTING — and leaving it open is a choice an operator
 // must make knowingly.
 //
-// Empty therefore means « the caller said nothing », and especially not « all ». The
+// Empty therefore means 'the caller said nothing', and especially not 'all'. The
 // message must name THE MISSING GESTURE, or the operator reads a failure without knowing
 // what to fix.
 func TestCommunityWithoutSourceBoundIsRefused(t *testing.T) {
@@ -152,7 +152,7 @@ func TestCommunityWithoutSourceBoundIsRefused(t *testing.T) {
 	var _, err = c.ApplySNMP(nil, SNMPIdentity{Community: "mc-ro"})
 	if err == nil {
 		t.Fatal("placing a community without a source bound must be refused: " +
-			"\u00ab leaving SNMP open to all addresses \u00bb must be requested " +
+			"'leaving SNMP open to all addresses' must be requested " +
 			"explicitly, not invented as a default")
 	}
 	// The message must be ACTIONABLE: name the device field, and give the value to pass
@@ -164,11 +164,11 @@ func TestCommunityWithoutSourceBoundIsRefused(t *testing.T) {
 		}
 	}
 	// This is NOT an absent capability: this connector knows perfectly well how to place
-	// a community. Confusing it with a capability refusal would display « this platform
-	// cannot do it » where a parameter is missing.
+	// a community. Confusing it with a capability refusal would display 'this platform
+	// cannot do it' where a parameter is missing.
 	if errors.Is(err, driver.ErrNotImplemented) {
 		t.Error("a missing source bound is a missing parameter, not an absent " +
-			"capability: the caller must not read it as \u00ab unsupported \u00bb")
+			"capability: the caller must not read it as 'unsupported'")
 	}
 }
 
@@ -196,7 +196,7 @@ func TestTrapPortOtherThan162IsRefused(t *testing.T) {
 			"the platform can target", out.Port)
 	}
 
-	// Every non-standard port is refused, including those that « look like » SNMP: the
+	// Every non-standard port is refused, including those that 'look like' SNMP: the
 	// platform has no field to write them, and a plausible number is no more reachable
 	// than any other.
 	var port int
@@ -264,7 +264,7 @@ func TestReceiverWithoutCommunityIsRefused(t *testing.T) {
 //     showing exactly the same VLANs.
 //
 // Without these notes, the screen would present a PRESENT AND INERT configuration as
-// segmentation in place, and an operator would conclude « this switch is compliant » on
+// segmentation in place, and an operator would conclude 'this switch is compliant' on
 // traffic that is not segmented at all.
 func TestNotesSayInertConfiguration(t *testing.T) {
 	var dev = stateFromFixtures(t)
@@ -277,7 +277,7 @@ func TestNotesSayInertConfiguration(t *testing.T) {
 			"case for the 24 copper ports of the reference device, accepted by the device "+
 			"and SILENT. Notes obtained:\n%s", notes)
 	}
-	// Ports must be NAMED, in facade order: a note saying « 24 ports » without naming
+	// Ports must be NAMED, in facade order: a note saying '24 ports' without naming
 	// them would help nobody, and alphabetical sort would place ether10 before ether2,
 	// making it unreadable therefore useless.
 	if !strings.Contains(notes, "ether1, ether2, ether3") {
@@ -369,9 +369,9 @@ func TestContractViewLosesNeitherPortNorVLAN(t *testing.T) {
 	if st.MgmtVLAN != 99 {
 		t.Errorf("management VLAN = %d in contract view, expected 99", st.MgmtVLAN)
 	}
-	if !st.LinkUp["sfp-sfpplus2"] || st.LinkUp["ether1"] {
+	if !st.HasLink("sfp-sfpplus2") || st.HasLink("ether1") {
 		t.Errorf("link state must survive conversion: it arms the port "+
-			"guardrail (got %v)", st.LinkUp)
+			"guardrail (got %v)", st.LinkUp())
 	}
 	// The CPU pseudo-port is not a facade port, here or elsewhere.
 	var _, present = st.Ports["bridge"]
@@ -383,8 +383,8 @@ func TestContractViewLosesNeitherPortNorVLAN(t *testing.T) {
 
 // TestUnresolvedAllRemovesNothing
 //
-// `TaggedAtLeast` is only for unresolved « all » (empty site plan). A resolved
-// « all » is an exact site VLAN set and is managed for tagged merge — extras leave.
+// `TaggedAtLeast` is only for unresolved 'all' (empty site plan). A resolved
+// 'all' is an exact site VLAN set and is managed for tagged merge — extras leave.
 // This test locks the merge calculation ApplyPorts uses for the unresolved case.
 func TestUnresolvedAllRemovesNothing(t *testing.T) {
 	// Device carries uplink in VLAN 30; plan asks only for 20.
@@ -397,12 +397,12 @@ func TestUnresolvedAllRemovesNothing(t *testing.T) {
 		t.Errorf("managed unwanted port leaves the VLAN: %v", strict)
 	}
 
-	// Unresolved « all »: uplink is NOT in managedTagged, so it stays.
+	// Unresolved 'all': uplink is NOT in managedTagged, so it stays.
 	var unresolved = mergeMembers(have, []string{"ether1"},
 		map[string]bool{"ether1": true})
 	if !reflect.DeepEqual(unresolved, []string{"ether1", "sfp-sfpplus2"}) {
 		t.Errorf("merge = %v, expected [ether1 sfp-sfpplus2].\n"+
-			"  Unresolved \u00ab all \u00bb must not strip tagged membership while the "+
+			"  Unresolved 'all' must not strip tagged membership while the "+
 			"site plan is empty.",
 			unresolved)
 	}
@@ -421,7 +421,7 @@ func TestUnresolvedAllRemovesNothing(t *testing.T) {
 func TestConnectorReachableThroughContract(t *testing.T) {
 	var conn, err = driver.ConnectorFor("mikrotik-routeros")
 	if err != nil {
-		t.Fatalf("driver.ConnectorFor(\u00ab mikrotik-routeros \u00bb) must return this "+
+		t.Fatalf("driver.ConnectorFor('mikrotik-routeros') must return this "+
 			"connector: without that, the API layer can write NOTHING on a MikroTik "+
 			"RouterOS, and that is exactly the fault the contract exists to "+
 			"close — %v", err)
@@ -508,7 +508,7 @@ func TestContractIdentityDoesNotConfuseTheTwoVersions(t *testing.T) {
 	// Family is DERIVED from part number, as the contract wants for capability differences
 	// at that level.
 	if id.Family != "CRS" {
-		t.Errorf("Family = %q, expected \u00ab CRS \u00bb derived from product reference", id.Family)
+		t.Errorf("Family = %q, expected 'CRS' derived from product reference", id.Family)
 	}
 	// `ModelCode` stays EMPTY: MikroTik has no catalogue reference distinct from the label.
 	// Copying the model would display the same thing twice as if they were two pieces of
@@ -519,7 +519,7 @@ func TestContractIdentityDoesNotConfuseTheTwoVersions(t *testing.T) {
 			id.ModelCode)
 	}
 	// Facade survives: without it, adoption produced a device with NO PORTS, which is not
-	// « blank » but false.
+	// 'blank' but false.
 	if id.CopperPorts != 24 || id.SFPPorts != 2 || !id.SFPPlus {
 		t.Errorf("facade = %d copper + %d SFP (SFP+=%t), expected 24 + 2 SFP+",
 			id.CopperPorts, id.SFPPorts, id.SFPPlus)
@@ -529,17 +529,17 @@ func TestContractIdentityDoesNotConfuseTheTwoVersions(t *testing.T) {
 			"PortGroups() method must be FILLED in the contract field",
 			len(id.PortGroups))
 	}
-	// Prefixes are those of the DEVICE, not a conventional « GE »: that is why the interface
+	// Prefixes are those of the DEVICE, not a conventional 'GE': that is why the interface
 	// reconstructs `sfp-sfpplus1`.
 	if id.PortGroups[0]["prefix"] != "ether" ||
 		id.PortGroups[1]["prefix"] != "sfp-sfpplus" {
-		t.Errorf("group prefixes = %v / %v, expected \u00ab ether \u00bb and \u00ab sfp-sfpplus \u00bb",
+		t.Errorf("group prefixes = %v / %v, expected 'ether' and 'sfp-sfpplus'",
 			id.PortGroups[0]["prefix"], id.PortGroups[1]["prefix"])
 	}
 	// And source says where the information came from: the screen must not present a deduction
 	// as a reading.
 	if id.Source != "rest_api" {
-		t.Errorf("Source = %q, expected \u00ab rest_api \u00bb", id.Source)
+		t.Errorf("Source = %q, expected 'rest_api'", id.Source)
 	}
 }
 
@@ -570,8 +570,8 @@ func TestFamilyDerivedOrEmpty(t *testing.T) {
 // TestSecretChangesOnlyForProvenAccount
 //
 // `SetSecret` changes the password OF THE ACCOUNT THAT JUST LOGGED IN, not another: letting
-// the caller name one would open the door to « change the password of an account we have not
-// proven we can access ».
+// the caller name one would open the door to 'change the password of an account we have not
+// proven we can access'.
 //
 // The edge case is access [Driver.Authenticate] returns DESPITE failure, for its transcript:
 // its account is empty, and a `set` would go out with an empty name.
@@ -594,10 +594,10 @@ func TestSecretChangesOnlyForProvenAccount(t *testing.T) {
 func TestRawKindNamesTheRightPlatform(t *testing.T) {
 	var c = &Client{}
 	if c.RawKind() != "REST menu" {
-		t.Errorf("RawKind = %q, expected \u00ab REST menu \u00bb: that is the word the "+
+		t.Errorf("RawKind = %q, expected 'REST menu': that is the word the "+
 			"operator must read in front of a MikroTik", c.RawKind())
 	}
-	// The connector named in messages must be this one, or « this platform cannot do X »
+	// The connector named in messages must be this one, or 'this platform cannot do X'
 	// helps nobody.
 	if c.Connector().Name != "mikrotik-routeros" {
 		t.Errorf("Connector().Name = %q", c.Connector().Name)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,12 @@ type observedState struct {
 	// the same, and the migration safeguard would answer "we do not know" where it
 	// should answer "there is no path" — letting through the case it exists to stop.
 	LinkUp map[string]bool `json:"link_up"`
+	// Links: the richer per-port operational state (up / down / disabled /
+	// unplugged / err-disabled), additive to link_up. Omitempty and a NEW tag so
+	// existing devices.observed rows stay byte-identical — the migration-safety
+	// rule the LinkUp comment states. err-disabled is the value the UI surfaces
+	// on the interface.
+	Links map[string]driver.LinkState `json:"links,omitempty"`
 	// MgmtVLAN is the VLAN the device says it is administered through (0 = untagged /
 	// unknown). Optional with omitempty so older observed rows stay valid.
 	MgmtVLAN int `json:"mgmt_vlan,omitempty"`
@@ -63,6 +70,9 @@ type observedState struct {
 func (s *Server) withSync(ctx context.Context, d model.Device) model.Device {
 	var out = withSyncVLANs(d, s.siteVLANIDs(ctx, d.SiteID))
 	out.WatchExcluded = s.WatchExcl.reasonFor(d.ID)
+	// Live provisioning: true only while the connector is writing to THIS device.
+	// Read from the apply queue, not the database — it is a runtime fact.
+	out.Applying = s.applyingNow(d.ID)
 	return out
 }
 
@@ -76,9 +86,68 @@ func withSyncVLANs(d model.Device, siteVLANs []int) model.Device {
 	for _, c = range changes {
 		d.Drift = append(d.Drift, c)
 	}
+	// ERR-DISABLED IS CARRIED ONTO THE PORT before observed is stripped.
+	//
+	// The list view drops the bulky observed blob, but a port the SWITCH shut
+	// itself is an alarm the facade must show without a second call. So the one
+	// fact worth keeping — the operational state, and the reason when the
+	// connector gave one — is lifted onto each port's intent JSON here, cheaply,
+	// while `d.Observed` is still readable.
+	d = mergeLinkState(d)
+
 	// Observed state is bulky and only matters on the detail screen: it has no place
 	// in a list of two hundred devices.
 	d.Observed = nil
+	return d
+}
+
+// mergeLinkState lifts each port's observed operational state (and the
+// err-disabled reason, when the connector reported one) onto the served port
+// intent, so the facade can flag a switch-shut port without shipping the whole
+// observed blob.
+//
+// Best-effort and non-destructive: a device that was never read, or whose read
+// carried no links, comes through untouched.
+func mergeLinkState(d model.Device) model.Device {
+	if len(d.Observed) == 0 || len(d.Ports) == 0 {
+		return d
+	}
+	var obs struct {
+		Links map[string]string `json:"links"`
+		Notes []string          `json:"notes"`
+	}
+	if json.Unmarshal(d.Observed, &obs) != nil || len(obs.Links) == 0 {
+		return d
+	}
+	var ports map[string]map[string]any
+	if json.Unmarshal(d.Ports, &ports) != nil {
+		return d
+	}
+	var name, state string
+	for name, state = range obs.Links {
+		var port, ok = ports[name]
+		if !ok {
+			continue
+		}
+		port["link_state"] = state
+		if state == "err-disabled" {
+			// The reason lives in a device-level note that names the port. It is
+			// a SENTENCE for a human (« GE25 was shut down BY THE SWITCH
+			// (err-disabled), reason gbic-invalid ») — surfaced verbatim, matched
+			// by the port name it contains.
+			var note string
+			for _, note = range obs.Notes {
+				if strings.Contains(note, name) {
+					port["err_reason"] = note
+					break
+				}
+			}
+		}
+	}
+	var raw, err = json.Marshal(ports)
+	if err == nil {
+		d.Ports = raw
+	}
 	return d
 }
 
@@ -191,6 +260,24 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ONE-TIME PORT-NAME CATCH-UP. A device whose ports were written before
+	// its connector adopted a standard naming scheme (or that was adopted by
+	// pasting its configuration before this remap existed at import time)
+	// still carries the platform's RAW names in devices.ports. Left alone,
+	// every later apply/diff/telemetry lookup on it silently misses by
+	// comparing under two different vocabularies — this is exactly the "port
+	// profile applied to one port did nothing" symptom a stale FS S3900
+	// device showed after its connector switched to standard GE-style names.
+	//
+	// This is NOT an intent change: the device is presumably already
+	// configured correctly under its OLD bookkeeping key, so it must not
+	// schedule a re-apply (desired_changed_at is deliberately left alone) —
+	// only the key changes, nothing is asked of the wire. Best-effort and
+	// silent when there is nothing stale: it renames only keys the connector
+	// itself says translate, never guesses.
+	var portsRenamed bool
+	d, portsRenamed = s.remapDevicePortsIfStale(r.Context(), d)
+
 	// SINGLE resolution point: the connector discovery designated, transport,
 	// credentials, and try order (cf. adminFor).
 	var _, adm, _, err = s.adminFor(r.Context(), d)
@@ -227,7 +314,7 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 
 	var raw []byte
 	if raw, err = json.Marshal(observedState{
-		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp,
+		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp(), Links: state.Links,
 		MgmtVLAN: state.MgmtVLAN,
 	}); err != nil {
 		fail(w, err)
@@ -273,6 +360,25 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 		out["stp"] = stpState
 	}
 
+	// FACEPLATE catch-up, in the same read gesture. A device adopted before its
+	// connector could read the faceplate (or entered by hand) carries no port
+	// groups, so nothing draws and SNMP/LLDP port resolution degrades. If it is
+	// empty and the connector can read it, fill it now — the faceplate is a fact
+	// of the hardware, like observed state, so a read is the right place. Failure
+	// never interrupts: ports and VLANs are already saved.
+	//
+	// ALSO forced when the stored groups still carry the connector's OLD prefix
+	// scheme (facadeNamingStale) — this is deliberately NOT the same condition
+	// as portsRenamed: a device already caught up on a PRIOR read has
+	// portsRenamed=false on this one (nothing left to rename in devices.ports),
+	// but its port_groups can still carry the stale prefix from before that
+	// prior read ever ran fillFaceplate. Checking the stored groups directly,
+	// every time, is what makes this catch-up actually converge instead of
+	// firing once and silently leaving the facade behind.
+	if faceplateEmpty(d.PortGroups) || portsRenamed || s.facadeNamingStale(r.Context(), d) {
+		s.fillFaceplate(r.Context(), d, adm, out)
+	}
+
 	var fresh model.Device
 	if fresh, err = s.Store.GetDevice(r.Context(), d.ID); err != nil {
 		fail(w, err)
@@ -289,7 +395,183 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 	}
 	out["ok"], out["sync"], out["drift"] = true, sync, changes
 	out["vlans"], out["ports"] = state.VLANs, len(state.Ports)
+
+	// A MANUAL refresh is also the operator saying "make this device right". If
+	// supervision should be up and is not, kick the SNMP re-push here — in the
+	// background, so this read-only response stays read-only and instant. It is
+	// the user-triggered twin of RunSNMPHeal: same idempotent gesture, but the
+	// manual click clears the backoff instead of waiting up to a day for it.
+	if fresh.SnmpStatus != "ok" {
+		s.KickSNMPHeal(fresh)
+		out["snmp_reprovision"] = "triggered"
+	}
 	respond(w, http.StatusOK, out)
+}
+
+// remapPortNamesIfStale is the PURE decision behind remapDevicePortsIfStale:
+// which keys of `ports` a connector's PortNamer would rename, and the
+// resulting JSON. Extracted so it is testable without a database — house
+// style throughout this codebase keeps the logic in a pure function and the
+// I/O in a thin wrapper around it.
+//
+// A key that already matches the connector's current standard form, or that
+// it cannot translate at all, is copied through unchanged: nothing is ever
+// guessed, only what the connector itself confirms is renamed.
+func remapPortNamesIfStale(namer driver.PortNamer, ports json.RawMessage) (json.RawMessage, bool) {
+	if len(ports) == 0 {
+		return ports, false
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(ports, &raw) != nil {
+		return ports, false
+	}
+	var out = map[string]json.RawMessage{}
+	var changed bool
+	var k string
+	var v json.RawMessage
+	for k, v = range raw {
+		var std, ok = namer.StandardPortName(k)
+		if ok && std != k {
+			out[std] = v
+			changed = true
+			continue
+		}
+		out[k] = v
+	}
+	if !changed {
+		return ports, false
+	}
+	var encoded, err = json.Marshal(out)
+	if err != nil {
+		return ports, false
+	}
+	return encoded, true
+}
+
+// facadeGroupPrefix is the one field facadeNamingStale needs from a stored
+// port group — kept separate from portrules.Port / the facade JSON shape used
+// elsewhere, because this is a MINIMAL probe, not a full decode.
+type facadeGroupPrefix struct {
+	Prefix string `json:"prefix"`
+	From   int    `json:"from"`
+}
+
+// facadeNamingStale is the PURE decision behind the facade half of the
+// standard-naming catch-up: does at least one stored port group still carry a
+// prefix the connector's PortNamer would translate to something ELSE? If so,
+// the group predates the connector's current naming scheme.
+//
+// Same probe shape as remapPortNamesIfStale, applied to port_groups instead
+// of ports: test the group's FIRST port (prefix + from) — on every numbering
+// connector shipped today the mapping is affine, so one sample proves the
+// whole group.
+func facadeNamingStale(namer driver.PortNamer, portGroups json.RawMessage) bool {
+	if len(portGroups) == 0 {
+		return false // faceplateEmpty already covers this case
+	}
+	var groups []facadeGroupPrefix
+	if json.Unmarshal(portGroups, &groups) != nil {
+		return false
+	}
+	var g facadeGroupPrefix
+	for _, g = range groups {
+		if g.From <= 0 || g.Prefix == "" {
+			continue
+		}
+		var sample = g.Prefix + strconv.Itoa(g.From)
+		var std, ok = namer.StandardPortName(sample)
+		if ok && std != sample {
+			return true
+		}
+	}
+	return false
+}
+
+// facadeNamingStale (method) resolves the device's connector and applies the
+// pure check above. False on any resolution failure — an unresolvable
+// connector or one without PortNamer has nothing to be stale AGAINST.
+func (s *Server) facadeNamingStale(ctx context.Context, d model.Device) bool {
+	var _, name = s.deviceIdentity(ctx, d)
+	var drv, known = driver.Get(name)
+	if !known {
+		return false
+	}
+	var namer, canName = driver.AsPortNamer(drv)
+	if !canName {
+		return false
+	}
+	return facadeNamingStale(namer, d.PortGroups)
+}
+
+// remapDevicePortsIfStale renames devices.ports keys still written under a
+// platform's RAW port name into the standard-model name the connector
+// currently uses, when the connector declares that translation
+// (driver.PortNamer). Returns the input unchanged when there is nothing
+// stale — most devices, most of the time.
+//
+// A FULL REPLACE of the ports column, not the incremental SetDevicePorts
+// (whose jsonb_set only adds or updates the keys it is given and never
+// removes any): a rename must make the OLD key actually disappear, or the
+// device would carry both the stale entry and its renamed twin — doubling it
+// in every desired-state iteration downstream.
+func (s *Server) remapDevicePortsIfStale(ctx context.Context, d model.Device) (model.Device, bool) {
+	var _, name = s.deviceIdentity(ctx, d)
+	var drv, known = driver.Get(name)
+	if !known {
+		return d, false
+	}
+	var namer, canName = driver.AsPortNamer(drv)
+	if !canName {
+		return d, false
+	}
+	var encoded, changed = remapPortNamesIfStale(namer, d.Ports)
+	if !changed {
+		return d, false
+	}
+	var fresh, err = s.Store.ReplaceDevicePorts(ctx, d.ID, encoded)
+	if err != nil {
+		return d, false
+	}
+	return fresh, true
+}
+
+// faceplateEmpty reports whether a device carries no drawable port groups.
+func faceplateEmpty(pg json.RawMessage) bool {
+	var s = strings.TrimSpace(string(pg))
+	if s == "" || s == "null" || s == "[]" || s == "{}" {
+		return true
+	}
+	var groups []any
+	if json.Unmarshal(pg, &groups) != nil {
+		return false // unreadable but non-empty: do not overwrite it
+	}
+	return len(groups) == 0
+}
+
+// fillFaceplate reads the physical faceplate from the live device and persists it,
+// on a connector that can. Best-effort: any failure is noted, never fatal — the
+// read already saved ports and VLANs. This is the catch-up that keeps a
+// blank-adopted device from staying portless forever (cf. driver.FaceplateReader).
+func (s *Server) fillFaceplate(ctx context.Context, d model.Device, adm driver.Admin, out map[string]any) {
+	var reader, ok = driver.AsFaceplateReader(adm)
+	if !ok {
+		return
+	}
+	var groups, err = reader.ReadFaceplate(ctx)
+	if err != nil {
+		out["faceplate_note"] = "faceplate not read: " + err.Error()
+		return
+	}
+	var raw, mErr = json.Marshal(groups)
+	if mErr != nil || len(groups) == 0 {
+		return
+	}
+	var _, sErr = s.Store.SetDeviceFaceplate(ctx, d.ID, raw)
+	if sErr != nil {
+		out["faceplate_note"] = "faceplate read but not saved: " + sErr.Error()
+		return
+	}
+	out["faceplate_filled"] = len(groups)
 }
 
 // handleReadRawSection returns one raw CONFIGURATION UNIT from the device, as its
@@ -958,7 +1240,7 @@ var errNoMgmtIP = errors.New("this device has no known management address")
 func (s *Server) saveObservedState(ctx context.Context, deviceID string,
 	state driver.State) error {
 	var raw, err = json.Marshal(observedState{
-		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp,
+		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp(), Links: state.Links,
 		MgmtVLAN: state.MgmtVLAN,
 	})
 	if err != nil {
