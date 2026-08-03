@@ -125,11 +125,7 @@ type MgmtAddressingView struct {
 // called on LISTS of two hundred devices, and going back through the discovery candidate
 // would cost one query per row. `devices.extra.driver` is set at adoption and suffices.
 func addrCapsOf(d model.Device) MgmtAddrCaps {
-	var extra map[string]string
-	if json.Unmarshal(d.Extra, &extra) != nil {
-		return MgmtAddrCaps{}
-	}
-	var drv, known = driver.Get(extra["driver"])
+	var drv, known = driver.Get(driver.DriverNameFromExtra(d.Extra))
 	if !known {
 		return MgmtAddrCaps{}
 	}
@@ -393,11 +389,7 @@ func applyConfirmReason(d model.Device, plan model.MgmtPlan) string {
 // explicit registry, following connector contract assertions
 // (`var _ driver.MgmtAddrReader = …`).
 func readableAddrOf(d model.Device) bool {
-	var extra map[string]string
-	if json.Unmarshal(d.Extra, &extra) != nil {
-		return false
-	}
-	switch extra["driver"] {
+	switch driver.DriverNameFromExtra(d.Extra) {
 	case "mikrotik-swos", "mikrotik-routeros", "aruba-instant-on-1930":
 		return true
 	}
@@ -1050,4 +1042,3 @@ func (s *Server) adoptWrittenMgmtIP(ctx context.Context, d model.Device,
 	})
 	return host, nil
 }
-

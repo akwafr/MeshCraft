@@ -114,6 +114,7 @@ export default function Profils() {
                 <th>{t("profilsPage.profileCol")}</th>
                 <th>{t("profilsPage.configCol")}</th>
                 <th>PoE</th>
+                <th>STP</th>
                 <th style={{ width: 140 }}></th>
               </tr>
             </thead>
@@ -152,6 +153,15 @@ export default function Profils() {
                     <td>
                       <span className="note" style={{ fontWeight: 600, color: spec.poe ? "var(--text)" : undefined }}>
                         {spec.poe ? "PoE" : "—"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="note" style={{ fontWeight: 600, color: spec.stp_enabled === false ? "var(--warn)" : "var(--text)" }}>
+                        {spec.stp_enabled === false
+                          ? t("profilsPage.stpEnabledOff")
+                          : t("profilsPage.stpEnabledOn")}
+                        {spec.stp_edge ? " · edge" : ""}
+                        {spec.bpdu_guard ? " · bpdu" : ""}
                       </span>
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -268,6 +278,10 @@ function ProfileEditor({
     pvid: init.pvid ?? vlans[0]?.vlan_id ?? null,
     tagged: init.tagged ?? [],
     poe: !!init.poe,
+    stp_edge: !!init.stp_edge,
+    // Default on for new profiles; keep false when the saved spec says so.
+    stp_enabled: init.stp_enabled !== false,
+    bpdu_guard: !!init.bpdu_guard,
     eng_only: !!init.eng_only,
   });
 
@@ -395,7 +409,7 @@ function ProfileEditor({
         </>
       )}
 
-      <div className="row" style={{ marginTop: 14, gap: 20 }}>
+      <div className="row" style={{ marginTop: 14, gap: 20, flexWrap: "wrap" }}>
         <label className="row" style={{ marginBottom: 0 }}>
           <input
             type="checkbox"
@@ -407,11 +421,61 @@ function ProfileEditor({
         <label className="row" style={{ marginBottom: 0 }}>
           <input
             type="checkbox"
+            checked={!!spec.stp_edge}
+            onChange={(e) => setSpec({ ...spec, stp_edge: e.target.checked })}
+          />
+          {t("profilsPage.stpEdge")}
+        </label>
+        <label className="row" style={{ marginBottom: 0 }}>
+          <input
+            type="checkbox"
             checked={!!spec.eng_only}
             onChange={(e) => setSpec({ ...spec, eng_only: e.target.checked })}
           />
           {t("profilsPage.engineerOnlyApply")}
         </label>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <div className="kicker" style={{ marginBottom: 6 }}>{t("profilsPage.stpEnabledLabel")}</div>
+        <div className="seg3" style={{ maxWidth: 280, marginBottom: 0 }}>
+          <button
+            type="button"
+            className={spec.stp_enabled !== false ? "on" : ""}
+            onClick={() => setSpec({ ...spec, stp_enabled: true })}
+          >
+            {t("profilsPage.stpEnabledOn")}
+          </button>
+          <button
+            type="button"
+            className={spec.stp_enabled === false ? "on" : ""}
+            onClick={() => setSpec({ ...spec, stp_enabled: false })}
+          >
+            {t("profilsPage.stpEnabledOff")}
+          </button>
+        </div>
+        <div className="note" style={{ marginTop: 6 }}>{t("profilsPage.stpEnabledHelp")}</div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <div className="kicker" style={{ marginBottom: 6 }}>{t("profilsPage.bpduGuardLabel")}</div>
+        <div className="seg3" style={{ maxWidth: 280, marginBottom: 0 }}>
+          <button
+            type="button"
+            className={spec.bpdu_guard === true ? "on" : ""}
+            onClick={() => setSpec({ ...spec, bpdu_guard: true })}
+          >
+            {t("profilsPage.bpduGuardOn")}
+          </button>
+          <button
+            type="button"
+            className={spec.bpdu_guard !== true ? "on" : ""}
+            onClick={() => setSpec({ ...spec, bpdu_guard: false })}
+          >
+            {t("profilsPage.bpduGuardOff")}
+          </button>
+        </div>
+        <div className="note" style={{ marginTop: 6 }}>{t("profilsPage.bpduGuardHelp")}</div>
       </div>
 
       <ErrorMsg error={save.error} />

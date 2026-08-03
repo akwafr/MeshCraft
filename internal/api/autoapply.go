@@ -55,6 +55,17 @@ func NewAutoApplier() *autoApplier {
 	return &autoApplier{pending: map[string]*time.Timer{}, busy: map[string]bool{}}
 }
 
+// applyingNow reports whether an automatic apply is running on this device right now.
+// Read by withSync so the device payload carries a live "provisioning" state.
+func (s *Server) applyingNow(deviceID string) bool {
+	if s.Apply == nil {
+		return false
+	}
+	s.Apply.mu.Lock()
+	defer s.Apply.mu.Unlock()
+	return s.Apply.busy[deviceID]
+}
+
 // schedule requests an apply for this device, after batching.
 func (s *Server) schedule(deviceID string) {
 	if s.Apply == nil {
@@ -80,10 +91,24 @@ func (s *Server) schedule(deviceID string) {
 		s.Apply.busy[deviceID] = true
 		s.Apply.mu.Unlock()
 
+		// Tell the screens an apply is now RUNNING on this device, so the dot and
+		// ports switch to a live "provisioning" animation instead of a still blue
+		// pending. The device payload reads busy through applyingNow.
+		var d, gErr = s.Store.GetDevice(context.Background(), deviceID)
+		if gErr == nil {
+			s.NotifySiteChanged(d.SiteID, ChangeSync)
+		}
+
 		defer func() {
 			s.Apply.mu.Lock()
 			delete(s.Apply.busy, deviceID)
 			s.Apply.mu.Unlock()
+			// And tell them it is over: applyingNow is false again, the dot settles
+			// on green (or drift). autoApplyDevice also notifies via emitDeviceBG on
+			// its outcome; this covers the paths that emit nothing.
+			if gErr == nil {
+				s.NotifySiteChanged(d.SiteID, ChangeSync)
+			}
 		}()
 
 		// Fresh context: the HTTP request that triggered the change finished long ago.
@@ -293,10 +318,25 @@ func (s *Server) runApply(ctx context.Context, d model.Device,
 		Desired: desired, MgmtVLAN: plan.VlanID, SiteVLANs: vlans, Force: force,
 	})
 	out.Steps = adm.Transcript()
+
+	// Spanning-tree: site preference ∩ connector caps, then port intents.
+	// Runs even when ApplyPorts failed: VLAN drift must not block edge / mode push.
+	var stpRes, stpErr = s.applyDeviceSTP(ctx, d, conn, adm)
+	out.Steps = adm.Transcript()
+	if stpErr != nil {
+		if err == nil {
+			err = stpErr
+		} else {
+			out.Notes = append(out.Notes, "spanning tree apply also failed: "+stpErr.Error())
+		}
+	} else {
+		out.Result.Skipped = append(out.Result.Skipped, stpRes.Skipped...)
+		out.Result.Notes = append(out.Result.Notes, stpRes.Notes...)
+		out.Notes = append(out.Notes, stpRes.Notes...)
+	}
 	if err != nil {
 		return out, err
 	}
-
 	// Nothing is considered applied on return code alone: we RE-READ and compare (section 5,
 	// Verify). That re-read is what authorizes dating the apply.
 	var state driver.State

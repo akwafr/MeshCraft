@@ -1,152 +1,144 @@
 package swos
 
 import (
+	"meshcraft/internal/driver"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-// Le chemin write, verified sur les captures REELLES de the device.
+// The write path, verified against REAL device captures.
 //
-// AUCUNE de ces ecritures n'a been executee contre un switch : l'outil disponible pour
-// atteindre the device a travers le tunnel est en lecture seule, par decision
-// d'architecture du projet. Ce que ces tests establish est donc precisely ce
-// qu'ils peuvent establish, et rien de plus :
+// NONE of these writes have been executed against a switch: the tool available to
+// reach the device through the tunnel is read-only, by project architecture decision.
+// What these tests establish is therefore precisely what they can establish, and nothing more:
 //
-//   - le CORPS produit, a l'octet pres, a partir de la page que the device a
-//     actually servie ;
-//   - le fait que le jeu de champs renvoye soit exactement celui que the device
-//     stocke — la property qui empeche une write de VLAN d'emporter avec elle
-//     l'isolation de ports ;
-//   - les garde-fous, qui decident de ce qu'on does not write PAS.
+//   - the BODY produced, byte-for-byte, from the page the device actually served;
+//   - that the returned field set matches exactly what the device stores — the property
+//     that prevents a VLAN write from carrying away port isolation with it;
+//   - the safeguards, which decide what we do NOT write.
 //
-// Ce qu'ils n'establish pas : que the device accepte. C'est la campagne write
-// de l'orchestrateur.
+// What they do not establish: that the device accepts. That is the orchestrator's write campaign.
 
-// fwdDeReference lit /fwd.b tel que the device l'a servi.
+// fwdDeReference reads /fwd.b as the device served it.
 func fwdDeReference(t *testing.T) *Page {
 	t.Helper()
 	var page, err = ParseObject(capture(t, "fwd.b"))
 	if err != nil {
-		t.Fatalf("/fwd.b : %v", err)
+		t.Fatalf("/fwd.b: %v", err)
 	}
 	return page
 }
 
-// TestCorpsFwdRenvoieLeJeuComplet : LA property de surete de ce connecteur.
+// TestFwdBodyReturnsCompleteFieldSet: THE safety property of this connector.
 //
-// SwOS n'accepte pas write partielle : son interface recompose l'objet ENTIER de
-// la page et le poste tel quel. Renvoyer /fwd.b sans son tableau `srt` laisserait donc
-// the device libre de remettre a zero les limites de storm de ses vingt-six ports
-// en posant un VLAN — et il le ferait en silence, cette plateforme n'ayant aucun
-// message d'erreur.
+// SwOS does not accept partial writes: its interface rebuilds the ENTIRE page object
+// and posts it as-is. Returning /fwd.b without its `srt` array would therefore leave
+// the device free to reset storm limits on all twenty-six ports when setting a VLAN —
+// and it would do so silently, since this platform has no error messages.
 //
-// Le test compare donc le corps produit au jeu de champs que the device STOCKE, tel
-// que sa propre sauvegarde de configuration l'enumerates.
-func TestCorpsFwdRenvoieLeJeuComplet(t *testing.T) {
+// The test therefore compares the produced body to the field set the device STORES, as
+// enumerated by its own configuration backup.
+func TestFwdBodyReturnsCompleteFieldSet(t *testing.T) {
 	var fwd = fwdDeReference(t)
 
-	// Un VLAN natif changed sur le port 1, comme le ferait ApplyPorts.
+	// A native VLAN changed on port 1, as ApplyPorts would do.
 	var dvid, ok = fwd.Nums(FieldDefaultVLAN)
 	if !ok {
-		t.Fatalf("/fwd.b ne porte pas %q", FieldDefaultVLAN)
+		t.Fatalf("/fwd.b does not contain %q", FieldDefaultVLAN)
 	}
 	dvid[0] = 42
 	fwd.SetNums(FieldDefaultVLAN, dvid)
 
 	var body, missing = fwd.Only(FwdWritableFields(26))
 	if len(missing) > 0 {
-		t.Fatalf("champs manquants dans la page servie par the device : %v — "+
-			"writing doit be REFUSED dans ce cas, pas truncated", missing)
+		t.Fatalf("missing fields in the page served by the device: %v — "+
+			"writing must be REFUSED in this case, not truncated", missing)
 	}
 
-	// Le jeu de champs doit be exactement celui de la sauvegarde de the device.
+	// The field set must match exactly what the device backup contains.
 	var backup, backupErr = ParseBackup(capture(t, "backup.swb"))
 	if backupErr != nil {
-		t.Fatalf("/backup.swb : %v", backupErr)
+		t.Fatalf("/backup.swb: %v", backupErr)
 	}
 	var stored *Page
 	stored, ok = backup.Obj("fwd.b")
 	if !ok {
-		t.Fatal("la sauvegarde ne porte pas /fwd.b")
+		t.Fatal("backup does not contain /fwd.b")
 	}
 	if !reflect.DeepEqual(body.Keys(), stored.Keys()) {
-		t.Errorf("le corps produit ne porte pas le same jeu de champs que ce que "+
-			"the device stocke.\n  produit : %v\n  stocke  : %v", body.Keys(), stored.Keys())
+		t.Errorf("produced body does not carry the same field set as what "+
+			"the device stores.\n  produced: %v\n  stored  : %v", body.Keys(), stored.Keys())
 	}
 
-	// Le changement est bien there, et RIEN d'autre n'a bouge : les 25 autres VLAN
-	// natifs, les masques d'isolation, les limites de storm et les rates ingress
-	// sont ceux de la page lue.
+	// The change is present, and NOTHING else moved: the other 25 native VLANs,
+	// isolation masks, storm limits, and ingress rates match the read page.
 	var encoded = body.Encode()
 	if !strings.Contains(encoded, "dvid:[0x2a,0x64,0x64") {
-		t.Errorf("le VLAN natif du port 1 devait passer a 0x2a en laissant les autres a "+
-			"0x64 ; corps : %s", excerpt(encoded, 400))
+		t.Errorf("port 1 native VLAN should become 0x2a while others stay at "+
+			"0x64; body: %s", excerpt(encoded, 400))
 	}
-	// `srt` (limites de storm) doit be intact : 26 valeurs a 0x64.
+	// `srt` (storm limits) must remain intact: 26 values at 0x64.
 	if !strings.Contains(encoded, "srt:[0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,"+
 		"0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64,0x64]") {
-		t.Error("les limites de storm ont been alterees par une write de VLAN")
+		t.Error("storm limits were altered by a VLAN write")
 	}
-	// La matrice d'isolation aussi : `fp1:0x03fffffe` est « tous les ports sauf le
-	// premier ».
+	// The isolation matrix too: `fp1:0x03fffffe` means "all ports except the first".
 	if !strings.Contains(encoded, "fp1:0x03fffffe") {
-		t.Error("la matrice d'isolation de ports a been alteree")
+		t.Error("port isolation matrix was altered")
 	}
 }
 
-// TestEcritureRefuseeSurUnJeuDeChampsInattendu : refuser rather que d'amputer.
+// TestWritingRefusedOnUnexpectedFieldSet: refuse rather than truncate.
 //
-// Un firmware qui ne servirait pas un champ expected ne doit PAS conduire a une
-// write partielle. C'est la consequence directe de la rule previous, et le seul
-// comportement sur sur une plateforme dont les refus sont muets.
-func TestEcritureRefuseeSurUnJeuDeChampsInattendu(t *testing.T) {
+// Firmware that would not serve an expected field must NOT lead to a partial write.
+// That is the direct consequence of the previous rule, and the only safe behavior on
+// a platform whose rejections are silent.
+func TestWritingRefusedOnUnexpectedFieldSet(t *testing.T) {
 	var page, err = ParseObject("{fp1:0x02,dvid:[0x01,0x01],vlan:[0x01,0x01]}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
 	var _, missing = page.Only(FwdWritableFields(2))
 	if len(missing) == 0 {
-		t.Fatal("aucun champ manquant flagged sur une page manifestement incomplete")
+		t.Fatal("no missing field flagged on a manifestly incomplete page")
 	}
-	// Les champs qui protegent le trafic doivent figurer parmi les manquants : c'est
-	// ce que the operator doit lire dans le message de refus.
+	// Traffic-protection fields must appear among the missing ones: that is what the
+	// operator should read in the refusal message.
 	var joined = strings.Join(missing, " ")
 	var expected string
 	for _, expected = range []string{"srt", "ir", "fp2", "lck"} {
 		if !strings.Contains(joined, expected) {
-			t.Errorf("le champ %q devrait be flagged manquant ; obtenu %v", expected, missing)
+			t.Errorf("field %q should be flagged missing; got %v", expected, missing)
 		}
 	}
 }
 
-// TestVLANCreeAvecLesDefautsDeLequipement : un VLAN created ne doit pas be created a zero.
+// TestVLANCreatedWithDeviceDefaults: a created VLAN must not be created at zero.
 //
-// Les valeurs par default de l'interface de the device ne sont pas des zeros :
-// l'isolation par VLAN et l'APPRENTISSAGE valent 1 (`u:1` dans ses definitions de
-// champs). Un VLAN created avec l'apprentissage disabled inonderait tout son trafic sur
-// tous ses ports membres — un default qui ne se verrait only la charge.
+// The device interface defaults are not zeros: per-VLAN isolation and LEARNING are 1
+// (`u:1` in its field definitions). A VLAN created with learning disabled would flood
+// all its traffic onto every member port — a default visible only under load.
 //
-// Et le masque de membres part VIDE, alors que le default de l'interface est « tous les
-// ports » (`u:268435455`) : c'est ApplyPorts qui y pose les ports voulus, et create un
-// VLAN avec tous les ports membres ferait passer tout le trafic partout.
-func TestVLANCreeAvecLesDefautsDeLequipement(t *testing.T) {
+// And the member mask starts EMPTY, while the interface default is "all ports"
+// (`u:268435455`): ApplyPorts sets the desired ports there, and creating a VLAN with
+// all ports as members would pass all traffic everywhere.
+func TestVLANCreatedWithDeviceDefaults(t *testing.T) {
 	var row = newVLANRow(VLAN{ID: 42, Name: "atelier"}, 26)
 
-	// L'ordre des champs suit celui de la sauvegarde de the device.
+	// Field order follows the device backup.
 	var stored, err = ParseBackup(capture(t, "backup.swb"))
 	if err != nil {
-		t.Fatalf("/backup.swb : %v", err)
+		t.Fatalf("/backup.swb: %v", err)
 	}
 	var rows []*Page
 	var ok bool
 	rows, ok = stored.List("vlan.b")
 	if !ok || len(rows) == 0 {
-		t.Fatal("la sauvegarde ne porte pas la table des VLAN")
+		t.Fatal("backup does not contain the VLAN table")
 	}
 	if !reflect.DeepEqual(row.Keys(), rows[0].Keys()) {
-		t.Errorf("l'ordre des champs d'une ligne created differe de celui de "+
-			"the device.\n  created : %v\n  lue   : %v", row.Keys(), rows[0].Keys())
+		t.Errorf("field order of a created row differs from the device.\n  created: %v\n  read   : %v", row.Keys(), rows[0].Keys())
 	}
 
 	var cas = []struct {
@@ -154,9 +146,9 @@ func TestVLANCreeAvecLesDefautsDeLequipement(t *testing.T) {
 		attend uint32
 	}{
 		{FieldVLANID, 42},
-		{FieldVLANMembers, 0}, // vide : ApplyPorts y pose les ports
-		{"piso", 1},           // default de l'interface, pas zero
-		{"lrn", 1},            // apprentissage ACTIF : a zero, le VLAN inonderait
+		{FieldVLANMembers, 0}, // empty: ApplyPorts sets the ports
+		{"piso", 1},           // interface default, not zero
+		{"lrn", 1},            // learning ACTIVE: at zero, the VLAN would flood
 		{"mrr", 0},
 		{"igmp", 0},
 	}
@@ -170,68 +162,63 @@ func TestVLANCreeAvecLesDefautsDeLequipement(t *testing.T) {
 	var name string
 	name, ok = row.Text(FieldVLANName)
 	if !ok || name != "atelier" {
-		t.Errorf("nom = %q (ok=%v), expected « atelier »", name, ok)
+		t.Errorf("name = %q (ok=%v), expected \"atelier\"", name, ok)
 	}
 }
 
-// TestMasqueDeMembresPrendLaFormeDuModele : un model de plus de 32 ports emploie un
-// tableau de mots.
+// TestMemberMaskMatchesModelShape: a model with more than 32 ports uses a word array.
 //
-// Sans cela, SetBit refuserait sur la ligne created et l'appartenance ne serait pas
-// posable — writing partirait avec un VLAN sans membre, donc un VLAN qui ne
-// transporte rien.
-func TestMasqueDeMembresPrendLaFormeDuModele(t *testing.T) {
+// Without that, SetBit would refuse on the created row and membership could not be
+// set — writing would proceed with a VLAN that has no members, and therefore carries no traffic.
+func TestMemberMaskMatchesModelShape(t *testing.T) {
 	var petit = newVLANRow(VLAN{ID: 10}, 26)
 	var v, _ = petit.Value(FieldVLANMembers)
 	if v.Kind != KindNum {
-		t.Errorf("jusqu'a 32 ports, le masque est un scalaire ; obtenu %v", v.Kind)
+		t.Errorf("up to 32 ports, the mask is a scalar; got %v", v.Kind)
 	}
 	if !petit.SetBit(FieldVLANMembers, 25, true) {
-		t.Error("appartenance non posable sur un masque scalaire")
+		t.Error("membership could not be set on a scalar mask")
 	}
 
 	var grand = newVLANRow(VLAN{ID: 10}, 48)
 	var grandMasque, _ = grand.Value(FieldVLANMembers)
 	if grandMasque.Kind != KindList {
-		t.Errorf("au-dela de 32 ports, le masque est un tableau de mots ; obtenu %v",
+		t.Errorf("beyond 32 ports, the mask is a word array; got %v",
 			grandMasque.Kind)
 	}
 	if !grand.SetBit(FieldVLANMembers, 47, true) {
-		t.Error("appartenance non posable sur le port 48")
+		t.Error("membership could not be set on port 48")
 	}
 	var on, ok = grand.Bit(FieldVLANMembers, 47)
 	if !ok || !on {
-		t.Error("le bit applied sur le port 48 ne se relit pas")
+		t.Error("bit applied on port 48 does not read back")
 	}
 }
 
-// TestTableCompleteeSansPerdreDeLigne : une table s'written ENTIRE, donc omettre une
-// ligne la supprime.
+// TestTableCompletedWithoutLosingRows: a table is written ENTIRELY, so omitting a row deletes it.
 //
-// Les lignes existantes doivent be conservees champ pour champ, y compris celles
-// qu'on ne comprend pas : l'isolation par VLAN, l'apprentissage, le miroir et le
-// snooping IGMP sont regles par l'exploitant et ne sont pas a nous.
-func TestTableCompleteeSansPerdreDeLigne(t *testing.T) {
+// Existing rows must be preserved field-for-field, including rows we do not understand:
+// per-VLAN isolation, learning, mirroring, and IGMP snooping are set by the operator and are not ours to change.
+func TestTableCompletedWithoutLosingRows(t *testing.T) {
 	var rows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
-		t.Fatalf("/vlan.b : %v", err)
+		t.Fatalf("/vlan.b: %v", err)
 	}
 	var avant = EncodeTable(rows)
 
 	var out, created, buildErr = withVLANs(rows,
 		[]VLAN{{ID: 42, Name: "atelier"}, {ID: 99}}, 26, nil)
 	if buildErr != nil {
-		t.Fatalf("completion refused : %v", buildErr)
+		t.Fatalf("completion refused: %v", buildErr)
 	}
-	// Le VLAN 99 existait already : seul le 42 est created.
+	// VLAN 99 already existed: only 42 is created.
 	if !reflect.DeepEqual(created, []int{42}) {
-		t.Errorf("VLAN created = %v, expected [42] — le 99 est already dans la table", created)
+		t.Errorf("created VLAN = %v, expected [42] — 99 is already in the table", created)
 	}
 	if len(out) != 3 {
-		t.Fatalf("%d ligne(s) after completion, expected 3", len(out))
+		t.Fatalf("%d row(s) after completion, expected 3", len(out))
 	}
-	// Les deux lignes d'origine sont there, intactes, et l'ordre est celui des
-	// identifiants — stable d'une execution a l'autre.
+	// The two original rows are present, intact, and order follows identifiers — stable across runs.
 	var vids []uint32
 	var r *Page
 	for _, r = range out {
@@ -239,21 +226,21 @@ func TestTableCompleteeSansPerdreDeLigne(t *testing.T) {
 		vids = append(vids, v)
 	}
 	if !reflect.DeepEqual(vids, []uint32{42, 99, 100}) {
-		t.Errorf("identifiants = %v, expected [42 99 100] tries", vids)
+		t.Errorf("identifiers = %v, expected [42 99 100] sorted", vids)
 	}
-	// Les lignes d'origine n'ont pas bouge d'un octet.
+	// Original rows did not move by a single byte.
 	var encoded = EncodeTable(out)
 	var ligne string
 	for _, ligne = range strings.Split(strings.Trim(avant, "[]"), "},{") {
 		ligne = strings.Trim(ligne, "{}")
 		if !strings.Contains(encoded, ligne) {
-			t.Errorf("une ligne d'origine a been alteree : %q absente du corps produit", ligne)
+			t.Errorf("an original row was altered: %q missing from produced body", ligne)
 		}
 	}
 }
 
-// TestTableRefuseLesBornesDeSwOS : ce que the device refuserait, on le refuse avant.
-func TestTableRefuseLesBornesDeSwOS(t *testing.T) {
+// TestTableRefusesSwOSBounds: what the device would refuse, we refuse first.
+func TestTableRefusesSwOSBounds(t *testing.T) {
 	var rows, _ = ParseTable(capture(t, "vlan.b"))
 	var cas = []struct {
 		nom string
@@ -268,12 +255,12 @@ func TestTableRefuseLesBornesDeSwOS(t *testing.T) {
 		t.Run(c.nom, func(t *testing.T) {
 			var _, _, err = withVLANs(rows, []VLAN{{ID: c.vid}}, 26, nil)
 			if err == nil {
-				t.Errorf("VLAN %d accepted alors que la table de SwOS va de 1 a 4094", c.vid)
+				t.Errorf("VLAN %d accepted although the SwOS table ranges from 1 to 4094", c.vid)
 			}
 		})
 	}
 
-	// Et la borne de 250 entries que l'interface s'impose.
+	// And the 250-entry limit imposed by the interface.
 	var pleine []*Page
 	var i int
 	for i = 1; i <= 250; i++ {
@@ -281,21 +268,20 @@ func TestTableRefuseLesBornesDeSwOS(t *testing.T) {
 	}
 	var _, _, pleineErr = withVLANs(pleine, []VLAN{{ID: 300}}, 26, nil)
 	if pleineErr == nil {
-		t.Error("un 251e VLAN a been accepted : the device refuse au-dela de 250")
+		t.Error("a 251st VLAN was accepted: the device refuses beyond 250")
 	}
 }
 
-// TestVLANVoulusRassembles : le plan du site ET ce que les ports reclament.
+// TestWantedVLANsAssembled: the site plan AND what ports request.
 //
-// Le plan VLAN du site est applied en ENTIER, pas seulement les VLAN qu'un port utilise :
-// un device adopte doit connaitre les VLAN de son site, sans quoi y affecter un
-// port depuis l'interface de the device — ou brancher un trunk — ne proposerait
-// rien.
-func TestVLANVoulusRassembles(t *testing.T) {
+// The site VLAN plan is applied in ENTIRETY, not only VLANs a port uses: an adopted
+// device must know its site VLANs, otherwise assigning a port from the device interface
+// — or plugging a trunk — would offer nothing.
+func TestWantedVLANsAssembled(t *testing.T) {
 	var desired = map[string]PortState{
 		"Port1": {Mode: "access", PVID: 20},
 		"Port2": {Mode: "trunk", PVID: 1, Tagged: []int{30, 40}},
-		// Un port non managed ne reclame rien.
+		// An unmanaged port requests nothing.
 		"Port3": {Mode: "libre", PVID: 999},
 		"Port4": {},
 	}
@@ -306,90 +292,86 @@ func TestVLANVoulusRassembles(t *testing.T) {
 		{ID: 1}, {ID: 10, Name: "mgmt"}, {ID: 20, Name: "users"}, {ID: 30}, {ID: 40},
 	}
 	if !reflect.DeepEqual(got, expected) {
-		t.Errorf("VLAN voulus = %+v, expected %+v", got, expected)
+		t.Errorf("wanted VLANs = %+v, expected %+v", got, expected)
 	}
-	// Le nom du plan du site n'est pas ecrase par le vide d'une intention de port.
+	// The site plan name is not overwritten by an empty port intent.
 	if got[2].Name != "users" {
-		t.Errorf("le VLAN 20 a perdu son nom : %+v", got[2])
+		t.Errorf("VLAN 20 lost its name: %+v", got[2])
 	}
-	// Un port « libre » n'a rien reclame.
+	// A "libre" port requested nothing.
 	var v VLAN
 	for _, v = range got {
 		if v.ID == 999 {
-			t.Error("un port non managed a reclame un VLAN")
+			t.Error("an unmanaged port requested a VLAN")
 		}
 	}
 }
 
-// L'ancien TestIndexDePortRefuseCeQuilNeComprendPas vit now dans naming_test.go,
-// sous TestIndexApprendLesDeuxFamilles : la traduction nom → index n'est plus une
-// fonction de ce fichier mais une method de [Facade], et elle accepte DEUX familles de
-// noms — celle de the device (« SFP1 ») et l'ancienne numerotation continue (« GE25 »).
+// The former port-index refusal test now lives in naming_test.go:
+// name → index translation is no longer a function in
+// this file but a method on [Facade], and it accepts TWO name families — the device's
+// ("SFP1") and the legacy continuous numbering ("GE25").
 
-// TestPolitiqueDeRetraitDeclaree : ce que la pose fait ET ce qu'elle refuse doit se
-// lire depuis l'exterieur du paquet.
+// TestRemovalPolicyDeclared: what apply does AND what it refuses must be readable from outside the package.
 //
-// La pose RETIRE now les appartenances que le plan ne demande plus, et refuse
-// quatre cas — VLAN de management, VLAN natif effectif, ports en « all », ports actifs
-// d'un device dont le VLAN d'administration est inconnu. Un UI qui affiche
-// « conforme » doit pouvoir dire laquelle des deux choses il annonce.
-func TestPolitiqueDeRetraitDeclaree(t *testing.T) {
+// Apply now REMOVES memberships the plan no longer requests, and refuses four cases —
+// management VLAN, effective native VLAN, ports in "all", active ports on a device whose
+// admin VLAN is unknown. A UI showing "compliant" must be able to say which of the two things it reports.
+func TestRemovalPolicyDeclared(t *testing.T) {
 	var s = RemovalPolicy()
 	if s == "" {
-		t.Fatal("la politique de retrait doit be lisible depuis l'exterieur du paquet")
+		t.Fatal("removal policy must be readable from outside the package")
 	}
 	var mot string
 	for _, mot = range []string{"retrait", "management", "motif"} {
 		if !strings.Contains(strings.ToLower(s), mot) {
-			t.Errorf("la phrase doit contenir %q ; obtenu : %q", mot, s)
+			t.Errorf("policy string must contain %q; got: %q", mot, s)
 		}
 	}
 }
 
-// TestRefusDEcrireVLANReceiveEtForceVLAN : ce qu'on refuse to write, on le dit.
+// TestVLANReceiveAndForceVLANWritePolicy: what we refuse to write, we say so.
 //
-// `vlni` et `fvid` sont inscriptibles, et sont same already renvoyes a the device a
-// chaque pose avec leur valeur lue. Ne pas les write est un CHOIX — les resserrer jette
-// du trafic, et le model standard n'exprime pas ce qu'il faudrait pour decider — et un
-// choix qui ne se lit pas ressemble a un oubli.
-func TestRefusDEcrireVLANReceiveEtForceVLAN(t *testing.T) {
+// `vlni` and `fvid` are writable, and are already sent back to the device on every apply
+// with their read value. Not writing them is a CHOICE — tightening them drops traffic,
+// and the standard model does not express what would be needed to decide — and a choice
+// that is not documented looks like an oversight.
+func TestVLANReceiveAndForceVLANWritePolicy(t *testing.T) {
 	var s = receivePolicy()
 	var mot string
 	for _, mot = range []string{FieldVLANReceive, FieldForceVLAN, "trafic"} {
 		if !strings.Contains(s, mot) {
-			t.Errorf("la phrase doit contenir %q ; obtenu : %q", mot, s)
+			t.Errorf("policy string must contain %q; got: %q", mot, s)
 		}
 	}
 }
 
-// TestWritableExtrasVide : le vide se lit, il ne se decouvre pas sur le terrain.
-func TestWritableExtrasVide(t *testing.T) {
-	if len(WritableExtras) != 0 {
-		t.Errorf("WritableExtras = %v ; ce connecteur ne pose que l'appartenance VLAN, "+
-			"et si cela change, la declaration doit changer avec le code qui pose",
-			WritableExtras)
+// TestWritableExtrasSTP: spanning-tree is the first extra this connector applies.
+func TestWritableExtrasSTP(t *testing.T) {
+	if !WritesExtra("stp") {
+		t.Fatal("WritesExtra(stp) must be true once ApplySpanningTree exists")
 	}
 	var name string
-	for _, name = range []string{"poe", "stp", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "dhcp_snooping", "port_security"} {
 		if WritesExtra(name) {
-			t.Errorf("WritesExtra(%q) = true sans code qui la pose", name)
+			t.Errorf("WritesExtra(%q) = true without apply code", name)
 		}
 	}
 }
 
-// --- La decision de pose, verified sur les captures reelles ---
+// --- Apply decision, verified against real captures ---
 //
-// PlanPorts est pure, et c'est ce qui rend la logique la plus dangereuse du
-// connecteur verifiable sans hardware : c'est elle qui decide quel port garde son VLAN
-// natif, donc elle qui decide si the device restera joignable.
+// PlanPorts is pure, and that is what makes the connector's most dangerous logic
+// verifiable without hardware: it decides which port keeps its native VLAN, and therefore
+// whether the device stays reachable.
 
-// planDe appelle [PlanPorts] en ne renseignant PAS le tableau des modes VLAN.
+// planDe calls [PlanPorts] without supplying the VLAN mode array.
 //
-// Un raccourci de test, et il dit quelque chose : `Modes` a nil fait renoncer au
-// wake du filtrage, donc ces tests-there eprouvent l'appartenance et le VLAN natif SEULS
-// — ce qu'ils ont toujours fait. Le wake du mode a ses propres tests, where le tableau
-// est fourni explicitement (cf. TestFiltrageReveilleSurUnPortEteint). Les melanger
-// ferait passer un test d'appartenance pour un test de mode, et l'inverse.
+// A test shortcut, and it says something: `Modes` at nil skips VLAN filtering wake,
+// so these tests exercise membership and native VLAN ONLY — as they always have.
+// Mode wake has its own tests, where the array is supplied explicitly
+// (see TestFiltrageReveilleSurUnPortEteint). Mixing them would pass a membership test
+// for a mode test, and vice versa.
 func planDe(current State, table []*Page, desired map[string]PortState,
 	facade Facade, protected map[int]string,
 	force bool) ([]PortChange, []string, error) {
@@ -400,35 +382,33 @@ func planDe(current State, table []*Page, desired map[string]PortState,
 	return out.Changes, out.Skipped, err
 }
 
-// planDeReference prepare state et la table de l'reference device.
+// planDeReference prepares state and the reference device table.
 func planDeReference(t *testing.T) (State, []*Page) {
 	t.Helper()
-	// Le mode VLAN par port est ignored ici, et ce n'est pas une perte : la decision de
-	// pose ne s'en sert pas, et il n'est plus un champ de state — c'est une note
-	// destinee a l'exploitant (cf. VLANFiltering et stateOf).
+	// Per-port VLAN mode is ignored here, and that is not a loss: the apply decision
+	// does not use it, and it is no longer a state field — it is a note for the operator
+	// (see VLANFiltering and stateOf).
 	var st, _ = etatDeReference(t)
 	var rows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
-		t.Fatalf("/vlan.b : %v", err)
+		t.Fatalf("/vlan.b: %v", err)
 	}
-	// State de l'reference device : administre en VLAN 99, et un SEUL port
-	// avec lien — la cage SFP2, SFP2.
+	// Reference device state: managed on VLAN 99, and a SINGLE port with link — cage SFP2, SFP2.
 	return State{
 		VLANs: []VLAN{{ID: 99}, {ID: 100}}, Ports: st,
-		MgmtVLAN: 99, LinkUp: map[string]bool{"SFP2": true},
+		MgmtVLAN: 99, Links: map[string]driver.LinkState{"SFP2": driver.LinkUpState},
 	}, rows
 }
 
-// TestPlanNeFaitRienQuandCestDejaConforme : un apply conforme ne poste RIEN.
+// TestPlanDoesNothingWhenAlreadyCompliant: a compliant apply posts NOTHING.
 //
-// Sur cette plateforme, writing est persistante d'office et sans retour arriere : un
-// POST qui ne change rien est un risque pris pour rien, et il serait pris a CHAQUE
-// passage de reconciliation, sur tout le parc. L'intention demandee ici est exactement
-// state lu sur the device.
-func TestPlanNeFaitRienQuandCestDejaConforme(t *testing.T) {
+// On this platform, writing is persistent by default with no rollback: a POST that changes
+// nothing is risk taken for nothing, and it would be taken on EVERY reconciliation pass,
+// across the entire fleet. The requested intent here is exactly the state read from the device.
+func TestPlanDoesNothingWhenAlreadyCompliant(t *testing.T) {
 	var current, rows = planDeReference(t)
 
-	// On redemande a the device ce qu'il porte already.
+	// Request from the device exactly what it already carries.
 	var desired = map[string]PortState{}
 	var name string
 	var p PortState
@@ -439,284 +419,270 @@ func TestPlanNeFaitRienQuandCestDejaConforme(t *testing.T) {
 	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
 		map[int]string{99: "VLAN de management declared par the device"}, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(changes) != 0 {
-		t.Errorf("%d changement(s) sur un device already conforme : %+v — aucune page ne "+
-			"doit be postee dans ce cas", len(changes), changes)
+		t.Errorf("%d change(s) on an already compliant device: %+v — no page must "+
+			"be posted in this case", len(changes), changes)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("des ports ont been epargnes alors que rien ne changeait : %v", skipped)
+		t.Errorf("ports were skipped although nothing changed: %v", skipped)
 	}
 }
 
-// TestGardeFouProtegeLEtiquetageDuManagement : LE garde-fou, et il n'est pas celui de
-// l'Instant On.
+// TestSafeguardProtectsManagementTagging: THE safeguard, and it is not Instant On's.
 //
-// Sur l'reference device, la session d'administration arrive TAGGED en VLAN 99
-// sur la cage SFP2 (SFP2), dont le VLAN natif est 1. La rule de l'Instant On — « ne
-// pas toucher au VLAN natif d'un port actif membre UNTAGGED du VLAN de management » —
-// ne protegerait donc rien ici : le VLAN natif de ce port n'est pas 99.
+// On the reference device, the admin session arrives TAGGED on VLAN 99 on cage SFP2 (SFP2),
+// whose native VLAN is 1. The Instant On rule — "do not touch the native VLAN of an active
+// port that is an UNTAGGED member of the management VLAN" — would therefore protect nothing
+// here: this port's native VLAN is not 99.
 //
-// Ce qui compte sur SwOS est l'TAGGING : changer le VLAN natif d'un port fait passer
-// l'ancien natif en tagged et le nouveau en untagged. Le changement est sur si et
-// seulement s'il ne modifie pas l'tagging du VLAN de management sur ce port.
-func TestGardeFouProtegeLEtiquetageDuManagement(t *testing.T) {
+// What matters on SwOS is TAGGING: changing a port's native VLAN moves the old native to
+// tagged and the new one to untagged. The change is safe if and only if it does not modify
+// management VLAN tagging on that port.
+func TestSafeguardProtectsManagementTagging(t *testing.T) {
 	var current, rows = planDeReference(t)
 	var protege = map[int]string{99: "VLAN de management declared par the device"}
 
-	// CAS SUR : SFP2 passe du VLAN natif 1 au VLAN natif 100. Le VLAN 99 reste tagged
-	// avant comme after, la session ne bouge pas. Refuser ici rendrait l'uplink
-	// impossible a configurer.
+	// SAFE CASE: SFP2 moves from native VLAN 1 to native VLAN 100. VLAN 99 stays tagged
+	// before and after, the session does not move. Refusing here would make the uplink impossible to configure.
 	var changes, skipped, err = planDe(current, rows,
 		map[string]PortState{"SFP2": {Mode: "trunk", PVID: 100, Tagged: []int{99}}},
 		facadeCSS326(), protege, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("passer de natif 1 a natif 100 laisse le VLAN 99 tagged : la session ne "+
-			"bouge pas, cela doit be autorise. Refus : %v", skipped)
+		t.Errorf("moving from native 1 to native 100 leaves VLAN 99 tagged: the session does "+
+			"not move, this must be allowed. Refusal: %v", skipped)
 	}
 	if len(changes) != 1 || changes[0].PVID != 100 {
-		t.Fatalf("SFP2 devait passer en VLAN natif 100 : %+v", changes)
+		t.Fatalf("SFP2 should move to native VLAN 100: %+v", changes)
 	}
 
-	// CAS DANGEREUX : SFP2 passe au VLAN natif 99, celui du management. L'administration
-	// sortirait alors SANS tag, et le voisin qui l'envoie tagged ne serait plus
-	// entendu.
+	// DANGEROUS CASE: SFP2 moves to native VLAN 99, the management VLAN. Admin traffic would
+	// then leave WITHOUT a tag, and the neighbor sending it tagged would no longer be heard.
 	changes, skipped, err = planDe(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 99}},
 		facadeCSS326(), protege, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(changes) != 0 {
-		t.Errorf("le port qui porte la session tagged a been bascule en natif 99 : %+v", changes)
+		t.Errorf("port carrying the tagged session was switched to native 99: %+v", changes)
 	}
 	if len(skipped) != 1 {
-		t.Fatalf("%d motif(s) de refus, expected 1 : %v", len(skipped), skipped)
+		t.Fatalf("%d refusal reason(s), expected 1: %v", len(skipped), skipped)
 	}
-	// Le motif doit be exploitable par un operator : dire quel port, que
-	// l'administration y arrive TAGGED, et qu'il n'y a pas de console de secours.
+	// The reason must be actionable for an operator: which port, that admin arrives TAGGED,
+	// and that there is no fallback console.
 	var expected string
-	for _, expected = range []string{"SFP2", "lien ACTIF", "TAGGED", "serial"} {
+	for _, expected = range []string{"SFP2", "ACTIVE link", "TAGGED", "serial"} {
 		if !strings.Contains(skipped[0], expected) {
-			t.Errorf("le motif de refus doit contenir %q ; obtenu : %q", expected, skipped[0])
+			t.Errorf("refusal reason must contain %q; got: %q", expected, skipped[0])
 		}
 	}
 
-	// `force` leve le garde-fou — c'est un geste explicite de l'exploitant, qui connait
-	// sa topologie mieux que meshcraft et accepte le risque du deplacement.
+	// `force` lifts the safeguard — an explicit operator gesture who knows their topology
+	// better than meshcraft and accepts the relocation risk.
 	changes, skipped, err = planDe(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 99}},
 		facadeCSS326(), protege, true)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("force doit lever le garde-fou ; refus : %v", skipped)
+		t.Errorf("force must lift the safeguard; refusal: %v", skipped)
 	}
 	if len(changes) != 1 || changes[0].PVID != 99 {
-		t.Errorf("avec force, SFP2 devait passer en VLAN natif 99 : %+v", changes)
+		t.Errorf("with force, SFP2 should move to native VLAN 99: %+v", changes)
 	}
 }
 
-// TestGardeFouProtegeLeCasClassiqueNonTague : l'autre sens, celui que couvrait already la
-// rule de l'Instant On.
+// TestSafeguardProtectsClassicUntaggedCase: the other direction, already covered by the Instant On rule.
 //
-// Un port actif dont l'administration arrive NON TAGGED — VLAN natif egal au VLAN de
-// management — ne doit pas changer de VLAN natif : l'administration deviendrait tagged
-// et access tomberait.
-func TestGardeFouProtegeLeCasClassiqueNonTague(t *testing.T) {
+// An active port whose admin traffic arrives UNTAGGED — native VLAN equal to the management
+// VLAN — must not change native VLAN: admin would become tagged and access would break.
+func TestSafeguardProtectsClassicUntaggedCase(t *testing.T) {
 	var current, rows = planDeReference(t)
-	// On place the device dans le cas classique : SFP2 est en access dans le VLAN de
-	// management, et il porte le lien.
+	// Put the device in the classic case: SFP2 is access on the management VLAN and carries the link.
 	current.Ports["SFP2"] = PortState{Mode: "access", PVID: 99}
 
 	var changes, skipped, err = planDe(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 100}},
 		facadeCSS326(), map[int]string{99: "VLAN de management du plan du site"}, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(changes) != 0 {
-		t.Errorf("le port qui porte l'administration non tagged a been modifie : %+v", changes)
+		t.Errorf("port carrying untagged admin was modified: %+v", changes)
 	}
-	if len(skipped) != 1 || !strings.Contains(skipped[0], "NON TAGGED") {
-		t.Fatalf("le motif doit dire que l'administration arrive non tagged : %v", skipped)
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "UNTAGGED") {
+		t.Fatalf("reason must say admin arrives untagged: %v", skipped)
 	}
 }
 
-// TestVLAN1JamaisCreeDansLaTable : le VLAN 1 est un default IMPLICITE du hardware.
+// TestVLAN1NeverCreatedInTable: VLAN 1 is an IMPLICIT hardware default.
 //
-// OBSERVED : les deux cages de l'reference device ont un VLAN natif de 1 alors
-// que sa table des VLAN ne contient que les VLAN 99 et 100. Le VLAN 1 n'y a pas de
-// ligne, et il ne doit surtout pas en recevoir une — la create ferait du VLAN 1 un VLAN
-// declared dont seuls les ports listes seraient membres, i.e. changerait le
-// comportement de tout le trafic untagged de the device, sans que personne l'ait
-// requested.
-func TestVLAN1JamaisCreeDansLaTable(t *testing.T) {
+// OBSERVED: both cages on the reference device have native VLAN 1 while its VLAN table
+// contains only VLANs 99 and 100. VLAN 1 has no row there, and must not receive one —
+// creating it would make VLAN 1 a declared VLAN whose only members are listed ports, i.e.
+// change behavior of all untagged traffic on the device, without anyone having requested it.
+func TestVLAN1NeverCreatedInTable(t *testing.T) {
 	var rows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
-		t.Fatalf("/vlan.b : %v", err)
+		t.Fatalf("/vlan.b: %v", err)
 	}
 	var out, created, buildErr = withVLANs(rows,
 		[]VLAN{{ID: 1, Name: "default"}, {ID: 42}}, 26, nil)
 	if buildErr != nil {
-		t.Fatalf("completion refused : %v", buildErr)
+		t.Fatalf("completion refused: %v", buildErr)
 	}
 	if !reflect.DeepEqual(created, []int{42}) {
-		t.Errorf("VLAN created = %v, expected [42] seulement : le VLAN 1 ne s'ajoute pas", created)
+		t.Errorf("created VLAN = %v, expected [42] only: VLAN 1 is not added", created)
 	}
 	if rowFor(out, 1) != nil {
-		t.Error("une ligne a been created pour le VLAN 1")
+		t.Error("a row was created for VLAN 1")
 	}
 
-	// Et un port dont le VLAN natif est 1 ne reclame AUCUNE appartenance : chercher une
-	// ligne pour le VLAN 1 et se plaindre de son absence ferait echouer la pose sur un
-	// device parfaitement configure.
+	// And a port whose native VLAN is 1 requests NO membership: looking for a VLAN 1 row
+	// and complaining about its absence would fail apply on a perfectly configured device.
 	var current, table = planDeReference(t)
 	var changes, skipped, planErr = planDe(current, table,
 		map[string]PortState{"Port1": {Mode: "trunk", PVID: 1, Tagged: []int{99}}},
 		facadeCSS326(), map[int]string{99: "plan"}, false)
 	if planErr != nil {
-		t.Fatalf("plan refused : %v", planErr)
+		t.Fatalf("plan refused: %v", planErr)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("un VLAN natif de 1 ne doit rien faire echouer : %v", skipped)
+		t.Errorf("native VLAN 1 must not cause any failure: %v", skipped)
 	}
 	if len(changes) != 1 || changes[0].PVID != 1 || len(changes[0].Join) != 0 {
-		t.Errorf("Port1 devait seulement passer en VLAN natif 1, sans appartenance a "+
-			"poser (il est already membre du 99) : %+v", changes)
+		t.Errorf("Port1 should only move to native VLAN 1, with no membership to "+
+			"set (already a member of 99): %+v", changes)
 	}
 }
 
-// TestPlanAutoriseLAjoutDeVLANTagueSurLePortDeSession : ce que le garde-fou NE bloque
-// pas, et il ne faut pas qu'il le bloque.
+// TestPlanAllowsAddingTaggedVLANOnSessionPort: what the safeguard does NOT block, and must not block.
 //
-// Ajouter un VLAN TAGGED a un port ne touche pas a son trafic untagged, donc ne coupe
-// pas la session. Refuser cela aussi rendrait un uplink impossible a configurer, et
-// c'est justement le port par lequel tout le site passe.
-func TestPlanAutoriseLAjoutDeVLANTagueSurLePortDeSession(t *testing.T) {
+// Adding a TAGGED VLAN to a port does not touch its untagged traffic, so it does not cut
+// the session. Refusing this too would make an uplink impossible to configure, and that is
+// precisely the port through which the entire site passes.
+func TestPlanAllowsAddingTaggedVLANOnSessionPort(t *testing.T) {
 	var current, rows = planDeReference(t)
-	// Le VLAN 42 doit exister dans la table pour qu'un port puisse le rejoindre.
+	// VLAN 42 must exist in the table for a port to join it.
 	var complete, _, err = withVLANs(rows, []VLAN{{ID: 42}}, 26, nil)
 	if err != nil {
-		t.Fatalf("completion refused : %v", err)
+		t.Fatalf("completion refused: %v", err)
 	}
 
-	// SFP2 garde son VLAN natif de 1 et gagne le VLAN 42 tagged.
+	// SFP2 keeps native VLAN 1 and gains tagged VLAN 42.
 	var desired = map[string]PortState{
 		"SFP2": {Mode: "trunk", PVID: 1, Tagged: []int{42, 99, 100}},
 	}
 	var changes, skipped, planErr = planDe(current, complete, desired, facadeCSS326(),
 		map[int]string{99: "VLAN de management declared par the device"}, false)
 	if planErr != nil {
-		t.Fatalf("plan refused : %v", planErr)
+		t.Fatalf("plan refused: %v", planErr)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("l'ajout d'un VLAN tagged ne touche pas au trafic untagged : cela ne "+
-			"doit pas be bloque. Refus : %v", skipped)
+		t.Errorf("adding a tagged VLAN does not touch untagged traffic: this must "+
+			"not be blocked. Refusal: %v", skipped)
 	}
 	if len(changes) != 1 {
-		t.Fatalf("%d changement(s), expected 1 : %+v", len(changes), changes)
+		t.Fatalf("%d change(s), expected 1: %+v", len(changes), changes)
 	}
-	// Le port est ALREADY membre de 99 et 100 : seul le 42 doit be rejoint, et le VLAN
-	// natif ne doit pas bouger.
+	// The port is ALREADY a member of 99 and 100: only 42 must be joined, and native VLAN must not move.
 	if !reflect.DeepEqual(changes[0].Join, []int{42}) {
-		t.Errorf("VLAN a rejoindre = %v, expected [42] — le port est already membre de 99 et 100",
+		t.Errorf("VLANs to join = %v, expected [42] — port is already a member of 99 and 100",
 			changes[0].Join)
 	}
 	if changes[0].PVID != 0 {
-		t.Errorf("le VLAN natif ne change pas : PVID = %d, expected 0 (inchange)",
+		t.Errorf("native VLAN does not change: PVID = %d, expected 0 (unchanged)",
 			changes[0].PVID)
 	}
 	if changes[0].Index != 25 {
-		t.Errorf("index SwOS de SFP2 = %d, expected 25", changes[0].Index)
+		t.Errorf("SwOS index of SFP2 = %d, expected 25", changes[0].Index)
 	}
 }
 
-// TestPlanModifieLibrementUnPortSansLien : sinon « adopter » ne voudrait rien dire.
+// TestPlanFreelyModifiesPortWithoutLink: otherwise "adopt" would mean nothing.
 //
-// Sur un device sorti d'usine, tous les ports partagent le same VLAN par default,
-// qui est aussi celui de l'administration. Sans la condition de LIEN, aucun port ne
-// serait jamais modifiable.
-func TestPlanModifieLibrementUnPortSansLien(t *testing.T) {
+// On a factory-default device, all ports share the same default VLAN, which is also the
+// admin VLAN. Without the LINK condition, no port would ever be modifiable.
+func TestPlanFreelyModifiesPortWithoutLink(t *testing.T) {
 	var current, rows = planDeReference(t)
-	// Port1 porte le VLAN natif 100 et n'a AUCUN lien dans la capture.
+	// Port1 carries native VLAN 100 and has NO link in the capture.
 	var desired = map[string]PortState{"Port1": {Mode: "access", PVID: 99}}
 
 	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
 		map[int]string{99: "VLAN de management declared par the device"}, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(skipped) != 0 {
-		t.Errorf("un port sans lien ne peut porter aucune session : %v", skipped)
+		t.Errorf("a port without link cannot carry any session: %v", skipped)
 	}
 	if len(changes) != 1 || changes[0].PVID != 99 || changes[0].Index != 0 {
-		t.Fatalf("Port1 devait passer en VLAN natif 99 : %+v", changes)
+		t.Fatalf("Port1 should move to native VLAN 99: %+v", changes)
 	}
-	// Il est already membre de 99 dans la capture : rien a rejoindre.
+	// It is already a member of 99 in the capture: nothing to join.
 	if len(changes[0].Join) != 0 {
-		t.Errorf("VLAN a rejoindre = %v, expected aucun — Port1 est already membre du 99",
+		t.Errorf("VLANs to join = %v, expected none — Port1 is already a member of 99",
 			changes[0].Join)
 	}
 }
 
-// TestPlanEpargneToutPortActifQuandLeVLANDadminEstInconnu : le cas de the device
-// sorti d'usine.
+// TestPlanSparesAllActivePortsWhenAdminVLANUnknown: the factory-default device case.
 //
-// `avln` a 0 veut dire « administration accepted depuis n'importe quel VLAN ». Rien ne
-// dit alors quel port porte la session, et la protection se reporte sur TOUS les ports
-// actifs — plus conservateur que le cas nominal, ce qui est le bon sens.
-func TestPlanEpargneToutPortActifQuandLeVLANDadminEstInconnu(t *testing.T) {
+// `avln` at 0 means "admin accepted from any VLAN". Nothing then says which port carries
+// the session, and protection falls back to ALL active ports — more conservative than the
+// nominal case, which is the right tradeoff.
+func TestPlanSparesAllActivePortsWhenAdminVLANUnknown(t *testing.T) {
 	var current, rows = planDeReference(t)
 	current.MgmtVLAN = 0
 
 	var desired = map[string]PortState{
-		"SFP2":  {Mode: "access", PVID: 100}, // port actif : epargne
-		"Port1": {Mode: "access", PVID: 99},  // port sans lien : modifiable
+		"SFP2":  {Mode: "access", PVID: 100}, // active port: spared
+		"Port1": {Mode: "access", PVID: 99},  // port without link: modifiable
 	}
 	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
 		map[int]string{}, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "SFP2") {
-		t.Errorf("le port actif devait be epargne : %v", skipped)
+		t.Errorf("active port should be spared: %v", skipped)
 	}
-	if !strings.Contains(skipped[0], "n'importe quel VLAN") {
-		t.Errorf("le motif doit expliquer POURQUOI on ne sait pas : %q", skipped[0])
+	if !strings.Contains(skipped[0], "any VLAN whatsoever") {
+		t.Errorf("reason must explain WHY we do not know: %q", skipped[0])
 	}
 	if len(changes) != 1 || changes[0].Port != "Port1" {
-		t.Errorf("Port1 devait rester modifiable : %+v", changes)
+		t.Errorf("Port1 should remain modifiable: %+v", changes)
 	}
 }
 
-// TestPlanIgnoreCeQuilNeGerePas : « absent = non managed ».
+// TestPlanIgnoresWhatItDoesNotManage: "absent = unmanaged".
 //
-// meshcraft ne reclame pas la property de ce qu'il n'a jamais applied, et un nom de port
-// qu'il ne comprend pas ne doit surtout pas devenir une write au hasard.
-func TestPlanIgnoreCeQuilNeGerePas(t *testing.T) {
+// meshcraft does not claim ownership of what it never applied, and a port name it does
+// not understand must not become a random write.
+func TestPlanIgnoresWhatItDoesNotManage(t *testing.T) {
 	var current, rows = planDeReference(t)
 	var desired = map[string]PortState{
 		"Port1": {Mode: "libre", PVID: 99},
 		"Port2": {},
-		"GE99":  {Mode: "access", PVID: 99}, // port inexistant sur ce model
+		"GE99":  {Mode: "access", PVID: 99}, // nonexistent port on this model
 	}
 	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
 		map[int]string{99: "plan"}, false)
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(changes) != 0 {
-		t.Errorf("aucun de ces ports ne doit be written : %+v", changes)
+		t.Errorf("none of these ports must be written: %+v", changes)
 	}
-	// Le port inexistant, en revanche, doit be SIGNALE : le taire laisserait croire
-	// que le plan a been applied en entier.
+	// The nonexistent port, however, must be REPORTED: staying silent would suggest the plan was fully applied.
 	if len(skipped) != 1 || !strings.Contains(skipped[0], "GE99") {
-		t.Errorf("le port inexistant doit be flagged, pas ignored en silence : %v", skipped)
+		t.Errorf("nonexistent port must be flagged, not silently ignored: %v", skipped)
 	}
 }

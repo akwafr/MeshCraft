@@ -15,7 +15,7 @@ func TestReferenceDeviceState(t *testing.T) {
 	var st = stateFromFixtures(t)
 
 	if st.BridgeName != "bridge" {
-		t.Errorf("bridge = %q, expected \u00ab bridge \u00bb", st.BridgeName)
+		t.Errorf("bridge = %q, expected 'bridge'", st.BridgeName)
 	}
 	// Filtering is ACTIVE on this device, and that is what makes every write error
 	// immediately effective: there is no grace period.
@@ -40,9 +40,9 @@ func TestReferenceDeviceState(t *testing.T) {
 // egress members of VLAN 100.
 //
 // That is incomplete configuration, perfectly accepted by the device, and silent. A
-// connector that derived PVID from membership would read « access on VLAN 1 » where the
+// connector that derived PVID from membership would read 'access on VLAN 1' where the
 // device does something else — and an apply would compare against an imaginary state.
-// This test exists so nobody « simplifies » the read by reintroducing derivation.
+// This test exists so nobody 'simplifies' the read by reintroducing derivation.
 func TestPVIDIsNotDerivedFromMembership(t *testing.T) {
 	var st = stateFromFixtures(t)
 
@@ -60,9 +60,9 @@ func TestPVIDIsNotDerivedFromMembership(t *testing.T) {
 	if len(ether1.Tagged) != 0 {
 		t.Errorf("ether1 tagged = %v, expected none", ether1.Tagged)
 	}
-	// Mode stays « access »: PVID alone says the port is managed.
+	// Mode stays 'access': PVID alone says the port is managed.
 	if ether1.Mode != "access" {
-		t.Errorf("ether1 mode = %q, expected \u00ab access \u00bb", ether1.Mode)
+		t.Errorf("ether1 mode = %q, expected 'access'", ether1.Mode)
 	}
 	// Hardware offload is observed active on all ports.
 	if !ether1.HWOffload {
@@ -80,7 +80,7 @@ func TestUplinkTrunkAndTaggedVLANs(t *testing.T) {
 
 	var uplink = st.Ports["sfp-sfpplus2"]
 	if uplink.Mode != "trunk" {
-		t.Errorf("sfp-sfpplus2 mode = %q, expected \u00ab trunk \u00bb", uplink.Mode)
+		t.Errorf("sfp-sfpplus2 mode = %q, expected 'trunk'", uplink.Mode)
 	}
 	// Sorted: unstable order would make a port that did not change blink.
 	if !reflect.DeepEqual(uplink.Tagged, []int{99, 100}) {
@@ -158,10 +158,10 @@ func TestMgmtVLANDerivedFromAddress(t *testing.T) {
 			"wrong VLAN", st.MgmtVLAN)
 	}
 	if st.MgmtInterface != "vlan99" {
-		t.Errorf("management interface = %q, expected \u00ab vlan99 \u00bb", st.MgmtInterface)
+		t.Errorf("management interface = %q, expected 'vlan99'", st.MgmtInterface)
 	}
 	if st.MgmtAddress != "10.99.0.54/24" {
-		t.Errorf("management address = %q, expected \u00ab 10.99.0.54/24 \u00bb",
+		t.Errorf("management address = %q, expected '10.99.0.54/24'",
 			st.MgmtAddress)
 	}
 }
@@ -175,7 +175,7 @@ func TestMgmtVLANDerivedFromAddress(t *testing.T) {
 // `Ports[BridgeName]`: the bridge is never a `/interface/bridge/port` record, so that
 // map never carries its name. The previous version of this test fabricated that entry by
 // hand — it validated a path the real read never takes, and MgmtVLAN stayed at 0 on
-// every factory device, apply then refusing to write « unknown management VLAN ».
+// every factory device, apply then refusing to write 'unknown management VLAN'.
 func TestFactoryAddressAloneDoesNotDesignateTaggedVLAN(t *testing.T) {
 	var st = DeviceState{
 		BridgeName: "bridge",
@@ -189,7 +189,7 @@ func TestFactoryAddressAloneDoesNotDesignateTaggedVLAN(t *testing.T) {
 	foldMgmt(addrs, nil, &st)
 
 	if st.MgmtInterface != "bridge" {
-		t.Errorf("management interface = %q, expected \u00ab bridge \u00bb", st.MgmtInterface)
+		t.Errorf("management interface = %q, expected 'bridge'", st.MgmtInterface)
 	}
 	// VLAN comes from the bridge PVID: untagged administration.
 	if st.MgmtVLAN != 1 {
@@ -216,8 +216,8 @@ func TestWithoutAddressNoVLANIsAsserted(t *testing.T) {
 
 // TestDynamicVLANDistinguishedFromStatic: RouterOS fabricates entries on its own.
 //
-// Observed: VLAN 1 on the reference device is `dynamic: true` with comment « added by
-// pvid » — the device created it because ports have that PVID. Such an entry has no
+// Observed: VLAN 1 on the reference device is `dynamic: true` with comment 'added by
+// pvid' — the device created it because ports have that PVID. Such an entry has no
 // stable `.id`, cannot be modified, and disappears when its reason disappears.
 // Confusing it with an ordinary entry would fail writes without the message saying why.
 func TestDynamicVLANDistinguishedFromStatic(t *testing.T) {
@@ -230,7 +230,7 @@ func TestDynamicVLANDistinguishedFromStatic(t *testing.T) {
 	}
 	if !byID[1].Dynamic {
 		t.Error("VLAN 1 is DYNAMIC on the reference device " +
-			"(observed `dynamic: true`, comment « added by pvid »): believing it " +
+			"(observed `dynamic: true`, comment 'added by pvid'): believing it " +
 			"static would attempt writes the device will refuse")
 	}
 	if byID[99].Dynamic || byID[100].Dynamic {
@@ -280,7 +280,7 @@ func TestParseVLANIDs(t *testing.T) {
 			var got = ParseVLANIDs(c.spec)
 			if c.name == "full bounded space" {
 				if len(got) != 4094 || got[0] != 1 || got[len(got)-1] != 4094 {
-					t.Errorf("\u00ab 1-4094 \u00bb must expand to 4094 identifiers from 1 to 4094, "+
+					t.Errorf("'1-4094' must expand to 4094 identifiers from 1 to 4094, "+
 						"got %d (from %v to %v)", len(got), got[0], got[len(got)-1])
 				}
 				return
@@ -310,8 +310,8 @@ func TestPortsFromOtherBridgeIgnored(t *testing.T) {
 
 	var _, present = got["ether2"]
 	if present {
-		t.Error("ether2 belongs to bridge \u00ab bridge-guests \u00bb: reading it in the " +
-			"\u00ab bridge \u00bb table would compare a port against the wrong " +
+		t.Error("ether2 belongs to bridge 'bridge-guests': reading it in the " +
+			"'bridge' table would compare a port against the wrong " +
 			"configuration, and writing on it would have no visible effect")
 	}
 	if got["ether1"].PVID != 10 {

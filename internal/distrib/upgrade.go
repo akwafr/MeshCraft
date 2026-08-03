@@ -11,17 +11,17 @@ import (
 	"time"
 )
 
-// Version cible du proxy et descripteur de mise a jour.
+// Target version of the proxy and upgrade descriptor.
 //
-// La source de verite est ce que le controleur SERT actually : le fichier
-// `artifacts/VERSION` (horodatage de build, written par le Dockerfile) et les
-// binaires eux-memes, haches a la demande. La note de specification parlait d'un
-// `manifest.json` written au build ; hacher les fichiers servis est strictement
-// plus honnete qu'un manifeste applied a cote d'eux, qui pourrait mentir.
+// The source of truth is what the controller actually SERVES: the
+// `artifacts/VERSION` file (build timestamp, written by the Dockerfile) and
+// the binaries themselves, hashed on demand. The original spec note talked
+// about a `manifest.json` written at build time; hashing the served files is
+// strictly more honest than a manifest sitting next to them, which could lie.
 //
-// Cf. docs/01-Architecture/Versionnage et mise a jour du proxy.
+// Cf. docs/01-Architecture/Versionnage et mise à jour du proxy.
 
-// Upgrade describes la mise a jour proposee a un proxy.
+// Upgrade describes the upgrade offered to a proxy.
 type Upgrade struct {
 	Version string `json:"version"`
 	URL     string `json:"url"`
@@ -38,15 +38,16 @@ type versionCache struct {
 
 var artifactsVersion versionCache
 
-// TargetVersion renvoie la version des binaires servis, ou "" si le controleur
-// n'en sert pas (build local, repertoire absent). Vide = aucune mise a jour ne
-// sera proposee : mieux vaut ne rien proposer que proposer l'inconnu.
+// TargetVersion returns the version of the served binaries, or "" if the
+// controller doesn't serve any (local build, directory absent). Empty means
+// no upgrade will be offered: better to offer nothing than to offer the
+// unknown.
 func (s *Service) TargetVersion() string {
 	var path = filepath.Join(s.Cfg.ArtifactsDir, "VERSION")
 	artifactsVersion.mu.Lock()
 	defer artifactsVersion.mu.Unlock()
-	// Relecture au plus une fois par seconde : le heartbeat de tout un parc ne
-	// doit pas se transformer en rafale de stat().
+	// Re-read at most once per second: the heartbeat of an entire fleet must
+	// not turn into a burst of stat() calls.
 	if time.Since(artifactsVersion.checked) < time.Second {
 		return artifactsVersion.value
 	}
@@ -69,49 +70,54 @@ func (s *Service) TargetVersion() string {
 	return artifactsVersion.value
 }
 
-// buildStamp reconnait un horodatage de build UTC AAAAMMJJ.HHMMSS, et RIEN d'autre.
+// buildStamp recognizes a UTC build timestamp YYYYMMDD.HHMMSS, and NOTHING
+// else.
 //
-// Reconnaitre la forme n'est pas une politesse de validation : c'est ce qui distingue
-// « plus ancien » de « incomparable », et les deux menent a des decisions opposees.
+// Recognizing the shape is not a validation nicety: it's what distinguishes
+// "older" from "not comparable", and the two lead to opposite decisions.
 var buildStamp = regexp.MustCompile(`^\d{8}\.\d{6}$`)
 
-// IsNewer dit si `candidate` doit REMPLACER `current`.
+// IsNewer reports whether `candidate` must REPLACE `current`.
 //
-// Le format AAAAMMJJ.HHMMSS est a largeur fixe : entre deux horodatages, la
-// comparaison lexicographique EST la comparaison chronologique, sans parseur.
+// The YYYYMMDD.HHMMSS format is fixed-width: between two timestamps,
+// lexicographic comparison IS chronological comparison, with no parser
+// needed.
 //
-// # LE TRAP QUE CETTE FONCTION PORTAIT, ET CE QU'IL A COSTE
+// # THE TRAP THIS FUNCTION USED TO CARRY, AND WHAT IT COST
 //
-// Le corps was `candidate > current`, et son commentaire affirmait qu'une version
-// d'un autre format « n'est jamais plus recente — elle est simplement differente, ce
-// qui suffit a decider ». It was faux, et faux dans le sens le plus couteux :
+// The body used to be `candidate > current`, and its comment claimed that a
+// version in a different format "is never newer — it's simply different,
+// which is enough to decide". That was wrong, and wrong in the most
+// expensive possible way:
 //
-//	« 20260729.213000 » > « dev »  →  FAUX
+//	"20260729.213000" > "dev"  →  FALSE
 //
-// Les chiffres se trient AVANT les lettres en ASCII. Un proxy dont la version est
-// « dev » est donc plus « recent » que tout build passe, present et futur : le
-// controleur ne lui propose RIEN, l'interface l'affiche « a jour », et il le reste
-// pour toujours. C'est tres exactement ce qui a been observed sur `proxy-akwalan`,
-// annonce `up_to_date` en version `dev` — un `docker compose pull` ne pouvait rien y
-// changer non plus, puisque le registre integrated servait le same build.
+// Digits sort BEFORE letters in ASCII. A proxy whose version is "dev" is
+// therefore "newer" than any build, past, present, or future: the
+// controller offers it NOTHING, the UI displays it as "up to date", and it
+// stays that way forever. This is exactly what was observed on
+// `proxy-akwalan`, reporting `up_to_date` at version `dev` — a `docker
+// compose pull` couldn't fix it either, since the embedded registry was
+// serving the same build.
 //
-// Et cela contredisait la rule de cette page : « aucune intervention sur la machine
-// du proxy, jamais ». Un proxy bloque a `dev` ne se repare QUE sur sa machine.
+// And this contradicted this page's rule: "no intervention on the proxy's
+// machine, ever." A proxy stuck at `dev` can only be fixed ON its machine.
 //
-// # LA RULE, DANS LES DEUX SENS
+// # THE RULE, IN BOTH DIRECTIONS
 //
-//   - une CANDIDATE qui n'est pas un horodatage n'est jamais proposee. C'est le
-//     principe already written pour la version cible vide : mieux vaut ne rien proposer que
-//     proposer l'inconnu ;
-//   - une COURANTE qui n'est pas un horodatage est a REMPLACER, sans comparaison. Elle
-//     ne se situe pas dans le temps, donc il n'y a rien a comparer — et un proxy qui
-//     porte une version que la string de build ne fabrique plus (cf. le garde-fou du
-//     Dockerfile) est precisely celui qu'il faut sortir de there.
+//   - a CANDIDATE that isn't a timestamp is never offered. This is the same
+//     principle already applied to an empty target version: better to offer
+//     nothing than to offer the unknown;
+//   - a CURRENT that isn't a timestamp is to be REPLACED, without
+//     comparison. It has no position in time, so there's nothing to
+//     compare — and a proxy carrying a version that the build string no
+//     longer produces (cf. the Dockerfile guard) is precisely the one that
+//     needs to be moved off of it.
 //
-// La consequence a connaitre : un proxy compile a la main, hors `make build`, se verra
-// proposer le build empaquete du controleur. C'est voulu. Le refuser demande
-// `auto_upgrade = false` ou un epinglage, i.e. une decision explicite, pas un
-// effet de bord d'une comparaison de strings.
+// The consequence worth knowing: a proxy built by hand, outside `make
+// build`, will be offered the controller's packaged build. This is
+// intentional. Refusing it requires `auto_upgrade = false` or pinning, i.e.
+// an explicit decision, not a side effect of a string comparison.
 func IsNewer(candidate, current string) bool {
 	if !buildStamp.MatchString(candidate) {
 		return false
@@ -122,9 +128,10 @@ func IsNewer(candidate, current string) bool {
 	return candidate > current
 }
 
-// UpgradeFor construit le descripteur pour l'architecture annoncee par le proxy.
-// Renvoie nil si rien n'est servi pour cette plateforme : un proxy armv7 sur un
-// controleur qui ne publie que amd64 ne doit pas recevoir d'offre.
+// UpgradeFor builds the descriptor for the architecture reported by the
+// proxy. Returns nil if nothing is served for that platform: an armv7 proxy
+// talking to a controller that only publishes amd64 must not receive an
+// offer.
 func (s *Service) UpgradeFor(r *http.Request, version, osName, arch string) *Upgrade {
 	if version == "" {
 		return nil

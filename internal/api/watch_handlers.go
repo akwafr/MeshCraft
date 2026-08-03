@@ -46,6 +46,19 @@ func (s *Server) PushWatchTo(ctx context.Context, proxyID string) {
 	// it replaces the whole set ENTIRELY: a device removed from watch or attached elsewhere
 	// ceases to be authorized the instant it ceases to be watched, with no expiry to manage.
 	s.recordProxyScope(proxyID, cfg)
+	// AND FORGET WHAT THIS PROXY NO LONGER WATCHES.
+	//
+	// A verdict only gets refreshed by a proxy that still watches the device, so a
+	// row left behind by a detached proxy would hold its last opinion forever with
+	// nothing able to overwrite it. That is not hypothetical: it is precisely how
+	// the 2026-08-02 outage stayed stuck — proxies emit on TRANSITION only, so the
+	// collector still holding "up" had nothing to say, and the false "down" simply
+	// stayed.
+	//
+	// Runs after the push and after recordProxyScope, on the same principle: the
+	// controller forgets an observation only once the proxy has actually been told
+	// to stop making it.
+	s.forgetDroppedReach(ctx, proxyID, cfg)
 	// The summary reads as a SUBTRACTION, and that is what attachment change brings
 	// (migration 0022): "this proxy pings thirty devices and polls only ten" is now normal,
 	// whereas the two numbers alone looked like a failure. They especially did not say which
@@ -758,7 +771,7 @@ func (s *Server) handleProxyEvent(proxyID string, ev tunnel.Event) {
 
 	switch ev.Type {
 	case tunnel.EventDeviceUp, tunnel.EventDeviceDown:
-		s.applyDeviceState(ctx, ev)
+		s.applyDeviceState(ctx, proxyID, ev)
 	case tunnel.EventSNMPUp, tunnel.EventSNMPDown:
 		s.applySNMPState(ctx, ev)
 	case tunnel.EventPortUp, tunnel.EventPortDown:
@@ -803,7 +816,7 @@ func (s *Server) handleProxyEvent(proxyID string, ev tunnel.Event) {
 // snapshot would make every re-announcement "different", therefore logged: deduplication would
 // never bite. The count is an EVENT property, not state — it stays in the log message, where
 // it is informative, and leaves the note, which must describe stable state.
-func (s *Server) applyDeviceState(ctx context.Context, ev tunnel.Event) {
+func (s *Server) applyDeviceState(ctx context.Context, proxyID string, ev tunnel.Event) {
 	if ev.DeviceID == "" {
 		return
 	}
@@ -813,16 +826,42 @@ func (s *Server) applyDeviceState(ctx context.Context, ev tunnel.Event) {
 		s.Renumber != nil && s.Renumber.Has(ev.DeviceID, ev.IP) {
 		go s.confirmRenumberCandidate(ev.DeviceID, ev.IP)
 	}
-	var status = "ok"
-	var note = ""
+	// THIS PROXY'S OBSERVATION IS RECORDED, IT IS NOT THE VERDICT.
+	//
+	// The distinction is the whole repair (cf. reachability.go and migration
+	// 0035). Writing `devices.status` straight from the event is what let a proxy
+	// on the wrong network mark four live devices down 3.7 seconds after it first
+	// connected, simply by speaking last.
+	var up = ev.Type != tunnel.EventDeviceDown
+	var reachErr = s.Store.SetProxyReach(ctx, ev.DeviceID, proxyID, up,
+		ev.Misses, ev.LatencyMS)
+	if reachErr != nil {
+		slog.Error("proxy observation not recorded", "err", reachErr,
+			"device", ev.DeviceID, "proxy_id", proxyID)
+		return
+	}
+	var obs, obsErr = s.Store.ProxyReachFor(ctx, ev.DeviceID)
+	if obsErr != nil {
+		slog.Error("proxy observations not read", "err", obsErr, "device", ev.DeviceID)
+		return
+	}
+	var verdict = judgeReach(obs, s.Tunnels.Connected)
+	var status, note = verdict.Status, verdict.Note
+
 	var severity = model.SevNotice
 	var message = "Device online (" + itoa(ev.LatencyMS) + " ms)"
-	if ev.Type == tunnel.EventDeviceDown {
-		status = "off"
-		note = "no longer responds to ping"
+	if status == "off" {
 		severity = model.SevWarning
 		message = "Device unreachable: " + note +
 			" (" + itoa(ev.Misses) + " consecutive misses)"
+	} else if status == "unknown" {
+		// Nobody has concluded. Nothing to announce and nothing to journal:
+		// silence is the honest report, and it is also what keeps a freshly
+		// connected proxy from producing an event per device.
+		severity = model.SevNotice
+		message = "No proxy has concluded on this device yet"
+	} else if verdict.Confirmed {
+		message = "Device online (" + itoa(ev.LatencyMS) + " ms), " + note
 	}
 	if ev.Resync {
 		// We do not claim to know WHEN: we state what we see and that we missed it.
@@ -851,6 +890,13 @@ func (s *Server) applyDeviceState(ctx context.Context, ev tunnel.Event) {
 	// Reachability transition: exactly what fleet screens expect without asking. No user HTTP
 	// request here, so no middleware to do it for us.
 	s.NotifySiteChanged(siteID, ChangeDevice)
+	if status == "unknown" {
+		// The screen is refreshed — the badge did change — but nothing is
+		// JOURNALED. "unknown" is the absence of a conclusion, and the two event
+		// types available both assert one: filing it as `device.recovered` would
+		// put a recovery in the log for a device nobody has looked at yet.
+		return
+	}
 	_ = s.Store.InsertEvent(ctx, model.Event{
 		SiteID: &siteID, DeviceID: &deviceID,
 		Type:     map[bool]string{true: "device.unreachable", false: "device.recovered"}[status == "off"],
@@ -1168,4 +1214,79 @@ func frMinutes(d time.Duration) string {
 		return "less than a minute"
 	}
 	return itoa(m) + " min"
+}
+
+// forgetDroppedReach removes this proxy's observations about devices it no longer
+// watches, and recomputes the status of each one.
+//
+// The recomputation is the point. Deleting the row silently would leave
+// `devices.status` on a verdict whose only source has just been withdrawn — the
+// device would keep showing the colour a proxy gave it before losing the right to
+// have an opinion.
+//
+// Best-effort throughout, and deliberately quiet when there is nothing to do,
+// which is the overwhelming majority of pushes: a watch set that did not change
+// removes no rows and touches no device.
+func (s *Server) forgetDroppedReach(ctx context.Context, proxyID string,
+	cfg tunnel.WatchConfig) {
+	var keep = make([]string, 0, len(cfg.Targets))
+	var t tunnel.WatchTarget
+	for _, t = range cfg.Targets {
+		if t.DeviceID != "" {
+			keep = append(keep, t.DeviceID)
+		}
+	}
+	var dropped, err = s.Store.ForgetProxyReach(ctx, proxyID, keep)
+	if err != nil {
+		slog.Warn("stale proxy observations not cleared", "proxy_id", proxyID,
+			"err", err.Error())
+		return
+	}
+	if len(dropped) == 0 {
+		return
+	}
+	slog.Info("proxy observations forgotten", "proxy_id", proxyID,
+		"devices", len(dropped),
+		"why", "these devices are no longer in this proxy's watch")
+	var deviceID string
+	for _, deviceID = range dropped {
+		s.recomputeReach(ctx, deviceID)
+	}
+}
+
+// recomputeReach re-derives one device's status from the observations that REMAIN.
+//
+// Called when the set of observers changes rather than when an observation does —
+// a proxy detached, revoked, or no longer covering the site. Without it, losing an
+// observer would leave its verdict standing indefinitely.
+func (s *Server) recomputeReach(ctx context.Context, deviceID string) {
+	var obs, err = s.Store.ProxyReachFor(ctx, deviceID)
+	if err != nil {
+		return
+	}
+	var verdict = judgeReach(obs, s.Tunnels.Connected)
+	var changed, setErr = s.Store.SetDeviceStatus(ctx, deviceID, verdict.Status, verdict.Note)
+	if setErr != nil || !changed {
+		return
+	}
+	var dev, getErr = s.Store.GetDevice(ctx, deviceID)
+	if getErr != nil {
+		return
+	}
+	var siteID = dev.SiteID
+	s.NotifySiteChanged(siteID, ChangeDevice)
+	if verdict.Status == "unknown" {
+		return
+	}
+	var id = deviceID
+	_ = s.Store.InsertEvent(ctx, model.Event{
+		SiteID: &siteID, DeviceID: &id,
+		Type: map[bool]string{true: "device.unreachable",
+			false: "device.recovered"}[verdict.Status == "off"],
+		Severity: map[bool]int{true: model.SevWarning,
+			false: model.SevNotice}[verdict.Status == "off"],
+		Message: "\"" + dev.Name + "\" — status re-established after a change of " +
+			"observers: " + verdict.Note,
+		Actor: "monitoring",
+	})
 }

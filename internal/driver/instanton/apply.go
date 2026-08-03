@@ -387,7 +387,7 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, err
 		// Does the port currently carry administration untagged?
 		var now = current.Ports[name]
 		var why = protected[now.PVID]
-		if why != "" && want.PVID != now.PVID && current.LinkUp[name] && !force {
+		if why != "" && want.PVID != now.PVID && current.HasLink(name) && !force {
 			out.Skipped = append(out.Skipped, fmt.Sprintf(
 				"%s not modified: it has an ACTIVE link and is an untagged member of "+
 					"VLAN %d (%s) — changing its native VLAN would very likely cut "+

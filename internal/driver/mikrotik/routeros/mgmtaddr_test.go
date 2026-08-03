@@ -11,7 +11,7 @@ import (
 // This test is also the OBSERVATION that justifies per-device addressing mode
 // (migration 0027): it finds, on hardware, that a CRS326 adopted in the correct
 // management subnet is on a FIXED address (`"dynamic":"false"`), while the site plan
-// says « external DHCP ». Same finding as on both CSS326 units, by a completely
+// says 'external DHCP'. Same finding as on both CSS326 units, by a completely
 // different read path.
 
 // TestMgmtAddrReel: /ip/address as the device served it.
@@ -63,7 +63,7 @@ func TestMgmtAddrDynamique(t *testing.T) {
 //     as THE gateway would look for a routing problem where there is none;
 //   - a route that is not the default route is not a management gateway;
 //   - resolvers pushed by DHCP live in `dynamic-servers`, separately from those an
-//     administrator entered. Reading only one would show « no DNS » on a device that
+//     administrator entered. Reading only one would show 'no DNS' on a device that
 //     resolves perfectly.
 func TestMgmtAddrPasserelleEtDNS(t *testing.T) {
 	var addrs = []Row{{

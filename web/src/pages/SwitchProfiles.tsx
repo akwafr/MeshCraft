@@ -32,20 +32,21 @@ import { vlanMap } from "../network";
 /**
  * Switch profiles: describe the facade of equipment using RULES.
  *
- * This screen replaces the equipment groups screen
- * (docs/01-Architecture/Profils de switchs). Il tient en trois zones, et
- * the order is not decorative:
+ * This screen replaces the equipment-groups screen
+ * (docs/01-Architecture/Profils de switchs). It is organized into three
+ * zones, and the order is not decorative:
  *
- *   1. la liste des profils du site ;
- * 2. the rule editor, ORDERED — the first rule that designates a take
- * wins, and you must therefore be able to move a rule without rewriting it;
- * 3. PREVIEW on real equipment, permanently on the right.
+ *   1. the site's list of profiles;
+ *   2. the rule editor, ORDERED — the first rule that claims a port wins,
+ *      so a rule must be movable without having to be rewritten;
+ *   3. a PREVIEW on a real device, permanently visible on the right.
  *
- * The preview is not an option that we unfold: apply a set of rules to
- * forty-eight shots without showing the result would be contrary to all
- * remainder of the product. It is calculated by the CONTROLLER (`switch-profile/preview`)
- * and not here: redoing the evaluation in TypeScript would give a second arbitration,
- * which would diverge from the first exactly where no one is looking.
+ * The preview is not an option we unfold on demand: applying a set of
+ * rules to forty-eight ports without showing the result would go against
+ * everything else in the product. It is computed by the CONTROLLER
+ * (`switch-profile/preview`) and not here — redoing the evaluation in
+ * TypeScript would produce a second arbitration that would diverge from
+ * the first exactly where no one is looking.
  */
 
 function mediaLabel(t: (k: string) => string, key: string): string {
@@ -78,9 +79,9 @@ function sliceLabel(t: (k: string) => string, key: string): string {
 }
 
 /**
- * Period identification shades. They mean nothing in themselves — they
- * are used only to connect a line of the editor to the sockets it has
- * gained on the facade. Distinct from the VLAN palette, which itself makes sense.
+ * Rule-identification tints. They carry no meaning of their own — they
+ * only exist to connect an editor row to the ports it has claimed on the
+ * facade. Distinct from the VLAN palette, which does carry meaning.
  */
 const RULE_TINTS = [
   "#3987e5", "#d95926", "#199e70", "#c98500",
@@ -94,7 +95,7 @@ const emptyRule = (): SwitchRule => ({
   config: { mode: "access", pvid: null, tagged: [], poe: false },
 });
 
-/** Summary of a selector in French: this is what we reread, not the JSON. */
+/** Human-readable summary of a selector: this is what gets reread, not the raw JSON. */
 function selectorText(t: (k: string, o?: Record<string, unknown>) => string, r: SwitchRule): string {
   const s = r.select;
   const parts: string[] = [];
@@ -158,8 +159,8 @@ export default function SwitchProfiles() {
     enabled: !!siteId,
   });
 
-  // The preview needs equipment: we offer one automatically rather than
-  // to display a blank screen which suggests that the function does not work.
+  // The preview needs a device: we select one automatically rather than
+  // showing a blank screen that would suggest the feature is broken.
   useEffect(() => {
     if (!deviceId && devices && devices.length > 0) setDeviceId(devices[0].id);
   }, [devices, deviceId]);
@@ -346,7 +347,7 @@ function RuleEditor({
   const patchRule = (i: number, next: Partial<SwitchRule>) =>
     setRules(rules.map((r, k) => (k === i ? { ...r, ...next } : r)));
 
-  /** Moves a rule: ORDER is conflict resolution, it is edited. */
+  /** Moves a rule: ORDER is the conflict-resolution mechanism, so order is what gets edited. */
   const move = (i: number, delta: number) => {
     const j = i + delta;
     if (j < 0 || j >= rules.length) return;
@@ -596,7 +597,7 @@ function RuleEditor({
   );
 }
 
-/** Setting written directly in a rule, when no grip profile matches. */
+/** Configuration written directly on a rule, when no port profile matches. */
 function InlineConfig({
   value,
   vlans,
@@ -728,12 +729,13 @@ function Preview({
   );
 
   /**
-   * Rules sent to preview, slightly behind typing.
+   * Rules sent to the preview, slightly debounced behind typing.
    *
-   * Without this delay, typing a rule name would initiate a per-character evaluation.
-   * And it is also THIS body which is used for the pose, not the last state of the
-   * fields: put something other than what the preview displays at the time of clicking
-   * would render the preview meaningless, even for a quarter of a second difference.
+   * Without this delay, typing a rule name would trigger a per-keystroke
+   * evaluation. And this exact snapshot is also what gets applied — not the
+   * latest state of the fields: applying something other than what the
+   * preview is showing at the moment of the click would make the preview
+   * meaningless, even for a quarter-second's difference.
    */
   const [body, setBody] = useState(live);
   useEffect(() => {
@@ -742,9 +744,10 @@ function Preview({
   }, [live]);
 
   const { data, error, isFetching } = useQuery({
-    // The key carries the rules themselves: the preview must follow the editing in
-    // course, not the last recording. It's the only way to see before
-    // to save — and therefore not to save only to discover that we were wrong.
+    // The key carries the rules themselves: the preview must track the
+    // edit in progress, not the last saved state. It's the only way to see
+    // the result before saving — and so avoid saving only to discover we
+    // got it wrong.
     queryKey: ["switch-preview", deviceId, JSON.stringify(body)],
     queryFn: () =>
       post<SwitchProfilePreview>(`/api/devices/${deviceId}/switch-profile/preview`, body),
@@ -815,7 +818,7 @@ function Preview({
             <QuickTip
               key={p.name}
               text={
-                p.name +
+                p.display +
                 " · " +
                 (a ? `${a.rule_label} → ${configText(t, a.config)}` : t("switchProfilesPage.noRuleUnchanged")) +
                 (a?.warn ? "\n" + a.warn : "")
@@ -825,7 +828,7 @@ function Preview({
               <span
                 style={{ opacity: dimmed ? 0.12 : 1, transition: "opacity .12s" }}
               >
-                <PortSquare name={p.name} port={intent} vm={vm} size={22} />
+                <PortSquare name={p.name} displayName={p.display} port={intent} vm={vm} size={22} />
               </span>
             </QuickTip>
           );
@@ -857,9 +860,10 @@ function Preview({
                 ) : rr.won === rr.matched ? (
                   t("switchProfilesPage.portsCount", { count: rr.won })
                 ) : (
-                  // The rule designated more than it obtained: a rule placed
-                  // higher came first. This is THE case that must be shown,
-                  // otherwise the rule looks wrong even though it is hidden.
+                  // The rule matched more ports than it won: a rule placed
+                  // higher already claimed some. This is exactly the case
+                  // that must be shown, otherwise the rule looks wrong even
+                  // though the reason is hidden.
                   t("switchProfilesPage.wonOfMatched", { won: rr.won, matched: rr.matched })
                 )}
               </td>

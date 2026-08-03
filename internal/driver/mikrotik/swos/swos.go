@@ -181,6 +181,10 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// de puissance LLDP-MED d'un port alimente : elle ne construit aucune
 			// table de voisins.
 			"LLDP": false,
+			// Per-port RSTP participation (/rstp.b `ena`). The `edge` bit on the
+			// live page is operational (edge detected), not an admin policy —
+			// POST edge:0x… is accepted then cleared on read-back (CSS326 lab).
+			driver.FeatSTPPortEnable: true,
 			// /sys.b `igmp`, `igmq` (querier), `igfl` (fast leave), `igve` (v2/v3),
 			// plus la table des groupes appris /!igmp.b.
 			"IGMPSnooping": true,
@@ -258,14 +262,14 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// confidentialite repose entirely sur le tunnel du proxy.
 			"HTTPMgmt": true,
 		},
-		// RSTP, et RSTP seulement.
+		// RSTP, and RSTP only — no protocol selector, no « none ».
 		//
-		// L'interface n'offre AUCUN selecteur de protocole : elle expose un
-		// interrupteur RSTP par port (/rstp.b `ena`), la priorite et le mode de cost
-		// du pont (/sys.b `prio`, `cost`). Le champ `rstp` de /rstp.b, qui affiche
-		// « STP » ou « RSTP », est en LECTURE SEULE : c'est le repli automatique
-		// lorsqu'un voisin ne parle que 802.1D, pas un mode qu'on choisit. Declare
-		// « stp » ferait accepter un intent qu'aucune write ne pourrait honorer.
+		// The UI exposes a per-port RSTP switch (/rstp.b `ena`), bridge priority
+		// and cost mode (/sys.b `prio`, `cost`). The `rstp` field on /rstp.b that
+		// shows « STP » or « RSTP » is READ-ONLY: automatic fallback when a
+		// neighbor speaks only 802.1D, not a mode we choose. Declaring « stp » or
+		// « none » would accept intents no write can honor. Site preference
+		// « none » is therefore skipped for this platform (ResolveSTPMode).
 		STPModes: []string{"rstp"},
 		// Pas de MSTP, donc pas d'instances.
 		MSTInstances: 0,

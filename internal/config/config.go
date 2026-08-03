@@ -25,6 +25,15 @@ type Config struct {
 	// SecretKey (64 hex characters) encrypts standard discovery credentials.
 	// Empty = random key stored in the database, with a warning at startup.
 	SecretKey string
+
+	// SocksListen is the bind address of the SOCKS5 route to device web
+	// interfaces (cf. internal/socks). EMPTY = the listener does not start.
+	//
+	// Off by default because it is a door into customer management networks, and
+	// SOCKS5 carries no transport security: a non-loopback bind sends the token
+	// and everything the browser exchanges with the switch in clear. The
+	// controller warns at startup when it is asked to bind beyond loopback.
+	SocksListen string
 }
 
 func env(key, def string) string {
@@ -45,5 +54,6 @@ func Load() Config {
 		ArtifactsDir:  env("MESHCRAFT_ARTIFACTS_DIR", "/srv/meshcraft/artifacts"),
 		OCIDir:        env("MESHCRAFT_OCI_DIR", "/srv/meshcraft/oci"),
 		SecretKey:     env("MESHCRAFT_SECRET_KEY", ""),
+		SocksListen:   env("MESHCRAFT_SOCKS_LISTEN", ""),
 	}
 }

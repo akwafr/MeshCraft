@@ -311,6 +311,19 @@ func (s *WebSession) authorization(method, url, challenge string) (string, error
 // independante — un connecteur qui incrementerait un compteur partage serait
 // faux from qu'il lit deux pages en parallele.
 func (s *WebSession) digestCredential(method, url, challenge string) (string, error) {
+	return DigestAuthorization(method, url, challenge, s.auth.Username, s.auth.Password)
+}
+
+// DigestAuthorization is [WebSession.digestCredential] with the credentials
+// passed in rather than held in a session.
+//
+// Exported for the web-UI relay (cf. internal/api/console_webui.go), which
+// presents Digest on a device's behalf without ever opening a WebSession — it
+// forwards a browser's requests, and a browser is not a connector. Keeping ONE
+// implementation matters more than the awkward signature: two copies of a digest
+// computation diverge on the qop-less variant first, and that variant is the one
+// that only old firmware asks for, i.e. the one nobody notices is broken.
+func DigestAuthorization(method, url, challenge, username, password string) (string, error) {
 	var p = parseChallenge(challenge)
 	var realm, nonce = p["realm"], p["nonce"]
 	if nonce == "" {
@@ -328,7 +341,7 @@ func (s *WebSession) digestCredential(method, url, challenge string) (string, er
 		uri = parsed.RequestURI()
 	}
 
-	var ha1 = md5hex(s.auth.Username + ":" + realm + ":" + s.auth.Password)
+	var ha1 = md5hex(username + ":" + realm + ":" + password)
 	var ha2 = md5hex(method + ":" + uri)
 
 	var raw = make([]byte, 8)
@@ -348,7 +361,7 @@ func (s *WebSession) digestCredential(method, url, challenge string) (string, er
 
 	var response string
 	var parts = []string{
-		`username="` + s.auth.Username + `"`,
+		`username="` + username + `"`,
 		`realm="` + realm + `"`,
 		`nonce="` + nonce + `"`,
 		`uri="` + uri + `"`,

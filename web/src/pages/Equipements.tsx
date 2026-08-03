@@ -190,6 +190,7 @@ export default function Equipements() {
                       <PortSquare
                         key={pr.name}
                         name={pr.name}
+                        displayName={pr.display}
                         port={pr.p}
                         vm={vm}
                         size={13}

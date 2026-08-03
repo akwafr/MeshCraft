@@ -3,6 +3,7 @@ package routeros
 import (
 	"context"
 	"fmt"
+	"meshcraft/internal/driver"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,14 +11,14 @@ import (
 
 // Reading the state ACTUALLY applied on a RouterOS device.
 //
-// This is the « Read » step of the reconciliation pipeline
+// This is the 'Read' step of the reconciliation pipeline
 // (docs/01-Architecture/Reconciliation §2): without it, meshcraft cannot know
-// whether what it believes is what is, and « configuration drift » remains a
+// whether what it believes is what is, and 'configuration drift' remains a
 // buzzword.
 //
 // THE VLAN MODEL OF A CRS3xx, because everything in this file follows from it.
 //
-// This is NOT the model of a classic switch, where a « VLAN × ports » table would
+// This is NOT the model of a classic switch, where a 'VLAN × ports' table would
 // carry everything. On RouterOS, VLAN configuration is spread across THREE menus,
 // and all three are needed to know what a port does:
 //
@@ -41,7 +42,7 @@ import (
 //     has an EMPTY `untagged` list. Those ports therefore tag ingress traffic into
 //     VLAN 100 without being VLAN 100 members on egress — incomplete configuration,
 //     perfectly accepted by the device, and silent.
-//     A connector that derived PVID from membership would read « access on VLAN 1 »
+//     A connector that derived PVID from membership would read 'access on VLAN 1'
 //     where the device does something else.
 //
 //  2. `bridge` IN A LIST IS NOT A PORT, IT IS THE CPU. OBSERVED: VLAN 99, which
@@ -58,13 +59,13 @@ import (
 // an entry the device rebuilds at will; without `RowID`, it has nothing to modify.
 type BridgeVLAN struct {
 	ID int `json:"id"`
-		// Name: RouterOS does not NAME its VLANs — `/interface/bridge/vlan` has no name
+	// Name: RouterOS does not NAME its VLANs — `/interface/bridge/vlan` has no name
 	// field. The `comment` stands in for it, as free text (OBSERVED: "added by pvid" on
 	// the entry the device created itself). We surface it as a name for lack of better,
 	// knowing it is not an identifier.
 	Name string `json:"name,omitempty"`
 	// Dynamic: was the entry created by the DEVICE rather than an operator. OBSERVED:
-	// VLAN 1 is `"dynamic":"true"` with comment « added by pvid » — RouterOS creates it
+	// VLAN 1 is `"dynamic":"true"` with comment 'added by pvid' — RouterOS creates it
 	// on its own because ports have that PVID.
 	//
 	// The distinction is vital for apply: a dynamic entry has no stable `.id`, cannot be
@@ -77,10 +78,10 @@ type BridgeVLAN struct {
 	// IDs carries ALL VLAN identifiers the record declares.
 	//
 	// THE FIELD THAT PREVENTS ONE WRITE FROM TOUCHING TEN VLANs AT ONCE. `vlan-ids` is
-	// not an integer: it is a RouterOS-format list, and the device accepts « 10-20,30 »
+	// not an integer: it is a RouterOS-format list, and the device accepts '10-20,30'
 	// in a single record (documented, and the read already expands it — cf. ParseVLANIDs).
 	// Yet `tagged` and `untagged` lists are carried by the RECORD, not by each of its
-	// VLANs: rewriting « VLAN 10 » membership on a line declaring 10-20 rewrites all
+	// VLANs: rewriting 'VLAN 10' membership on a line declaring 10-20 rewrites all
 	// ELEVEN, silently, in one `set`.
 	//
 	// The read split the line into one entry per identifier, correct for DISPLAY — but
@@ -143,8 +144,8 @@ type BridgePort struct {
 	//
 	// Almost always a single element, then identical to PVID — but the two are
 	// independent on this platform (cf. header, trap #1), and the read must show when
-	// they diverge. This field makes it possible to say « this port tags into 100 but
-	// is a member of nothing », the exact anomaly the reference device carries.
+	// they diverge. This field makes it possible to say 'this port tags into 100 but
+	// is a member of nothing', the exact anomaly the reference device carries.
 	Untagged []int `json:"untagged,omitempty"`
 	// RowID is the `/interface/bridge/port` record identifier.
 	RowID string `json:"-"`
@@ -192,7 +193,7 @@ type DeviceState struct {
 	// reachable via ITS OWN VLAN. Protecting the plan's would protect a VLAN the device
 	// does not use, while leaving the one carrying the current session open to rewrite.
 	//
-	// 0 means « administration does not arrive via a tagged VLAN »: either the address
+	// 0 means 'administration does not arrive via a tagged VLAN': either the address
 	// is on the bridge itself, or on a physical interface. That is NOT a read error, and
 	// MgmtInterface specifies which.
 	MgmtVLAN int `json:"mgmt_vlan"`
@@ -219,7 +220,7 @@ type DeviceState struct {
 	// arrives UNTAGGED and the VLAN involved is the bridge's PVID. Derivation looked for
 	// that PVID in `Ports[BridgeName]` — but the bridge is never a `/interface/bridge/port`
 	// record, so that map never contains its name. MgmtVLAN stayed at 0, and apply refused
-	// to write « unknown management VLAN » on exactly the most common case: a factory
+	// to write 'unknown management VLAN' on exactly the most common case: a factory
 	// RouterOS with its address on the bridge.
 	BridgePVID int `json:"bridge_pvid,omitempty"`
 	// LinkUp: ports that have link. A port WITHOUT link cannot carry the current
@@ -236,15 +237,15 @@ type DeviceState struct {
 //
 // This is not a meshcraft convention: it is literally the bridge name used as a member
 // of its own VLAN table, OBSERVED in `"tagged":"bridge,sfp-sfpplus2"`. The reference
-// device's bridge happens to be named « bridge »; on a device where it were named
+// device's bridge happens to be named 'bridge'; on a device where it were named
 // differently, that name would appear. Comparison is therefore against the REAL bridge
-// name, never against the hard-coded string « bridge » — hence State.BridgeName.
+// name, never against the hard-coded string 'bridge' — hence State.BridgeName.
 const defaultBridgeName = "bridge"
 
 // ReadState re-reads the device and returns state in CONTRACT form.
 //
 // READ ONLY: replayable as often as needed, including on a production fleet. This is
-// the « Read » step of the reconciliation pipeline, and also what allows DATING an
+// the 'Read' step of the reconciliation pipeline, and also what allows DATING an
 // apply — nothing is considered applied on the faith of a return code alone.
 //
 // `Target.PortPrefix` IS IGNORED, and that is not an oversight: this connector does not
@@ -252,7 +253,7 @@ const defaultBridgeName = "bridge"
 // device names (`ether3`, `sfp-sfpplus1`), so the facade carries MULTIPLE prefixes —
 // `ether` and `sfp-sfpplus` on the reference device — and none summarizes them. Using
 // one as the prefix for all ports would write on the wrong port, cutting a client.
-// Connectors that NUMBER their ports (Instant On, SwOS) need it to translate « GE12 » to
+// Connectors that NUMBER their ports (Instant On, SwOS) need it to translate 'GE12' to
 // index 12; this one has no translation to do, and that is correct behavior.
 //
 // THE RETURNED STATE IS POORER THAN WHAT THE DEVICE SAYS, and [State.Notes] is what
@@ -265,7 +266,7 @@ const defaultBridgeName = "bridge"
 // empty state, and the caller has the error to know it does not hold everything. NOTES
 // are then replaced, and that matters: [DeviceState.notes] describe what the device
 // CARRIES, and on an interrupted read they would describe a device we read nothing from
-// — « no bridge on this device » where the tunnel simply dropped. A false sentence on a
+// — 'no bridge on this device' where the tunnel simply dropped. A false sentence on a
 // diagnostic screen sends you looking for a fault that does not exist.
 func (c *Client) ReadState(ctx context.Context) (State, error) {
 	var dev, err = c.ReadDeviceState(ctx)
@@ -333,7 +334,7 @@ func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 		// switching table. Saying so in the transcript beats reading the first silently and
 		// comparing against the wrong one.
 		c.step(true, "multiple bridges present",
-			fmt.Sprintf("%d bridges; \u00ab %s \u00bb chosen (the one filtering VLANs)",
+			fmt.Sprintf("%d bridges; '%s' chosen (the one filtering VLANs)",
 				len(bridges), out.BridgeName))
 	}
 
@@ -375,7 +376,7 @@ func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 	}
 
 	c.step(true, "switching state read",
-		fmt.Sprintf("bridge \u00ab %s \u00bb (filtering %s), %d VLAN(s), %d port(s), "+
+		fmt.Sprintf("bridge '%s' (filtering %s), %d VLAN(s), %d port(s), "+
 			"management VLAN %d via %s", out.BridgeName,
 			map[bool]string{true: "active", false: "INACTIVE"}[out.VLANFiltering],
 			len(out.VLANs), len(out.Ports), out.MgmtVLAN, out.MgmtInterface))
@@ -405,7 +406,7 @@ func (c *Client) readMgmt(ctx context.Context, out *DeviceState) error {
 		return err
 	}
 	// The VLAN interface menu may be unreadable on reduced firmware. We then pass a
-	// nil slice: foldMgmt will conclude « untagged » or « unknown » rather than invent an
+	// nil slice: foldMgmt will conclude 'untagged' or 'unknown' rather than invent an
 	// identifier.
 	var vlans []Row
 	vlans, _ = c.List(ctx, "interface/vlan") //nolint:errcheck // absence handled by foldMgmt
@@ -477,7 +478,7 @@ func foldMgmt(addrs, vlans []Row, out *DeviceState) {
 	// Read on `/interface/bridge` ([DeviceState.BridgePVID]) not in `Ports[BridgeName]`:
 	// the bridge is never a `/interface/bridge/port` record, so that map never carries its
 	// name. Looking there left MgmtVLAN at 0 on every factory device, and apply refused to
-	// write « unknown management VLAN » — on the most common case there is.
+	// write 'unknown management VLAN' — on the most common case there is.
 	if out.MgmtInterface == out.BridgeName && out.BridgePVID > 0 {
 		out.MgmtVLAN = out.BridgePVID
 	}
@@ -534,7 +535,7 @@ func foldVLANs(vlanRows, portRows []Row, bridgeName string) (
 		}
 		// `vlan-ids` may carry MULTIPLE identifiers and RANGES: a RouterOS-format list,
 		// not an integer. Simple OBSERVED values here ("99", "100", "1"), but the device
-		// accepts « 10-20,30 » in the same record, and reading an integer would fail
+		// accepts '10-20,30' in the same record, and reading an integer would fail
 		// silently on that form.
 		var ids = ParseVLANIDs(r.Get("vlan-ids"))
 		if len(ids) == 0 {
@@ -553,7 +554,7 @@ func foldVLANs(vlanRows, portRows []Row, bridgeName string) (
 				Dynamic: r.Bool("dynamic"),
 				RowID:   r.ID(),
 				// ALL identifiers from the line, on EACH entry it spawns: this lets apply
-				// see that writing « VLAN 10 » membership would also touch the other ten.
+				// see that writing 'VLAN 10' membership would also touch the other ten.
 				IDs:             ids,
 				TaggedMembers:   rowTagged,
 				UntaggedMembers: rowUntagged,
@@ -604,8 +605,8 @@ func foldVLANs(vlanRows, portRows []Row, bridgeName string) (
 	// On connector, so two product lines compare cleanly.
 	//
 	// A port with neither PVID nor membership stays in empty mode: it is in the bridge but
-	// nothing concerns it. « Absent = unmanaged » means meshcraft claims nothing for it,
-	// and pretending it is « access VLAN 0 » would be false.
+	// nothing concerns it. 'Absent = unmanaged' means meshcraft claims nothing for it,
+	// and pretending it is 'access VLAN 0' would be false.
 	for name = range ports {
 		var st = ports[name]
 		switch {
@@ -624,7 +625,7 @@ func foldVLANs(vlanRows, portRows []Row, bridgeName string) (
 
 // dedupe removes duplicates from a SORTED slice. Needed because the same VLAN can
 // appear in several `/interface/bridge/vlan` records — nothing forbids that on this
-// platform, and the dynamic « added by pvid » entry often overlaps a static one.
+// platform, and the dynamic 'added by pvid' entry often overlaps a static one.
 func dedupe(in []int) []int {
 	if len(in) == 0 {
 		return nil
@@ -640,7 +641,7 @@ func dedupe(in []int) []int {
 	return out
 }
 
-// ParseVLANIDs expands RouterOS `vlan-ids` notation: « 99 », « 10-20,30 », « 1-4094 ».
+// ParseVLANIDs expands RouterOS `vlan-ids` notation: '99', '10-20,30', '1-4094'.
 //
 // Ranges are bounded to what 802.1Q space allows, and a reversed range is SKIPPED rather
 // than guessed: a response we cannot read must not spawn four thousand imaginary VLANs.
@@ -719,22 +720,22 @@ func (s DeviceState) CPUCarries(vlanID int) bool {
 //     EMPTY `untagged` list. The device accepts that, silently.
 //
 // A screen presenting both cases as segmentation in place would make an operator conclude
-// « this switch is compliant » while traffic is not segmented at all. This is the only
+// 'this switch is compliant' while traffic is not segmented at all. This is the only
 // place in the connector where that can still be said.
 func (s DeviceState) Standard() State {
 	var out = State{
 		VLANs:    make([]VLAN, 0, len(s.VLANs)),
 		Ports:    make(map[string]PortState, len(s.Ports)),
 		MgmtVLAN: s.MgmtVLAN,
-		LinkUp:   s.LinkUp,
+		Links:    driver.LinksFromUp(s.LinkUp),
 		Notes:    s.notes(),
 	}
 
 	// VLANs, DEDUPLICATED by identifier with the STATIC entry preferred.
 	//
 	// The same VLAN can appear in several records — nothing forbids that on this platform,
-	// and the dynamic « added by pvid » entry often overlaps a static one. The contract
-	// describes « VLANs declared on the device »: returning one twice would count two VLANs
+	// and the dynamic 'added by pvid' entry often overlaps a static one. The contract
+	// describes 'VLANs declared on the device': returning one twice would count two VLANs
 	// where there is one, which drift calculation would read as a gap. We keep the STATIC
 	// entry's name, because a dynamic entry's name is a comment the device wrote to itself.
 	var at = map[int]int{}
@@ -779,8 +780,8 @@ func (s DeviceState) notes() []string {
 
 	if s.BridgeName == "" {
 		// No bridge: there is no switching table on this device. That is not a read error
-		// — a RouterOS can route without switching — but the screen must not present « no
-		// VLAN » as a reset switch.
+		// — a RouterOS can route without switching — but the screen must not present 'no
+		// VLAN' as a reset switch.
 		out = append(out, "No bridge on this device: there is no switching table, "+
 			"therefore no VLAN to read or apply. A RouterOS without a bridge routes without "+
 			"switching — it is not an empty switch, it is a different use case.")
@@ -788,7 +789,7 @@ func (s DeviceState) notes() []string {
 	}
 
 	if !s.VLANFiltering {
-		out = append(out, fmt.Sprintf("VLAN FILTERING INACTIVE on bridge \u00ab %s \u00bb: "+
+		out = append(out, fmt.Sprintf("VLAN FILTERING INACTIVE on bridge '%s': "+
 			"the VLANs and memberships listed here EXIST on the device but have NO effect — "+
 			"the bridge lets everything pass everywhere, tagged or untagged. This is therefore "+
 			"not segmentation in place, it is configuration ready to take effect. Apply enables "+

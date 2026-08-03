@@ -1,83 +1,83 @@
-// Package driver definit le contrat des connecteurs de plateforme et le
-// registre qui les recense.
+// Package driver defines the contract for platform connectors and the registry
+// that tracks them.
 //
-// Un connecteur sait parler a UNE plateforme : il traduit le model de data
-// standard vers ce que the device comprend, et l'inverse en lecture. Voir
+// A connector knows how to talk to ONE platform: it translates the standard data
+// model into what the device understands, and back again on reads. See
 // docs/01-Architecture/Connecteurs.
 //
-// Ce paquet ne connait ni SSH ni HTTP : un connecteur receives une Session dont le
-// transport est already established — directement ou a travers un [[Proxy]] — et n'a
-// aucune notion de tunnel. C'est la rule « un seul chemin de code ».
+// This package knows neither SSH nor HTTP: a connector receives a Session whose
+// transport is already established — directly, or through a [[Proxy]] tunnel — and
+// has no notion of a tunnel of its own. This is the "single code path" rule.
 package driver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
 	"time"
 )
 
-// ErrNotImplemented : la capability existe dans le contrat mais pas encore dans ce
-// connecteur. Le dire explicitement vaut mieux qu'un comportement vide qui
-// laisserait croire a un success.
-var ErrNotImplemented = errors.New("non implemented par ce connecteur")
+// ErrNotImplemented: the capability exists in the contract but not yet in this
+// connector. Saying so explicitly is better than an empty behavior that would
+// suggest success.
+var ErrNotImplemented = errors.New("not implemented by this connector")
 
-// Info identifie le connecteur.
+// Info identifies the connector.
 type Info struct {
-	// Name est l'identifiant stable used en base et dans l'API.
+	// Name is the stable identifier used in the database and in the API.
 	Name   string `json:"name"`
 	Vendor string `json:"vendor"`
-	// Family describes la gamme couverte, telle qu'un operator la nomme.
+	// Family describes the range covered, as an operator would name it.
 	Family string `json:"family"`
-	// Transport : ce par quoi the device s'administre actually.
+	// Transport: what the device is actually administered through.
 	Transport []string `json:"transport"` // web | ssh | telnet | snmp | api
-	// Doc : la reference constructeur hence viennent les capabilities.
+	// Doc: the vendor reference the capabilities come from.
 	Doc string `json:"doc,omitempty"`
 }
 
-// VlanSupport dit quels VLAN l'interface d'administration accepte.
+// VlanSupport says which VLANs the administration interface accepts.
 type VlanSupport string
 
 const (
-	// VlanAny : le VLAN de management est configurable librement.
+	// VlanAny: the management VLAN is freely configurable.
 	VlanAny VlanSupport = "any"
-	// VlanDefaultOnly : management sur le VLAN par default (1) uniquement.
+	// VlanDefaultOnly: management on the default VLAN (1) only.
 	VlanDefaultOnly VlanSupport = "default_only"
-	// VlanUnknown : on ne sait pas — donc on suppose le pire (cf. la rule
-	// « une capability inconnue est supposee absente »).
+	// VlanUnknown: it isn't known — so the worst case is assumed (cf. the rule
+	// "an unknown capability is assumed absent").
 	VlanUnknown VlanSupport = ""
 )
 
-// MgmtCapabilities describes ce que l'interface d'administration accepte. C'est la
-// capability la plus dangereuse a supposer : se tromper rend the device
-// injoignable (cf. docs/01-Architecture/Adressage de management).
+// MgmtCapabilities describes what the administration interface accepts. This is
+// the most dangerous capability to get wrong: a mistake here makes the device
+// unreachable (cf. docs/01-Architecture/Adressage de management).
 type MgmtCapabilities struct {
 	VlanIDs VlanSupport `json:"vlan_ids"`
-	// VlanRange borne les identifiants admis pour le management.
+	// VlanRange bounds the IDs accepted for management.
 	VlanRange [2]int `json:"vlan_range"`
-	// TaggedOK : le management fonctionne sur un VLAN tagged.
+	// TaggedOK: management works on a tagged VLAN.
 	TaggedOK bool `json:"tagged_ok"`
-	// Static / DHCP : modes d'adressage admis.
+	// Static / DHCP: addressing modes accepted.
 	Static bool `json:"static"`
 	DHCP   bool `json:"dhcp"`
-	// Gateway / DNS : la plateforme porte-t-elle une PASSERELLE et des RESOLVEURS
-	// pour son administration ?
+	// Gateway / DNS: does the platform carry a GATEWAY and RESOLVERS for its
+	// administration?
 	//
-	// Ces deux champs ne sont pas decoratifs, et ils ne se deduisent surtout pas de
-	// `Static`. Le observed qui les a fait naitre : le jeu de champs inscriptible de
-	// /sys.b sur un CSS326-24G-2S+ — enumerated par sa propre sauvegarde de
-	// configuration, donc exhaustif — contient bien `ip` et `iptp` mais AUCUNE
-	// passerelle et AUCUN resolveur. Sans passerelle, les sorties hors sous-network
-	// (traps, DNS) n'ont pas de route ici ; l'administration entrante peut encore
-	// repondre en L2. C'est un fait d'exploitation, pas une condamnation.
+	// These two fields are not decorative, and above all they cannot be deduced
+	// from `Static`. The observation that gave rise to them: the writable field
+	// set of /sys.b on a CSS326-24G-2S+ — enumerated from its own configuration
+	// backup, and therefore exhaustive — does contain `ip` and `iptp` but NO
+	// gateway and NO resolver at all. Without a gateway, outbound traffic leaving
+	// the subnet (traps, DNS) has no route here; inbound administration can still
+	// answer at L2. This is an operational fact, not a shortcoming.
 	//
-	// FAUX PAR DEFAULT, comme tout ce qui touche a access. Un UI qui offre trois
-	// champs de saisie sur une plateforme qui n'en porte qu'un fait saisir une
-	// passerelle qui n'atterrira nulle part, et l'exploitant en conclut que meshcraft
-	// n'a pas written ce qu'il avait requested. Dire « cette plateforme n'a pas de
-	// passerelle de management » est une information ; afficher un champ vide n'en est
-	// pas une.
+	// FALSE BY DEFAULT, like everything touching access. A UI that offers three
+	// input fields on a platform that only carries one lets an operator enter a
+	// gateway that will land nowhere, and the operator concludes that meshcraft
+	// failed to write what was requested. Saying "this platform has no
+	// management gateway" is information; showing an empty field is not.
 	Gateway bool `json:"gateway"`
 	DNS     bool `json:"dns"`
 	// Routed: can management leave its own subnet (default gateway / L3)?
@@ -91,32 +91,32 @@ type MgmtCapabilities struct {
 	// no gateway — inbound admin from another subnet can work if an L2 return
 	// path exists. SwOS is the reference: no gateway, but L2 reply still works.
 	IPARP bool `json:"ip_arp"`
-	// DHCPFallback : adresse de repli si le DHCP ne repond pas.
+	// DHCPFallback: fallback address if DHCP doesn't answer.
 	DHCPFallback string `json:"dhcp_fallback,omitempty"`
-	// OutOfBand : il existe une voie d'administration HORS DU NETWORK — console
-	// serial, MAC-winbox, port de gestion dedie — par laquelle on recupere un
-	// device qu'une erreur d'adressage a rendu muet.
+	// OutOfBand: an administration path exists OUTSIDE THE NETWORK — serial
+	// console, MAC-winbox, a dedicated management port — through which a device
+	// left mute by an addressing mistake can be recovered.
 	//
-	// LE CHAMP QUI DECIDE DE LA GRAVITE, et il est ne d'un message FAUX. La couche
-	// API refusait une bascule de VLAN de management en affirmant « cette gamme n'a
-	// ni SSH ni serial port : le seul recours serait un retour aux reglages d'usine,
-	// sur site ». It was vrai des deux gammes web-only livrees, et faux de
-	// RouterOS — qui a une console serial ET MAC-winbox, les deux RELEVES. Tout un
-	// refus was donc calibre sur une plateforme irrecuperable, et recite tel quel
-	// a une plateforme qui, elle, se rattrape.
+	// THE FIELD THAT DECIDES SEVERITY, and it was born from a FALSE message. The
+	// API layer used to refuse a management-VLAN switch by claiming "this range
+	// has neither SSH nor a serial port: the only recourse would be a factory
+	// reset, on site." That was true of the two web-only ranges shipped, and false
+	// of RouterOS — which has a serial console AND MAC-winbox, both OBSERVED. A
+	// whole refusal message was therefore calibrated on an unrecoverable platform,
+	// and recited verbatim to a platform that can, in fact, be recovered.
 	//
-	// A NE PAS DEDUIRE D'[Info.Transport] : cette liste dit par quoi meshcraft
-	// administre, pas ce qui reste quand le network est perdu. Un connecteur peut
-	// parler web a un device qui a aussi un serial port (RouterOS), et un autre
-	// annoncer `ssh` sur une plateforme dont le SSH passe par le same VLAN que tout
-	// le reste — donc tombe avec lui. Les deux erreurs vont dans le sens dangereux.
+	// DO NOT DEDUCE FROM [Info.Transport]: that list says what meshcraft
+	// administers through, not what's left when the network is lost. A connector
+	// can speak web to a device that also has a serial port (RouterOS), and
+	// another can advertise `ssh` on a platform whose SSH runs over the same VLAN
+	// as everything else — and therefore goes down with it. Both mistakes point in
+	// the dangerous direction.
 	//
-	// FAUX PAR DEFAULT, et c'est la rule du projet appliquee a son cas le plus
-	// couteux : une capability inconnue est supposee ABSENTE. Se tromper dans ce
-	// sens fait afficher un avertissement trop dur, ce qui costs de la prudence ;
-	// se tromper in l'other does tenter une manœuvre irreversible on un
-	// device qu'on croyait rattrapable, ce qui costs un deplacement avec un
-	// trombone.
+	// FALSE BY DEFAULT, and this is the project rule applied to its most costly
+	// case: an unknown capability is assumed ABSENT. Getting it wrong in this
+	// direction produces a warning that is too harsh, which costs some caution;
+	// getting it wrong the other way risks attempting an irreversible maneuver on
+	// a device believed recoverable, which costs a site visit with a paperclip.
 	OutOfBand bool `json:"out_of_band"`
 	// ApplySameVLAN: the connector has proven [MgmtAddrWriter] on hardware for
 	// same-VLAN DHCP/static/gateway/DNS apply. FALSE by default until proven.
@@ -128,73 +128,72 @@ type MgmtCapabilities struct {
 	// with backup. SwOS-shaped; never set together with MigrateVLAN as a substitute
 	// for dual-path on a platform that can do both.
 	JumpVLAN bool `json:"jump_vlan"`
-	// Notes porte les contraintes d'ORDRE et les pieges documentes par le
-	// constructeur — ce qui fait la difference entre un apply qui marche et un
-	// device perdu.
+	// Notes carries the ORDERING constraints and pitfalls documented by the
+	// vendor — the difference between a write that works and a device that's
+	// lost.
 	Notes []string `json:"notes,omitempty"`
 }
 
-// AdminAccount describes ce que la plateforme accepte comme COMPTE
-// d'administration. meshcraft veut poser partout le same nom (`mcadmin`) pour
-// que access direct soit predictable ; beaucoup de switchs ingress de gamme
-// n'admettent que `admin`. Cette capability est ce qui empeche de pousser un
-// nom que the device refusera — et de croire ensuite qu'il l'a pris.
+// AdminAccount describes what the platform accepts as an administration ACCOUNT.
+// meshcraft wants to set the same name everywhere (`mcadmin`) so that direct
+// access is predictable; many entry-range switches only accept `admin`. This
+// capability is what prevents pushing a name the device will refuse — and then
+// believing it was accepted.
 type AdminAccount struct {
-	// Custom : la plateforme sait create un compte au nom choisi.
+	// Custom: the platform can create an account under a chosen name.
 	Custom bool `json:"custom"`
-	// FixedName : le seul nom possible quand Custom est faux.
+	// FixedName: the only possible name when Custom is false.
 	FixedName string `json:"fixed_name,omitempty"`
-	// PasswordMin / PasswordMax : bornes imposees par the device. 0 = inconnu.
+	// PasswordMin / PasswordMax: bounds imposed by the device. 0 = unknown.
 	PasswordMin int `json:"password_min,omitempty"`
 	PasswordMax int `json:"password_max,omitempty"`
-	// AlphanumericOnly : the device refuse la ponctuation. C'est une des
-	// raisons pour lesquelles meshcraft n'engendre que de l'alphanumerique
+	// AlphanumericOnly: the device rejects punctuation. This is one of the
+	// reasons meshcraft only generates alphanumeric passwords
 	// (cf. internal/pwgen).
 	AlphanumericOnly bool `json:"alphanumeric_only,omitempty"`
-	// Notes porte ce qui ne se code pas : ordre des operations, pieges.
+	// Notes carries what doesn't fit in code: operation ordering, pitfalls.
 	Notes []string `json:"notes,omitempty"`
 }
 
-// MonitorChannel : un canal de collecte, avec son plancher de cadence.
+// MonitorChannel: a collection channel, with its polling-rate floor.
 //
-// MinInterval est un PLANCHER, pas un objectif : « jamais plus souvent que ».
-// Un parc de deux cents devices interroges au plancher, c'est des dizaines
-// de requests par seconde en permanence, dont l'essentiel ne change jamais — et
-// le CPU de supervision d'un switch access est modeste. Un device qu'on
-// supervise trop est un device qu'on abime.
+// MinInterval is a FLOOR, not a target: "never more often than." A fleet of two
+// hundred devices polled at the floor is dozens of requests per second at all
+// times, most of which never change anything — and an access switch's monitoring
+// CPU budget is modest. A device that is monitored too aggressively is a device
+// that gets damaged.
 type MonitorChannel struct {
-	// Kind : web | snmp | streaming.
+	// Kind: web | snmp | streaming.
 	Kind string `json:"kind"`
-	// Metrics : ce que ce canal sait rendre, named comme dans le model standard
+	// Metrics: what this channel can return, named as in the standard model
 	// (if_state, if_counters, health, lldp…).
 	Metrics []string `json:"metrics"`
-	// MinInterval : l'intervalle le plus COURT admissible sur ce canal.
+	// MinInterval: the SHORTEST interval acceptable on this channel.
 	MinInterval time.Duration `json:"min_interval"`
-	// Note explique une limite que la structure ne dit pas — par exemple un access
-	// restreint au VLAN de management.
+	// Note explains a limitation the struct doesn't otherwise state — for
+	// example an access restricted to the management VLAN.
 	Note string `json:"note,omitempty"`
 }
 
-// MetricUnavailable declares une metrique que la PLATEFORME n'expose pas, avec
-// son motif — l'absence dite a voix haute rather que laissee au silence.
+// MetricUnavailable declares a metric that the PLATFORM does not expose, along
+// with the reason — the absence stated out loud rather than left to silence.
 //
-// A ne pas confondre avec une metrique que meshcraft ne collecte pas ENCORE. Les
-// deux se lisent de la same way a the UI — pas de courbe — et menent a des
-// decisions OPPOSEES :
+// Not to be confused with a metric meshcraft does not collect YET. The two read
+// the same way in the UI — no graph — and lead to OPPOSITE decisions:
 //
-//   - « meshcraft ne le collecte pas encore » est un manque de notre cote : il se
-//     comble par une version, et l'exploitant a raison d'attendre ;
-//   - « la plateforme ne l'expose pas » est un fait de the device : aucun
-//     developpement n'y changera rien, et l'exploitant doit changer de hardware
-//     ou renoncer.
+//   - "meshcraft doesn't collect it yet" is a gap on our side: it gets closed by
+//     a release, and the operator is right to expect it eventually;
+//   - "the platform doesn't expose it" is a fact about the device: no amount of
+//     development changes it, and the operator must either change hardware or
+//     give up.
 //
-// Les confondre costs du temps et de la credibilite. Un manque de NOTRE cote n'a
-// donc rien a faire ici : il se voit a l'absence de collecte EN FACE d'un canal
-// qui, lui, sait rendre la metrique (health, lldp et poe sont dans ce cas). Cette
-// liste ne porte que ce que the device ne sert pas.
+// Confusing the two costs time and credibility. A gap on OUR side therefore has
+// no business here: it shows up as the absence of collection ALONGSIDE a channel
+// that can, in fact, return the metric (health, lldp, and poe are in that
+// category). This list only carries what the device does not serve.
 type MetricUnavailable struct {
 	// Metric: named as in the standard model — the same key as on channels — so
-	// « no channel renders this metric » and « here is why » answer under the same
+	// "no channel renders this metric" and "here is why" answer under the same
 	// name. Operator-facing copy is NOT here: the UI localizes from this key
 	// (`monitoring.unavailable.<metric>`). The connector only declares absence.
 	Metric string `json:"metric"`
@@ -212,39 +211,41 @@ type MetricUnavailable struct {
 	Source string `json:"source,omitempty"`
 }
 
-// MonitoringCapabilities describes observability d'une plateforme.
+// MonitoringCapabilities describes a platform's observability.
 //
-// C'est le connecteur qui decide, pas un reglage : personne ne devrait avoir a
-// savoir, device par device, ce que son parc supporte. Ce que la
-// plateforme ne sait pas faire n'est pas contourne — the device apparait avec
-// le canal dont il dispose, et l'UI dit lequel. Un parc a half supervise sans
-// que personne ne le voie serait le pire des results.
+// It is the connector that decides, not a setting: nobody should have to know,
+// device by device, what their fleet supports. What the platform cannot do is
+// not worked around — the device shows up with whatever channel it has, and the
+// UI says which one. A fleet that is half-monitored without anyone noticing
+// would be the worst possible outcome.
 //
-// Voir docs/01-Architecture/Monitoring unifie et pipelines §1.
+// See docs/01-Architecture/Monitoring unifie et pipelines §1.
 type MonitoringCapabilities struct {
 	Channels []MonitorChannel `json:"channels"`
-	// Traps / Syslog : the device sait-il POUSSER vers un collecteur ? C'est ce
-	// qui donne la reactivity, there where le polling donne la reference.
+	// Traps / Syslog: can the device PUSH to a collector? This is what gives
+	// reactivity, where polling gives the baseline reference.
 	Traps  bool `json:"traps"`
 	Syslog bool `json:"syslog"`
-	// Streaming : gNMI ou equivalent.
+	// Streaming: gNMI or equivalent.
 	Streaming bool `json:"streaming"`
-	// Unavailable : ce que la plateforme N'EXPOSE PAS, et pourquoi.
+	// Unavailable: what the platform does NOT expose, and why.
 	//
-	// Tout le reste de cette structure describes ce qui EXISTE ; sans ce champ,
-	// l'absence n'est que du silence, et un silence ne se distingue pas d'un
-	// oubli. C'est le pendant en lecture de instanton.WritableExtras, dont le vide
-	// « se lit a the UI au lieu de se decouvrir sur le terrain ».
+	// Everything else in this struct describes what EXISTS; without this field,
+	// an absence is just silence, and silence cannot be told apart from an
+	// oversight. This is the read-side counterpart of instanton.WritableExtras,
+	// whose emptiness "is read from the UI instead of being discovered in the
+	// field."
 	//
-	// Vide n'est PAS un aveu d'ignorance : la rule du projet reste « une
-	// capability inconnue est supposee absente », et une metrique sans canal n'est
-	// pas supervisee. Ce champ ne sert only ajouter le MOTIF there where on le connait.
+	// Empty is NOT an admission of ignorance: the project rule remains "an
+	// unknown capability is assumed absent," and a metric with no channel is
+	// simply not monitored. This field only serves to add the REASON where it is
+	// known.
 	Unavailable []MetricUnavailable `json:"unavailable,omitempty"`
 }
 
-// Best rend le canal le plus rapide disponible pour une metrique data, et dit
-// s'il en existe un. Sert a planifier : inutile de demander un rythme que
-// the device ne tiendra pas.
+// Best returns the fastest channel available for a given metric, and says
+// whether one exists. Used for planning: no point asking for a rate the device
+// won't sustain.
 func (m MonitoringCapabilities) Best(metric string) (MonitorChannel, bool) {
 	var out MonitorChannel
 	var found bool
@@ -263,31 +264,30 @@ func (m MonitoringCapabilities) Best(metric string) (MonitorChannel, bool) {
 	return out, found
 }
 
-// BestOfKind rend le canal le plus rapide d'un GENRE donne (`snmp`, `web`,
-// `api`, `streaming`), et dit s'il en existe un.
+// BestOfKind returns the fastest channel of a given KIND (`snmp`, `web`, `api`,
+// `streaming`), and says whether one exists.
 //
-// # Pourquoi Best ne suffisait pas, et ce que ca coutait
+// # Why Best wasn't enough, and what it cost
 //
-// Best rend le canal le plus rapide TOUS GENRES CONFONDUS, ce qui est la bonne
-// response a « a quelle vitesse cette plateforme peut-elle be observee ». Ce
-// n'est PAS la bonne response a « a quelle vitesse ai-je le droit d'interroger ce
-// canal-ci », et c'est cette seconde question que la planification pose
-// actually — parce que le collecteur periodique du produit s'execute sur le
-// proxy et ne parle QUE SNMP (`internal/snmppoll`).
+// Best returns the fastest channel ACROSS ALL KINDS, which is the right answer
+// to "how fast can this platform be observed." It is NOT the right answer to
+// "how fast am I allowed to poll THIS channel," and that second question is the
+// one planning actually asks — because the product's periodic collector runs on
+// the proxy and speaks ONLY SNMP (`internal/snmppoll`).
 //
-// Le default que cela produisait est verifiable : le connecteur RouterOS declares un
-// canal `web` a 5 s et un canal `snmp` a 60 s, ce dernier deliberately haut parce
-// qu'aucun OID n'y a jamais been lu. Best rendait donc 5 s, et le controleur
-// poussait au proxy une cadence de 5 s — appliquee a un POLL SNMP, i.e. au
-// canal dont le connecteur venait to write « jamais plus souvent que 60 s ». Le
-// plancher d'un canal was oppose a un autre canal, ce qui est exactement ce qu'un
-// plancher n'est pas.
+// The bug this produced is reproducible: the RouterOS connector declares a `web`
+// channel at 5 s and an `snmp` channel at 60 s, the latter deliberately high
+// because no OID had ever been read from it. Best therefore returned 5 s, and the
+// controller pushed a 5 s rate to the proxy — applied to an SNMP POLL, i.e. to
+// the very channel the connector had just declared "never more often than 60 s."
+// One channel's floor was pitted against a different channel, which is exactly
+// what a floor is not supposed to be.
 //
-// Le repli sur Best est laisse a l'APPELANT et n'est pas fait ici : une plateforme
-// qui ne declares aucun canal du genre requested doit be traitee explicitement — soit
-// en retombant sur le plancher de l'inconnu, soit en ne collectant pas — et masquer
-// ce choix derriere un repli silencieux ferait interroger en SNMP une plateforme qui
-// n'en a jamais annonce la capability.
+// Falling back to Best is left to the CALLER and is not done here: a platform
+// that declares no channel of the requested kind must be handled explicitly —
+// either by falling back to the floor for the unknown, or by not collecting at
+// all — and hiding that choice behind a silent fallback would poll a platform
+// over SNMP that never advertised the capability.
 func (m MonitoringCapabilities) BestOfKind(kind, metric string) (MonitorChannel, bool) {
 	var out MonitorChannel
 	var found bool
@@ -309,12 +309,12 @@ func (m MonitoringCapabilities) BestOfKind(kind, metric string) (MonitorChannel,
 	return out, found
 }
 
-// WhyUnavailable rend le motif declared pour une metrique que la plateforme
-// n'expose pas. Interrogee avec la same key que Best : there where Best repond
-// « aucun canal », celle-ci repond « et voici pourquoi il n'y en aura pas ».
+// WhyUnavailable returns the declared reason for a metric the platform does not
+// expose. Queried with the same key as Best: where Best answers "no channel,"
+// this one answers "and here is why there never will be one."
 //
-// ok=false ne veut PAS dire que la metrique est disponible — il veut dire que
-// personne n'a documente son absence. C'est Best qui dit la disponibilite.
+// ok=false does NOT mean the metric is available — it means nobody has
+// documented its absence. It's Best that states availability.
 func (m MonitoringCapabilities) WhyUnavailable(metric string) (MetricUnavailable, bool) {
 	var u MetricUnavailable
 	for _, u = range m.Unavailable {
@@ -325,18 +325,18 @@ func (m MonitoringCapabilities) WhyUnavailable(metric string) (MetricUnavailable
 	return MetricUnavailable{}, false
 }
 
-// Contradictions rend les metriques declarees A LA FOIS rendues par un canal et
-// indisponibles sur la plateforme.
+// Contradictions returns the metrics declared BOTH as returned by a channel AND
+// as unavailable on the platform.
 //
-// Une declaration qui se contredit est pire que pas de declaration : soit the UI
-// annonce une courbe qu'aucune collecte ne remplira jamais, soit il affiche un
-// motif d'absence a cote d'une courbe qui existe. Dans les deux cas l'exploitant
-// perd la seule chose que ces capabilities lui apportent — la certitude que ce
-// qui est affiche correspond a the device.
+// A self-contradicting declaration is worse than no declaration at all: either
+// the UI advertises a graph that no collection will ever fill, or it shows a
+// reason for absence next to a graph that actually exists. Either way, the
+// operator loses the one thing these capabilities are supposed to provide —
+// certainty that what's shown matches the device.
 //
-// Ce n'est pas un control d'execution : c'est un invariant que les tests de
-// chaque connecteur verrouillent, y compris ceux a venir. Il rend l'incoherence
-// impossible a introduire en silence, dans un sens comme dans l'autre.
+// This is not a runtime check: it is an invariant locked in by every connector's
+// tests, including future ones. It makes this kind of inconsistency impossible to
+// introduce silently, in either direction.
 func (m MonitoringCapabilities) Contradictions() []string {
 	var out []string
 	var u MetricUnavailable
@@ -350,9 +350,9 @@ func (m MonitoringCapabilities) Contradictions() []string {
 	return out
 }
 
-// EffectiveUsername resout le nom actually posable. Le nom souhaite n'est
-// qu'un souhait : c'est ce que renvoie cette fonction qui atterrit sur
-// the device, et donc ce qu'il faut enregistrer.
+// EffectiveUsername resolves the name that can actually be set. The desired name
+// is only a wish: what this function returns is what lands on the device, and
+// therefore what must be recorded.
 func (a AdminAccount) EffectiveUsername(wanted string) string {
 	if a.Custom && wanted != "" {
 		return wanted
@@ -360,82 +360,84 @@ func (a AdminAccount) EffectiveUsername(wanted string) string {
 	if a.FixedName != "" {
 		return a.FixedName
 	}
-	// Capability inconnue : on suppose le pire, i.e. le compte
-	// historique de tout le secteur.
+	// Unknown capability: assume the worst case, i.e. the account name
+	// historically used across the whole industry.
 	return "admin"
 }
 
-// CommitStyle : comment la plateforme rend un changement durable. C'est ce qui
-// determine la strategie de security de l'apply (cf. [[Reconciliation]]).
+// CommitStyle: how the platform makes a change durable. This is what determines
+// the write's safety strategy (cf. [[Reconciliation]]).
 type CommitStyle string
 
 const (
-	// CommitImmediate : le changement s'applique et persiste d'un bloc. Le pire
-	// cas — aucun filet fourni par la plateforme.
+	// CommitImmediate: the change applies and persists in one shot. The worst
+	// case — no safety net provided by the platform.
 	CommitImmediate CommitStyle = "immediate"
-	// CommitApplyThenSave : le changement s'applique tout de suite mais ne
-	// survit pas a un reboot tant qu'il n'est pas explicitement sauve.
-	// C'est un rollback gratuit : appliquer, verify, PUIS sauver.
+	// CommitApplyThenSave: the change applies right away but does not survive a
+	// reboot until it is explicitly saved. This is a free rollback: apply,
+	// verify, THEN save.
 	CommitApplyThenSave CommitStyle = "apply_then_save"
-	// CommitConfirmed : la plateforme annule elle-same si on ne confirme pas.
+	// CommitConfirmed: the platform rolls itself back if not confirmed.
 	CommitConfirmed CommitStyle = "commit_confirmed"
-	// CommitArchiveRollback : snapshot + restauration (IOS archive).
+	// CommitArchiveRollback: snapshot + restore (IOS archive).
 	CommitArchiveRollback CommitStyle = "archive_rollback"
 )
 
-// Capabilities : ce que la plateforme sait faire. Un intent qui demande autre
-// chose est refused a la compilation, avec un message lisible — jamais un failure
-// silencieux au deploiement.
+// Capabilities: what the platform knows how to do. An intent asking for
+// something else is refused at compile time, with a readable message — never a
+// silent failure at deployment.
 type Capabilities struct {
-	// VlanRange et MaxVlans : 802.1Q.
+	// VlanRange and MaxVlans: 802.1Q.
 	VlanRange [2]int `json:"vlan_range"`
 	MaxVlans  int    `json:"max_vlans"`
-	// Features : ce qui est present ou absent, named comme dans le model
-	// standard.
+	// Features: what's present or absent, named as in the standard model.
 	Features map[string]bool `json:"features"`
-	// STPModes : stp | rstp | mstp.
+	// STPModes : none | stp | rstp | mstp. "none" means the platform can turn
+	// spanning tree off (RouterOS protocol-mode=none, Instant On admin mode 0).
+	// Platforms that only speak one protocol (SwOS RSTP) omit "none" and list
+	// that protocol alone — ResolveSTPMode will not honor a "none" preference
+	// against them.
 	STPModes []string `json:"stp_modes"`
-	// MSTInstances, MaxACLs, MaxACEs, MaxStaticRoutes : les limites chiffrees,
-	// qui servent a refuser AVANT to write.
+	// MSTInstances, MaxACLs, MaxACEs, MaxStaticRoutes: the numeric limits, used
+	// to refuse BEFORE writing.
 	MSTInstances    int `json:"mst_instances"`
 	MaxACLs         int `json:"max_acls"`
 	MaxACEs         int `json:"max_aces"`
 	MaxStaticRoutes int `json:"max_static_routes"`
-	// MaxLAGs / PortsPerLAG : aggregation. Depend du nombre de ports du model.
+	// MaxLAGs / PortsPerLAG: aggregation. Depends on the model's port count.
 	MaxLAGs     int `json:"max_lags"`
 	PortsPerLAG int `json:"ports_per_lag"`
-	// SNMPVersions : v1 | v2c | v3. Decide de identity de service poussee
+	// SNMPVersions: v1 | v2c | v3. Decides the service identity pushed
 	// (cf. docs/03-Securite/Identite de service et rotation).
 	SNMPVersions []string `json:"snmp_versions"`
-	// SNMPv3Auth / SNMPv3Priv : les algorithmes ACTUALLY disponibles.
+	// SNMPv3Auth / SNMPv3Priv: the algorithms ACTUALLY available.
 	//
-	// « Supporte v3 » n'est pas un booleen. Une plateforme peut annoncer v3 en
-	// n'offrant que MD5 et DES, ce qui ne vaut pas mieux que du v2c — et la
-	// present  comme sure serait le pire des mensonges. Le connecteur declares
-	// donc les algorithmes, la politique porte un plancher, et l'ecart est
-	// AFFICHE (spec §2.1 d'Identite de service et rotation).
+	// "Supports v3" is not a boolean. A platform can advertise v3 while only
+	// offering MD5 and DES, which is no better than v2c — and presenting it as
+	// secure would be the worst kind of lie. The connector therefore declares
+	// the algorithms, policy carries a floor, and the gap between the two is
+	// DISPLAYED (spec §2.1 of Identite de service et rotation).
 	//
-	// Ces listes decident aussi de l'ETIQUETTE que the device recevra
-	// (`snmpv3-sha-des`), et donc du secret qu'il partagera : deux devices
-	// aux algorithmes differents ne peuvent pas porter la same key v3.
+	// These lists also decide the LABEL the device will receive
+	// (`snmpv3-sha-des`), and therefore the secret it will share: two devices
+	// with different algorithms cannot carry the same v3 key.
 	SNMPv3Auth []string `json:"snmpv3_auth,omitempty"`
 	SNMPv3Priv []string `json:"snmpv3_priv,omitempty"`
-	// Monitoring : par quels canaux cet device est supervisable, et a quelle
-	// cadence c'est raisonnable.
+	// Monitoring: which channels this device can be monitored through, and at
+	// what rate that's reasonable.
 	Monitoring MonitoringCapabilities `json:"monitoring"`
-	// MaxSessions : sessions d'administration simultanees. Un connecteur qui
-	// l'ignore fait tomber l'UI de the device sous ses propres requests.
+	// MaxSessions: simultaneous administration sessions. A connector that
+	// ignores this takes down the device's own UI under its own requests.
 	MaxSessions int `json:"max_sessions"`
-	// Commit : la strategie de security de l'apply.
+	// Commit: the write's safety strategy.
 	Commit CommitStyle      `json:"commit"`
 	Mgmt   MgmtCapabilities `json:"mgmt"`
-	// Admin : ce que la plateforme accepte comme compte d'administration.
+	// Admin: what the platform accepts as an administration account.
 	Admin AdminAccount `json:"admin"`
 }
 
-// Has repond sans paniquer sur une carte nulle. Une feature inconnue est
-// ABSENTE : pour tout ce qui peut couper access, l'inconnu se traite comme un
-// refus.
+// Has answers without panicking on a nil map. An unknown feature is ABSENT: for
+// anything that can cut off access, the unknown is treated as a refusal.
 func (c Capabilities) Has(feature string) bool {
 	if c.Features == nil {
 		return false
@@ -443,42 +445,42 @@ func (c Capabilities) Has(feature string) bool {
 	return c.Features[feature]
 }
 
-// ResetProcedure est du SAVOIR, pas une action : le connecteur describes la remise
-// a zero, meshcraft ne l'execute pas a la place de the operator
+// ResetProcedure is KNOWLEDGE, not an action: the connector describes the factory
+// reset, meshcraft does not perform it in the operator's place
 // (cf. docs/01-Architecture/Discovery).
 type ResetProcedure struct {
-	// Hardware : le geste physique, describes sans ambiguite.
+	// Hardware: the physical gesture, described unambiguously.
 	Hardware string `json:"hardware,omitempty"`
-	// Software : la voie logicielle quand access admin est conserve.
+	// Software: the software path when admin access is retained.
 	Software string `json:"software,omitempty"`
-	// Erases : ce qui est actually efface.
+	// Erases: what is actually wiped.
 	Erases []string `json:"erases,omitempty"`
-	// AfterReset : state dans lequel on retrouve the device — c'est ce qui
-	// permet d'enchainer sur l'adoption.
+	// AfterReset: the state the device is found in afterward — this is what
+	// allows chaining straight into adoption.
 	AfterReset []string `json:"after_reset,omitempty"`
-	// Pitfalls : les pieges connus.
+	// Pitfalls: known traps.
 	Pitfalls []string `json:"pitfalls,omitempty"`
-	// Confirmed : la procedure est-elle verified pour ce model, ou deduced
-	// d'une gamme ? L'UI doit le dire — une procedure de reset erronee costs au
-	// mieux du temps, au pire access a the device.
+	// Confirmed: has the procedure been verified for this exact model, or is it
+	// deduced from a product range? The UI must say which — a wrong reset
+	// procedure costs time at best, access to the device at worst.
 	Confirmed bool   `json:"confirmed"`
 	Source    string `json:"source,omitempty"`
 }
 
-// Driver est le contrat d'un connecteur. Les methods non encore livrees
-// renvoient ErrNotImplemented.
+// Driver is a connector's contract. Methods not yet shipped return
+// ErrNotImplemented.
 type Driver interface {
 	Info() Info
-	// Capabilities depend du model precise : un 8 ports et un 48 ports de la
-	// same gamme n'ont pas les memes limites.
+	// Capabilities depends on the exact model: an 8-port and a 48-port unit of
+	// the same range do not have the same limits.
 	Capabilities(model string) Capabilities
-	// Fingerprint : « cet device est-il pour moi ? », de 0 a 100.
+	// Fingerprint: "is this device mine?", from 0 to 100.
 	Fingerprint(ev Evidence) int
 	ResetProcedure(model string) ResetProcedure
 }
 
-// Evidence rassemble ce que la discovery a appris d'une adresse, sans prejuger
-// du transport.
+// Evidence gathers what discovery learned about an address, without prejudging
+// the transport.
 type Evidence struct {
 	HTTPServer  string
 	HTTPTitle   string
@@ -490,22 +492,21 @@ type Evidence struct {
 	OpenPorts   []int
 }
 
-// --- Registre ---
+// --- Registry ---
 
 var (
 	registryMu sync.RWMutex
 	registry   = map[string]Driver{}
 )
 
-// Register enregistre un connecteur. Appele depuis l'init des paquets de
-// connecteurs.
+// Register registers a connector. Called from the init of connector packages.
 func Register(d Driver) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	registry[d.Info().Name] = d
 }
 
-// Get renvoie un connecteur par nom.
+// Get returns a connector by name.
 func Get(name string) (Driver, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -513,7 +514,58 @@ func Get(name string) (Driver, bool) {
 	return d, ok
 }
 
-// List renvoie tous les connecteurs, par nom.
+// Names lists every REGISTERED connector, sorted.
+//
+// Distinct from discovery.Drivers(), which enumerates FINGERPRINTS — what
+// meshcraft knows how to recognize on a network. This enumerates what it knows
+// how to talk to, which is the question a capability check has to ask: "does
+// every connector that claims a web transport also say where that interface
+// answers?" is only meaningful over the registry.
+//
+// Sorted so a test that iterates reports its failures in a stable order rather
+// than a different one per run.
+func Names() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	var out = make([]string, 0, len(registry))
+	var name string
+	for name = range registry {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// DriverNameFromExtra reads devices.extra.driver without failing when Extra also
+// carries nested objects (stp_observed, …). Unmarshalling Extra into
+// map[string]string rejects those shapes and used to make the connector look
+// unknown (addressing apply shown as ANNOTATION only).
+func DriverNameFromExtra(raw json.RawMessage) string {
+	return ExtraString(raw, "driver")
+}
+
+// ExtraString reads a string field from devices.extra. Nested objects under other
+// keys (stp_observed, …) are ignored — they must not make the whole decode fail.
+func ExtraString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 || key == "" {
+		return ""
+	}
+	var bag map[string]json.RawMessage
+	if json.Unmarshal(raw, &bag) != nil {
+		return ""
+	}
+	var v, ok = bag[key]
+	if !ok || len(v) == 0 || string(v) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(v, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+// List returns all connectors, by name.
 func List() []Driver {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -526,9 +578,9 @@ func List() []Driver {
 	return out
 }
 
-// Best choisit le connecteur au meilleur score au-dessus du seuil. Renvoie
-// ok=false si rien n'accroche — the device apparait alors comme non identifie
-// rather que range de force dans une gamme.
+// Best picks the connector with the highest score above the threshold. Returns
+// ok=false if nothing matches — the device then shows up as unidentified rather
+// than forced into a range it isn't part of.
 func Best(ev Evidence, threshold int) (Driver, int, bool) {
 	var best Driver
 	var bestScore int
@@ -545,6 +597,6 @@ func Best(ev Evidence, threshold int) (Driver, int, bool) {
 	return best, bestScore, true
 }
 
-// Unused garde le contexte dans la signature du contrat a venir (ReadState,
-// Plan, Apply) sans imposer de dependance from maintenant.
+// Unused keeps context in the signature of the upcoming contract (ReadState,
+// Plan, Apply) without imposing a dependency starting now.
 var _ = context.Background

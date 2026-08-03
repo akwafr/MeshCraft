@@ -61,9 +61,20 @@ services:
       # Time series. Empty = no metric storage: meshcraft still runs, and says
       # so, rather than failing startup for a service inventory does not need.
       MESHCRAFT_METRICS_URL: ${MESHCRAFT_METRICS_URL:-http://metrics:8428}
+      # SOCKS5 route to device web interfaces (cf. internal/socks). EMPTY = off,
+      # and that is the default: it is a path into customer management networks.
+      #
+      # Bind INSIDE the container; the mapping below decides who can reach it.
+      # SOCKS5 has no TLS, so the published port stays on 127.0.0.1 and the
+      # operator forwards it (ssh -L 1080:127.0.0.1:1080 controller-host).
+      # Publishing it on 0.0.0.0 would put the token and everything typed into a
+      # vendor login form on the wire in clear; the controller warns at startup
+      # if asked to bind beyond loopback inside the container.
+      MESHCRAFT_SOCKS_LISTEN: ${MESHCRAFT_SOCKS_LISTEN:-}
     # No direct public exposure: traffic enters through Caddy.
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:1080:1080"
 
   caddy:
     image: caddy:2-alpine

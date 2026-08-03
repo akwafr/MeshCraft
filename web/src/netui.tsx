@@ -6,6 +6,7 @@ import { deviceDot, portShortNum, portVisual, type VlanMap } from "./network";
 
 export function PortSquare({
   name,
+  displayName,
   port,
   vm,
   size,
@@ -16,7 +17,16 @@ export function PortSquare({
   neighbor,
   onClick,
 }: {
+  /** Standard-model name — what is sent to the API when this square is clicked. */
   name: string;
+  /**
+   * What the operator reads: the hardware's silkscreen number when the
+   * platform prints one different from the standard name (FS S3900 "1/11" vs
+   * the standard "GE11"). Falls back to a digit-preserving read of `name`
+   * when the caller has none (older callers, or a platform whose standard
+   * name already matches its faceplate).
+   */
+  displayName?: string;
   port: PortIntent;
   vm: VlanMap;
   size: number;
@@ -34,7 +44,7 @@ export function PortSquare({
    * Blinking applies ONLY to the ports actually concerned. Blinking the
    * whole facade for one differing port would make it a long search.
    */
-  drift?: "pending" | "drift" | null;
+  drift?: "pending" | "drift" | "applying" | null;
   /**
    * OBSERVED LLDP neighbor on this port, already phrased by the caller
    * (`neighborTooltip`, web/src/lldp.ts). Added to the tooltip, never to the
@@ -58,14 +68,19 @@ export function PortSquare({
 }) {
   const { t } = useTranslation();
   const v = portVisual(port, vm, { size, off, hoverVlan });
+  // A port the SWITCH shut itself: red frame and a blinking fill, so it draws the
+  // eye on a dense facade. Distinct from drift (orange), which is a configuration
+  // gap and not a fault.
+  const errDisabled = port.link_state === "err-disabled";
   const showNum = size >= 24;
+  const shown = displayName ?? portShortNum(name);
   const style: React.CSSProperties = {
     position: "relative",
     width: size,
     height: Math.round(size * 0.92),
     flex: "none",
     background: v.background,
-    border: `1px solid ${v.borderColor}`,
+    border: errDisabled ? "2px solid var(--danger)" : `1px solid ${v.borderColor}`,
     borderRadius: 3,
     boxShadow: selected ? "0 0 0 2px var(--accent)" : "none",
     opacity: v.opacity,
@@ -86,18 +101,23 @@ export function PortSquare({
       : " — " + port.link + ", " + t("netui.activeLinkUnmanaged")
     : " — " + t("netui.free");
   const tip =
-    name +
+    shown +
     (port.label ? " — " + port.label : state) +
-    (drift === "pending"
-      ? "\n" + t("netui.driftPending")
-      : drift === "drift"
-        ? "\n" + t("netui.driftMismatch")
-        : "") +
+    (drift === "applying"
+      ? "\n" + t("netui.driftApplying")
+      : drift === "pending"
+        ? "\n" + t("netui.driftPending")
+        : drift === "drift"
+          ? "\n" + t("netui.driftMismatch")
+          : "") +
     // The neighbor LAST, and that's a deliberate order: the two lines above
     // describe what meshcraft WANTS on this port, this one describes what a
     // device SAW facing it. The separation mirrors the one between
     // `device_links` and `lldp_neighbors`, and the tooltip has no reason to
     // blur it.
+    (errDisabled
+      ? "\n⚠ " + (port.err_reason || t("netui.errDisabled"))
+      : "") +
     (neighbor ? "\n" + neighbor : "");
   const inner = (
     <>
@@ -108,7 +128,7 @@ export function PortSquare({
             fontSize: 9, fontWeight: 700, color: v.ink, lineHeight: "12px",
           }}
         >
-          {portShortNum(name)}
+          {shown}
         </span>
       )}
       {v.poeDot && (
@@ -126,7 +146,7 @@ export function PortSquare({
   const square = onClick ? (
     <button
       type="button"
-      className={driftClass(drift)}
+      className={driftClass(drift) + (errDisabled ? " port-errdisabled" : "")}
       style={style}
       onMouseDown={(e) => e.shiftKey && e.preventDefault()}
       onClick={onClick}
@@ -134,7 +154,7 @@ export function PortSquare({
       {inner}
     </button>
   ) : (
-    <span className={driftClass(drift)} style={style}>
+    <span className={driftClass(drift) + (errDisabled ? " port-errdisabled" : "")} style={style}>
       {inner}
     </span>
   );
@@ -146,7 +166,8 @@ export function PortSquare({
 }
 
 /** Blink class, empty when the port is compliant. */
-function driftClass(drift?: "pending" | "drift" | null): string | undefined {
+function driftClass(drift?: "pending" | "drift" | "applying" | null): string | undefined {
+  if (drift === "applying") return "port-applying";
   if (drift === "pending") return "port-pending";
   if (drift === "drift") return "port-drift";
   return undefined;

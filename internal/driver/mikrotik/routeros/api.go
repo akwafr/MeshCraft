@@ -27,21 +27,21 @@ import (
 //	             for everything else in this connector (rest.go). It cannot execute
 //	             a command that is not exposed as a menu GET/POST, and the
 //	             controller's read tool is restricted to GET/HEAD.
-//	8728 / 8729  BINARY API, this file. Proprietary protocol with « sentences »,
+//	8728 / 8729  BINARY API, this file. Proprietary protocol with 'sentences',
 //	             words prefixed by their length, login by password or
 //	             challenge/response. This is what MikroTik documentation calls
-//	             « the API », and it is the channel through which a third-party
+//	             'the API', and it is the channel through which a third-party
 //	             client runs CONSOLE COMMANDS — `print`, `monitor`, `set` — without
 //	             opening a terminal.
 //	8291         WINBOX. Yet ANOTHER protocol, encrypted, undocumented, whose
 //	             payload is an object serialization specific to the GUI tool. This
-//	             file does NOT implement it and does not pretend to: saying « the
-//	             Winbox API » in practice means the binary API above, because it is
+//	             file does NOT implement it and does not pretend to: saying 'the
+//	             Winbox API' in practice means the binary API above, because it is
 //	             the only one of the two that is specified.
 //
 // The capability that distinguishes them already exists and is OBSERVED (routeros.go):
 // `Winbox` for 8291, `BinaryAPI` for 8728/8729, `RESTAPI` for the web. The
-// `BinaryAPI` comment used to say « that this connector does not use »; this file
+// `BinaryAPI` comment used to say 'that this connector does not use'; this file
 // makes that false, and the comment was updated with it.
 //
 // # What this channel provides that REST does not
@@ -51,7 +51,7 @@ import (
 // diagnostics on RouterOS (module temperature, supply voltage, bias current,
 // transmitted and received power). It is out of reach for a GET-only tool — that is
 // stated plainly in `monitoringFor` — and the connector therefore declared optical
-// power « neither channel nor unavailability entry ». This file gives it a channel.
+// power 'neither channel nor unavailability entry'. This file gives it a channel.
 //
 // # What is NOT verified, and must be known before relying on it
 //
@@ -64,7 +64,7 @@ import (
 // │ `/ip/service` returns `api` on 8728 and `api-ssl` on 8729, not disabled —   │
 // │ and that both ports accept the TCP connection without speaking HTTP. The    │
 // │ PROTOCOL itself is implemented from the specification published by          │
-// │ MikroTik (help.mikrotik.com, « API » page), and exercised against a         │
+// │ MikroTik (help.mikrotik.com, 'API' page), and exercised against a         │
 // │ SIMULATED device in api_test.go.                                           │
 // │                                                                            │
 // │ Consequence on declarations: the `api` channel is declared with a floor     │
@@ -143,7 +143,7 @@ type Reply struct {
 	// Bare carries words that are NEITHER an attribute NOR an API attribute.
 	//
 	// This field is not decorative: `!fatal` carries its reason exactly this way, as
-	// one bare word (« cannot log in », « session terminated on another interface »).
+	// one bare word ('cannot log in', 'session terminated on another interface').
 	// Dropping it would surface a session closure without a reason to the operator —
 	// the worst message, the one that forces a full retry to understand.
 	Bare []string
@@ -155,7 +155,7 @@ const (
 	replyDone  = "!done"
 	replyTrap  = "!trap"
 	replyFatal = "!fatal"
-	// replyEmpty: introduced by RouterOS 7.18. A distinct « there is nothing »
+	// replyEmpty: introduced by RouterOS 7.18. A distinct 'there is nothing'
 	// response, separate from a data-less `!done`. Treated as a `!re` without
 	// attributes, which is exactly what it means.
 	replyEmpty = "!empty"
@@ -163,7 +163,7 @@ const (
 
 // APIConn is an open session on the binary API.
 //
-// « Session » is NOT loose wording here, and that is the most important difference
+// 'Session' is NOT loose wording here, and that is the most important difference
 // from REST: the binary API is a LONG TCP connection, authenticated ONCE via
 // `/login`, and authentication state lives in the connection. Hence two consequences
 // REST does not have:
@@ -242,7 +242,7 @@ func encodeWordLength(n int) ([]byte, error) {
 //
 // Returns the length, and an error that NAMES the misalignment when the first byte
 // is not a valid prefix. Values 0xF8 through 0xFF are reserved by the specification
-// for control bytes: encountering them does not mean « giant word », it means we are
+// for control bytes: encountering them does not mean 'giant word', it means we are
 // no longer reading the stream we think we are — and continuing would consume random
 // bytes until a timeout whose message would say nothing.
 func readWordLength(r *bufio.Reader) (int, error) {
@@ -399,15 +399,15 @@ func parseReply(s Sentence) Reply {
 // telemetry, exactly what the SNMP poller's strict indexing rule exists to avoid.
 //
 // `!trap` is returned as an ERROR carrying the device's message, never as an empty
-// record: on a read command, a refusal that read as « no data » would conclude « this
-// menu is empty » where the device said « you do not have permission ».
+// record: on a read command, a refusal that read as 'no data' would conclude 'this
+// menu is empty' where the device said 'you do not have permission'.
 func (c *APIConn) Do(ctx context.Context, command string, args ...string) ([]Row, error) {
 	if c.dead != "" {
 		return nil, fmt.Errorf("binary API session closed by the device (%s)", c.dead)
 	}
 	if !strings.HasPrefix(command, "/") {
 		return nil, fmt.Errorf("binary API command %q refused: a command of this "+
-			"protocol starts with \u00ab / \u00bb — otherwise the device would read it as "+
+			"protocol starts with '/' — otherwise the device would read it as "+
 			"an attribute word and respond with an unrelated `!fatal`", command)
 	}
 	var err = c.deadline(ctx)
@@ -435,11 +435,11 @@ func (c *APIConn) Do(ctx context.Context, command string, args ...string) ([]Row
 		}
 		var rep = parseReply(raw)
 		if rep.Tag != "" && rep.Tag != tag {
-			c.dead = "response tagged \u00ab " + rep.Tag + " \u00bb received while \u00ab " + tag +
-				"\u00bb was expected"
+			c.dead = "response tagged '" + rep.Tag + "' received while '" + tag +
+				"' was expected"
 			c.step(false, "binary API stream misaligned", c.dead)
-			return nil, fmt.Errorf("binary API response tagged \u00ab %s \u00bb while command %s "+
-				"carried \u00ab %s \u00bb: this connector never emits two commands in flight, so "+
+			return nil, fmt.Errorf("binary API response tagged '%s' while command %s "+
+				"carried '%s': this connector never emits two commands in flight, so "+
 				"this shift cannot be interleaving. The session is abandoned rather than sorted — "+
 				"returning one record's values for another would produce credible and false "+
 				"telemetry", rep.Tag, command, tag)
@@ -448,7 +448,7 @@ func (c *APIConn) Do(ctx context.Context, command string, args ...string) ([]Row
 		case replyData:
 			rows = append(rows, rep.Attrs)
 		case replyEmpty:
-			// « there is nothing », stated explicitly (RouterOS ≥ 7.18). No record to
+			// 'there is nothing', stated explicitly (RouterOS ≥ 7.18). No record to
 			// add, and especially not an empty record, which would count as one.
 		case replyDone:
 			if len(rep.Attrs) > 0 {
@@ -477,9 +477,9 @@ func (c *APIConn) Do(ctx context.Context, command string, args ...string) ([]Row
 			// An unknown first word is not data: it is a protocol version that moved, or
 			// a shifted stream. We SAY so rather than ignore it — ignoring would loop until
 			// timeout on a sentence that never closes.
-			c.dead = "sentence of unknown type \u00ab " + rep.Type + " \u00bb"
+			c.dead = "sentence of unknown type '" + rep.Type + "'"
 			c.step(false, "binary API response not understood", c.dead)
-			return rows, fmt.Errorf("binary API sentence of unknown type \u00ab %s \u00bb in "+
+			return rows, fmt.Errorf("binary API sentence of unknown type '%s' in "+
 				"response to %s: neither !re, !done, !trap, nor !fatal. The stream is shifted, "+
 				"or this firmware speaks a protocol version this connector does not know",
 				rep.Type, command)
@@ -490,8 +490,8 @@ func (c *APIConn) Do(ctx context.Context, command string, args ...string) ([]Row
 // trapMeaning translates what a refusal on this channel means.
 //
 // Three messages only, but they are the three that send you looking in the wrong
-// place. « no such command » on the binary API does NOT mean the same thing as REST's
-// 400 « no such command or directory »: here there is no submenu 500 trap (cf.
+// place. 'no such command' on the binary API does NOT mean the same thing as REST's
+// 400 'no such command or directory': here there is no submenu 500 trap (cf.
 // restStatusMeaning), the response is frank.
 func trapMeaning(message, category string) string {
 	var low = strings.ToLower(message)
@@ -535,7 +535,7 @@ func (c *APIConn) deadline(ctx context.Context) error {
 // without quitting leaves the device counting the session until its own inactivity
 // timeout, and `/ip/service` OBSERVES `max-sessions: 20` on the `api` entry. A
 // connector that opens and closes twenty times in a row shuts its own door, and the
-// symptom — « cannot log in » on a secret that is nonetheless good — gives nothing
+// symptom — 'cannot log in' on a secret that is nonetheless good — gives nothing
 // that points to the cause.
 //
 // The `/quit` error is IGNORED: the device responds to `/quit` with a `!fatal`, which
@@ -571,9 +571,9 @@ type APIOptions struct {
 //
 // Authentication is a SEPARATE call ([APIConn.Login]) and not a parameter here, for a
 // reason that matters on this platform: an accepted TCP connection and a refused
-// `/login` are two different diagnoses — « the service is not listening / the tunnel
-// is down » on one side, « the secret is wrong or the group does not carry the `api`
-// policy » on the other. Merging them into one call would force guessing which of the
+// `/login` are two different diagnoses — 'the service is not listening / the tunnel
+// is down' on one side, 'the secret is wrong or the group does not carry the `api`
+// policy' on the other. Merging them into one call would force guessing which of the
 // two we have.
 //
 // # THE TLS CASE: the port listens, and that is not enough
@@ -634,7 +634,7 @@ func DialAPI(ctx context.Context, host string, d driver.Dialer,
 		if name == "" {
 			name = host
 		}
-		// See the « THE TLS CASE » section above for InsecureSkipVerify and what will
+		// See the 'THE TLS CASE' section above for InsecureSkipVerify and what will
 		// fail on a device without a certificate.
 		var tc = tls.Client(conn, &tls.Config{
 			ServerName:         name,
@@ -666,22 +666,22 @@ func DialAPI(ctx context.Context, host string, d driver.Dialer,
 //
 // MikroTik changed login in 6.43, and both forms coexist in the field:
 //
-//	≥ 6.43 (« modern »)     `/login =name=… =password=…` in ONE sentence. The password
+//	≥ 6.43 ('modern')     `/login =name=… =password=…` in ONE sentence. The password
 //	                         travels IN CLEAR: on 8728 without TLS, anyone on the path
 //	                         can read it, and it is the proxy tunnel — not the protocol
 //	                         — that protects it.
-//	< 6.43 (« legacy »)     TWO sentences. Bare `/login` returns a `!done` carrying
+//	< 6.43 ('legacy')     TWO sentences. Bare `/login` returns a `!done` carrying
 //	                         `=ret=<challenge, 16 bytes in hexadecimal>`; the client
 //	                         responds `/login =name=… =response=00<md5(0x00 || secret || challenge)>`.
 //	                         The secret does not travel, but unsalted MD5 over a device
-//	                         challenge does not authenticate the SERVER: it is not « more
-//	                         secure », it is differently weak.
+//	                         challenge does not authenticate the SERVER: it is not 'more
+//	                         secure', it is differently weak.
 //
 // # Order, and why it is cost-free
 //
 // The modern form is tried FIRST, and a legacy firmware does not fail for that: it
 // IGNORES attributes it does not understand and returns its challenge. The `=ret=` on
-// `!done` is therefore both « here is the challenge » and « I am pre-6.43 firmware »,
+// `!done` is therefore both 'here is the challenge' and 'I am pre-6.43 firmware',
 // and its PRESENCE is the only discriminator we need. No version detection, no round
 // trip spent probing: one sentence in the modern case, two in the legacy case, and
 // never a wasted attempt.
@@ -696,16 +696,16 @@ func DialAPI(ctx context.Context, host string, d driver.Dialer,
 // firmware responded `!done` WITH a `=ret=` after accepting the credentials, chaining
 // into the challenge response is harmless — the device sees a second correct `/login`.
 // The opposite (ignoring a legacy firmware's `=ret=`) would leave a UNAUTHENTICATED
-// session whose first command would answer « not enough permissions », a message that
+// session whose first command would answer 'not enough permissions', a message that
 // sends you looking for a group policy where the second login sentence is simply missing.
 func (c *APIConn) Login(ctx context.Context, user, secret string) error {
 	var rows, err = c.Do(ctx, "/login", "=name="+user, "=password="+secret)
 	if err != nil {
-		return fmt.Errorf("session login refused for \u00ab %s \u00bb: %w", user, err)
+		return fmt.Errorf("session login refused for '%s': %w", user, err)
 	}
 	var challenge = attrOf(rows, "ret")
 	if challenge == "" {
-		c.step(true, "binary API session authenticated as \u00ab "+user+" \u00bb",
+		c.step(true, "binary API session authenticated as '"+user+"'",
 			"modern login (cleartext password, RouterOS ≥ 6.43)")
 		return nil
 	}
@@ -716,7 +716,7 @@ func (c *APIConn) Login(ctx context.Context, user, secret string) error {
 //
 // The response is `00` followed by the MD5 digest of concatenating a NUL byte, the
 // secret, and the challenge DECODED from hexadecimal. Three details, each producing
-// the same unreadable symptom — « cannot log in » on a secret that is nonetheless good:
+// the same unreadable symptom — 'cannot log in' on a secret that is nonetheless good:
 //
 //   - the leading NUL byte is in the HASH, the leading `00` is in the RETURNED string.
 //     Two different things that look alike, and confusing them is the classic mistake
@@ -729,7 +729,7 @@ func (c *APIConn) Login(ctx context.Context, user, secret string) error {
 func (c *APIConn) loginLegacy(ctx context.Context, user, secret, challenge string) error {
 	var raw, err = hex.DecodeString(strings.TrimSpace(challenge))
 	if err != nil {
-		return fmt.Errorf("unreadable login challenge (\u00ab %s \u00bb): the legacy "+
+		return fmt.Errorf("unreadable login challenge ('%s'): the legacy "+
 			"protocol serves it in hexadecimal, and hashing it as-is would yield a valid "+
 			"and false digest — therefore a refusal whose message would say nothing: %w",
 			challenge, err)
@@ -742,11 +742,11 @@ func (c *APIConn) loginLegacy(ctx context.Context, user, secret, challenge strin
 
 	_, err = c.Do(ctx, "/login", "=name="+user, "=response="+response)
 	if err != nil {
-		return fmt.Errorf("legacy login refused for \u00ab %s \u00bb: %w — this firmware "+
+		return fmt.Errorf("legacy login refused for '%s': %w — this firmware "+
 			"predates RouterOS 6.43 (it answered with a challenge instead of accepting "+
 			"the cleartext password)", user, err)
 	}
-	c.step(true, "binary API session authenticated as \u00ab "+user+" \u00bb",
+	c.step(true, "binary API session authenticated as '"+user+"'",
 		"legacy challenge/response login (RouterOS < 6.43)")
 	return nil
 }

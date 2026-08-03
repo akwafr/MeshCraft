@@ -2,8 +2,8 @@ package main
 
 import "net"
 
-// netInterfaceAddrs renvoie les adresses IP locales utiles (hors loopback et
-// hors link-local), au format CIDR.
+// netInterfaceAddrs returns the useful local IP addresses (excluding loopback
+// and link-local), in CIDR format.
 func netInterfaceAddrs() ([]string, error) {
 	var ifaces, err = net.Interfaces()
 	if err != nil {

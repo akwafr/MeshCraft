@@ -203,11 +203,11 @@ func TestNotesDeManagementPortentLOrdre(t *testing.T) {
 	}
 	var joined = strings.ToLower(strings.Join(mgmt.Notes, " "))
 	var expected = []string{
-		"before",  // l'ordre des operations
-		"allp",    // les champs qui coupent access
-		"serial",  // pas de console de secours
-		"strict",  // le mode VLAN qui fait tomber les trames
-		"endian",  // l'ordre des octets de l'adresse
+		"before", // l'ordre des operations
+		"allp",   // les champs qui coupent access
+		"serial", // pas de console de secours
+		"strict", // le mode VLAN qui fait tomber les trames
+		"endian", // l'ordre des octets de l'adresse
 	}
 	var a string
 	for _, a = range expected {

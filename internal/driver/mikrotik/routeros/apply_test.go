@@ -1,6 +1,7 @@
 package routeros
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -50,7 +51,7 @@ func TestPortToVLANPivot(t *testing.T) {
 	if !reflect.DeepEqual(got[1].Tagged, []string{"ether3"}) {
 		t.Errorf("VLAN 20 tagged = %v, expected [ether3]", got[1].Tagged)
 	}
-	// Unmanaged ports appear NOWHERE: « absent = unmanaged ».
+	// Unmanaged ports appear NOWHERE: 'absent = unmanaged'.
 	var m membership
 	for _, m = range got {
 		var name string
@@ -90,13 +91,13 @@ func TestNativeVLANIsNotAlsoTagged(t *testing.T) {
 //
 // RouterOS does not accept a delta: writing VLAN membership means replacing the
 // ENTIRE list. Yet that list contains members meshcraft does not manage — a port left
-// « free » in the plan, a port added manually by the operator, an interface that is
+// 'free' in the plan, a port added manually by the operator, an interface that is
 // not a front-panel port.
 //
 // Keeping only what meshcraft wants would be the naive behavior, and it would destroy
 // these members on EVERY apply: every port configured outside meshcraft would disappear
 // from its VLANs on the first apply. That is the translation, on a full-list write, of
-// the « absent = unmanaged » rule.
+// the 'absent = unmanaged' rule.
 func TestMergePreservesWhatMeshcraftDoesNotManage(t *testing.T) {
 	// The device carries three members; meshcraft manages only two.
 	var have = []string{"ether1", "ether2", "ether9"}
@@ -212,7 +213,7 @@ func TestUnionRemovesNothing(t *testing.T) {
 // TestPortWithoutLinkIsNotProtected: the safeguard must stay USABLE.
 //
 // On a new device, all ports are in the default VLAN which is also the administration
-// VLAN. If the safeguard applied to all, « adopt » would mean nothing — no port would
+// VLAN. If the safeguard applied to all, 'adopt' would mean nothing — no port would
 // ever be modifiable. The LINK condition is what makes it practical: a port without a
 // cable cannot carry any session.
 //
@@ -240,7 +241,7 @@ func TestPortWithoutLinkIsNotProtected(t *testing.T) {
 // TestDynamicEntryIsNeverModified
 //
 // RouterOS fabricates VLAN entries on its own (observed: VLAN 1, `dynamic: true`,
-// comment « added by pvid »). They have no stable `.id`, are not modifiable, and
+// comment 'added by pvid'). They have no stable `.id`, are not modifiable, and
 // disappear when their reason for being disappears. Trying to write them fails without
 // the message saying why; apply therefore creates a STATIC entry alongside.
 func TestDynamicEntryIsNeverModified(t *testing.T) {
@@ -248,7 +249,7 @@ func TestDynamicEntryIsNeverModified(t *testing.T) {
 
 	var _, found = vlanRowFor(st, 1)
 	if found {
-		t.Error("VLAN 1 is dynamic on the reference device: vlanRowFor must not offer "+
+		t.Error("VLAN 1 is dynamic on the reference device: vlanRowFor must not offer " +
 			"it as a write target")
 	}
 	// Static VLANs, on the other hand, are modifiable and carry their `.id`.
@@ -312,19 +313,28 @@ func TestNothingWrittenWithoutIdentifier(t *testing.T) {
 	}
 }
 
-// TestWritableExtrasIsEmptyAndSaysSo: emptiness reads on screen instead of being
-// discovered in the field.
-func TestWritableExtrasIsEmptyAndSaysSo(t *testing.T) {
-	if len(WritableExtras) != 0 {
-		t.Errorf("WritableExtras = %v: if this connector now applies an intent outside "+
-			"VLAN, the capabilities.go comment must change too", WritableExtras)
+func TestIsVLANAlreadyAdded(t *testing.T) {
+	var err = fmt.Errorf("interface/bridge/vlan/add refused: request refused: 400 Bad Request: failure: vlan already added")
+	if !isVLANAlreadyAdded(err) {
+		t.Fatal("expected already-added")
 	}
-	// All standard-model intents are declared not applied.
+	if isVLANAlreadyAdded(fmt.Errorf("failure: invalid value")) {
+		t.Fatal("other failures must still abort create")
+	}
+	if isVLANAlreadyAdded(nil) {
+		t.Fatal("nil")
+	}
+}
+
+// TestWritableExtrasSTP: spanning-tree is applied via ApplySpanningTree.
+func TestWritableExtrasSTP(t *testing.T) {
+	if !WritesExtra("stp") {
+		t.Fatal("WritesExtra(stp) must be true once ApplySpanningTree exists")
+	}
 	var name string
-	for _, name = range []string{"poe", "stp", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "dhcp_snooping", "port_security"} {
 		if WritesExtra(name) {
-			t.Errorf("intent %q is declared applied although no write from this connector "+
-				"has been verified on hardware", name)
+			t.Errorf("WritesExtra(%q) = true without apply code", name)
 		}
 	}
 }

@@ -34,7 +34,18 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 	}
 
 	out.Mode = "rstp"
-	out.Enabled = true
+	out.Enabled = false
+	var names = a.portNames(ctx)
+	var i int
+	var anyEna bool
+	for i = 0; i < len(names); i++ {
+		var ena, enaOK = rstp.Bit("ena", i)
+		if enaOK && ena {
+			anyEna = true
+			break
+		}
+	}
+	out.Enabled = anyEna || (!rstp.Has("ena"))
 	if prio, ok := sys.Num("prio"); ok {
 		out.BridgePriority = int(prio)
 	}
@@ -44,16 +55,22 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 	if rpr, ok := sys.Num("rpr"); ok {
 		out.RootPriority = int(rpr)
 	}
-	if rmac, ok := sys.Text("rmac"); ok && rmac != "" {
-		out.RootBridgeID = formatSwosMAC(rmac)
-		if out.RootPriority > 0 {
-			out.RootBridgeID = fmt.Sprintf("%04x.%s", out.RootPriority, out.RootBridgeID)
+	// mac / rmac are 12 hex digits (not ASCII hex-encoded text like brd/id).
+	// Text() would decode them to binary garbage in the UI.
+	if v, ok := sys.Value("rmac"); ok && v.Kind == KindStr {
+		if mac, macOK := DecodeMAC(v.Raw); macOK {
+			out.RootBridgeID = mac
+			if out.RootPriority > 0 {
+				out.RootBridgeID = fmt.Sprintf("%04x.%s", out.RootPriority, out.RootBridgeID)
+			}
 		}
 	}
-	if mac, ok := sys.Text("mac"); ok && mac != "" {
-		out.BridgeID = formatSwosMAC(mac)
-		if out.BridgePriority > 0 {
-			out.BridgeID = fmt.Sprintf("%04x.%s", out.BridgePriority, out.BridgeID)
+	if v, ok := sys.Value(FieldMAC); ok && v.Kind == KindStr {
+		if mac, macOK := DecodeMAC(v.Raw); macOK {
+			out.BridgeID = mac
+			if out.BridgePriority > 0 {
+				out.BridgeID = fmt.Sprintf("%04x.%s", out.BridgePriority, out.BridgeID)
+			}
 		}
 	}
 	if out.BridgeID != "" && out.RootBridgeID != "" {
@@ -66,8 +83,6 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 		out.IsRoot = true
 	}
 
-	var names = a.portNames(ctx)
-	var i int
 	for i = 0; i < len(names); i++ {
 		var ena, enaOK = rstp.Bit("ena", i)
 		if enaOK && !ena {
@@ -96,7 +111,11 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 			p.RootPathCost = int(rpcs[i])
 		}
 		if edge, ok := rstp.Bit("edge", i); ok {
+			// Operational edge (detected), not admin policy.
 			p.Edge = edge
+			if edge {
+				p.EdgeMode = driver.STPEdgeYes
+			}
 		}
 		out.Ports = append(out.Ports, p)
 	}
@@ -134,19 +153,6 @@ func swosRoleName(v uint32) string {
 		return driver.STPRoleBackup
 	}
 	return ""
-}
-
-func formatSwosMAC(raw string) string {
-	var s = strings.TrimSpace(raw)
-	if strings.Contains(s, ":") {
-		return strings.ToLower(s)
-	}
-	// Hex without separators (sys.b style).
-	if len(s) == 12 {
-		return strings.ToLower(s[0:2] + ":" + s[2:4] + ":" + s[4:6] + ":" +
-			s[6:8] + ":" + s[8:10] + ":" + s[10:12])
-	}
-	return strings.ToLower(s)
 }
 
 func bareMAC(id string) string {

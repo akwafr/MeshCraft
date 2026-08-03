@@ -106,13 +106,12 @@ var portMetrics = []string{
 // Bounds on the requested window.
 //
 // They exist for the reason written at the top of series.go: a one-year range at one-
-// second step would load tens of millions of points to draw six hundred pixels. The point
-// cap is the real bound — it holds whatever (window, step) pair is requested.
+// second step would load tens of millions of points to draw six hundred pixels. Step
+// selection is shared with site traffic (chartStep): density stays homogeneous across
+// the 24 h / 3 d / 7 d / 30 d presets.
 const (
 	defaultTelemetryWindow = 24 * time.Hour
 	maxTelemetryWindow     = 30 * 24 * time.Hour
-	minTelemetryStep       = 15 * time.Second
-	maxTelemetryPoints     = 600
 )
 
 // handleDeviceTelemetry serves a device's series.
@@ -240,10 +239,8 @@ func seriesLess(a, b telemetrySeries) bool {
 
 // telemetryWindow reads and bounds the requested window.
 //
-// The POINT CAP is the bound that actually holds: it applies whatever pair is requested,
-// and prevents a one-month range at fifteen-second step from crossing the
-// controller for a six-hundred-pixel chart. Step is then WIDENED rather than shrinking the
-// window — the operator asked for a month, they get it, less finely.
+// Step comes from chartStep so device telemetry and the site traffic chart share the
+// same density for the same window. Widening only happens past the global point cap.
 func telemetryWindow(r *http.Request) (time.Duration, time.Duration) {
 	var window = defaultTelemetryWindow
 	var asked, err = strconv.Atoi(r.URL.Query().Get("minutes"))
@@ -253,12 +250,6 @@ func telemetryWindow(r *http.Request) (time.Duration, time.Duration) {
 	if window > maxTelemetryWindow {
 		window = maxTelemetryWindow
 	}
-	var step = window / maxTelemetryPoints
-	if step < minTelemetryStep {
-		step = minTelemetryStep
-	}
-	// Rounded to seconds: step goes as whole seconds in the query (cf. tsdb.QueryRange),
-	// and a fractional step would be silently truncated there.
-	step = step.Round(time.Second)
+	var step = chartStep(window)
 	return window, step
 }

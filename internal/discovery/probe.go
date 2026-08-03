@@ -16,14 +16,17 @@ import (
 
 	"meshcraft/internal/driver"
 	"meshcraft/internal/driver/instanton"
-	// Les connecteurs s'enregistrent aussi aupres du registre driver par leur init :
-	// la discovery est le point du programme qui les consulte tous, c'est donc ici
-	// qu'ils entrent en scene.
+	// Connectors also register themselves with the driver registry through
+	// their init: discovery is the point in the program that consults all of
+	// them, so this is where they come on stage.
+	"meshcraft/internal/driver/cisco/ios"
+	"meshcraft/internal/driver/fs/s3900"
+	_ "meshcraft/internal/driver/hpe/procurve" // registers "hpe-procurve" via init()
 	"meshcraft/internal/driver/mikrotik/routeros"
 	"meshcraft/internal/driver/mikrotik/swos"
 )
 
-// Ports sondes : ceux qui distinguent un device network administrable.
+// Ports probed: the ones that distinguish a manageable network device.
 var ProbePorts = []int{22, 23, 80, 443, 8080, 8443}
 
 const (
@@ -36,25 +39,25 @@ const (
 	maxOutputLen = 256 * 1024
 )
 
-// Credential est un identifiant a essayer. Secret = mot de passe en clair,
-// dechiffre juste avant l'essai et jamais journalise.
+// Credential is a credential to try. Secret = plaintext password, decrypted
+// just before the attempt and never logged.
 type Credential struct {
 	ID   string
 	Name string
-	// Kind : le transport sur lequel cet identifiant a un sens.
+	// Kind: the transport on which this credential makes sense.
 	//
-	// « ssh » et « http » sont essayes, « telnet » ne l'est pas (cf. la note du
-	// same nom plus bas). « any » vaut pour tous les transports essayes, et le
-	// VIDE en fait autant : c'est le cas de l'identifiant ponctuel saisi pour un
-	// seul essai, where l'exploitant ne devrait pas avoir a deviner par where meshcraft
-	// va entrer — il donne un couple utilisateur/mot de passe, on l'essaie par
-	// tous les chemins qu'on sait emprunter.
-	Kind     string // ssh | telnet | http | any | "" (tous)
+	// "ssh" and "http" are tried, "telnet" is not (see the note of the same
+	// name further below). "any" applies to every transport tried, and EMPTY
+	// does the same: that's the case of the one-off credential entered for a
+	// single attempt, where the operator shouldn't have to guess which way
+	// meshcraft will get in — they give a username/password pair, and we try
+	// it on every path we know how to take.
+	Kind     string // ssh | telnet | http | any | "" (all)
 	Username string
 	Secret   string
 }
 
-// credFor dit si un identifiant est a essayer sur ce transport.
+// credFor says whether a credential should be tried on this transport.
 func credFor(c Credential, transport string) bool {
 	switch c.Kind {
 	case "", "any":
@@ -64,9 +67,9 @@ func credFor(c Credential, transport string) bool {
 	}
 }
 
-// countKind compte les identifiants d'un genre donne, tel qu'il a been declared :
-// ici on ne veut PAS l'elargissement de credFor, mais bien « combien
-// d'identifiants ont been enregistres pour ce transport-there ».
+// countKind counts the credentials of a given kind, as it was DECLARED: here
+// we do NOT want credFor's broadening, but rather "how many credentials were
+// registered for this specific transport".
 func countKind(creds []Credential, kind string) int {
 	var n int
 	var c Credential
@@ -78,7 +81,7 @@ func countKind(creds []Credential, kind string) int {
 	return n
 }
 
-// Result rassemble tout ce qu'on a appris d'une adresse.
+// Result gathers everything learned about an address.
 type Result struct {
 	IP         string   `json:"ip"`
 	Reachable  bool     `json:"reachable"`
@@ -90,24 +93,25 @@ type Result struct {
 	HTTPServer string `json:"http_server,omitempty"`
 	HTTPTitle  string `json:"http_title,omitempty"`
 
-	// Renseignes seulement si un identifiant a fonctionne.
+	// Populated only if a credential worked.
 	LoginOK        bool   `json:"login_ok"`
 	CredentialID   string `json:"credential_id,omitempty"`
 	CredentialName string `json:"credential_name,omitempty"`
 	ShellOutput    string `json:"shell_output,omitempty"`
 	RawConfig      string `json:"raw_config,omitempty"`
 
-	// Issue de l'essai des identifiants sur l'interface web, et sa phrase.
+	// Outcome of trying credentials against the web interface, and its
+	// explanatory sentence.
 	//
-	// Ce champ existe parce que « pas authentifie » recouvre trois situations qui
-	// n'appellent pas du tout le same geste de l'exploitant, cf. les constantes
-	// WebAuth*. Sans lui, l'UI ne pourrait afficher qu'un failure, et le seul geste
-	// qu'un failure suggere est de rechercher un mot de passe — y compris there where
-	// aucun mot de passe n'a jamais been presented a personne.
+	// This field exists because "not authenticated" covers three situations
+	// that call for entirely different operator actions, see the WebAuth*
+	// constants. Without it, the UI could only show a failure, and the only
+	// action a failure suggests is to look for a password — including in
+	// cases where no password was ever presented to anyone.
 	WebAuth       string `json:"web_auth,omitempty"`
 	WebAuthDetail string `json:"web_auth_detail,omitempty"`
 
-	// MAC et PortGroups viennent du connecteur quand il sait les lire.
+	// MAC and PortGroups come from the connector when it knows how to read them.
 	MAC        string           `json:"mac,omitempty"`
 	PortGroups []map[string]any `json:"port_groups,omitempty"`
 
@@ -121,35 +125,36 @@ type Result struct {
 	Notes      string `json:"notes,omitempty"`
 }
 
-// Dialer ouvre les connexions TCP de la sonde. C'est le point ingress du
-// tunnel : `net.Dialer` pour le proxy « Local » (l'instance elle-same), le hub
-// de tunnels pour un proxy distant. La sonde, elle, ne sait pas hence elle part —
-// c'est la rule « un seul chemin de code » (docs/01-Architecture/Vue d'ensemble).
+// Dialer opens the probe's TCP connections. This is the tunnel's ingress
+// point: `net.Dialer` for the "Local" proxy (the instance itself), the
+// tunnel hub for a remote proxy. The probe itself doesn't know which one it
+// is using — that's the "single code path" rule (docs/01-Architecture/Vue
+// d'ensemble).
 type Dialer interface {
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// Prober sonde une adresse. Sans etat : sur en concurrence.
+// Prober probes an address. Stateless: safe under concurrency.
 type Prober struct {
-	// Dialer vide = connexions directes depuis le controleur.
+	// Empty Dialer = direct connections from the controller.
 	Dialer Dialer
 
-	// FetchConfig : lire aussi la configuration courante (plus long, et ca
-	// laisse une trace dans les logs de the device). Utilise pour l'ajout
-	// manuel et l'import de configuration, pas pour le balayage de masse.
+	// FetchConfig: also read the current configuration (slower, and it
+	// leaves a trace in the device's logs). Used for manual add and
+	// configuration import, not for mass scanning.
 	FetchConfig bool
-	// ForceDriver contraint le driver (type choisi par l'utilisateur).
+	// ForceDriver constrains the driver (type chosen by the user).
 	ForceDriver string
 }
 
-// Probe execute la sequence complete sur une adresse.
+// Probe runs the full sequence against an address.
 func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Result {
 	var res = Result{IP: ip, OpenPorts: []int{}, Transports: []string{}}
 
 	var started = time.Now()
-	// Les ports sont sondes EN PARALLELE : en serial, un hote mort coutait
-	// 6 × 900 ms, ce qui rendait un /16 hors de portee (des heures). En parallele
-	// il costs 900 ms, et le balayage d'un /16 redevient une affaire de minutes.
+	// Ports are probed IN PARALLEL: run in series, a dead host used to cost
+	// 6 × 900 ms, which put a /16 out of reach (hours). In parallel it costs
+	// 900 ms, and scanning a /16 becomes a matter of minutes again.
 	var openPorts = p.scanPorts(ctx, ip)
 	res.OpenPorts = openPorts
 	if len(res.OpenPorts) == 0 {
@@ -163,7 +168,7 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 		res.SSHBanner = p.grabBanner(ctx, ip, 22)
 	} else if hasPort(res.OpenPorts, 23) {
 		res.SSHBanner = ""
-		res.Notes = strings.TrimSpace(res.Notes + " Telnet ouvert : identification par banniere seulement.")
+		res.Notes = strings.TrimSpace(res.Notes + " Telnet open: identification by banner only.")
 	}
 	if hasPort(res.OpenPorts, 443) || hasPort(res.OpenPorts, 8443) {
 		res.HTTPServer, res.HTTPTitle = p.grabHTTP(ctx, ip, httpsPort(res.OpenPorts), true)
@@ -173,28 +178,28 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 		res.HTTPServer, res.HTTPTitle = p.grabHTTP(ctx, ip, httpPort(res.OpenPorts), false)
 	}
 
-	// Premiere identification, sans authentification.
+	// First identification, without authentication.
 	var m, conf, evidence = Identify("", res.SSHBanner, res.HTTPServer, res.HTTPTitle)
 	if p.ForceDriver != "" {
 		m = MatcherFor(p.ForceDriver)
-		evidence = "type impose par l'utilisateur"
+		evidence = "type forced by the user"
 		conf = ConfShellOutput
 	}
 
-	// winner est l'identifiant qui a ouvert la porte, kept en clair le temps de la
-	// sonde pour be RENDU au connecteur qui va lire plus profond
-	// (cf. enrich). Il ne quitte jamais cette fonction autrement : ni dans le
-	// Result, ni dans une note, ni dans un journal.
+	// winner is the credential that opened the door, kept in clear text for
+	// the duration of the probe so it can be HANDED to the connector that
+	// will read deeper (see enrich). It never leaves this function any other
+	// way: not in the Result, not in a note, not in a log.
 	var winner Credential
 	var haveWinner bool
 
-	// Essai des identifiants sur SSH, puis identification renforcee.
+	// Try credentials over SSH, then reinforced identification.
 	if hasPort(res.OpenPorts, 22) && len(creds) > 0 {
 		var out, cred, err = p.trySSH(ctx, ip, creds, m)
 		if cred.Username != "" {
-			// Retenu from que la session s'est ouverte, same si le shell n'a rien
-			// repondu : c'est le cas de RouterOS, dont l'API REST se laissera lire
-			// avec cet identifiant-there alors que son shell reste muet.
+			// Kept because the session opened, even if the shell answered
+			// nothing: this is the case of RouterOS, whose REST API can be
+			// read with this very credential even though its shell stays silent.
 			winner, haveWinner = cred, true
 		}
 		if err != nil {
@@ -215,20 +220,21 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 		}
 	}
 
-	// Essai des identifiants sur l'interface web, puis identification renforcee.
+	// Try credentials against the web interface, then reinforced identification.
 	//
-	// Apres SSH, et seulement si SSH n'a rien ouvert : un device qui a already
-	// parle par sa CLI n'a rien a gagner d'un second essai, et chaque essai laisse
-	// une ligne dans le journal d'authentification de the device. Le chemin web
-	// n'est pas un luxe pour autant — il est le SEUL sur les gammes web-only, et
-	// le seul qui reste quand la sonde SSH tombe en delai depasse alors que l'API
-	// REST du same device repond.
+	// After SSH, and only if SSH opened nothing: a device that has already
+	// talked through its CLI has nothing to gain from a second attempt, and
+	// every attempt leaves a line in the device's authentication log. That
+	// doesn't make the web path a luxury, though — it's the ONLY one on
+	// web-only ranges, and the only one left when the SSH probe times out
+	// while the same device's REST API responds.
 	if !res.LoginOK && len(creds) > 0 && webPortOpen(res.OpenPorts) {
 		var att = p.tryWeb(ctx, ip, res.OpenPorts, creds, m)
 		res.WebAuth, res.WebAuthDetail = att.outcome, att.detail
 		if att.outcome != WebAuthOK && att.detail != "" {
-			// Une issue non concluante doit SURVIVRE au result de sonde : la note
-			// part dans le candidat, et c'est there qu'on la relira dans trois jours.
+			// An inconclusive outcome must SURVIVE the probe result: the
+			// note goes into the candidate, and that's where it will be read
+			// again in three days.
 			res.Notes = strings.TrimSpace(res.Notes + " " + att.detail)
 		}
 		if att.outcome == WebAuthOK {
@@ -237,9 +243,10 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 			res.CredentialName = att.cred.Name
 			winner, haveWinner = att.cred, true
 
-			// Ce que la page authentifiee apprend, et qui n'was pas accessible a
-			// un anonyme. On ne remplace jamais un fait already connu : celui-ci vient
-			// d'une lecture generique, celui-there peut venir d'un connecteur.
+			// What the authenticated page reveals, and which wasn't
+			// accessible to an anonymous visitor. We never replace a fact
+			// already known: this one comes from a generic read, that one
+			// may come from a connector.
 			var host, serial, mdl = ExtractFacts(att.body)
 			var facts bool
 			if res.Hostname == "" && host != "" {
@@ -251,52 +258,53 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 			if res.Model == "" && mdl != "" {
 				res.Model, facts = mdl, true
 			}
-			// La page authentifiee ne se voit confier l'identification que si rien
-			// d'autre n'y est parvenu. C'est du texte riche — une UI d'device
-			// peut nommer un autre constructeur au passage, dans une note de
-			// compatibilite — et laisser un corps de page defaire une reconnaissance
-			// obtenue par la banniere SSH serait une regression, pas un progres.
+			// The authenticated page is only entrusted with identification
+			// if nothing else succeeded at it. It's rich text — a device's
+			// UI can name a different vendor in passing, in a compatibility
+			// note — and letting a page body undo a recognition obtained
+			// from the SSH banner would be a regression, not progress.
 			if p.ForceDriver == "" && isGenericDriver(m.Driver) {
 				var wm = identifyFromWeb(att.body)
 				if wm.Driver != "" {
 					m, facts = wm, true
 				}
 			}
-			// La confiance monte, mais seulement si l'authentification a rapporte
-			// quelque chose : reussir a se connecter ne prouve pas qu'on a mieux
-			// identifie the device, et une confiance qui monte sans fait nouveau
-			// est un mensonge tranquille. Quand il y a bien du fait nouveau, il vaut
-			// ConfDeviceSelfReport : c'est the device qui parle de lui-same,
-			// derriere une authentification qu'il a lui-same exigee — pas une regex
-			// sur un titre HTML.
+			// Confidence rises, but only if authentication reported
+			// something: succeeding at connecting doesn't prove we
+			// identified the device better, and confidence that rises
+			// without a new fact is a quiet lie. When there is indeed a new
+			// fact, it deserves ConfDeviceSelfReport: it's the device
+			// talking about itself, behind an authentication it demanded
+			// itself — not a regex on an HTML title.
 			if facts && conf < ConfDeviceSelfReport {
 				conf = ConfDeviceSelfReport
-				evidence = "page authentifiee de the device (" + att.path + ")"
+				evidence = "authenticated device page (" + att.path + ")"
 			}
-			// Une configuration demandee mais non lue doit se DIRE. L'exploitant a
-			// coche « lire aussi la configuration » et l'authentification a reussi :
-			// sans cette phrase, il conclurait a un device qui refuse de livrer
-			// sa configuration, alors que c'est meshcraft qui ne sait pas encore la
-			// lire par ce chemin — l'export d'une gamme web-only appartient a son
-			// connecteur, pas a une sonde generique.
+			// A configuration that was requested but not read must be
+			// SAID. The operator checked "also read the configuration" and
+			// authentication succeeded: without this sentence, they would
+			// conclude the device refuses to hand over its configuration,
+			// when actually it's meshcraft that doesn't yet know how to
+			// read it through this path — exporting a web-only range
+			// belongs to its connector, not to a generic probe.
 			if p.FetchConfig && res.RawConfig == "" {
 				res.Notes = strings.TrimSpace(res.Notes +
-					" Configuration non lue : access s'est fait par l'interface web," +
-					" dont l'export appartient au connecteur de la gamme.")
+					" Configuration not read: access was through the web interface," +
+					" whose export belongs to the range's connector.")
 			}
 		}
 	}
 
-	// Le genre « telnet » ne se laisse PAS au silence : un identifiant enregistre
-	// qu'on n'essaie jamais est exactement le default qu'on vient de corriger pour
-	// le web. On le dit ici, sur the device where la question se pose vraiment —
-	// celui dont le 23 est ouvert.
+	// The "telnet" kind is NOT left in silence: a registered credential that
+	// we never try is exactly the bug we just fixed for the web path. We say
+	// so here, on the device where the question actually arises — the one
+	// whose port 23 is open.
 	if hasPort(res.OpenPorts, 23) {
 		var n = countKind(creds, "telnet")
 		if n > 0 {
 			res.Notes = strings.TrimSpace(res.Notes + fmt.Sprintf(
-				" %d identifiant(s) de genre telnet enregistres : NON essayes,"+
-					" meshcraft n'a pas de client telnet.", n))
+				" %d telnet-kind credential(s) registered: NOT attempted,"+
+					" meshcraft has no telnet client.", n))
 		}
 	}
 
@@ -305,9 +313,9 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 	res.Confidence = conf
 	res.Evidence = evidence
 
-	// Le connecteur reconnu a le droit de preciser ce que la sonde generique ne
-	// sait pas voir : model exact, serial number, front panel de ports. C'est du
-	// savoir de plateforme, il n'a rien a faire dans la sonde.
+	// A recognized connector has the right to refine what the generic probe
+	// can't see: exact model, serial number, port front panel. That's
+	// platform knowledge, it has no place in the probe.
 	p.enrich(ctx, &res, winner, haveWinner)
 	if res.Hostname == "" && res.HTTPTitle != "" {
 		res.Hostname = ""
@@ -315,8 +323,8 @@ func (p *Prober) Probe(ctx context.Context, ip string, creds []Credential) Resul
 	return res
 }
 
-// scanPorts sonde tous les ports en parallele et renvoie ceux qui repondent,
-// dans l'ordre de ProbePorts (un result stable est plus facile a comparer).
+// scanPorts probes every port in parallel and returns the ones that respond,
+// in ProbePorts order (a stable result is easier to compare).
 func (p *Prober) scanPorts(ctx context.Context, ip string) []int {
 	var open = make([]bool, len(ProbePorts))
 	var wg sync.WaitGroup
@@ -339,7 +347,7 @@ func (p *Prober) scanPorts(ctx context.Context, ip string) []int {
 	return out
 }
 
-// dial ouvre une connexion, par le tunnel du proxy choisi ou en direct.
+// dial opens a connection, through the chosen proxy's tunnel or directly.
 func (p *Prober) dial(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
 	if p.Dialer != nil {
 		var dctx, cancel = context.WithTimeout(ctx, timeout)
@@ -359,9 +367,9 @@ func (p *Prober) dialOK(ctx context.Context, ip string, port int) bool {
 	return true
 }
 
-// grabBanner lit la banniere que le serveur envoie SPONTANEMENT (cas de SSH et
-// de beaucoup de serveurs Telnet). Aucune tentative d'authentification ici :
-// c'est gratuit et sans risque de verrouillage de compte.
+// grabBanner reads the banner the server sends SPONTANEOUSLY (the case for
+// SSH and many Telnet servers). No authentication attempt here: it's free
+// and carries no risk of account lockout.
 func (p *Prober) grabBanner(ctx context.Context, ip string, port int) string {
 	var conn, err = p.dial(ctx, net.JoinHostPort(ip, itoa(port)), dialTimeout)
 	if err != nil {
@@ -385,14 +393,14 @@ func (p *Prober) grabHTTP(ctx context.Context, ip string, port int, secure bool)
 	if secure {
 		scheme = "https"
 	}
-	// InsecureSkipVerify : les devices network present  des certificats
-	// auto-signes, c'est la norme. On ne fait ici que de l'identification.
+	// InsecureSkipVerify: network devices present self-signed certificates,
+	// that's the norm. We're only doing identification here.
 	var client = &http.Client{
 		Timeout: httpTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			// Le HTTP passe par le same chemin que le reste : c'est ce qui
-			// permet d'atteindre l'UI web d'un device a travers un proxy.
+			// HTTP goes through the same path as everything else: this is
+			// what makes it possible to reach a device's web UI through a proxy.
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return p.dial(ctx, addr, dialTimeout)
 			},
@@ -430,9 +438,10 @@ func (p *Prober) grabHTTP(ctx context.Context, ip string, port int, secure bool)
 	return server, title
 }
 
-// sshClientConfig accepte volontairement les algorithmes anciens : sans eux,
-// une bonne partie du parc reel (switchs de plus de cinq ans) est injoignable.
-// La key d'hote n'est pas verified — en discovery on ne la connait pas encore.
+// sshClientConfig deliberately accepts old algorithms: without them, a good
+// portion of the real fleet (switches more than five years old) is
+// unreachable. The host key isn't verified — during discovery we don't know
+// it yet.
 func sshClientConfig(c Credential) *ssh.ClientConfig {
 	return &ssh.ClientConfig{
 		User: c.Username,
@@ -465,23 +474,26 @@ func sshClientConfig(c Credential) *ssh.ClientConfig {
 		HostKeyAlgorithms: []string{
 			"ssh-ed25519", "rsa-sha2-256", "rsa-sha2-512", "ssh-rsa",
 			"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384",
+			// FS S3900 OpCode 1.7 vintage: KEX offer is group1/group14-sha1 only
+			// (already listed above) and the host key can be DSA.
+			"ssh-dss",
 		},
 	}
 }
 
-// maxAuthFailures borne les essais par hote : au-dela, on stops same s'il
-// reste des identifiants a tester. Les politiques AAA verrouillent les comptes
-// after quelques echecs — decouvrir un switch ne doit pas bloquer access de
-// l'equipe network (cf. docs/01-Architecture/Discovery, garde-fous).
+// maxAuthFailures bounds the attempts per host: beyond that, we stop even if
+// there are still credentials left to test. AAA policies lock accounts after
+// a few failures — discovering a switch must not block the network team's
+// access (see docs/01-Architecture/Discovery, safeguards).
 const maxAuthFailures = 2
 
-// trySSH essaie les identifiants dans l'ordre recu et, au premier qui passe,
-// execute les commandes d'identification du driver.
-// trySSH rend l'identifiant qui a fonctionne, et non son seul identifiant de
-// base : un identifiant saisi pour un seul essai n'a PAS d'ID (rien ne
-// l'enregistre), et le retrouver after coup dans la liste par son ID was
-// impossible. Or c'est precisely lui qu'un operator emploie quand il ajoute un
-// device a la main — le cas where l'enrichissement compte le plus.
+// trySSH tries the credentials in the order received and, on the first one
+// that succeeds, runs the driver's identification commands.
+// trySSH returns the credential that worked, and not just its base
+// identifier: a credential entered for a single attempt has NO ID (nothing
+// registers it), and finding it again afterward in the list by its ID would
+// be impossible. Yet that is precisely the one an operator uses when adding
+// a device by hand — the case where enrichment matters most.
 func (p *Prober) trySSH(ctx context.Context, ip string, creds []Credential, m Matcher) (out string, cred Credential, err error) {
 	var failures int
 	var c Credential
@@ -494,7 +506,7 @@ func (p *Prober) trySSH(ctx context.Context, ip string, creds []Credential, m Ma
 		}
 		if failures >= maxAuthFailures {
 			return "", Credential{}, fmt.Errorf(
-				"essais d'identifiants arretes after %d echecs (protection contre le verrouillage de compte)",
+				"credential attempts stopped after %d failures (account-lockout protection)",
 				failures)
 		}
 		var client, dialErr = p.sshDial(ctx, ip, c)
@@ -503,22 +515,23 @@ func (p *Prober) trySSH(ctx context.Context, ip string, creds []Credential, m Ma
 				failures++
 				continue
 			}
-			return "", Credential{}, fmt.Errorf("SSH : %v", firstLine(dialErr.Error()))
+			return "", Credential{}, fmt.Errorf("SSH: %v", firstLine(dialErr.Error()))
 		}
 		var text, shellErr = runShell(ctx, client, p.commandsFor(m))
 		_ = client.Close()
 		if shellErr != nil && text == "" {
-			// L'identifiant est rendu DESPITE l'erreur : la session s'est ouverte, donc
-			// le mot de passe est bon — c'est le shell qui n'a pas repondu comme on
-			// l'attendait. C'est exactement le cas de RouterOS, dont le shell
-			// interactif ne se laisse pas gratter, et il ne faut pas que ce refus de
-			// dialogue fasse perdre un identifiant qui, lui, fonctionne.
-			return "", c, fmt.Errorf("session SSH : %v", firstLine(shellErr.Error()))
+			// The credential is returned DESPITE the error: the session
+			// opened, so the password is correct — it's the shell that
+			// didn't answer as expected. This is exactly the case of
+			// RouterOS, whose interactive shell can't be scraped, and this
+			// refusal to converse must not cost us a credential that
+			// otherwise works.
+			return "", c, fmt.Errorf("SSH session: %v", firstLine(shellErr.Error()))
 		}
 		return text, c, nil
 	}
 	if failures > 0 {
-		return "", Credential{}, fmt.Errorf("aucun identifiant standard accepted (%d refus)", failures)
+		return "", Credential{}, fmt.Errorf("no standard credential accepted (%d refused)", failures)
 	}
 	return "", Credential{}, nil
 }
@@ -553,16 +566,16 @@ func (p *Prober) commandsFor(m Matcher) []string {
 	return cmds
 }
 
-// Marqueurs encadrant la configuration dans la sortie du shell. Ce sont des
-// commandes volontairement invalides : the device les rejette, mais leur
-// echo dans la sortie delimite proprement le bloc de configuration.
+// Markers framing the configuration in the shell output. These are
+// deliberately invalid commands: the device rejects them, but their echo in
+// the output cleanly delimits the configuration block.
 const (
 	configMarkerBegin = "echo MESHCRAFT-CONFIG-BEGIN"
 	configMarkerEnd   = "echo MESHCRAFT-CONFIG-END"
 )
 
-// runShell ouvre un shell interactif (beaucoup de switchs refusent `exec`),
-// envoie les commandes et lit la sortie pendant un temps borne.
+// runShell opens an interactive shell (many switches refuse `exec`), sends
+// the commands, and reads the output for a bounded time.
 func runShell(ctx context.Context, client *ssh.Client, cmds []string) (string, error) {
 	var session, err = client.NewSession()
 	if err != nil {
@@ -581,8 +594,7 @@ func runShell(ctx context.Context, client *ssh.Client, cmds []string) (string, e
 		return "", err
 	}
 
-	// Un pty large evite la pagination sur les plateformes qui ignorent la
-	// commande de desactivation.
+	// A wide pty avoids pagination on platforms that ignore the disable command.
 	err = session.RequestPty("vt100", 200, 512, ssh.TerminalModes{
 		ssh.ECHO: 0, ssh.TTY_OP_ISPEED: 38400, ssh.TTY_OP_OSPEED: 38400,
 	})
@@ -621,8 +633,8 @@ func runShell(ctx context.Context, client *ssh.Client, cmds []string) (string, e
 		}
 		time.Sleep(400 * time.Millisecond)
 	}
-	// « exit » referme proprement, ce qui debloque la lecture sans attendre
-	// tout le budget.
+	// "exit" closes cleanly, which unblocks reading without waiting out the
+	// whole budget.
 	_, _ = io.WriteString(stdin, "exit\n")
 	_ = stdin.Close()
 
@@ -633,15 +645,16 @@ func runShell(ctx context.Context, client *ssh.Client, cmds []string) (string, e
 	case text = <-collected:
 		return sanitize(text), nil
 	case <-budget.C:
-		return "", fmt.Errorf("delai depasse after %s", shellBudget)
+		return "", fmt.Errorf("timed out after %s", shellBudget)
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
 }
 
-// extractConfig isole le bloc de configuration entre les marqueurs. A default de
-// marqueurs, renvoie la sortie entire : le parseur d'import sait ignorer le
-// bruit, et une configuration tronquee serait pire qu'une configuration bruitee.
+// extractConfig isolates the configuration block between the markers. In
+// the absence of markers, returns the whole output: the import parser knows
+// how to ignore the noise, and a truncated configuration would be worse
+// than a noisy one.
 func extractConfig(out string) string {
 	var begin = strings.Index(out, "MESHCRAFT-CONFIG-BEGIN")
 	var end = strings.LastIndex(out, "MESHCRAFT-CONFIG-END")
@@ -656,85 +669,88 @@ func extractConfig(out string) string {
 	return strings.TrimSpace(body[nl+1:])
 }
 
-// --- Essai des identifiants sur l'interface web ---
+// --- Trying credentials against the web interface ---
 //
-// Ce que cet essai couvre : l'authentification AU NIVEAU HTTP, celle qui se
-// present dans un en-tete `Authorization` parce que the device a repondu 401
-// en annoncant lui-same le schema qu'il veut (driver.AuthAuto — on ne le devine
-// pas, cf. internal/driver/webfetch.go). Deux gammes du parc de test n'ont rien
-// d'autre : un SwOS n'ouvre que le port 80 et sert ses pages de data en
-// Digest, et l'API REST de RouterOS repond en Basic sur un device dont la
-// sonde SSH tombe en delai depasse. Avant cet essai, la discovery les voyait
-// sans jamais pouvoir se present .
+// What this attempt covers: authentication AT THE HTTP LEVEL, the kind that
+// shows up in an `Authorization` header because the device answered 401
+// while itself announcing the scheme it wants (driver.AuthAuto — we never
+// guess it, see internal/driver/webfetch.go). Two ranges in the test fleet
+// have nothing else: a SwOS only opens port 80 and serves its data pages
+// over Digest, and RouterOS's REST API answers over Basic on a device whose
+// SSH probe times out. Before this attempt, discovery would see them
+// without ever being able to introduce itself.
 //
-// Ce que cet essai ne couvre PAS, et ne pourra pas couvrir : les UI a
-// FORMULAIRE. Un Aruba Instant On rend 200 a un anonyme et n'ouvre de session
-// qu'after le POST d'un formulaire dont il faut connaitre l'URL, les champs, et
-// la way dont le cookie est applied. Rien de cela ne se devine depuis une sonde
-// generique : c'est du savoir de plateforme, donc le travail d'un connecteur
-// (docs/01-Architecture/Connecteurs). C'est exactement la raison d'be de la
-// troisieme issue ci-dessous — sans elle, cette limite se lirait comme un mot de
-// passe refused.
+// What this attempt does NOT cover, and will never be able to cover:
+// FORM-based UIs. An Aruba Instant On returns 200 to an anonymous visitor
+// and only opens a session after a POST of a form whose URL, fields, and
+// cookie-handling method must be known. None of that can be guessed from a
+// generic probe: it's platform knowledge, hence a connector's job (see
+// docs/01-Architecture/Connecteurs). This is exactly the reason the third
+// outcome below exists — without it, this limitation would read like a
+// refused password.
 const (
-	// WebAuthNotTried : essai non conduit — aucun port web, aucun identifiant
-	// utilisable sur le web, ou SSH avait already ouvert une session.
+	// WebAuthNotTried: attempt not made — no web port, no usable web
+	// credential, or SSH had already opened a session.
 	WebAuthNotTried = ""
-	// WebAuthOK : the device a accepted un identifiant.
+	// WebAuthOK: the device accepted a credential.
 	WebAuthOK = "ok"
-	// WebAuthRefused : the device a REDEMANDE a s'authentifier after avoir vu
-	// nos identifiants. There, et there seulement, il y a un mot de passe a corriger.
+	// WebAuthRefused: the device asked AGAIN to authenticate after seeing
+	// our credentials. Here, and only here, is there a password to fix.
 	WebAuthRefused = "refused"
-	// WebAuthNone : aucune des pages essayees ne demande d'authentification HTTP.
-	// Ce n'est PAS un failure d'identifiants — aucun n'a been presented a personne.
-	// Confondre les deux, c'est envoyer chercher un mauvais mot de passe pendant
-	// des heures sur une interface qui n'en attendait aucun.
+	// WebAuthNone: none of the pages tried request HTTP authentication.
+	// This is NOT a credential failure — none was ever presented to
+	// anyone. Confusing the two means sending someone to look for a wrong
+	// password for hours on an interface that never expected one.
 	WebAuthNone = "no-http-auth"
-	// WebAuthError : l'essai n'a pas abouti (lien coupe, TLS refused, schema
-	// d'authentification inconnu, response qu'on ne sait pas interpreter). Ni un
-	// refus, ni une absence : une panne d'essai, qui se relance.
+	// WebAuthError: the attempt didn't complete (link down, TLS refused,
+	// unknown authentication scheme, response we don't know how to
+	// interpret). Neither a refusal nor an absence: a failed attempt, to be
+	// retried.
 	WebAuthError = "error"
 )
 
-// webAuthPaths dit WHERE chercher un 401 sur une plateforme already reconnue.
+// webAuthPaths says WHERE to look for a 401 on an already-recognized
+// platform.
 //
-// La root ne suffit pas, et c'est verified sur les deux devices de test :
-// SwOS et RouterOS servent tous deux leur page d'accueil en 200 a un anonyme, et
-// n'exigent l'authentification que sur leurs pages de DONNEES. S'en tenir a « / »
-// aurait donc conclu « cette interface n'authentifie pas » sur les deux
-// devices que ce travail doit debloquer.
+// The root isn't enough, and this was verified on both test devices: SwOS
+// and RouterOS both serve their home page with a 200 to an anonymous
+// visitor, and only require authentication on their DATA pages. Sticking to
+// "/" would therefore have concluded "this interface doesn't authenticate"
+// on both devices this work is meant to unblock.
 //
-// Cette table est le strict minimum, et elle a la same faiblesse que celle des
-// motifs de fingerprint.go : elle est du savoir de plateforme range dans une
-// sonde generique. Sa place definitive est dans le connecteur, qui sait already where
-// vivent ses pages ; en attendant, l'avoir ici est la difference entre un
-// identifiant essaye et un identifiant decoratif.
+// This table is the bare minimum, and it has the same weakness as the
+// patterns in fingerprint.go: it's platform knowledge tucked into a generic
+// probe. Its rightful home is the connector, which already knows where its
+// pages live; in the meantime, having it here is the difference between a
+// credential that gets tried and a decorative one.
 var webAuthPaths = map[string][]string{
-	// Pages `*.b` de SwOS : Digest, realm = le model du switch.
+	// SwOS's `*.b` pages: Digest, realm = the switch's model.
 	"mikrotik-swos": {"/sys.b"},
-	// API REST de RouterOS : Basic. `system/resource` est la ressource la moins
-	// engageante qui exige l'authentification.
+	// RouterOS's REST API: Basic. `system/resource` is the least
+	// committal resource that requires authentication.
 	"mikrotik-routeros": {"/rest/system/resource"},
 }
 
-// webRootOnly : a default de plateforme reconnue, la root et rien d'autre.
-// Deviner des chemins sur une interface inconnue, ce serait balayer the device
-// a l'aveugle — beaucoup de bruit dans ses journaux pour un pari.
+// webRootOnly: in the absence of a recognized platform, the root and
+// nothing else. Guessing paths on an unknown interface would mean scanning
+// the device blindly — a lot of noise in its logs for a gamble.
 var webRootOnly = []string{"/"}
 
-// webAttempt : ce qu'on rapporte d'un essai web. `body` reste local a la sonde ;
-// il n'est there que pour en tirer des faits d'identification.
+// webAttempt: what we report about a web attempt. `body` stays local to the
+// probe; it's only there to extract identification facts from.
 type webAttempt struct {
 	outcome string
 	detail  string
-	// cred est l'identifiant qui a fonctionne, ENTIER et non son seul ID : un
-	// identifiant saisi pour un seul essai n'en a pas, et c'est pourtant lui que le
-	// connecteur devra present  pour lire plus profond.
+	// cred is the credential that worked, the WHOLE thing and not just its
+	// ID: a credential entered for a single attempt doesn't have one, and
+	// yet it's exactly the one the connector will need to present in order
+	// to read deeper.
 	cred Credential
 	path string
 	body string
 }
 
-// webChallenge : la page qui a repondu 401, et ce qu'elle reclame.
+// webChallenge: the page that answered 401, and what it demands.
 type webChallenge struct {
 	base       string
 	url        string
@@ -749,8 +765,8 @@ func webPortOpen(ports []int) bool {
 		hasPort(ports, 8080) || hasPort(ports, 8443)
 }
 
-// webBases : les bases d'URL a essayer, HTTPS d'abord — quand les deux sont
-// ouverts, le 80 d'un device redirige en general vers son 443.
+// webBases: the URL bases to try, HTTPS first — when both are open, a
+// device's port 80 generally redirects to its 443.
 func webBases(ip string, ports []int) []string {
 	var out = []string{}
 	if hasPort(ports, 443) || hasPort(ports, 8443) {
@@ -762,13 +778,13 @@ func webBases(ip string, ports []int) []string {
 	return out
 }
 
-// webSession : une session web de sonde, qui part par le same chemin que tout le
-// reste (le tunnel du proxy, ou rien).
+// webSession: a probe web session, which goes through the same path as
+// everything else (the proxy's tunnel, or nothing).
 //
-// MaxBody est reduit : verify un mot de passe se joue sur un code de statut, et
-// les faits qu'on peche dans une page state tiennent dans ses premiers
-// kilo-octets. Rapatrier deux megaoctets par adresse balayee n'apporterait rien
-// et se paierait sur un lien lent.
+// MaxBody is kept small: checking a password comes down to a status code,
+// and the facts we fish out of a static page fit in its first few
+// kilobytes. Fetching two megabytes per scanned address wouldn't help and
+// would cost dearly on a slow link.
 func (p *Prober) webSession(base string) *driver.WebSession {
 	var s = driver.NewWebSession(base, p.Dialer, webAuthWait)
 	s.MaxBody = 128 * 1024
@@ -777,9 +793,9 @@ func (p *Prober) webSession(base string) *driver.WebSession {
 
 var webRealmRe = regexp.MustCompile(`(?i)realm\s*=\s*"?([^",]+)"?`)
 
-// parseWebChallenge ne retient du `WWW-Authenticate` que de quoi le RACONTER :
-// le schema et le realm. Le calcul de la response, lui, appartient a
-// driver.WebSession — il n'y a pas deux implementations de Digest ici.
+// parseWebChallenge keeps from `WWW-Authenticate` only enough to REPORT it:
+// the scheme and the realm. Computing the response itself belongs to
+// driver.WebSession — there's no second implementation of Digest here.
 func parseWebChallenge(challenge string) (scheme, realm string) {
 	var fields = strings.Fields(strings.TrimSpace(challenge))
 	if len(fields) > 0 {
@@ -792,9 +808,10 @@ func parseWebChallenge(challenge string) (scheme, realm string) {
 	return scheme, realm
 }
 
-// tryWeb establishes d'ABORD si l'interface authentifie au niveau HTTP, et essaie
-// les identifiants ensuite. L'ordre n'est pas indifferent : c'est le passage
-// anonyme qui permet de distinguer un refus d'une interface qui ne demande rien.
+// tryWeb FIRST establishes whether the interface authenticates at the HTTP
+// level, and only tries the credentials afterward. The order isn't
+// arbitrary: it's the anonymous pass that lets us distinguish a refusal from
+// an interface that asks for nothing.
 func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Credential, m Matcher) webAttempt {
 	var eligible int
 	var c Credential
@@ -804,12 +821,12 @@ func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Cre
 		}
 	}
 	if eligible == 0 {
-		// Dire l'absence rather que de rester muet : c'est la situation exacte de
-		// l'exploitant qui a enregistre ses identifiants en « ssh » et voit sa
-		// gamme web-only rester anonyme.
+		// State the absence rather than staying silent: this is exactly the
+		// situation of the operator who registered their credentials as
+		// "ssh" and sees their web-only range stay anonymous.
 		return webAttempt{outcome: WebAuthNotTried,
-			detail: "interface web non essayee : aucun identifiant de genre « http »" +
-				" ou « tous » n'est enregistre."}
+			detail: "web interface not tried: no credential of kind \"http\"" +
+				" or \"any\" is registered."}
 	}
 
 	var paths = webAuthPaths[m.Driver]
@@ -819,19 +836,19 @@ func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Cre
 	var ch, err = p.findWebChallenge(ctx, webBases(ip, ports), paths)
 	if err != nil {
 		return webAttempt{outcome: WebAuthError,
-			detail: "interface web injoignable pour l'essai d'identifiants : " +
+			detail: "web interface unreachable for the credential attempt: " +
 				firstLine(err.Error())}
 	}
 	if ch.url == "" {
 		return webAttempt{outcome: WebAuthNone, detail: fmt.Sprintf(
-			"l'interface web ne demande aucune authentification HTTP sur %s"+
-				" (response %d) : aucun identifiant n'a donc been presented. Soit elle"+
-				" authentifie par formulaire — une session dans un cookie, que seul un"+
-				" connecteur sait poser — soit ses pages de data sont ailleurs.",
+			"the web interface requests no HTTP authentication on %s"+
+				" (response %d): so no credential was presented. Either it"+
+				" authenticates via a form — a session in a cookie, which only a"+
+				" connector knows how to set up — or its data pages are elsewhere.",
 			strings.Join(ch.tried, ", "), ch.lastStatus)}
 	}
 
-	var announced = strings.TrimSpace(ch.scheme + " realm « " + ch.realm + " »")
+	var announced = strings.TrimSpace(ch.scheme + " realm \"" + ch.realm + "\"")
 	if ch.realm == "" {
 		announced = ch.scheme
 	}
@@ -843,9 +860,9 @@ func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Cre
 		if !credFor(c, "http") {
 			continue
 		}
-		// La same borne que sur SSH, et pour la same raison : la politique AAA d'un
-		// device compte les echecs toutes origines confondues, et decouvrir un
-		// switch ne doit pas verrouiller le compte de l'equipe network.
+		// The same bound as on SSH, and for the same reason: a device's AAA
+		// policy counts failures across all origins, and discovering a
+		// switch must not lock the network team's account.
 		if failures >= maxAuthFailures {
 			break
 		}
@@ -853,10 +870,10 @@ func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Cre
 		session.SetAuth(driver.AuthAuto, c.Username, c.Secret)
 		var resp, getErr = session.Get(ctx, ch.url)
 		if getErr != nil {
-			// C'est ici qu'atterrit un schema que driver.WebSession ne sait pas
-			// present  (NTLM, Bearer…). Ce n'est pas un mauvais mot de passe.
+			// This is where a scheme that driver.WebSession doesn't know how
+			// to present (NTLM, Bearer...) lands. This is not a bad password.
 			return webAttempt{outcome: WebAuthError,
-				detail: "essai d'authentification web interrompu : " + firstLine(getErr.Error())}
+				detail: "web authentication attempt interrupted: " + firstLine(getErr.Error())}
 		}
 		switch {
 		case resp.Status == http.StatusUnauthorized:
@@ -864,33 +881,35 @@ func (p *Prober) tryWeb(ctx context.Context, ip string, ports []int, creds []Cre
 		case resp.Status < 400:
 			return webAttempt{outcome: WebAuthOK, cred: c,
 				path: ch.url, body: resp.Body,
-				detail: fmt.Sprintf("authentification web accepted sur %s (%s)",
+				detail: fmt.Sprintf("web authentication accepted on %s (%s)",
 					ch.url, announced)}
 		default:
-			// 403, 500… : l'identifiant n'a pas been redemande, il n'est donc pas
-			// refused — mais on ne sait pas dire qu'il est accepted non plus. On rend
-			// le code tel quel rather que de trancher a la place de l'exploitant.
+			// 403, 500...: the credential wasn't asked for again, so it
+			// isn't refused — but we can't say it was accepted either. We
+			// return the code as-is rather than deciding in the operator's
+			// place.
 			return webAttempt{outcome: WebAuthError, path: ch.url,
-				detail: fmt.Sprintf("response HTTP %d sur %s after presentation d'un"+
-					" identifiant : ni acceptation, ni refus d'authentification.",
+				detail: fmt.Sprintf("HTTP response %d on %s after presenting a"+
+					" credential: neither acceptance nor refusal of authentication.",
 					resp.Status, ch.url)}
 		}
 	}
 	return webAttempt{outcome: WebAuthRefused, path: ch.url, detail: fmt.Sprintf(
-		"identifiants refused par l'interface web : %s redemande a s'authentifier"+
-			" sur %s after %d essai(s). C'est bien un mot de passe a corriger.",
+		"credentials refused by the web interface: %s asked again to authenticate"+
+			" on %s after %d attempt(s). This is indeed a password to fix.",
 		announced, ch.url, failures)}
 }
 
-// isGenericDriver : « on n'a rien reconnu ». Les deux drivers de repli portent ce
-// sens, et rien d'autre ne doit s'en approcher.
+// isGenericDriver: "nothing was recognized". The two fallback drivers carry
+// this meaning, and nothing else should come close to it.
 func isGenericDriver(name string) bool {
 	return name == "" || name == genericSSH.Driver || name == genericHTTP.Driver
 }
 
-// identifyFromWeb cherche une plateforme dans le corps d'une page authentifiee.
-// Driver vide = rien reconnu ; on ne renvoie deliberately PAS de driver
-// generique, qui n'apprendrait rien et ecraserait le driver en place.
+// identifyFromWeb looks for a platform in the body of an authenticated
+// page. Empty driver = nothing recognized; we deliberately do NOT return a
+// generic driver, which would learn nothing and would overwrite the driver
+// already in place.
 func identifyFromWeb(body string) Matcher {
 	if strings.TrimSpace(body) == "" {
 		return Matcher{}
@@ -904,10 +923,9 @@ func identifyFromWeb(body string) Matcher {
 	return Matcher{}
 }
 
-// findWebChallenge cherche, ANONYMEMENT, une page qui reclame une
-// authentification HTTP. Aucun identifiant n'est presented a ce stade : un 401 ne
-// compte pour aucune politique de verrouillage, contrairement a un mot de passe
-// faux.
+// findWebChallenge looks, ANONYMOUSLY, for a page that requests HTTP
+// authentication. No credential is presented at this stage: a 401 doesn't
+// count against any lockout policy, unlike a wrong password.
 func (p *Prober) findWebChallenge(ctx context.Context, bases, paths []string) (webChallenge, error) {
 	var out = webChallenge{tried: []string{}}
 	var lastErr error
@@ -918,8 +936,8 @@ func (p *Prober) findWebChallenge(ctx context.Context, bases, paths []string) (w
 		for _, path = range paths {
 			var resp, err = session.Get(ctx, path)
 			if err != nil {
-				// La base ne repond pas (TLS refused, port filtre au-dela du dial) :
-				// inutile de lui demander ses autres chemins.
+				// The base doesn't respond (TLS refused, port filtered
+				// beyond the dial): no point asking it for its other paths.
 				lastErr = err
 				break
 			}
@@ -933,9 +951,10 @@ func (p *Prober) findWebChallenge(ctx context.Context, bases, paths []string) (w
 				return out, nil
 			}
 		}
-		// Une base qui repond a repondu : on ne va pas cogner a la suivante. Le
-		// balayage d'une plage se paie par adresse, et une interface web qui
-		// authentifie sur son 80 mais pas sur son 443 n'existe pas dans la nature.
+		// A base that responded, responded: we won't go knock on the next
+		// one. Scanning a range is paid for per address, and a web
+		// interface that authenticates on its 80 but not on its 443 doesn't
+		// exist in the wild.
 		if reached {
 			return out, nil
 		}
@@ -1004,8 +1023,8 @@ func firstLine(s string) string {
 	return s[:i]
 }
 
-// sanitize retire les sequences de control : les bannieres et les shells de
-// switchs sont truffes d'echappements ANSI qui pollueraient l'UI et la base.
+// sanitize strips control sequences: switch banners and shells are riddled
+// with ANSI escapes that would pollute the UI and the database.
 func sanitize(s string) string {
 	s = ansiRe.ReplaceAllString(s, "")
 	var b strings.Builder
@@ -1020,20 +1039,20 @@ func sanitize(s string) string {
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
-// enrich laisse le connecteur complete l'identification.
+// enrich lets the connector complete the identification.
 //
-// Un enrichissement impossible ne fait PAS echouer une discovery qui a par
-// ailleurs reussi — mais il laisse une trace dans les notes. Un failure muet est
-// indiagnosticable : on ne saurait pas distinguer « le connecteur n'a rien a
-// dire » de « le connecteur n'a pas pu parler a the device ».
-// enrich laisse le connecteur reconnu preciser ce que la sonde generique ne sait
-// pas voir.
+// An enrichment failure does NOT make a discovery that otherwise succeeded
+// fail — but it leaves a trace in the notes. A silent failure is
+// undiagnosable: there would be no way to distinguish "the connector has
+// nothing to say" from "the connector couldn't talk to the device".
+// enrich lets the recognized connector refine what the generic probe can't
+// see.
 //
-// `cred` est l'identifiant qui a ACTUALLY ouvert la porte, et `haveCred` dit
-// s'il y en a un. Aucun autre essai n'est tente ici : celui-there a fonctionne, et en
-// rejouer d'autres ne ferait que remplir le journal d'authentification de
-// the device et ronger la protection contre le verrouillage de compte que la
-// sonde vient d'appliquer.
+// `cred` is the credential that ACTUALLY opened the door, and `haveCred`
+// says whether there is one. No other attempt is made here: this one
+// worked, and replaying others would only fill up the device's
+// authentication log and eat into the account-lockout protection the probe
+// just applied.
 func (p *Prober) enrich(ctx context.Context, res *Result, cred Credential, haveCred bool) {
 	switch res.Driver {
 	case "aruba-instant-on-1930":
@@ -1042,6 +1061,84 @@ func (p *Prober) enrich(ctx context.Context, res *Result, cred Credential, haveC
 		p.enrichSwOS(ctx, res, cred)
 	case "mikrotik-routeros":
 		p.enrichRouterOS(ctx, res, cred, haveCred)
+	case "fs-s3900":
+		p.enrichS3900(ctx, res, cred, haveCred)
+	case "cisco-ios":
+		p.enrichCiscoIOS(ctx, res, cred, haveCred)
+	}
+}
+
+// enrichCiscoIOS: model, serial and above all the FACEPLATE, read by the SSH
+// connector with the one credential that already opened the door.
+//
+// The faceplate matters more on this vendor than on any other in the fleet.
+// The 2960-X range alone ships 24- and 48-port variants, PoE and non-PoE, with
+// four 1G cages OR two 10G cages — and only the part-number suffix tells them
+// apart. Without this read, a Catalyst adopted by push would carry no drawable
+// port, LLDP resolution would discard every neighbour, and the SNMP poller's
+// MaxIfIndex bound would stay at zero. That exact sequence is what an S3900
+// went through the day before its connector shipped.
+func (p *Prober) enrichCiscoIOS(ctx context.Context, res *Result, cred Credential, haveCred bool) {
+	if !haveCred {
+		res.Notes = strings.TrimSpace(res.Notes +
+			" Serial and faceplate not read: the CLI sits behind SSH authentication and no credential opened it.")
+		return
+	}
+	var id, err = ios.Inspect(ctx, res.IP, p.Dialer, cred.Username, cred.Secret)
+	if err != nil {
+		res.Notes = strings.TrimSpace(res.Notes +
+			" Deep identification failed: " + firstLine(err.Error()))
+		return
+	}
+	if id.Model != "" {
+		res.Model = id.Model
+	}
+	if id.Serial != "" {
+		res.Serial = id.Serial
+	}
+	if id.MAC != "" {
+		res.MAC = id.MAC
+	}
+	if len(id.PortGroups) > 0 {
+		res.PortGroups = id.PortGroups
+	}
+	if res.Confidence < ConfDeviceSelfReport {
+		res.Confidence = ConfDeviceSelfReport
+		res.Evidence = "identification by the device (" + id.Source + ")"
+	}
+	if id.Firmware != "" {
+		res.Notes = strings.TrimSpace(res.Notes + " Cisco IOS " + id.Firmware + ".")
+	}
+}
+
+// enrichS3900 : série, firmware et FAÇADE lus par le connecteur SSH, avec le
+// seul identifiant qui a déjà ouvert la porte. Sans façade, un S3900 adopté en
+// mode « push » n'aurait aucun port dessinable, la résolution LLDP jetterait
+// chaque voisin et la borne MaxIfIndex du polling SNMP resterait à zéro.
+func (p *Prober) enrichS3900(ctx context.Context, res *Result, cred Credential, haveCred bool) {
+	if !haveCred {
+		res.Notes = strings.TrimSpace(res.Notes +
+			" Serie et facade non lues : le CLI est derriere l'authentification SSH et aucun identifiant n'a ouvert.")
+		return
+	}
+	var id, err = s3900.Inspect(ctx, res.IP, p.Dialer, cred.Username, cred.Secret)
+	if err != nil {
+		res.Notes = strings.TrimSpace(res.Notes +
+			" Identification approfondie impossible : " + firstLine(err.Error()))
+		return
+	}
+	if id.Serial != "" {
+		res.Serial = id.Serial
+	}
+	if len(id.PortGroups) > 0 {
+		res.PortGroups = id.PortGroups
+	}
+	if res.Confidence < ConfDeviceSelfReport {
+		res.Confidence = ConfDeviceSelfReport
+		res.Evidence = "identification par the device (" + id.Source + ")"
+	}
+	if id.Firmware != "" {
+		res.Notes = strings.TrimSpace(res.Notes + " FSOS OpCode " + id.Firmware + ".")
 	}
 }
 

@@ -88,29 +88,36 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 		VlanRange: [2]int{1, 4092},
 		MaxVlans:  256,
 		Features: map[string]bool{
-			"Trunk8021Q":     true,
-			"PVID":           true,
-			"VoiceVLAN":      true, // « Auto Voice VLAN »
-			"PoE":            strings.Contains(strings.ToUpper(model), "PoE") || strings.Contains(model, "P"),
-			"LLDP":           true, // 802.1AB + LLDP-MED
-			"IGMPSnooping":   true, // v1/v2
-			"LACP":           true, // 802.3ad + static trunks
-			"DHCPSnooping":   true,
-			"DHCPRelay":      true,
-			"ARPProtection":  true,
-			"DoSProtection":  true,
-			"PortSecurity":   true,
-			"ProtectedPorts": true,
-			"Dot1X":          true, // 802.1x + guest VLAN
-			"RADIUS":         true,
-			"PortMirroring":  true,
-			"IngressRate":    true, // per port
-			"JumboFrames":    true, // 9216 L2 / 9000 routed
-			"StaticRouting":  true, // IPv4, 32 entries
-			"SNTP":           true,
-			"LoopProtection": true,
-			"EEE":            true, // 802.3az
-			"RMON":           true,
+			"Trunk8021Q": true,
+			"PVID":       true,
+			"VoiceVLAN":  true, // « Auto Voice VLAN »
+			"PoE":        strings.Contains(strings.ToUpper(model), "PoE") || strings.Contains(model, "P"),
+			"LLDP":       true, // 802.1AB + LLDP-MED
+			// CST Edge Port: Auto (default) / Enable / Disable — AdminEdgePort +
+			// AutoEdgePort. STP State disables protocol participation per port.
+			driver.FeatSTPEdge:       true,
+			driver.FeatSTPEdgeAuto:   true,
+			driver.FeatSTPPortEnable: true,
+			// CST Port « BPDU Guard » (guide 5200-5879) — suspends port on BPDU.
+			driver.FeatBPDUGuard: true,
+			"IGMPSnooping":       true, // v1/v2
+			"LACP":               true, // 802.3ad + static trunks
+			"DHCPSnooping":       true,
+			"DHCPRelay":          true,
+			"ARPProtection":      true,
+			"DoSProtection":      true,
+			"PortSecurity":       true,
+			"ProtectedPorts":     true,
+			"Dot1X":              true, // 802.1x + guest VLAN
+			"RADIUS":             true,
+			"PortMirroring":      true,
+			"IngressRate":        true, // per port
+			"JumboFrames":        true, // 9216 L2 / 9000 routed
+			"StaticRouting":      true, // IPv4, 32 entries
+			"SNTP":               true,
+			"LoopProtection":     true,
+			"EEE":                true, // 802.3az
+			"RMON":               true,
 			// Storm control exists but is GLOBAL, not per port: an intent that
 			// sets it per port is not applicable here.
 			"StormControl":     true,
@@ -126,7 +133,10 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 			"SerialPort": false,
 			"HTTPMgmt":   true,
 		},
-		STPModes:     []string{"stp", "rstp", "mstp"}, // 802.1D / 802.1w / 802.1s
+		// SpanningTreeGlobalParam.STPOperationMode: 0=STP, 2=RSTP, 3=MSTP;
+		// enabled=2 turns the tree off (« none »). MSTP radio is hidden on k9
+		// Instant On, but the code still answers when set.
+		STPModes:     []string{"none", "stp", "rstp", "mstp"},
 		MSTInstances: 8,
 		// « ACLs (named ACL - IPv4 and MAC). Up to 50 ACLs. Up to 480 ACEs »
 		MaxACLs:         50,

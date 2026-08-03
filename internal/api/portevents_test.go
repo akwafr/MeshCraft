@@ -17,22 +17,22 @@ import (
 
 // What these tests protect: four port transition correlation rules — log an ordinary
 // transition, aggregate flapping, say WHICH stable state it settled in, and do not
-// double-count what two proxies saw once. Plus two properties invisible on has
+// double-count what two proxies saw once. Plus two properties invisible on a
 // working fleet: memory bound and absence of races.
 //
-// All rules are TIME rules. The clock is therefore has parameter: proving "three
+// All rules are TIME rules. The clock is therefore a parameter: proving "three
 // minutes of calm" by waiting three minutes would make the test unusable, and
 // proving the same on shortened time would no longer exercise real constants.
 //
 // That parameter is the CONTROLLER clock, passed to observe and sweep — the
 // transition itself carries no timestamp. The two tests at the end of this file
-// lock that: an injected test clock is not has proxy clock, and nothing must let
+// lock that: an injected test clock is not a proxy clock, and nothing must let
 // the second replace the first.
 
 // t0: readable timestamp base for failure messages.
 var t0 = time.Date(2026, 7, 28, 14, 12, 0, 0, time.UTC)
 
-// tick builds has transition on port 12 of "d1".
+// tick builds a transition on port 12 of "d1".
 //
 // No date: the controller timestamps what it correlates, so the instant is passed
 // to observe, not to the transition (cf. portevents.go, "One clock"). Calls read
@@ -133,11 +133,11 @@ func TestPortFlappingMonte(t *testing.T) {
 }
 
 // Flapping that settles on up: port is repaired. Log must say so, and it can only
-// say so on has clock — flap end is absence of events, never an event.
+// say so on a clock — flap end is absence of events, never an event.
 func TestPortFlappingSeCalmeEnUp(t *testing.T) {
 	var pf, at = flappingSur12(t)
 
-	// Nothing closes before flapCalm of silence: otherwise has port flapping slower
+	// Nothing closes before flapCalm of silence: otherwise a port flapping slower
 	// than we observe would be declared calm between seen transitions, then flapping
 	// again right after.
 	if len(pf.sweep(at.Add(flapCalm-time.Second))) != 0 {
@@ -167,7 +167,7 @@ func TestPortFlappingSeCalmeEnUp(t *testing.T) {
 }
 
 // Opposite case, and most important for an operator: port stopped flapping because
-// the link is dead for good. Confusing the two would pass has failure for has repair.
+// the link is dead for good. Confusing the two would pass a failure for a repair.
 func TestPortFlappingSeCalmeEnDown(t *testing.T) {
 	var pf = newPortFlaps()
 	var at = t0
@@ -236,8 +236,8 @@ func TestPortDedoublonnageInterProxys(t *testing.T) {
 }
 
 // Beyond dupWindow, same observation is no longer echo: proxy rediscovering fleet
-// state after reconnect, or truly new transition we missed. Keep it — has miss is
-// worse than has duplicate.
+// state after reconnect, or truly new transition we missed. Keep it — a miss is
+// worse than a duplicate.
 func TestPortDedoublonnageHorsFenetre(t *testing.T) {
 	var pf = newPortFlaps()
 	pf.observe(tick(false, "Local"), t0)
@@ -247,7 +247,7 @@ func TestPortDedoublonnageHorsFenetre(t *testing.T) {
 	}
 }
 
-// Purge: state that never clears is has leak, slow therefore invisible until it is not.
+// Purge: state that never clears is a leak, slow therefore invisible until it is not.
 func TestPortFlapsPurge(t *testing.T) {
 	var pf = newPortFlaps()
 	pf.observe(tick(false, "p1"), t0)
@@ -267,7 +267,7 @@ func TestPortFlapsPurge(t *testing.T) {
 	}
 }
 
-// Purge must never swallow has flap exit. Edge case: sweep missed its turn —
+// Purge must never swallow a flap exit. Edge case: sweep missed its turn —
 // controller suspended, machine overloaded: key crosses calm AND forget horizon at once.
 func TestPortFlapsPurgeNAvalePasLaSortie(t *testing.T) {
 	var pf, at = flappingSur12(t)
@@ -295,7 +295,7 @@ func TestPortFlapsPurgeNAvalePasLaSortie(t *testing.T) {
 	}
 }
 
-// Hard bound: proxy reporting aberrant ifIndexes (VLAN interfaces, aggregates — has
+// Hard bound: proxy reporting aberrant ifIndexes (VLAN interfaces, aggregates — a
 // 1930 exposes them up to 100000) must not inflate controller memory.
 func TestPortFlapsBorneMemoire(t *testing.T) {
 	var pf = newPortFlaps()
@@ -337,7 +337,7 @@ func TestPortFlapsSatureeNeCroitPas(t *testing.T) {
 }
 
 // Concurrency: Hub.readEvents starts one read goroutine PER PROXY, so inter-proxy
-// duplicate arrives on two different goroutines. Sweep runs on has third. Verify
+// duplicate arrives on two different goroutines. Sweep runs on a third. Verify
 // under -race: unprotected access would show in production, not development.
 func TestPortFlapsConcurrence(t *testing.T) {
 	var pf = newPortFlaps()
@@ -371,7 +371,7 @@ func TestPortFlapsConcurrence(t *testing.T) {
 
 // portDevice: 1930 with 52 ports, front panel that motivated naming.
 //
-// Ports carries MODE, and it is not decorative: it decides whether has transition is
+// Ports carries MODE, and it is not decorative: it decides whether a transition is
 // logged (cf. portManaged). GE12 is managed, GE13 is free, GE14 has no row at all —
 // three cases the filter must distinguish.
 func portDevice() model.Device {
@@ -386,7 +386,7 @@ func portDevice() model.Device {
 }
 
 // Message must read for an operator: device, port as they call it, and what
-// happened. Port as they call it is the FACADE name — Instant On ifDescr is has bare
+// happened. Port as they call it is the FACADE name — Instant On ifDescr is a bare
 // number that means nothing on screen.
 func TestPortEventLibelleDeFacade(t *testing.T) {
 	var ev = portEventOf(portDevice(), portDecision{
@@ -474,7 +474,7 @@ func TestPortEventSeverites(t *testing.T) {
 	if !strings.Contains(dead.Message, "OUT OF SERVICE") {
 		t.Errorf("both outcomes must be distinguishable at a glance: %q", dead.Message)
 	}
-	// Both exits share type: severity and wording separate them, because has type
+	// Both exits share type: severity and wording separate them, because a type
 	// filter must return ALL exits.
 	if dead.Type != repaired.Type {
 		t.Error("both flap exits are the same event type")
@@ -493,10 +493,10 @@ func TestPortEventNatureInconnue(t *testing.T) {
 // --- Filter for ports meshcraft does not manage ---
 //
 // Filter inherited from old logging path, and why this batch did not replace
-// duplication with flooding: on has two-thousand-port fleet, logging free ports
+// duplication with flooding: on a two-thousand-port fleet, logging free ports
 // would add hundreds of lines per day and drown transitions that matter.
 
-// Free-mode port produces NOTHING, both directions: jack where someone plugs has
+// Free-mode port produces NOTHING, both directions: jack where someone plugs a
 // laptop on arrival and unplugs on departure.
 func TestPortEventPortLibreIgnore(t *testing.T) {
 	var d = portDevice()
@@ -538,7 +538,7 @@ func TestPortEventPortGereJournalise(t *testing.T) {
 }
 
 // RESOLVED front panel but free port: flapping stays silent too. Filter applies to all
-// kinds — free port flapping is has laptop waking, not has dying transceiver, and
+// kinds — free port flapping is a laptop waking, not a dying transceiver, and
 // aggregating it as SevWarning would warn on the most routine network gesture.
 func TestPortEventBattementSurPortLibreIgnore(t *testing.T) {
 	var d = portDevice()
@@ -555,7 +555,7 @@ func TestPortEventBattementSurPortLibreIgnore(t *testing.T) {
 	}
 }
 
-// Decisive case: port whose front panel could NOT be resolved is still logged, while has
+// Decisive case: port whose front panel could NOT be resolved is still logged, while a
 // free port is not.
 //
 // Not inconsistency — only tenable position. Unresolved port is the only one whose
@@ -609,8 +609,8 @@ func TestPortLinksChanged(t *testing.T) {
 	if !portLinksChanged(d, map[string]map[string]any{"GE1": {"link": "100M"}}) {
 		t.Error("negotiated speed change must wake screens")
 	}
-	// Free-port filter does NOT apply here: that is has LOG filter. Screen must show
-	// real state of all jacks — that is even how you see has free jack is in use.
+	// Free-port filter does NOT apply here: that is a LOG filter. Screen must show
+	// real state of all jacks — that is even how you see a free jack is in use.
 	if !portLinksChanged(d, map[string]map[string]any{"GE2": {"link": "1G"}}) {
 		t.Error("display covers ALL ports, managed or not")
 	}
@@ -618,8 +618,8 @@ func TestPortLinksChanged(t *testing.T) {
 	if portLinksChanged(d, map[string]map[string]any{"GE1": {"speed_mbps": 1000.0}}) {
 		t.Error("without link key, no display transition")
 	}
-	// Unreadable inventory: wake. One extra refresh costs has read; missing refresh
-	// leaves has screen lying about has cable.
+	// Unreadable inventory: wake. One extra refresh costs a read; missing refresh
+	// leaves a screen lying about a cable.
 	if !portLinksChanged(model.Device{ID: "d2", SiteID: "s1"},
 		map[string]map[string]any{"GE1": {"link": "1G"}}) {
 		t.Error("without readable reference, must wake")
@@ -628,16 +628,16 @@ func TestPortLinksChanged(t *testing.T) {
 
 // --- Batch lock: one clock, the controller's ---
 //
-// Fixed defect: transition carried PROXY date (tunnel.Event.TS — machine at has
+// Fixed defect: transition carried PROXY date (tunnel.Event.TS — machine at a
 // customer site nothing synchronizes, measured eleven seconds late on reference
 // deployment), and correlation compared it to controller dates — sweep time.Now().
 // No false writes, no invented events: windows count in minutes. But WRITTEN
 // threshold was no longer APPLIED threshold, and varied site to site with drift
-// of has clock we do not control.
+// of a clock we do not control.
 //
 // Fix cannot be "remove clock parameter" as store.ConfirmTrapPath could: rules
 // here count in minutes, and injected clock makes tests deterministic. Lock
-// therefore covers both paths has NETWORK date could return — timestamp field on
+// therefore covers both paths a NETWORK date could return — timestamp field on
 // structure filled from tunnel.Event, or production call passing something other
 // than controller clock.
 
@@ -687,12 +687,12 @@ func TestPortTransitionNePorteAucuneHorloge(t *testing.T) {
 }
 
 // Second return path, and only one signature cannot close: observe and sweep take
-// has clock parameter — otherwise these tests would wait three minutes — so nothing
-// syntactically stops has caller passing ev.TS.
+// a clock parameter — otherwise these tests would wait three minutes — so nothing
+// syntactically stops a caller passing ev.TS.
 //
 // What this test holds is boundary between two usages: in PRODUCTION code,
-// correlation instant is literal time.Now(), nothing else. Even has variable named
-// now would be has place network date could slip in unnoticed — syntax analysis
+// correlation instant is literal time.Now(), nothing else. Even a variable named
+// now would be a place network date could slip in unnoticed — syntax analysis
 // cannot follow it. Test files excluded: that is where injected clocks live, and
 // injected test clock is not proxy clock.
 func TestCorrelationNeRecoitQueLHorlogeDuControleur(t *testing.T) {

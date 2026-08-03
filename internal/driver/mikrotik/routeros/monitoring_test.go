@@ -98,7 +98,7 @@ func TestEachChannelItsFloor(t *testing.T) {
 	}
 
 	// The split must be REAL: no channel must put counters in the same bag as
-	// health or network tables. Without this assertion, a « cleanliness »
+	// health or network tables. Without this assertion, a 'cleanliness'
 	// regrouping would redo the defect without failing the checks above — it would
 	// suffice to pick 5 s for the whole group, and health would be read at 5 s the
 	// day it is read.
@@ -127,15 +127,15 @@ func TestEachChannelItsFloor(t *testing.T) {
 // # This test changed SHAPE without changing OBJECT, and why must be said
 //
 // It was called `TestLeCanalSNMPResteUnRepli` and checked two things: that the SNMP
-// channel note contain the word « fallback », and that `Best` return the REST channel
+// channel note contain the word 'fallback', and that `Best` return the REST channel
 // for state as for counters. The intention was right — a never-exercised channel must
-// not become a fleet's primary path « by the sole effect of a smaller number » — but
+// not become a fleet's primary path 'by the sole effect of a smaller number' — but
 // the MEANS rested on a misunderstanding, and the misunderstanding produced a defect:
 //
 // the product's periodic collection runs on the proxy and speaks ONLY SNMP
 // (`internal/snmppoll`). The REST channel therefore won no race, because there was no
 // race: it was NEVER taken. What it did, by being the fastest, was LEND its 5 s floor
-// to an SNMP poll whose own channel announced « never more often than 60 s ».
+// to an SNMP poll whose own channel announced 'never more often than 60 s'.
 //
 // The means is replaced by the fitting mechanism (`MonitoringCapabilities.BestOfKind`,
 // which queries the channel by KIND) and this test keeps the object: verify that the
@@ -151,14 +151,14 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 			continue
 		}
 		snmpFound = true
-		// « no oid »: the phrase that says this channel is declared from an
+		// 'no oid': the phrase that says this channel is declared from an
 		// OBSERVED CONFIGURATION and not from a collection. Removing it would turn an
 		// admission into silence, and the floors below would pass for measurements.
 		//
-		// « measured » is the third receivable admission, and it arrived AFTER the other
+		// 'measured' is the third receivable admission, and it arrived AFTER the other
 		// two. The `lldp` channel was walked OID by OID on the reference device
 		// (observed 2026-07-29, cf. docs/fr/01-Architecture/Voisinage LLDP.md): forcing
-		// it to say « no OID was read » would have been demanding a LIE to satisfy a
+		// it to say 'no OID was read' would have been demanding a LIE to satisfy a
 		// test. What this test protects is not the formula, it is that a note say
 		// EXPLICITLY where its floor comes from — measurement, observed configuration,
 		// or deduction. Silence remains the only refused case, and it still is.
@@ -168,7 +168,7 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 		var admits = strings.Contains(note, "no oid") || strings.Contains(note, "derived")
 		// `claims`: this channel says it was measured. The word only counts if the
 		// channel is not already apologizing elsewhere — the `if_state` channel note
-		// contains « measured » talking about the 1930, i.e. ANOTHER device, and it
+		// contains 'measured' talking about the 1930, i.e. ANOTHER device, and it
 		// admits elsewhere that no OID was read. The distinction avoids demanding an
 		// observation date it by definition does not have.
 		var claims = !admits && strings.Contains(note, "measured")
@@ -178,7 +178,7 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 				"MEASURED. Without that phrase, a declared floor passes for a measurement. "+
 				"Got: %q", c.Note)
 		}
-		// And the measurement admission must be DATED. « measured » without a date is an
+		// And the measurement admission must be DATED. 'measured' without a date is an
 		// unverifiable claim — exactly what this file exists to prevent — whereas a date
 		// points to an observation one can go reread in the vault.
 		if claims && !strings.Contains(note, "2026") {
@@ -211,7 +211,7 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 
 	// And the counterpart: the fastest channel ALL KINDS COMBINED remains REST for
 	// state and counters. That is what `Best` must continue to say, because a screen
-	// that answers « how fast can this device be observed? » asks exactly that
+	// that answers 'how fast can this device be observed?' asks exactly that
 	// question.
 	for _, m = range []string{"if_state", "if_counters"} {
 		var best = channelOf(t, mon, m)
@@ -227,11 +227,11 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 // The absence is an OBSERVATION, and it took two requests to be able to assert it:
 // `/rest/interface/ethernet/poe` returns 500, but a 500 proves nothing on this
 // API — `/rest/interface/dot1x` also returns 500 while
-// `/rest/interface/dot1x/server` returns `[]`. It is the 400 « no such command
-// prefix » from `poe/settings` that concludes, the same response as an invented path.
+// `/rest/interface/dot1x/server` returns `[]`. It is the 400 'no such command
+// prefix' from `poe/settings` that concludes, the same response as an invented path.
 //
-// What this test protects is not the structure, it is the DIFFERENCE between « we do
-// not collect it yet » and « the device does not expose it ». The first makes one
+// What this test protects is not the structure, it is the DIFFERENCE between 'we do
+// not collect it yet' and 'the device does not expose it'. The first makes one
 // wait for a version, the second makes one change hardware. Erasing this
 // declaration would leave an operator waiting in front of a curve that will never
 // arrive.
@@ -326,9 +326,9 @@ func TestTrapsDoNotCarryLinksToday(t *testing.T) {
 // # What this test said before, and why it changed
 //
 // It was called `TestPuissanceOptiqueNiServieNiDeclareeAbsente` and locked the
-// THIRD position of the contract: neither channel (« we do not declare what we have
-// not exercised »), nor `Unavailable` entry (« we do not declare impossible what is
-// probably available »). The cause was named: `monitor` is a command, therefore out
+// THIRD position of the contract: neither channel ('we do not declare what we have
+// not exercised'), nor `Unavailable` entry ('we do not declare impossible what is
+// probably available'). The cause was named: `monitor` is a command, therefore out
 // of reach of a read tool restricted to GET.
 //
 // That cause has been LIFTED, and that is the whole object of the telemetry batch:

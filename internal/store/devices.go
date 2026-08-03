@@ -116,6 +116,34 @@ func (s *Store) UpdateDevice(ctx context.Context, d model.Device) (model.Device,
 		d.PoEBudgetW, d.PosX, d.PosY, jsonOr(d.PortGroups, `[]`)))
 }
 
+// SetDeviceFaceplate records the physical port groups read from the device.
+//
+// The faceplate is a FACT of the hardware, not intent — same nature as observed
+// state. It is normally set once at adoption from discovery enrichment; this
+// method exists so a re-read can fill it on a device adopted before its connector
+// could read the faceplate (or entered by hand), without touching name/location/
+// intent. Returns the fresh device so the caller can redraw.
+func (s *Store) SetDeviceFaceplate(ctx context.Context, deviceID string, groups json.RawMessage) (model.Device, error) {
+	return scanDevice(s.pool.QueryRow(ctx,
+		`update devices set port_groups = $2::jsonb where id = $1::uuid returning `+deviceCols,
+		deviceID, jsonOr(groups, `[]`)))
+}
+
+// ReplaceDevicePorts OVERWRITES the entire `ports` column.
+//
+// Distinct from SetDevicePort(s), which PATCH specific keys via jsonb_set and
+// never remove any — the right semantics for an operator editing a
+// selection. This method exists for the one case that needs the opposite: the
+// one-time standard-port-name catch-up (cf. api.remapDevicePortsIfStale),
+// where a stale key must actually disappear, renamed to the form the
+// connector uses today, or the device would carry both the old entry and its
+// renamed twin.
+func (s *Store) ReplaceDevicePorts(ctx context.Context, deviceID string, ports json.RawMessage) (model.Device, error) {
+	return scanDevice(s.pool.QueryRow(ctx,
+		`update devices set ports = $2::jsonb where id = $1::uuid returning `+deviceCols,
+		deviceID, jsonOr(ports, `{}`)))
+}
+
 // SetDevicePort replaces one port's configuration in the jsonb `ports`.
 func (s *Store) SetDevicePort(ctx context.Context, deviceID, portName string, port json.RawMessage) (model.Device, error) {
 	return scanDevice(s.pool.QueryRow(ctx,

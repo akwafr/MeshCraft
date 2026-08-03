@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -618,11 +617,7 @@ const (
 // falls in `never_polled`, which is exact: we have no reason to believe it does not speak
 // LLDP.
 func lldpPlatformSilent(d model.Device) (string, bool) {
-	var extra map[string]string
-	// Error ignored deliberately, as in `unavailableMetricsOf`: a record without connector
-	// is not a read anomaly.
-	_ = json.Unmarshal(d.Extra, &extra)
-	var drv, known = driver.Get(extra["driver"])
+	var drv, known = driver.Get(driver.DriverNameFromExtra(d.Extra))
 	if !known {
 		return "", false
 	}

@@ -146,6 +146,36 @@ func (a *Service) SiteIDsWithRole(ctx context.Context, minRole string) (ids []st
 }
 
 // CanSite checks that the user has at least minRole on the site.
+// CanSiteFor answers the same question as [Service.CanSite] for a NAMED user,
+// rather than the one carried in the context.
+//
+// Needed by callers that authenticate outside the HTTP middleware and therefore
+// have no user in their context — the SOCKS route is the first (cf.
+// api/socks_handlers.go), where the operator is identified by a token presented
+// on a raw TCP connection.
+//
+// Deliberately re-reads the global-admin flag rather than trusting a caller to
+// pass it: a permission check whose inputs come from the caller is a permission
+// check the caller can pass itself.
+func (a *Service) CanSiteFor(ctx context.Context, userID, siteID, minRole string) bool {
+	if userID == "" || siteID == "" {
+		return false
+	}
+	var u, err = a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return false
+	}
+	if u.IsGlobalAdmin {
+		return true
+	}
+	var role string
+	role, err = a.Store.GetSiteRole(ctx, userID, siteID)
+	if err != nil || role == "" {
+		return false
+	}
+	return model.RoleLevel[role] >= model.RoleLevel[minRole]
+}
+
 func (a *Service) CanSite(ctx context.Context, siteID, minRole string) bool {
 	var u = UserFrom(ctx)
 	if u.IsGlobalAdmin {

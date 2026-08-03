@@ -41,9 +41,9 @@ import (
 //     since everything works, ten times slower. Rate comes from
 //     `/interface/ethernet/monitor`, which is a command, not a menu;
 //   - OPTICAL DIAGNOSTICS come from the same `monitor`. The connector already said
-//     this and drew the only honest conclusion at the time: \u00ab it could not be
+//     this and drew the only honest conclusion at the time: 'it could not be
 //     READ — `monitor` is a POST, out of scope for a tool restricted to GET. It
-//     therefore had neither channel nor unavailability entry \u00bb. This file
+//     therefore had neither channel nor unavailability entry'. This file
 //     gives it its channel.
 //
 // # What this file is NOT
@@ -57,8 +57,8 @@ import (
 // NOT taken here.
 //
 // Until then, what these reads actually serve: on-demand diagnostics from the
-// controller — the screen that answers \u00ab why is this link slow? \u00bb and
-// \u00ab is this transceiver near end of life? \u00bb — and the proven foundation
+// controller — the screen that answers 'why is this link slow?' and
+// 'is this transceiver near end of life?' — and the proven foundation
 // for the day connector-based collection exists. That is stated here rather than
 // discovered in front of an empty graph.
 
@@ -70,11 +70,11 @@ import (
 //
 // The split also tells the operator something useful: `Monitor` is the only
 // method the two transports do not honor the same way, and that is exactly the
-// boundary OBSERVED between \u00ab menu \u00bb and \u00ab command \u00bb on this
+// boundary OBSERVED between 'menu' and 'command' on this
 // platform.
 type TelemetrySource interface {
 	// Print reads a menu and returns its records. The menu is given WITHOUT its
-	// verb (\u00ab interface \u00bb, \u00ab system/resource \u00bb): the transport
+	// verb ('interface', 'system/resource'): the transport
 	// knows whether to append `/print`.
 	Print(ctx context.Context, menu string) ([]Row, error)
 	// Monitor runs a menu's `monitor` command on a named object, in `once` mode —
@@ -82,7 +82,7 @@ type TelemetrySource interface {
 	//
 	// Returns an error when the transport cannot do this. That error must be
 	// treated as ABSENCE OF CHANNEL, not failure: the difference between
-	// \u00ab this transceiver has no sensor \u00bb and \u00ab this path cannot read it \u00bb.
+	// 'this transceiver has no sensor' and 'this path cannot read it'.
 	Monitor(ctx context.Context, menu, name string) (Row, error)
 }
 
@@ -101,8 +101,8 @@ func (c *APIConn) Print(ctx context.Context, menu string) ([]Row, error) {
 //
 // `=once=` is a FLAG — a present, empty attribute. Without it, `monitor` opens a
 // STREAM: the device emits an `!re` sentence on every change and never returns
-// its `!done`, so the read would wait until the timeout and then return \u00ab no
-// response \u00bb for a command that worked perfectly.
+// its `!done`, so the read would wait until the timeout and then return 'no
+// response' for a command that worked perfectly.
 //
 // `=numbers=` takes the interface NAME, not an index. This is what this platform
 // does better than others: meshcraft names ARE device names, there is no
@@ -137,8 +137,8 @@ func (c *Client) Print(ctx context.Context, menu string) ([]Row, error) {
 // it would make the platform look incapable of something it is probably capable
 // of, and that is exactly the confusion [driver.MetricUnavailable] exists to
 // prevent. What protects the operator is therefore not a refusal, but the
-// corresponding channel declaration carrying its high floor and its \u00ab not
-// exercised \u00bb note.
+// corresponding channel declaration carrying its high floor and its 'not
+// exercised' note.
 func (c *Client) Monitor(ctx context.Context, menu, name string) (Row, error) {
 	var rows, err = c.Command(ctx, menu, "monitor", map[string]string{
 		"numbers": name,
@@ -170,7 +170,7 @@ type Sensor struct {
 // PortCounters is telemetry for one port, across all channels.
 //
 // Fields are POINTERS for what can legitimately be missing, and that distinction
-// carries this whole type: `0` and \u00ab not read \u00bb are not the same thing
+// carries this whole type: `0` and 'not read' are not the same thing
 // on a counter. A port whose errors could not be read and a port with none look
 // like zero and mean the opposite — the first must produce NO sample, otherwise
 // the graph claims an absence of errors that nobody OBSERVED.
@@ -357,7 +357,7 @@ func telemetryNotes(failures []string) []string {
 // remains a heuristic, and its only cost when wrong is one extra `monitor`
 // request on a copper port — whose response will simply carry no `sfp-*` fields,
 // so `Present: false`. The reverse (missing a cage) would cost a missing curve,
-// which is why the match is BROAD: any name containing \u00ab sfp \u00bb.
+// which is why the match is BROAD: any name containing 'sfp'.
 func looksOptical(name string) bool {
 	return strings.Contains(strings.ToLower(name), "sfp")
 }
@@ -402,7 +402,7 @@ func foldResource(r Row, out *Telemetry) {
 // sees three losses.
 //
 // A string with one unreadable piece is REJECTED whole, rather than returned
-// truncated: \u00ab 4 h \u00bb where the device says \u00ab 3 weeks and 4 h \u00bb
+// truncated: '4 h' where the device says '3 weeks and 4 h'
 // would suggest a reboot that did not happen, which is exactly the event this
 // measurement exists to detect.
 func ParseUptime(s string) (float64, bool) {
@@ -581,8 +581,8 @@ func foldEthernetCounters(e, iface Row, pc *PortCounters) {
 
 // sumFields sums fields and returns nil if NONE were read.
 //
-// The distinction is that of this whole file: \u00ab none of these counters exist
-// on this firmware \u00bb and \u00ab they exist and are all zero \u00bb look like
+// The distinction is that of this whole file: 'none of these counters exist
+// on this firmware' and 'they exist and are all zero' look like
 // zero and mean the opposite. The first must produce no sample; the second
 // produces one at zero, stating something true.
 //
@@ -624,11 +624,11 @@ func assignFloat(dst **float64, raw string) {
 //
 // RouterOS forms are `10Mbps`, `100Mbps`, `1Gbps`, `10Gbps`, and casing varies by
 // product line. An unknown value returns `ok=false` rather than zero: a port at
-// \u00ab 0 Mbit/s \u00bb reads as a dead link, when it is a label we could not
+// '0 Mbit/s' reads as a dead link, when it is a label we could not
 // translate — and the two are fixed by opposite actions.
 //
 // The NUMBER in the string is NOT interpreted alone: `10Gbps` and `10Mbps` differ
-// by one letter, and reading \u00ab 10 \u00bb without its unit would be off by a
+// by one letter, and reading '10' without its unit would be off by a
 // factor of a thousand. Same trap as the `2S+` vs `2S` nomenclature in
 // [parseDesignation], and it costs the same factor.
 func parseRate(raw string) (float64, bool) {
@@ -702,11 +702,11 @@ func foldOptic(port string, r Row) Optic {
 
 // assignBool sets a flag when the field EXISTS.
 //
-// Existence, not value: `Row.Bool` returns false for both \u00ab false \u00bb and
+// Existence, not value: `Row.Bool` returns false for both 'false' and
 // a missing field, and on an alarm flag the two do not mean the same thing —
-// \u00ab this module reports no signal loss \u00bb versus \u00ab this firmware does
-// not say \u00bb. Publishing the second as the first would show \u00ab no alarm
-// \u00bb on hardware that reports none because it never reports any.
+// 'this module reports no signal loss' versus 'this firmware does
+// not say'. Publishing the second as the first would show 'no alarm'
+// on hardware that reports none because it never reports any.
 func assignBool(dst **bool, r Row, field string) {
 	var raw, ok = r[field]
 	if !ok {
@@ -745,8 +745,8 @@ func lessPortName(a, b string) bool {
 //
 // The consequence is fortunate: the controller requires `iftype` to touch
 // inventory (§2.1 of the unified monitoring and pipelines note), so these samples feed
-// curves WITHOUT ever being able to modify the UI. The rule \u00ab telemetry never
-// CREATES a port \u00bb is obtained here by construction, not by a guard that
+// curves WITHOUT ever being able to modify the UI. The rule 'telemetry never
+// CREATES a port' is obtained here by construction, not by a guard that
 // must be remembered.
 //
 // Attachment to a port is then by NAME, the most favorable of the three cases

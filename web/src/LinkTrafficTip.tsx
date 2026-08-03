@@ -45,7 +45,8 @@ export function LinkTrafficTip({ hover }: { hover: LinkTrafficHover | null }) {
   const towardA = hover.from === "A" ? traffic.rx : traffic.tx;
   const towardB = hover.from === "A" ? traffic.tx : traffic.rx;
   const step = tele?.step_seconds ?? 0;
-  const hasSeries = towardA.length > 0 || towardB.length > 0;
+  const hasSeries =
+    towardA.some((v) => v != null) || towardB.some((v) => v != null);
 
   const pad = 14;
   const tipW = 320;

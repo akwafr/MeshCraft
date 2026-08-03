@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSite, useSiteId } from "../useSite";
-import { del, get, post, put, type SiteCredential } from "../api";
-import { useSiteRole } from "../auth";
+import { del, get, post, put, type KnownCredential, type SiteCredential } from "../api";
+import { useAuth, useSiteRole } from "../auth";
 import {
   ActionButton,
   DeleteButton,
@@ -17,18 +17,18 @@ import {
 } from "../components";
 
 /**
- * {t("siteCredsPage.title")}: what meshcraft installs on equipment, and what
- * qu'un administrateur utilise pour s'y connecter directement.
+ * {t("siteCredsPage.title")}: what meshcraft installs on the equipment, and
+ * what an administrator uses to connect to it directly.
  *
- * The list never displays a secret — only its presence and date.
- * rotation. Revealing it is a distinct gesture, reserved for the site-admin, and traced
- * dans le journal.
+ * The list never displays a secret — only its presence and rotation date.
+ * Revealing it is a distinct action, reserved for the site-admin, and
+ * logged in the audit trail.
  *
- * Three types coexist (docs/03-Security/SNMP Identity §2), and the screen must
- * make them impossible to confuse: an administration password opens the
- * door of equipment, a v2c community only reads, and a v3 identity
- * ne vaut que pour une famille cryptographique. Les afficher tous « pareil »
- * would reveal one while believing to read the other.
+ * Three types coexist (docs/03-Security/SNMP Identity §2), and the screen
+ * must make them impossible to confuse: an administration password opens
+ * the door to equipment, a v2c community only reads, and a v3 identity is
+ * only valid for one cryptographic family. Displaying them all "the same
+ * way" would risk revealing one while believing you're reading the other.
  */
 
 /** Kinds, such as `site_credentials.kind` carry them server-side. */
@@ -37,16 +37,17 @@ const KIND_V2C = "snmp_v2c";
 const KIND_V3 = "snmp_v3";
 
 /**
- * `tag` et `priority` accompagnent l'identifiant dans la charge utile de l'API :
- * a v3 identity is ONLY identified by its label, and reissue it to
- * registration is vital — an omitted `tag` would target the “site” scope and
- * would create a second identifier instead of modifying the one being edited.
+ * `tag` and `priority` travel alongside the identifier in the API payload:
+ * a v3 identity is identified ONLY by its label, and resubmitting it on
+ * save is essential — an omitted `tag` would target the "site" scope and
+ * create a second identifier instead of modifying the one being edited.
  */
 type Cred = SiteCredential & { tag?: string; priority?: number };
 
 /**
- * Nameable algorithms. This list only avoids entering a label
- * que rien ne saura relire : le serveur reste seul juge (`snmpv3.ParseTag`).
+ * Nameable algorithms. This list merely avoids typing a label that nothing
+ * could parse back afterward: the server remains the sole judge
+ * (`snmpv3.ParseTag`).
  */
 const V3_AUTH = ["md5", "sha", "sha224", "sha256", "sha384", "sha512"];
 const V3_PRIV = ["aes256", "aes192", "aes128", "des", "nopriv"];
@@ -67,8 +68,8 @@ function KindBadge({ kind }: { kind: string }) {
       </span>
     );
   if (kind === KIND_ADMIN) return <span className="badge admin">{t("siteCredsPage.adminBadge")}</span>;
-  // Inherited or unknown gender: show it as it is rather than disguising it as
-  // something known — the server will refuse it for registration.
+  // Inherited or unknown kind: show it as-is rather than disguising it as
+  // something known — the server will refuse it on save.
   return <span className="badge">{kind}</span>;
 }
 
@@ -80,13 +81,14 @@ function credWho(c: Cred, t: (k: string) => string): string {
 /**
  * Identifier MAINTAINED BY MESHCRAFT: its scope targets a reserved namespace.
  *
- * Two families today, and the server refuses both for seizure
- * (`checkCredScope`): the SNMPv3 identity, whose key derives from a pair
- * d'algorithmes, et le mot de passe d'administration d'une politique de
- * platform. The screen should say it BEFORE clicking — suggest “Modify” or
- * “Delete” to be refused then search for a missing right there
- * where there is no action to be taken. And removing that from a policy would leave
- * toute une gamme sans mot de passe posable.
+ * Two families today, and the server refuses edits to both
+ * (`checkCredScope`): the SNMPv3 identity, whose key derives from a pair of
+ * algorithms, and the administration password of a platform password
+ * policy. The screen should say so BEFORE the click — offering "Edit" or
+ * "Delete" only to have it refused would send the user hunting for a
+ * missing permission where there is none — there's simply no action to
+ * take. And removing this from a policy would leave a whole product range
+ * with no password that can be set.
  */
 function isManaged(c: Cred): boolean {
   return isReservedTagName(c.tag ?? "");
@@ -107,11 +109,18 @@ export default function SiteCredentialsPage() {
   const canEdit = useSiteRole(siteId) === "ing";
   const [editing, setEditing] = useState<Cred | "new" | null>(null);
   // `secret2` is only present for a v3 identity: the server omits the key
-  // rather than returning an empty string, otherwise the window would display a
-  // Empty “passphrase” where there simply is none.
+  // rather than returning an empty string, otherwise the window would show
+  // an empty "passphrase" field where there simply isn't one.
   const [revealed, setRevealed] = useState<
     { id?: string; username?: string; secret: string; secret2?: string } | null>(null);
   const [rotating, setRotating] = useState<Cred | null>(null);
+  // INSTANCE credentials are listed here too, and that is not a convenience.
+  // They are what the serial soft-reset actually places on a device — the
+  // browser has to type a secret on a UART the controller cannot open — so any
+  // equipment provisioned over the console but not yet adopted is reachable
+  // ONLY with one of these. Before they appeared on this page, the sole way to
+  // read one again was to re-run the serial wizard.
+  const isGlobalAdmin = !!useAuth().user?.is_global_admin;
 
   const { data, error } = useQuery({
     queryKey: ["site-credentials", siteId],
@@ -119,6 +128,22 @@ export default function SiteCredentialsPage() {
       get<{ credentials: Cred[]; key_external: boolean }>(
         `/api/sites/${siteId}/credentials`),
     enabled: !!siteId,
+  });
+
+  const { data: instance } = useQuery({
+    queryKey: ["known-credentials"],
+    queryFn: () => get<{ credentials: KnownCredential[] }>("/api/discovery/credentials"),
+    enabled: isGlobalAdmin,
+  });
+
+  // Same modal, same audit sentence as the site reveal below: two reveal paths
+  // that journalled differently would make the trail depend on which page
+  // someone opened.
+  const revealInstance = useMutation({
+    mutationFn: (c: KnownCredential) =>
+      post<{ id: string; name: string; username: string; secret: string }>(
+        `/api/discovery/credentials/${c.id}/reveal`),
+    onSuccess: (r) => setRevealed({ ...r, username: r.username || r.name }),
   });
 
   const reveal = useMutation({
@@ -151,10 +176,10 @@ export default function SiteCredentialsPage() {
   if (!siteId) return <div className="empty">{t("siteCredsPage.chooseSite")}</div>;
 
   const creds = data?.credentials ?? [];
-  // “Default identifier” means: the one that equipment outside the group and
-  // without label will receive to ADMINISTER. A site SNMP community, it,
-  // does not fill this gap — counting it there would extinguish the warning by leaving
-  // le parc sans mot de passe.
+  // "Default identifier" means: the one that equipment outside any group
+  // and without a tag will receive for ADMINISTRATION. A site's SNMP
+  // community does not fill this gap — counting it as if it did would
+  // silence the warning while leaving the fleet without a password.
   const hasDefault = creds.some(
     (c) => c.kind === KIND_ADMIN && c.group_name === "" && !c.tag);
 
@@ -163,9 +188,11 @@ export default function SiteCredentialsPage() {
       <div className="toolbar">
         <h1>
           {t("siteCredsPage.title")}
-          {/* Full vault doctrine behind one help: scope, password policies, SNMP.
-              Three blocks the screen showed permanently although they are read once —
-              and they hid the page's only warning, missing default credential. */}
+          {/* Full vault doctrine tucked behind a single help tooltip: scope,
+              password policies, SNMP. Three blocks that the screen used to
+              show permanently, even though they're read once — and they
+              buried the page's only real warning: a missing default
+              credential. */}
           <HelpTip label={t("siteCredsPage.helpLabel")}>
             <p>{t("siteCredsPage.help1")}</p>
             <p>{t("siteCredsPage.help2")}</p>
@@ -229,11 +256,12 @@ export default function SiteCredentialsPage() {
                       <input
                         type="checkbox"
                         checked={c.per_device}
-                        // On an identifier held by meshcraft, the mode is not
-                        // an operating setting: switch to “one secret per
-                        // equipment” would bring this identifier out of the mechanism
-                        // which maintains it, and the next provisioning in
-                        // would generate another in its place.
+                        // On an identifier held by meshcraft, this mode is
+                        // not a user-facing setting: switching to "one
+                        // secret per device" would pull this identifier out
+                        // of the mechanism that maintains it, and the next
+                        // provisioning run would just generate another one
+                        // in its place.
                         disabled={!canEdit || mode.isPending || isManaged(c)}
                         onChange={(e) => mode.mutate({ c, per: e.target.checked })}
                       />
@@ -259,9 +287,10 @@ export default function SiteCredentialsPage() {
                       <span style={{ color: "var(--warn)" }}>{t("siteCredsPage.noSecret")}</span>
                     )}
                     {c.kind === KIND_V3 && c.has_secret && !c.has_secret2 && (
-                      // A v3 identity without a passphrase authenticates
-                      // and doesn't encrypt anything. Nothing on the screen would show it: the
-                      // supervision remonterait normalement, en clair.
+                      // A v3 identity without a passphrase authenticates but
+                      // encrypts nothing. Nothing else on the screen would
+                      // show this: monitoring would come back normally, in
+                      // the clear.
                       <div style={{ color: "var(--warn)" }}>
                         {t("siteCredsPage.noPrivPhrase")}
                       </div>
@@ -276,11 +305,13 @@ export default function SiteCredentialsPage() {
                   <td className="cred-actions-cell creds-col-actions">
                     {canEdit && (
                       <div className="cred-actions">
-                        {/* ROTATION stays offered, including on meshcraft-held credentials:
-                            a whole product line's secret must be rotatable. The server
-                            then bounds the new secret to the constraint the tag names —
-                            an out-of-bounds password would be refused by the connector
-                            before send, so a credential that looks active but is inert. */}
+                        {/* ROTATION stays available, even on credentials held by
+                            meshcraft: a whole product line's secret must be
+                            rotatable. The server then constrains the new secret
+                            to whatever the tag names — an out-of-bounds password
+                            would be rejected by the connector before it's ever
+                            sent, rather than producing a credential that looks
+                            active but is inert. */}
                         <ActionButton kind="refresh" className="ghost" onClick={() => setRotating(c)}>
                           {t("siteCredsPage.newGeneration")}
                         </ActionButton>
@@ -311,8 +342,9 @@ export default function SiteCredentialsPage() {
           </table>
         )}
         <ErrorMsg error={reveal.error} />
-        {/* Only text this card keeps: a gap that leaves part of the fleet without
-            an applicable password. It was buried among three explanation blocks. */}
+        {/* The only text this card keeps: a gap that leaves part of the fleet
+            without an applicable password. It used to be buried among three
+            explanation blocks. */}
         {!hasDefault && creds.length > 0 && (
           <p className="note" style={{ marginTop: 12, color: "var(--warn)" }}>
             {t("siteCredsPage.noDefaultWarning")}
@@ -320,9 +352,62 @@ export default function SiteCredentialsPage() {
         )}
       </div>
 
-      {/* « Secret » rather than « password »: it may be a community or v3 phrase,
-          and half-correct naming on a vault screen makes you paste the wrong value
-          in the wrong field. */}
+      {isGlobalAdmin && (instance?.credentials?.length ?? 0) > 0 && (
+        <>
+          <div className="row" style={{ justifyContent: "space-between", marginTop: 20 }}>
+            <h2 style={{ margin: 0, fontSize: 15 }}>{t("siteCredsPage.instanceTitle")}</h2>
+          </div>
+          <p className="note" style={{ marginTop: 4 }}>
+            {t("siteCredsPage.instanceIntro")}
+          </p>
+          <div className="card">
+            <table className="creds-table">
+              <thead>
+                <tr>
+                  <th className="creds-col-scope">{t("siteCredsPage.instanceNameCol")}</th>
+                  <th className="creds-col-user">{t("siteCredsPage.usernameCol")}</th>
+                  <th className="creds-col-kind">{t("siteCredsPage.kindCol")}</th>
+                  <th className="creds-col-actions"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(instance?.credentials ?? []).map((c) => (
+                  <tr key={c.id}>
+                    <td className="creds-col-scope">
+                      <b>{c.name}</b>
+                      {!c.enabled && (
+                        // Disabled means "stop TRYING it during discovery", not
+                        // "nobody needs to read it": it is still the password on
+                        // every device it was ever applied to.
+                        <div className="note">{t("siteCredsPage.instanceDisabled")}</div>
+                      )}
+                    </td>
+                    <td className="creds-col-user"><span className="mono">{c.username}</span></td>
+                    <td className="creds-col-kind"><span className="badge">{c.kind}</span></td>
+                    <td className="creds-col-actions">
+                      <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                        <ActionButton
+                          kind="download"
+                          className="ghost"
+                          disabled={revealInstance.isPending || !c.has_secret}
+                          onClick={() => revealInstance.mutate(c)}
+                        >
+                          {t("siteCredsPage.reveal")}
+                        </ActionButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ErrorMsg error={revealInstance.error} />
+          </div>
+        </>
+      )}
+
+      {/* "Secret" rather than "password": it may be a community string or a v3
+          passphrase, and half-correct naming on a vault screen leads you to
+          paste the wrong value into the wrong field. */}
       {revealed && (
         <Modal
           title={t("siteCredsPage.revealTitle", { username: revealed.username })}
@@ -426,14 +511,14 @@ function CredentialModal({
   const [tag, setTag] = useState(cred?.tag ?? "");
   const [username, setUsername] = useState(cred?.username ?? t("siteCredsPage.adminBadge"));
   const [secret, setSecret] = useState("");
-  // Second sentence, specific to v3. Always empty when opened, like the
-  // first: this page never rereads a secret.
+  // Second passphrase, specific to v3. Always empty when opened, like the
+  // first: this page never redisplays a stored secret.
   const [secret2, setSecret2] = useState("");
   const [note, setNote] = useState(cred?.note ?? "");
 
-  // The pair of algorithms is composed, it is not typed: a v3 label
-  // entered by hand would be reread by anyone, and the provisioning would not
-  // would never find the secret stored underneath.
+  // The algorithm pair is composed automatically, not typed: a v3 label
+  // entered by hand could be mistyped by anyone, and provisioning would
+  // then never find the secret stored underneath it.
   const couple = (cred?.tag ?? "").startsWith("snmpv3-")
     ? (cred?.tag ?? "").slice("snmpv3-".length).split("-")
     : [];
@@ -442,10 +527,10 @@ function CredentialModal({
 
   const isV2c = kind === KIND_V2C;
   const isV3 = kind === KIND_V3;
-  // The scope actually sent: composed for v3, mute for v2c, and
-  // for the admin that which the screen displays. Reissuing it is essential —
-  // (site, group, tag, genre) is the KEY to the identifier: an omitted field
-  // would not modify the line that is being edited, it would create another one.
+  // The scope actually sent: composed for v3, empty for v2c, and for
+  // admin whatever the screen displays. Resubmitting it is essential —
+  // (site, group, tag, kind) is the KEY to the identifier: an omitted field
+  // would not modify the row being edited, it would create another one.
   const scopeTag = isV3 ? `snmpv3-${auth}-${priv}` : isV2c ? "" : tag.trim();
   const scopeGroup = isV2c || isV3 ? "" : group.trim();
 
@@ -455,28 +540,28 @@ function CredentialModal({
         group_name: scopeGroup, tag: scopeTag, kind,
         username: isV2c ? "" : username.trim(),
         priority: cred?.priority ?? 0,
-        // `secret2` is only issued for v3: the server refuses for a second
-        // sentence on other genres, and a field remained filled after a
-        // changing the genre would cause the recording to fail without
-        // the operator sees where.
+        // `secret2` is only sent for v3: the server rejects a second
+        // passphrase on other kinds, and a field left filled in after
+        // switching kind would make the save fail without the operator
+        // seeing why.
         secret, secret2: isV3 ? secret2 : "", note,
       }),
     onSuccess: onDone,
   });
 
-  // RESERVED namespace, said before the click too. The server is the sole judge
-  // (`pwpolicy.IsTechnicalTag`, `snmpv3.ParseTag`) and will refuse anyway:
-  // what is at stake here is to explain WHY, rather than letting people read
-  // “refused” on an ordinary-looking label.
+  // RESERVED namespace, stated before the click too. The server is the
+  // sole judge (`pwpolicy.IsTechnicalTag`, `snmpv3.ParseTag`) and will
+  // refuse it anyway: what matters here is explaining WHY, rather than
+  // letting people read "refused" on an ordinary-looking label.
   const reservedScope =
     kind === KIND_ADMIN && isReservedTagName(scopeTag)
       ? t("siteCredsPage.reservedScopeErrorDetail", { tag: scopeTag })
       : "";
 
-  // What the server will refuse, says BEFORE the click (checkCredSecrets on the Go side).
-  // Two password fields without explanation invite you to enter the same password
-  // value: refusing it when clicked, without saying why, would start again
-  // l'identique.
+  // What the server will refuse is stated BEFORE the click (checkCredSecrets
+  // on the Go side). Two password fields with no explanation invite you to
+  // enter the same value in both: rejecting it on click, without saying
+  // why, would just have the user retry the exact same thing.
   const v3Pair = isV3
     ? secret2 && secret === secret2
       ? t("siteCredsPage.phrasesMustDiffer")
@@ -485,10 +570,11 @@ function CredentialModal({
         : ""
     : "";
 
-  // Changing gender changes the expected account on the equipment: repropose
-  // “admin” for an SNMPv3 identity would pose a homonymous v3 user of the account
-  // web — two distinct things, which cannot be revoked together. Only the
-  // value remaining at default is replaced: an entry by the operator, never.
+  // Changing kind changes the expected account on the equipment:
+  // re-offering "admin" for an SNMPv3 identity would create a v3 user with
+  // the same name as the web account — two distinct things that cannot be
+  // revoked together. Only a value still at its default gets replaced:
+  // never a value the operator typed in.
   function defaultUser(k: string) {
     return k === KIND_V3 ? "mcadmin" : t("siteCredsPage.adminBadge");
   }
@@ -497,9 +583,10 @@ function CredentialModal({
     setKind(k);
   }
 
-  // “Passphrase v3” didn’t say which one. With two fields, one label
-  // who does not announce his role is worse than useless: the two sentences are not
-  // interchangeable, reversing them makes the equipment mute rather than in error.
+  // "v3 passphrase" didn't say which one. With two fields, a label that
+  // doesn't announce its role is worse than useless: the two passphrases
+  // are not interchangeable — swapping them makes the equipment go silent
+  // rather than raise an error.
   const secretLabel = isV2c
     ? t("siteCredsPage.snmpV2cCommunity")
     : isV3
@@ -642,9 +729,10 @@ function CredentialModal({
 /**
  * History of generations of a secret.
  *
- * What this display should make obvious: a “behind” generation is not
- * not dead. As long as equipment carries it, it is the only password that
- * opens their door — and that’s why we can reveal it separately.
+ * What this display should make obvious: a "retiring" generation is not
+ * dead. As long as some equipment still carries it, it is the only
+ * password that opens its door — and that's why we can reveal it
+ * separately.
  */
 function Generations({
   cred,
@@ -708,9 +796,10 @@ function RotateModal({
   const isV3 = cred.kind === KIND_V3;
   const rotate = useMutation({
     mutationFn: () =>
-      // The two sentences of a v3 identity run TOGETHER, in the same
-      // generation. Renewing only one would leave the other key derived from
-      // the old sentence, and nothing would say which pair is in place.
+      // The two passphrases of a v3 identity travel TOGETHER, in the same
+      // generation. Renewing only one would leave the other key derived
+      // from the old passphrase, and nothing would indicate which pair is
+      // actually in place.
       post(`/api/sites/${siteId}/credentials/${cred.id}/rotate`,
         { secret, secret2: isV3 ? secret2 : "" }),
     onSuccess: onDone,

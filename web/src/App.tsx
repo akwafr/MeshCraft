@@ -20,6 +20,7 @@ import DiscoveryCredentials from "./pages/DiscoveryCredentials";
 import Profils from "./pages/Profils";
 import SiteConfigIO from "./pages/SiteConfigIO";
 import ConfigDevices from "./pages/ConfigDevices";
+import SpanningTreeConfig from "./pages/SpanningTreeConfig";
 import MgmtPlanPage from "./pages/MgmtPlan";
 import SiteCredentialsPage from "./pages/SiteCredentials";
 import DebugPage from "./pages/Debug";
@@ -158,6 +159,7 @@ export default function App() {
         {/* Configuration */}
         <Route path="/:siteSlug/config/vlans" element={<Vlans />} />
         <Route path="/:siteSlug/config/management" element={<MgmtPlanPage />} />
+        <Route path="/:siteSlug/config/spanning-tree" element={<SpanningTreeConfig />} />
         <Route path="/:siteSlug/config/credentials" element={<SiteCredentialsPage />} />
         <Route path="/:siteSlug/config/tags" element={<TagsPage />} />
         <Route path="/config/debug" element={<DebugPage />} />

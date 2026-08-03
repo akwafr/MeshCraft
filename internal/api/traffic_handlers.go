@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -14,33 +13,19 @@ import (
 
 // Site aggregate throughput over a sliding window.
 //
-// MEASURED when the series store responds, RECONSTRUCTED otherwise — and the
-// `simulated` field says which, without indirection. A plausible curve presented as
-// measurement would be worse than no curve at all.
+// MEASURED when the series store responds; otherwise an empty time grid
+// (`simulated: true`) so long windows do not invent a flat history.
+// Missing slots inside a measured window leave rx/tx null (empty stroke).
 //
-// # WHAT CHANGED, AND THE COMMENT THAT PRESCRIBED IT
-//
-// This file used to say: « replace with a VictoriaMetrics read once SNMP collection
-// feeds `meshcraft_if_in_octets_total`: throughput will then be computed from counter
-// deltas, and `simulated` becomes false ». The condition is met — collection runs and
-// was verified on hardware — and that is what `measuredTraffic` does now.
-//
-// The reconstructed fallback REMAINS, and is not legacy: `MESHCRAFT_METRICS_URL` can
-// be empty (compose allows it explicitly, « meshcraft works without metrics and says
-// so »), a new instance has no history yet, and a temporarily unreachable store must
-// not blank a screen. In those three cases the curve falls back to inventory-derived
-// values, with its flag.
-//
-// # THE TWO MEANINGS OF `simulated`
-//
-//	false — each point is a sum of `rate()` over interface counters.
-//	true  — the curve is derived from instant inventory rates, with interface variation.
-//	        It has the right SHAPE, not the right value.
+//	simulated false — each point is a sum of rate() over interface counters.
+//	simulated true  — no history available; points carry timestamps only.
 
 type trafficPoint struct {
 	TS time.Time `json:"ts"`
-	RX float64   `json:"rx_mbps"`
-	TX float64   `json:"tx_mbps"`
+	// Nil means no sample at this slot — the UI leaves that stretch empty
+	// instead of connecting across the gap or drawing a false zero.
+	RX *float64 `json:"rx_mbps"`
+	TX *float64 `json:"tx_mbps"`
 }
 
 type trafficSeries struct {
@@ -98,10 +83,12 @@ func (s *Server) handleSiteTraffic(w http.ResponseWriter, r *http.Request) {
 	if hours <= 0 || hours > 720 {
 		hours = 24
 	}
-	var points, _ = strconv.Atoi(r.URL.Query().Get("points"))
-	if points <= 1 || points > 500 {
-		points = 96
-	}
+	// Step follows the displayed window (1 min / 5 min / 10 min / 15 min).
+	// The obsolete `points` query param is ignored: a fixed budget coarsened
+	// long ranges and made the same screen look sparse after a chip click.
+	var window = time.Duration(hours) * time.Hour
+	var step = chartStep(window)
+	var points = chartPointCount(window, step)
 
 	var devices, err = s.Store.ListDevices(r.Context(), siteID)
 	if err != nil {
@@ -109,11 +96,10 @@ func (s *Server) handleSiteTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var now = time.Now()
-	var step = time.Duration(hours) * time.Hour / time.Duration(points-1)
 
 	// MEASUREMENT FIRST. Failure is not returned to the caller: it falls back to
-	// reconstruction, which was behavior before this set. Returning 502 on a temporarily
-	// unreachable store would blank a screen that worked fine without it.
+	// an empty grid (not a reconstituted curve). Inventing a flat line across 7 d
+	// or 30 d where nothing was measured looked like history.
 	var measured, err2 = s.measuredTraffic(r.Context(), devices, now, step, points)
 	if err2 == nil && len(measured) > 0 {
 		respond(w, http.StatusOK, trafficSeries{
@@ -121,61 +107,20 @@ func (s *Server) handleSiteTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var baseRX, baseTX float64
-	var i int
-	for i = range devices {
-		var rx, tx = portRates(devices[i])
-		baseRX += rx
-		baseTX += tx
-	}
-
-	// THE FALLBACK CURVE IS FLAT, and that is a fix.
-	//
-	// It used to carry generated variation (`jitAt`) around the current value, so « the
-	// historical curve and live display tell the same story ». That was makeup for missing
-	// data: ±18% oscillation no octet caused, on which an operator bases capacity
-	// decisions.
-	//
-	// What remains is the only fact available: instant rate inventory carries, held
-	// constant over the window, with `simulated: true` to say it is not history. A
-	// straight line claims nothing; an invented curve claims everything.
+	// Empty window aligned on the same grid: the chart shows axes with no stroke.
 	var out = trafficSeries{Hours: hours, Simulated: true, Points: []trafficPoint{}}
+	var i int
 	for i = 0; i < points; i++ {
 		var at = now.Add(-time.Duration(points-1-i) * step)
-		out.Points = append(out.Points, trafficPoint{TS: at, RX: baseRX, TX: baseTX})
+		out.Points = append(out.Points, trafficPoint{TS: at})
 	}
 	respond(w, http.StatusOK, out)
 }
 
-// measuredTraffic returns the MEASURED curve, or an empty list when there is nothing
-// to measure.
+// measuredTraffic returns one point per chart slot for [now-(n-1)×step, now].
 //
-// # TIMESTAMPS COME FROM THE STORE, NEVER FROM LOCAL MATH
-//
-// That fixes a defect in the first version, and it did not look like a bug: the curve
-// displayed, with one point in four. The function built expected instants (`now - k ×
-// step`) and fetched each value at that key. VictoriaMetrics aligns its own grid to
-// multiples of step from `start`: the two grids coincide only by rounding luck, and
-// surviving point count CHANGED from request to request — four, then two, then one.
-//
-// A gapped curve does not read as a code error: it reads as intermittent collection,
-// sending you looking for a network fault.
-//
-// Returned points are therefore what the store served, in chronological order, and
-// requested count only drives step size.
-//
-// # BOTH DIRECTIONS ARE JOINED BY TIMESTAMP, NOT BY INDEX
-//
-// Same reason, other consequence: the store returns a point only where it has data, so
-// the two series may differ in length — a port emitting nothing has no egress series.
-// Pairing by index would shift the transmit curve in time, which reads as a network
-// incident.
-//
-// A step SMALLER than the rate window (cf. rateWindow) is legitimate: points overlap,
-// smoothing the curve. A much larger step SUBSAMPLES — a 24 h window in 96 points
-// takes a two-minute average every fifteen minutes, and a burst between points does not
-// appear. That is the nature of a screen curve, and it is said here so nobody hunts a
-// missing octet.
+// Slots with no store sample leave RX/TX nil so the UI draws an empty stretch
+// rather than bridging the gap or filling zero Mbps.
 func (s *Server) measuredTraffic(ctx context.Context, devices []model.Device,
 	now time.Time, step time.Duration, points int) ([]trafficPoint, error) {
 	if s.TSDB == nil {
@@ -191,33 +136,56 @@ func (s *Server) measuredTraffic(ctx context.Context, devices []model.Device,
 	if err != nil {
 		return nil, err
 	}
-	// UNION of both grids, sorted. An instant where only one direction was measured
-	// yields a point with the other direction at zero — which is exact: the store did
-	// respond on that window, and has nothing for that direction.
-	var at = make([]int64, 0, len(rx)+len(tx))
-	var seen = map[int64]bool{}
-	var maps = []map[int64]float64{rx, tx}
-	var i int
-	for i = range maps {
-		var ts int64
-		for ts = range maps[i] {
-			if !seen[ts] {
-				seen[ts] = true
-				at = append(at, ts)
-			}
-		}
+	if len(rx) == 0 && len(tx) == 0 {
+		return nil, nil
 	}
-	sort.Slice(at, func(a, b int) bool { return at[a] < at[b] })
 
-	var out []trafficPoint
-	for i = range at {
-		out = append(out, trafficPoint{
-			TS: time.Unix(at[i], 0).UTC(),
-			RX: round3(rx[at[i]]),
-			TX: round3(tx[at[i]]),
-		})
+	var half = int64(step / time.Second / 2)
+	if half < 1 {
+		half = 1
+	}
+	var out = make([]trafficPoint, 0, points)
+	var i int
+	for i = 0; i < points; i++ {
+		var at = from.Add(time.Duration(i) * step).UTC()
+		var slot = trafficPoint{TS: at}
+		var rv, rok = nearestSample(rx, at.Unix(), half)
+		if rok {
+			var v = round3(rv)
+			slot.RX = &v
+		}
+		var tv, tok = nearestSample(tx, at.Unix(), half)
+		if tok {
+			var v = round3(tv)
+			slot.TX = &v
+		}
+		out = append(out, slot)
 	}
 	return out, nil
+}
+
+// nearestSample finds a store sample within ±halfSec of the chart slot.
+func nearestSample(m map[int64]float64, want, halfSec int64) (float64, bool) {
+	if v, ok := m[want]; ok {
+		return v, true
+	}
+	var bestTs int64
+	var bestDist = halfSec + 1
+	var ts int64
+	for ts = range m {
+		var d = ts - want
+		if d < 0 {
+			d = -d
+		}
+		if d <= halfSec && d < bestDist {
+			bestDist = d
+			bestTs = ts
+		}
+	}
+	if bestDist > halfSec {
+		return 0, false
+	}
+	return m[bestTs], true
 }
 
 // trafficSeries queries the store and returns site sum by timestamp.

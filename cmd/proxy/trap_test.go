@@ -85,29 +85,29 @@ func TestDiffPorts(t *testing.T) {
 	type cas struct {
 		nom       string
 		prev, cur map[int]portObs
-		expected   []portChange
+		expected  []portChange
 	}
 	var cases = []cas{{
 		nom: "first observation : muette",
 		cur: map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperDown}},
 	}, {
-		nom:     "up vers down",
-		prev:    map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
-		cur:     map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
+		nom:      "up vers down",
+		prev:     map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
+		cur:      map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
 		expected: []portChange{{ifIndex: 1, name: "GE1", up: false, status: ifOperDown}},
 	}, {
-		nom:     "down vers up",
-		prev:    map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
-		cur:     map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
+		nom:      "down vers up",
+		prev:     map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
+		cur:      map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
 		expected: []portChange{{ifIndex: 1, name: "GE1", up: true, status: ifOperUp}},
 	}, {
 		nom:  "port disparu de la table : muet",
 		prev: map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperUp}},
 		cur:  map[int]portObs{1: {status: ifOperUp}},
 	}, {
-		nom:     "valeur exotique : down, avec la valeur conservee",
-		prev:    map[int]portObs{5: {status: ifOperUp}},
-		cur:     map[int]portObs{5: {status: 3}},
+		nom:      "valeur exotique : down, avec la valeur conservee",
+		prev:     map[int]portObs{5: {status: ifOperUp}},
+		cur:      map[int]portObs{5: {status: 3}},
 		expected: []portChange{{ifIndex: 5, up: false, status: 3}},
 	}, {
 		nom:  "down vers lowerLayerDown : same etat, donc muet",
@@ -294,7 +294,7 @@ func TestClassifyTrap(t *testing.T) {
 	type cas struct {
 		nom, ip, community string
 		device             string
-		expected            trapVerdict
+		expected           trapVerdict
 	}
 	var cases = []cas{
 		{nom: "bonne paire", ip: "10.0.0.5", community: "lecture",

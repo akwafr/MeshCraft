@@ -11,11 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Registre docker/OCI v2 en LECTURE SEULE, servi depuis un layout OCI produit
-// au build par cmd/mkoci. Une seule image : meshcraft/proxy, tag unique.
-// Suffit a `docker pull <controleur>/meshcraft/proxy:latest`.
+// READ-ONLY docker/OCI v2 registry, served from an OCI layout produced at
+// build time by cmd/mkoci. A single image: meshcraft/proxy, single tag.
+// Enough for `docker pull <controller>/meshcraft/proxy:latest`.
 //
-// Layout expected dans Cfg.OCIDir :
+// Layout expected in Cfg.OCIDir:
 //   oci-layout, index.json, blobs/sha256/<hex>
 
 const imageName = "meshcraft/proxy"
@@ -35,7 +35,7 @@ func (s *Service) handleV2Root(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("{}"))
 }
 
-// blobPath valide un digest sha256:<hex> et renvoie le chemin du blob.
+// blobPath validates a sha256:<hex> digest and returns the blob's path.
 func (s *Service) blobPath(digest string) (string, bool) {
 	var hex, ok = strings.CutPrefix(digest, "sha256:")
 	if !ok || len(hex) != 64 || strings.ContainsAny(hex, "/\\.") {
@@ -52,15 +52,15 @@ func registryError(w http.ResponseWriter, code int, errCode, msg string) {
 	})
 }
 
-// manifestByRef resout une reference : un tag (quel qu'il soit) renvoie l'index
-// multi-arch, un digest renvoie le document correspondant.
+// manifestByRef resolves a reference: any tag returns the multi-arch index,
+// a digest returns the corresponding document.
 //
-// L'index doit be adressable PAR SON PROPRE DIGEST : `docker pull` resout le
-// tag, lit le digest dans Docker-Content-Digest, puis redemande le manifeste par
-// digest. Un 404 ici fait basculer `docker pull` sur un repli « pull by tag »
-// deprecie, et fait echouer franchement `docker compose up`. mkoci written
-// now l'index comme blob ; le repli ci-dessous rattrape les layouts
-// produits avant ce correctif.
+// The index must be addressable BY ITS OWN DIGEST: `docker pull` resolves
+// the tag, reads the digest from Docker-Content-Digest, then requests the
+// manifest again by digest. A 404 here makes `docker pull` fall back to a
+// deprecated "pull by tag" path, and makes `docker compose up` fail outright.
+// mkoci now also writes the index as a blob; the fallback below catches
+// layouts produced before that fix.
 func (s *Service) manifestByRef(ref string) ([]byte, bool, error) {
 	var indexPath = filepath.Join(s.Cfg.OCIDir, "index.json")
 	if !strings.HasPrefix(ref, "sha256:") {
@@ -86,14 +86,14 @@ func (s *Service) handleManifest(w http.ResponseWriter, r *http.Request) {
 	var ref = chi.URLParam(r, "ref")
 	var data, validRef, err = s.manifestByRef(ref)
 	if !validRef {
-		registryError(w, http.StatusBadRequest, "DIGEST_INVALID", "digest invalide")
+		registryError(w, http.StatusBadRequest, "DIGEST_INVALID", "invalid digest")
 		return
 	}
 	if err != nil {
-		registryError(w, http.StatusNotFound, "MANIFEST_UNKNOWN", "manifeste inconnu")
+		registryError(w, http.StatusNotFound, "MANIFEST_UNKNOWN", "unknown manifest")
 		return
 	}
-	// Le media-type est porte par le document lui-same.
+	// The media-type is carried by the document itself.
 	var mt struct {
 		MediaType string `json:"mediaType"`
 	}
@@ -102,7 +102,7 @@ func (s *Service) handleManifest(w http.ResponseWriter, r *http.Request) {
 		mt.MediaType = "application/vnd.oci.image.index.v1+json"
 	}
 	w.Header().Set("Content-Type", mt.MediaType)
-	// Content-Length explicite : le client docker l'exige, y compris en HEAD.
+	// Explicit Content-Length: the docker client requires it, including on HEAD.
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Header().Set("Docker-Content-Digest", digestOf(data))
 	w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
@@ -116,12 +116,12 @@ func (s *Service) handleBlob(w http.ResponseWriter, r *http.Request) {
 	var digest = chi.URLParam(r, "digest")
 	var path, ok = s.blobPath(digest)
 	if !ok {
-		registryError(w, http.StatusBadRequest, "DIGEST_INVALID", "digest invalide")
+		registryError(w, http.StatusBadRequest, "DIGEST_INVALID", "invalid digest")
 		return
 	}
 	var _, err = os.Stat(path)
 	if err != nil {
-		registryError(w, http.StatusNotFound, "BLOB_UNKNOWN", "blob inconnu")
+		registryError(w, http.StatusNotFound, "BLOB_UNKNOWN", "unknown blob")
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

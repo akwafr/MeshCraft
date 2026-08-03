@@ -2,7 +2,7 @@
 // multiplexed with yamux, in which the controller opens TCP connections toward
 // devices on the proxy's network.
 //
-// This is phase 0bis of the controller-proxy protocol (docs/en/01-Architecture/Proxy.md). The
+// This is phase 0b of the controller-proxy protocol (docs/en/01-Architecture/Proxy.md). The
 // document describes custom framing (type/channel/payload) AND decides: "yamux
 // over WS for MVP". With yamux, the natural mapping of channels is **one stream
 // per connection**, preceded by a one-line JSON preamble:

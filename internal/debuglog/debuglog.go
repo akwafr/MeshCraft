@@ -1,17 +1,17 @@
-// Package debuglog garde en memory les dernieres lignes de journal de
-// l'APPLICATION, et les diffuse en direct.
+// Package debuglog keeps the latest log lines of the APPLICATION in memory
+// and streams them live.
 //
-// A ne pas confondre avec le [[Journal d'evenements]], qui parle du PARC a
-// l'exploitant. Ici on parle de meshcraft a qui le diagnostique : « connecteur
-// instanton : HTTP 200 sans code state » n'matters pas l'administrateur d'un
-// site, mais c'est la seule chose qui compte quand on cherche pourquoi une pose
-// fails.
+// Not to be confused with the [[Journal d'evenements]] (event log), which
+// speaks to the operator about the FLEET. Here we're talking to meshcraft
+// itself about its own diagnostics: "instanton connector: HTTP 200 with no
+// state code" doesn't matter to the administrator of a site, but it's the
+// one thing that matters when trying to figure out why a deployment fails.
 //
-// Voir docs/01-Architecture/Monitoring unifie et pipelines §6.
+// See docs/01-Architecture/Monitoring unifie et pipelines §6.
 //
-// EN MEMORY, jamais en base. Un journal de debug qui written en base ajoute de la
-// charge au moment precise where quelque chose va mal — i.e. au pire moment
-// possible.
+// IN MEMORY, never in the database. A debug log that gets written to the
+// database adds load at the exact moment when something is going wrong —
+// i.e. at the worst possible moment.
 package debuglog
 
 import (
@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// Line est une ligne de journal telle qu'elle sera montree.
+// Line is a log line as it will be displayed.
 type Line struct {
 	Seq   uint64            `json:"seq"`
 	TS    time.Time         `json:"ts"`
@@ -31,11 +31,11 @@ type Line struct {
 	Attrs map[string]string `json:"attrs,omitempty"`
 }
 
-// Ring garde les N dernieres lignes et reveille les abonnes.
+// Ring keeps the last N lines and wakes up subscribers.
 //
-// La borne est ce qui rend la chose sure : un composant qui part en boucle
-// remplit l'anneau et ecrase les lignes anciennes, il ne remplit jamais la
-// memory du controleur.
+// The bound is what makes this safe: a component stuck in a runaway loop
+// fills the ring and overwrites old lines, but it never fills up the
+// controller's memory.
 type Ring struct {
 	mu      sync.RWMutex
 	lines   []Line
@@ -45,7 +45,7 @@ type Ring struct {
 	maxSubs int
 }
 
-// NewRing construit l'anneau. `size` est le nombre de lignes conservees.
+// NewRing builds the ring. `size` is the number of lines kept.
 func NewRing(size int) *Ring {
 	if size <= 0 {
 		size = 2000
@@ -53,12 +53,12 @@ func NewRing(size int) *Ring {
 	return &Ring{lines: make([]Line, size), subs: map[chan Line]struct{}{}, maxSubs: 16}
 }
 
-// sensitive dit si une key d'attribut porte probablement un secret.
+// sensitive reports whether an attribute key likely carries a secret.
 //
-// Le filtrage est fait sur le NOM, pas sur la valeur : chercher un secret dans
-// une valeur suppose de savoir a quoi il ressemble, ce qui est faux par
-// construction. Un mot de passe qui transite dans un journal de debug est un mot
-// de passe fuite — et ce flux est consultable dans un navigateur.
+// The filtering is done on the NAME, not the value: looking for a secret in
+// a value would require knowing what it looks like, which is false by
+// construction. A password that transits through a debug log is a leaked
+// password — and this stream can be viewed in a browser.
 func sensitive(key string) bool {
 	var k = strings.ToLower(key)
 	var needle string
@@ -70,7 +70,7 @@ func sensitive(key string) bool {
 	return false
 }
 
-// Add enregistre une ligne et la pousse aux abonnes.
+// Add records a line and pushes it to subscribers.
 func (r *Ring) Add(l Line) {
 	r.mu.Lock()
 	r.seq++
@@ -85,9 +85,9 @@ func (r *Ring) Add(l Line) {
 	r.mu.Unlock()
 
 	for _, c = range subs {
-		// Envoi NON bloquant : un abonne lent — un navigateur sur un lien
-		// mediocre — ne doit jamais ralentir le code qui journalise. Il perd des
-		// lignes, ce qui est exactement le bon compromis pour du debug.
+		// NON-blocking send: a slow subscriber — a browser on a poor link —
+		// must never slow down the code that's logging. It loses lines,
+		// which is exactly the right tradeoff for debugging.
 		select {
 		case c <- l:
 		default:
@@ -95,7 +95,7 @@ func (r *Ring) Add(l Line) {
 	}
 }
 
-// Snapshot rend les lignes conservees, de la plus ancienne a la plus recente.
+// Snapshot returns the kept lines, from oldest to newest.
 func (r *Ring) Snapshot(minLevel string) []Line {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -113,7 +113,7 @@ func (r *Ring) Snapshot(minLevel string) []Line {
 
 var rank = map[string]int{"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
 
-// AtLeast dit si un niveau atteint le seuil requested.
+// AtLeast reports whether a level reaches the requested threshold.
 func AtLeast(level, min string) bool {
 	if min == "" {
 		return true
@@ -121,10 +121,10 @@ func AtLeast(level, min string) bool {
 	return rank[level] >= rank[min]
 }
 
-// Subscribe ouvre un flux. La fonction rendue doit be appelee pour liberer.
+// Subscribe opens a stream. The returned function must be called to release it.
 //
-// Le nombre d'abonnes est BORNE : chaque flux tient un canal et une goroutine
-// HTTP. Un onglet oublie ne doit pas couter indefiniment.
+// The number of subscribers is BOUNDED: each stream holds a channel and an
+// HTTP goroutine. A forgotten browser tab must not cost resources forever.
 func (r *Ring) Subscribe() (<-chan Line, func(), bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -141,13 +141,13 @@ func (r *Ring) Subscribe() (<-chan Line, func(), bool) {
 	}, true
 }
 
-// Handler est un slog.Handler qui written dans l'anneau EN PLUS du handler
-// habituel.
+// Handler is a slog.Handler that writes to the ring IN ADDITION TO the
+// regular handler.
 //
-// « En plus » et non « a la place » : les logs doivent continuer d'aller sur la
-// sortie standard, where les recupere l'exploitation du conteneur. Une zone de
-// debug qui detournerait le flux ferait perdre les journaux au moment where on en
-// a le plus besoin.
+// "In addition to" and not "instead of": logs must keep going to standard
+// output, where the container's ops tooling picks them up. A debug layer
+// that hijacked the stream would lose the logs at the exact moment they're
+// needed most.
 type Handler struct {
 	next  slog.Handler
 	ring  *Ring
@@ -155,7 +155,7 @@ type Handler struct {
 	group string
 }
 
-// NewHandler emballe un handler existant.
+// NewHandler wraps an existing handler.
 func NewHandler(next slog.Handler, ring *Ring) *Handler {
 	return &Handler{next: next, ring: ring}
 }
@@ -190,7 +190,7 @@ func putAttr(dst map[string]string, group string, a slog.Attr) {
 		key = group + "." + key
 	}
 	if sensitive(key) {
-		dst[key] = "[masque]"
+		dst[key] = "[masked]"
 		return
 	}
 	dst[key] = a.Value.String()

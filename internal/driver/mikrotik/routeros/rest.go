@@ -17,7 +17,7 @@ import (
 // Why REST and not the CLI, even though RouterOS has SSH and Telnet open
 // (observed: `/ip/service` serves `ssh` on 22 and `telnet` on 23, and the banner
 // is `SSH-2.0-ROSSSH`): the project's generic SSH probe FAILS on this device —
-// « SSH session: timeout after 12s », seen on 10.99.0.54. RouterOS's shell is a
+// 'SSH session: timeout after 12s', seen on 10.99.0.54. RouterOS's shell is a
 // full-screen interactive terminal that redraws, paginates and waits for keypresses;
 // scraping it amounts to reimplementing a terminal. REST, on the other hand,
 // returns structured JSON and re-authenticates on every request. So this is not an
@@ -27,19 +27,19 @@ import (
 // CAUTION, what is observed and what is not: everything this file does in READ
 // has been exercised on a CRS326-24G-2S+ on 7.21beta3 through the proxy tunnel.
 // Everything it does in WRITE has NOT been — the controller's read tool is
-// restricted to GET/HEAD by architectural decision (« writing to a device goes
-// through a connector, not through this tool »). Every write carries the mention
+// restricted to GET/HEAD by architectural decision ('writing to a device goes
+// through a connector, not through this tool'). Every write carries the mention
 // NOT VERIFIED where it is coded.
 
 // The transcript step is no longer defined here: it is `driver.Step`, aliased as
 // [Step] by contract.go. This package used to carry its own, saying in its original
-// comment that it had « the same shape as instanton.Step, so the API has only one
-// way to present an apply ». Three copies of an identical type by convention hold
+// comment that it had 'the same shape as instanton.Step, so the API has only one
+// way to present an apply'. Three copies of an identical type by convention hold
 // until the day one gains a field — and that day, the API's silent conversion loses
 // that field without any test seeing it. The `Steps` field below has not changed
 // for all that: an ALIAS imposes no conversion.
 
-// Row is a RouterOS record: a menu « item », with its `.id`.
+// Row is a RouterOS record: a menu 'item', with its `.id`.
 //
 // All values are STRINGS, including numbers and booleans. That is not a
 // simplification on our part; it is what the device serves — observed on 7.21beta3:
@@ -49,12 +49,12 @@ type Row map[string]string
 
 // Client is a REST session toward a RouterOS.
 //
-// « Session » is a deliberate abuse of language and it must be known: RouterOS REST
+// 'Session' is a deliberate abuse of language and it must be known: RouterOS REST
 // has NO session. Authentication is HTTP Basic re-presented on EVERY request
 // (observed: without credentials, `/rest/system/resource` returns 401 with
 // `WWW-Authenticate: Basic`). There is therefore neither a cookie to keep, nor a
 // connection to open, nor a logout to perform — and, a much heavier consequence, no
-// possible « safe mode », RouterOS's being attached to an interactive session (cf.
+// possible 'safe mode', RouterOS's being attached to an interactive session (cf.
 // the Commit comment in routeros.go).
 type Client struct {
 	web  *driver.WebSession
@@ -70,7 +70,7 @@ type Client struct {
 	// to reconstruct it from the transcript.
 	//
 	// UNEXPORTED deliberately: a public field would be mutable after the fact, and
-	// « the candidate that worked » must not be able to become anything other than
+	// 'the candidate that worked' must not be able to become anything other than
 	// what the device actually accepted.
 	accepted Candidate
 	// Steps is the transcript, in order.
@@ -88,7 +88,7 @@ func (c *Client) step(ok bool, what string, detail ...string) {
 // from the bound. But a RouterOS recalculating its bridge table, or a tunnel that
 // just came back, take much longer, and a timeout on a WRITE leaves the caller
 // without knowing whether it was taken. On this platform that persists immediately,
-// « I do not know if it is written » is the worst possible state: we prefer to wait.
+// 'I do not know if it is written' is the worst possible state: we prefer to wait.
 const restTimeout = 20 * time.Second
 
 // Open opens a REST client in CLEAR HTTP, and that is an observed choice, not
@@ -124,7 +124,7 @@ func OpenScheme(scheme, host string, d driver.Dialer, user, secret string) *Clie
 
 // restError is what RouterOS returns when it refuses.
 //
-// Observed: `{"detail":"no such command or directory (nimportequoi)","error":400,
+// Observed: `{"detail":"no such command or directory (whatever)","error":400,
 // "message":"Bad Request"}`. `detail` is the only field that says something useful
 // — `message` is only the HTTP status label.
 type restError struct {
@@ -156,7 +156,7 @@ func (e restError) String() string {
 //     necessary filter: the dot is a legitimate character in a MikroTik interface
 //     name, so it cannot be forbidden — but a `..` segment would survive the first
 //     filter, and `net/http` NORMALIZES the path before emitting it.
-//     « interface/../../etc » would therefore leave as « /etc », i.e. outside the
+//     'interface/../../etc' would therefore leave as '/etc', i.e. outside the
 //     REST API, and on a write toward an endpoint we did not aim for.
 func menuPath(menu string) string {
 	menu = strings.TrimPrefix(strings.TrimSpace(menu), "/")
@@ -285,15 +285,15 @@ func (c *Client) Object(ctx context.Context, menu string) (Row, error) {
 // The main lesson: on this API, a 500 does NOT PROVE that a menu is absent.
 // Observed side by side on 7.21beta3:
 //
-//	/rest/nimportequoi              → 400 « no such command or directory »
-//	/rest/interface/nexistepas      → 500 Internal Server Error
-//	/rest/interface/dot1x           → 500 Internal Server Error
-//	/rest/interface/dot1x/server    → 200 []            ← the menu EXISTS nonetheless
-//	/rest/interface/ethernet/poe    → 500 Internal Server Error
-//	/rest/interface/ethernet/poe/settings → 400 « no such command prefix »
+//	/rest/whatever                        → 400 'no such command or directory'
+//	/rest/interface/doesnotexist          → 500 Internal Server Error
+//	/rest/interface/dot1x                 → 500 Internal Server Error
+//	/rest/interface/dot1x/server          → 200 []            ← the menu EXISTS nonetheless
+//	/rest/interface/ethernet/poe          → 500 Internal Server Error
+//	/rest/interface/ethernet/poe/settings → 400 'no such command prefix'
 //
 // In other words: a menu that contains only SUB-menus returns 500, just like a
-// nonexistent path. Concluding « absent » from a single 500 is a mistake — that is
+// nonexistent path. Concluding 'absent' from a single 500 is a mistake — that is
 // why this model's PoE absence is established on the 400 from `poe/settings`, which
 // literally says the PREFIX does not exist, and not on the 500 from `poe`.
 func restStatusMeaning(status int, re restError) string {
@@ -365,7 +365,7 @@ func (c *Client) Command(ctx context.Context, menu, command string,
 		json.Unmarshal([]byte(resp.Body), &re) //nolint:errcheck // fallback message below
 		// The body sent appears in the transcript: on a platform that persists
 		// immediately, knowing exactly what was proposed is the only way to
-		// distinguish « refused » from « half taken ».
+		// distinguish 'refused' from 'half taken'.
 		c.step(false, path+" refused by the device",
 			fmt.Sprintf("POST %s %s → HTTP %d — %s", path, describe(payload),
 				resp.Status, re.String()))

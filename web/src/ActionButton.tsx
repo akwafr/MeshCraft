@@ -37,6 +37,8 @@ export type ActionKind =
   | "link"
   | "finish"
   | "play"
+  | "pause"
+  | "terminal"
   | "upload"
   | "refresh"
   | "role";
@@ -203,6 +205,21 @@ export function ActionIcon({ kind, size = 14 }: { kind: ActionKind; size?: numbe
       return (
         <Svg size={size}>
           <path d="M5 3l14 9-14 9V3z" />
+        </Svg>
+      );
+    case "pause":
+      return (
+        <Svg size={size}>
+          <path d="M8 4v16" />
+          <path d="M16 4v16" />
+        </Svg>
+      );
+    case "terminal":
+      return (
+        <Svg size={size}>
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="M6 9l4 3-4 3" />
+          <path d="M12 15h6" />
         </Svg>
       );
     case "refresh":

@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// TestBestChoisitLeCanalLePlusRapide : planifier, c'est demander le rythme que
-// the device tient — pas celui qu'on voudrait. Best rend le canal le plus
-// rapide qui sait rendre la metrique.
+// TestBestChoisitLeCanalLePlusRapide: planning means asking for the rate the
+// device can actually sustain — not the one we'd like. Best returns the fastest
+// channel that can return the metric.
 func TestBestChoisitLeCanalLePlusRapide(t *testing.T) {
 	var caps = MonitoringCapabilities{Channels: []MonitorChannel{
 		{Kind: "web", Metrics: []string{"if_state"}, MinInterval: 30 * time.Second},
@@ -17,33 +17,33 @@ func TestBestChoisitLeCanalLePlusRapide(t *testing.T) {
 
 	var c, ok = caps.Best("if_state")
 	if !ok || c.Kind != "snmp" || c.MinInterval != 5*time.Second {
-		t.Errorf("if_state doit passer par SNMP a 5 s, obtenu %+v (ok=%v)", c, ok)
+		t.Errorf("if_state must go through SNMP at 5 s, got %+v (ok=%v)", c, ok)
 	}
 	if c, ok = caps.Best("if_counters"); !ok || c.MinInterval != 30*time.Second {
-		t.Errorf("if_counters expected a 30 s, obtenu %+v", c)
+		t.Errorf("if_counters expected at 30 s, got %+v", c)
 	}
-	// Une metrique qu'aucun canal ne rend n'est pas supervisee, et il faut le
-	// dire : un parc a half supervise sans que personne ne le voie est le pire
-	// des results.
+	// A metric no channel returns is not monitored, and that must be said: a
+	// fleet that is half-monitored without anyone noticing is the worst possible
+	// outcome.
 	if _, ok = caps.Best("streaming_only_metric"); ok {
-		t.Error("une metrique sans canal doit be flagged absente, pas invented")
+		t.Error("a metric with no channel must be flagged as absent, not invented")
 	}
 }
 
-// TestBestSansCanal : une plateforme sans observability declared ne doit rien
-// promettre. La capability inconnue est supposee ABSENTE.
+// TestBestSansCanal: a platform with no declared observability must not promise
+// anything. The unknown capability is assumed ABSENT.
 func TestBestSansCanal(t *testing.T) {
 	var _, ok = (MonitoringCapabilities{}).Best("if_state")
 	if ok {
-		t.Error("aucune capability declared ne doit valoir aucune supervision")
+		t.Error("no declared capability must never amount to any monitoring")
 	}
 }
 
-// TestWhyUnavailableSepareLIgnoranceDuFaitEtabli : les deux responses possibles de
-// WhyUnavailable ne disent pas la same chose. Un motif declared est un fait sur
-// the device ; l'absence de motif n'est PAS une disponibilite, c'est
-// simplement que personne ne l'a documente. Confondre les deux referait le
-// silence que ce champ existe pour rompre.
+// TestWhyUnavailableSepareLIgnoranceDuFaitEtabli: the two possible answers from
+// WhyUnavailable do not say the same thing. A declared reason is a fact about the
+// device; the absence of a reason is NOT availability, it simply means nobody
+// documented it. Conflating the two would recreate the exact silence this field
+// exists to break.
 func TestWhyUnavailableSepareLIgnoranceDuFaitEtabli(t *testing.T) {
 	var caps = MonitoringCapabilities{
 		Channels: []MonitorChannel{
@@ -57,29 +57,29 @@ func TestWhyUnavailableSepareLIgnoranceDuFaitEtabli(t *testing.T) {
 
 	var u, ok = caps.WhyUnavailable("optical_power")
 	if !ok || !u.Observed || u.Source == "" {
-		t.Errorf("le motif observed doit remonter tel quel : %+v (ok=%v)", u, ok)
+		t.Errorf("the observed reason must come back unchanged: %+v (ok=%v)", u, ok)
 	}
-	// Constate / suppose doit se DISTINGUER : sans ca, the UI affiche du same ton
-	// un fait mesure et une deduction, et fait renoncer un exploitant sur une
-	// supposition.
+	// Observed / assumed must be DISTINGUISHABLE: without that, the UI shows a
+	// measured fact and a deduction in the same tone, and makes an operator give
+	// up over a mere assumption.
 	if u, ok = caps.WhyUnavailable("temperature"); !ok || u.Observed {
-		t.Errorf("une absence supposee ne doit pas se present  comme observed : %+v", u)
+		t.Errorf("an assumed absence must not present itself as observed: %+v", u)
 	}
-	// Metrique dont personne n'a documente l'absence : pas de motif, et surtout
-	// aucune promesse de disponibilite — c'est Best qui en decide.
+	// A metric whose absence nobody documented: no reason, and above all no
+	// promise of availability — that's for Best to decide.
 	if _, ok = caps.WhyUnavailable("health"); ok {
-		t.Error("aucun motif n'est declared pour health : en inventer un serait pire que rien")
+		t.Error("no reason is declared for health: making one up would be worse than nothing")
 	}
 	if _, ok = caps.Best("health"); ok {
-		t.Error("health n'a aucun canal : la metrique n'est pas supervisee")
+		t.Error("health has no channel: the metric is not monitored")
 	}
 }
 
-// TestContradictionsAttrapeLaDeclarationQuiSeMord : declare une metrique a la
-// fois rendue par un canal et indisponible sur la plateforme est le seul default
-// que cette structure permet encore. Il faut qu'il se voie, parce qu'il produit
-// soit une courbe promise que rien ne remplira, soit un motif d'absence a cote
-// d'une courbe bien vivante.
+// TestContradictionsAttrapeLaDeclarationQuiSeMord: declaring a metric both
+// returned by a channel and unavailable on the platform is the only defect this
+// struct can still allow. It has to be visible, because it produces either a
+// promised graph nothing will ever fill, or a stated reason for absence next to
+// a graph that is alive and well.
 func TestContradictionsAttrapeLaDeclarationQuiSeMord(t *testing.T) {
 	var sain = MonitoringCapabilities{
 		Channels: []MonitorChannel{
@@ -89,7 +89,7 @@ func TestContradictionsAttrapeLaDeclarationQuiSeMord(t *testing.T) {
 	}
 	var consistent = sain.Contradictions()
 	if len(consistent) != 0 {
-		t.Errorf("declaration consistent attendue sans contradiction, obtenu %v", consistent)
+		t.Errorf("expected a consistent declaration with no contradiction, got %v", consistent)
 	}
 
 	var mordue = MonitoringCapabilities{
@@ -101,26 +101,26 @@ func TestContradictionsAttrapeLaDeclarationQuiSeMord(t *testing.T) {
 	}
 	var got = mordue.Contradictions()
 	if len(got) != 1 || got[0] != "optical_power" {
-		t.Errorf("la contradiction doit be named, obtenu %v", got)
+		t.Errorf("the contradiction must be named, got %v", got)
 	}
 }
 
 // TestBestOfKindNeLaissePasUnCanalDeciderPourUnAutre
 //
-// # Le default que cette method corrige, et qui n'was pas hypothetique
+// # The bug this method fixes, and it was not hypothetical
 //
-// `Best` rend le canal le plus rapide TOUS GENRES CONFONDUS. C'est la bonne response a
-// « a quelle vitesse cette plateforme peut-elle be observee » — la question qu'un UI
-// pose — mais pas a « a quelle vitesse ai-je le droit d'interroger ce canal-ci », qui est
-// la question de la PLANIFICATION.
+// `Best` returns the fastest channel ACROSS ALL KINDS. That is the right answer to
+// "how fast can this platform be observed" — the question a UI asks — but not to
+// "how fast am I allowed to poll this specific channel," which is the question
+// PLANNING asks.
 //
-// La difference coutait cher, et elle was verifiable : le collecteur periodique du
-// produit s'execute sur le proxy et ne parle QUE SNMP. Sur une plateforme declarant un
-// canal web rapide et un canal SNMP lent — le cas du connecteur RouterOS, dont la REST
-// est mesuree a 111 ms et dont le canal SNMP n'a jamais servi un seul OID — `Best`
-// rendait le plancher de la REST, et le controleur l'appliquait a un walk SNMP. Le
-// plancher d'un canal was oppose a un AUTRE canal, ce qui est tres exactement ce qu'un
-// plancher n'est pas.
+// The difference was costly, and it was reproducible: the product's periodic
+// collector runs on the proxy and speaks ONLY SNMP. On a platform declaring a
+// fast web channel and a slow SNMP channel — the RouterOS connector's case,
+// whose REST API measures 111 ms and whose SNMP channel had never served a
+// single OID — `Best` returned the REST floor, and the controller applied it to
+// an SNMP walk. One channel's floor was pitted against a DIFFERENT channel, which
+// is exactly what a floor is not supposed to be.
 func TestBestOfKindNeLaissePasUnCanalDeciderPourUnAutre(t *testing.T) {
 	var caps = MonitoringCapabilities{Channels: []MonitorChannel{
 		{Kind: "web", Metrics: []string{"if_state"}, MinInterval: 5 * time.Second},
@@ -128,14 +128,14 @@ func TestBestOfKindNeLaissePasUnCanalDeciderPourUnAutre(t *testing.T) {
 		{Kind: "api", Metrics: []string{"if_state"}, MinInterval: 30 * time.Second},
 	}}
 
-	// La question de the UI : le plus rapide, tous genres confondus.
+	// The UI's question: the fastest, across all kinds.
 	var global, ok = caps.Best("if_state")
 	if !ok || global.Kind != "web" || global.MinInterval != 5*time.Second {
-		t.Errorf("Best doit rendre le canal le plus rapide toutes gammes confondues : %+v",
+		t.Errorf("Best must return the fastest channel across all kinds: %+v",
 			global)
 	}
 
-	// La question de la planification : le plancher DU canal qu'on va emprunter.
+	// Planning's question: the floor OF the channel that will actually be used.
 	var cas = []struct {
 		genre    string
 		plancher time.Duration
@@ -148,12 +148,12 @@ func TestBestOfKindNeLaissePasUnCanalDeciderPourUnAutre(t *testing.T) {
 	for c = range cas {
 		var ch, trouve = caps.BestOfKind(cas[c].genre, "if_state")
 		if !trouve {
-			t.Errorf("aucun canal %q pour if_state", cas[c].genre)
+			t.Errorf("no %q channel for if_state", cas[c].genre)
 			continue
 		}
 		if ch.MinInterval != cas[c].plancher {
-			t.Errorf("plancher du canal %q : %v expected %v — un canal d'un autre genre "+
-				"ne doit pas pouvoir decider a sa place",
+			t.Errorf("floor for channel %q: %v expected %v — a channel of another kind "+
+				"must not be able to decide in its place",
 				cas[c].genre, ch.MinInterval, cas[c].plancher)
 		}
 	}
@@ -161,10 +161,11 @@ func TestBestOfKindNeLaissePasUnCanalDeciderPourUnAutre(t *testing.T) {
 
 // TestBestOfKindRetiendLePlusRapideDuGENRE
 //
-// Deux canaux du same genre pour la same metrique existent : le connecteur RouterOS en a
-// deux en `api` — l'un pour state et les compteurs, l'autre pour l'optique — et rien
-// n'interdit qu'une plateforme en declares deux pour la same metrique a des costs
-// differents. C'est alors le PLUS RAPIDE du genre qui borne, comme pour `Best`.
+// Two channels of the same kind for the same metric do occur: the RouterOS
+// connector has two under `api` — one for state and counters, another for
+// optics — and nothing prevents a platform from declaring two for the same
+// metric at different rates. In that case it's the FASTEST of the kind that sets
+// the bound, just like for `Best`.
 func TestBestOfKindRetiendLePlusRapideDuGENRE(t *testing.T) {
 	var caps = MonitoringCapabilities{Channels: []MonitorChannel{
 		{Kind: "snmp", Metrics: []string{"health"}, MinInterval: 120 * time.Second},
@@ -172,30 +173,30 @@ func TestBestOfKindRetiendLePlusRapideDuGENRE(t *testing.T) {
 	}}
 	var ch, ok = caps.BestOfKind("snmp", "health")
 	if !ok || ch.MinInterval != 60*time.Second {
-		t.Errorf("le plus rapide du genre expected (60 s), obtenu %+v", ch)
+		t.Errorf("expected the fastest of the kind (60 s), got %+v", ch)
 	}
 }
 
 // TestBestOfKindNeReplieurPasToutSeul
 //
-// Le repli est laisse a l'APPELANT, deliberately. Une plateforme qui ne declares aucun
-// canal du genre requested doit be traitee EXPLICITEMENT — soit en retombant sur le
-// plancher de l'inconnu, soit en ne collectant pas du tout — et masquer ce choix derriere
-// un repli silencieux ferait interroger en SNMP une plateforme qui n'en a jamais annonce
-// la capability.
+// The fallback is deliberately left to the CALLER. A platform that declares no
+// channel of the requested kind must be handled EXPLICITLY — either by falling
+// back to the floor for the unknown, or by not collecting at all — and hiding
+// that choice behind a silent fallback would poll a platform over SNMP that
+// never advertised the capability.
 func TestBestOfKindNeReplieurPasToutSeul(t *testing.T) {
 	var caps = MonitoringCapabilities{Channels: []MonitorChannel{
 		{Kind: "web", Metrics: []string{"if_state"}, MinInterval: 10 * time.Second},
 	}}
 	var ch, ok = caps.BestOfKind("snmp", "if_state")
 	if ok {
-		t.Errorf("aucun canal SNMP n'est declared : BestOfKind ne doit PAS se rabattre "+
-			"sur le canal web, obtenu %+v", ch)
+		t.Errorf("no SNMP channel is declared: BestOfKind must NOT fall back "+
+			"to the web channel, got %+v", ch)
 	}
-	// Et une metrique inconnue du genre requested ne se replie pas non plus sur une autre
-	// metrique du same canal.
+	// And a metric unknown to the requested kind must not fall back to another
+	// metric of the same channel either.
 	var _, ok2 = caps.BestOfKind("web", "optical_power")
 	if ok2 {
-		t.Error("une metrique non portee par le canal ne doit pas be trouvee")
+		t.Error("a metric not carried by the channel must not be found")
 	}
 }

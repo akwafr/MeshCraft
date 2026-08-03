@@ -30,7 +30,7 @@ import (
 // identification requires CREDENTIALS. Without them, `/rest/...` responds 401
 // with `WWW-Authenticate: Basic` — OBSERVED. There is no equivalent of a 1930
 // login page that serves sysDescr to whoever asks. Discovery must therefore
-// either have credentials, or settle for the HTTP title (« RouterOS », served
+// either have credentials, or settle for the HTTP title ('RouterOS', served
 // without authentication, cf. Fingerprint) and the SNMP serial number.
 
 // DeviceIdentity is what is known about the device after an authenticated read.
@@ -65,7 +65,7 @@ type DeviceIdentity struct {
 	Firmware string `json:"firmware,omitempty"`
 	// Build is the compile timestamp. RouterOS publishes no separate build
 	// number: `build-time` is what distinguishes two images of the same version,
-	// which matters on a `testing` branch where « 7.21beta3 » can denote
+	// which matters on a `testing` branch where '7.21beta3' can denote
 	// several images.
 	Build string `json:"build,omitempty"`
 	// RouterBoot is the BOOTLOADER version, not to be confused with Firmware.
@@ -217,12 +217,12 @@ func (c *Client) Identify(ctx context.Context) (DeviceIdentity, error) {
 	//
 	// `/interface/ethernet/poe` responds 500 on a model without PoE, but a 500
 	// proves nothing on this API (cf. restStatusMeaning). `poe/settings` decides,
-	// responding 400 « no such command prefix » when the menu prefix does not
+	// responding 400 'no such command prefix' when the menu prefix does not
 	// exist. That is the one we query.
 	id.PoE = c.hasPoE(ctx)
 
 	c.step(true, "device identified",
-		fmt.Sprintf("%s, serial %s, RouterOS %s (RouterBOOT %s), name \u00ab %s \u00bb, "+
+		fmt.Sprintf("%s, serial %s, RouterOS %s (RouterBOOT %s), name '%s', "+
 			"%d copper ports + %d SFP%s", id.Model, id.Serial, id.Firmware,
 			id.RouterBoot, id.Hostname, id.CopperPorts, id.SFPPorts,
 			map[bool]string{true: "+"}[id.SFPPlus]))
@@ -240,12 +240,12 @@ func (c *Client) hasPoE(ctx context.Context) bool {
 }
 
 // reTrailingDigits splits an interface name prefix from its number:
-// « ether12 » → « ether » + 12, « sfp-sfpplus2 » → « sfp-sfpplus » + 2.
+// 'ether12' → 'ether' + 12, 'sfp-sfpplus2' → 'sfp-sfpplus' + 2.
 var reTrailingDigits = regexp.MustCompile(`^(.*?)(\d+)$`)
 
 // reAdvertiseSpeed reads speeds advertised by a port. OBSERVED on
-// `sfp-sfpplus2`: « 10M-baseT-half,...,1G-baseX,2.5G-baseT,5G-baseT,10G-baseT,
-// 10G-baseSR-LR,10G-baseCR ». Port speed is the LARGEST in the list.
+// `sfp-sfpplus2`: '10M-baseT-half,...,1G-baseX,2.5G-baseT,5G-baseT,10G-baseT,
+// 10G-baseSR-LR,10G-baseCR'. Port speed is the LARGEST in the list.
 var reAdvertiseSpeed = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)(M|G)-base`)
 
 // switchPorts keeps SWITCHING interfaces, in natural order.
@@ -284,7 +284,7 @@ func switchPorts(rows, ethernet []Row) []Port {
 		// An optical cage is recognized by its factory name, which follows the
 		// range convention: `sfp1`, `sfp-sfpplus2`, `qsfpplus1-1`. The CURRENT name
 		// does not serve for that — an operator who renamed `sfp-sfpplus1` to
-		// « uplink-core » did not turn the port into a copper jack.
+		// 'uplink-core' did not turn the port into a copper jack.
 		var basis = p.DefaultName
 		if basis == "" {
 			basis = p.Name
@@ -394,7 +394,7 @@ func splitPortName(defaultName, name string) (string, int) {
 // design decision, not a shortcut.
 //
 // The Instant On connector must translate: its device numbers ports 1 through 52
-// and meshcraft names them « GE1 »…, hence a prefix to add and remove on every
+// and meshcraft names them 'GE1'…, hence a prefix to add and remove on every
 // read and write — and ParsePortRange/portNumbers to handle it. Here RouterOS
 // NAMES its ports, and those names are already stable, readable identifiers.
 // Reusing them removes all translation, hence an entire class of bug: writing to
@@ -415,11 +415,11 @@ func (id DeviceIdentity) PortNames() []string {
 // consumes (`prefix`, `count`, `from`, `speed`, `poe`, `label`): the UI
 // reconstructs names by concatenating `prefix` and a number from `from`. Because
 // meshcraft names here are RouterOS names, groups carry device prefixes — `ether`
-// and `sfp-sfpplus` — not a conventional « GE ».
+// and `sfp-sfpplus` — not a conventional 'GE'.
 //
 // Groups are built on FACTORY names and verified CONTIGUOUS: a prefix whose
 // numbering skips is split into several groups rather than declared in one block.
-// Announcing « ether, 24 ports starting at 1 » when one is missing in the middle
+// Announcing 'ether, 24 ports starting at 1' when one is missing in the middle
 // would draw a jack that does not exist, and meshcraft would eventually write to
 // it.
 func (id DeviceIdentity) PortGroups() []map[string]any {
@@ -474,7 +474,7 @@ func (id DeviceIdentity) PortGroups() []map[string]any {
 	return out
 }
 
-// speedLabel names a speed as the standard model expects (« 1G », « 10G »).
+// speedLabel names a speed as the standard model expects ('1G', '10G').
 func speedLabel(mbps int) string {
 	if mbps >= 1000 && mbps%1000 == 0 {
 		return strconv.Itoa(mbps/1000) + "G"
@@ -501,8 +501,8 @@ func speedLabel(mbps int) string {
 //     401 with `WWW-Authenticate: Basic`). There is no page that speaks before
 //     login.
 //
-// Without a candidate, discovery therefore stops at the web page title — «
-// RouterOS », served without authentication, enough to place the device in the
+// Without a candidate, discovery therefore stops at the web page title — '
+// RouterOS', served without authentication, enough to place the device in the
 // right connector but not to name its model — and the SNMP serial number. That is
 // what the message below says, because the operator looking at a less informative
 // discovery line than the others must understand WHY, and know that completing it
@@ -513,8 +513,8 @@ func speedLabel(mbps int) string {
 // reads of [Client.Identify] are tolerant SEPARATELY — firmware that would not
 // serve `/system/routerboard` (a CHR virtual machine, which is not a RouterBOARD)
 // returns model and version without serial number, rather than failing all of
-// discovery. « It is a CRS326-24G-2S+ whose serial we did not read » is a useful
-// result; « failure » is not.
+// discovery. 'It is a CRS326-24G-2S+ whose serial we did not read' is a useful
+// result; 'failure' is not.
 func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 	cands []Candidate) (Identity, error) {
 	if len(cands) == 0 {
@@ -522,7 +522,7 @@ func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 			"RouterOS REST responds 401 on all its resources, including the one that "+
 			"carries the model. Unlike Instant On and SwOS ranges, this device says "+
 			"nothing before authentication — supply a credential, or settle for its "+
-			"web page title (\u00ab RouterOS \u00bb, served without authentication) and "+
+			"web page title ('RouterOS', served without authentication) and "+
 			"its SNMP serial number", tgt.Host)
 	}
 
@@ -553,12 +553,12 @@ func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 // platform, and frame ceiling. What is CALCULATED here rather than copied deserves
 // a word, because both cases are decisions:
 //
-//   - `Family` is DERIVED from the reference — « CRS326-24G-2S+ » yields « CRS ».
+//   - `Family` is DERIVED from the reference — 'CRS326-24G-2S+' yields 'CRS'.
 //     The contract wants it for capability differences at sub-range level, and
 //     MikroTik names families at the head of the reference. Derivation cannot
 //     invent: without leading letters, it returns empty;
 //   - `ModelCode` stays EMPTY, and that is not an oversight. This field is the
-//     CATALOG reference when it differs from the label — « JL685A » at Aruba.
+//     CATALOG reference when it differs from the label — 'JL685A' at Aruba.
 //     MikroTik has none: `/system/routerboard` and `/system/resource` both return
 //     the same string, which IS both label and commercial reference. Copying the
 //     model there would display the same thing twice as if they were two
@@ -567,8 +567,8 @@ func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 // `PortGroups` is the field the contract carries that this package used to expose
 // as a METHOD: the front panel is computed by [DeviceIdentity.PortGroups] and
 // FILLED here, which provides the same service. Groups carry device prefixes
-// (`ether`, `sfp-sfpplus`) and are verified CONTIGUOUS — announcing « 24 ports
-// starting at 1 » when one is missing in the middle would draw a jack that does
+// (`ether`, `sfp-sfpplus`) and are verified CONTIGUOUS — announcing '24 ports
+// starting at 1' when one is missing in the middle would draw a jack that does
 // not exist, and meshcraft would eventually write to it.
 func (id DeviceIdentity) Standard() Identity {
 	return Identity{
@@ -581,7 +581,7 @@ func (id DeviceIdentity) Standard() Identity {
 		Firmware: id.Firmware,
 		// RouterOS publishes no separate build number: `build-time` is what
 		// distinguishes two images of the same version, which matters on a `testing`
-		// branch where « 7.21beta3 » can denote several images.
+		// branch where '7.21beta3' can denote several images.
 		Build:       id.Build,
 		Hostname:    id.Hostname,
 		CopperPorts: id.CopperPorts,
@@ -593,8 +593,8 @@ func (id DeviceIdentity) Standard() Identity {
 	}
 }
 
-// reFamily isolates the leading family of a MikroTik reference: « CRS326-24G-2S+ » →
-// « CRS », « CCR2004-1G-12S+2XS » → « CCR ».
+// reFamily isolates the leading family of a MikroTik reference: 'CRS326-24G-2S+' →
+// 'CRS', 'CCR2004-1G-12S+2XS' → 'CCR'.
 var reFamily = regexp.MustCompile(`^([A-Za-z]+)`)
 
 // familyOf returns a product reference's sub-range, or empty.

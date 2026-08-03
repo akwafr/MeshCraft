@@ -12,7 +12,7 @@ import (
 
 // Writing port VLAN membership.
 //
-// This is the « Apply » step of the pipeline (docs/01-Architecture/Reconciliation §4 and
+// This is the 'Apply' step of the pipeline (docs/01-Architecture/Reconciliation §4 and
 // §5), and the most dangerous file in this connector.
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -28,7 +28,7 @@ import (
 // this file does not look like its counterpart:
 //
 //  1. RouterOS wants the COMPLETE list of members of a VLAN, not a delta. Where Instant
-//     On accepts « add VLAN 20 to this port » and refuses being sent the entire state,
+//     On accepts 'add VLAN 20 to this port' and refuses being sent the entire state,
 //     RouterOS knows only a `tagged` field written in bulk. Direct and heavy
 //     consequence: every write is an opportunity to LOSE a member we did not intend to
 //     touch. All the care in this file is there — see mergeMembers.
@@ -41,7 +41,7 @@ import (
 //
 //  3. NOTHING TO SAVE, and that is bad news. Instant On applies without persisting: a
 //     failed apply cancels on power loss, which makes the operation testable. RouterOS
-//     persists IMMEDIATELY (cf. Commit). There is no step 3 « make durable » at the end
+//     persists IMMEDIATELY (cf. Commit). There is no step 3 'make durable' at the end
 //     of this file — because there is no safety net either.
 //
 // IN RETURN, and it must be said because it changes the gravity of a mistake: this
@@ -86,7 +86,7 @@ import (
 // and this platform's placement would write something other than what the screen shows.
 func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, error) {
 	var out ApplyResult
-	// Site VLAN plan from the database is the meaning of « all »: expand here so
+	// Site VLAN plan from the database is the meaning of 'all': expand here so
 	// apply adds AND removes until the device matches, even if the caller left
 	// TaggedAtLeast set.
 	var desired = driver.ExpandAllTrunks(plan.Desired, plan.SiteVLANs)
@@ -108,7 +108,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 	// --- Safeguards, before any write ---
 
 	if current.BridgeName == "" {
-		return out, fmt.Errorf("no bridge on this device: there is no switching table "+
+		return out, fmt.Errorf("no bridge on this device: there is no switching table " +
 			"where to place VLANs")
 	}
 
@@ -124,7 +124,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		// reason. Administration may arrive untagged through the bridge, through a VLAN
 		// interface, or not at all by IP (MAC-winbox): in doubt, rewriting member lists
 		// is exactly the gesture that cuts access.
-		return out, fmt.Errorf("unknown management VLAN, from plan or device: write "+
+		return out, fmt.Errorf("unknown management VLAN, from plan or device: write " +
 			"refused, meshcraft cannot guarantee not cutting access")
 	}
 	// Plan and device disagree: both stay protected. Say it here (apply knows the
@@ -185,10 +185,10 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 			continue
 		}
 		if present && have.Dynamic {
-			// A DYNAMIC entry (observed: VLAN 1, « added by pvid ») is not an entry to
+			// A DYNAMIC entry (observed: VLAN 1, 'added by pvid') is not an entry to
 			// modify — it has no stable `.id` and the device refabricates it at will. A
 			// STATIC one must be created alongside, which will take over. Say it in the
-			// transcript, because it is counter-intuitive: we « add » a VLAN that already
+			// transcript, because it is counter-intuitive: we 'add' a VLAN that already
 			// appeared in the read.
 			c.step(true, fmt.Sprintf("VLAN %d existed as DYNAMIC", want.ID),
 				"a static entry is created alongside: a dynamic entry is neither "+
@@ -203,6 +203,14 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		}
 		_, err = c.Add(ctx, "interface/bridge/vlan", fields)
 		if err != nil {
+			// Idempotent: VLAN 1 is often already present as a dynamic 'added by
+			// pvid' row, and some firmwares refuse a second static add with
+			// 'vlan already added'. The VLAN exists — creating it is done.
+			if isVLANAlreadyAdded(err) {
+				c.step(true, fmt.Sprintf("VLAN %d already present", want.ID),
+					err.Error())
+				continue
+			}
 			return out, fmt.Errorf("creating VLAN %d: %w", want.ID, err)
 		}
 		out.VLANsCreated = append(out.VLANsCreated, want.ID)
@@ -220,7 +228,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 	//
 	// A port whose switching has fallen back into the CPU has lost chip throughput, and
 	// nothing on the device says so — so it must be said. But not in `Skipped`: the
-	// screen attaches a « force » button there, and there is nothing to force. `hw-offload`
+	// screen attaches a 'force' button there, and there is nothing to force. `hw-offload`
 	// is a RESULT, not a setting, and its cause is configuration the operator wanted.
 	// The sentence therefore comes out through [DeviceState.notes], which the post-apply
 	// reread surfaces in `last_apply.notes` — in the right place, with the other facts
@@ -235,14 +243,14 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 	// THE BUG THIS SET CLOSES. A spared port stayed in `managed`: its PVID was not
 	// moved, but member lists were rewritten according to intent. Result on a port whose
 	// protected PVID 99 and whose plan demanded 100: PVID at 99, removed from VLAN 99's
-	// `untagged` list, added to VLAN 100's — i.e. exactly the « PVID without membership »
+	// `untagged` list, added to VLAN 100's — i.e. exactly the 'PVID without membership'
 	// anomaly state read signals as incomplete configuration, caused by the safeguard
 	// itself, on the port carrying the session. A spared port must be spared IN FULL.
 	var frozen = map[string]bool{}
 	for _, name = range names {
 		var wantPort = desired[name]
 		if wantPort.Mode == "" || wantPort.Mode == "libre" {
-			continue // « absent = unmanaged »: meshcraft claims nothing on this port
+			continue // 'absent = unmanaged': meshcraft claims nothing on this port
 		}
 		var now, known = current.Ports[name]
 		if !known {
@@ -290,14 +298,14 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 	// This is where apply safety on this platform is decided: every write replaces an
 	// ENTIRE list.
 	//
-	// TWO SETS OF MANAGED PORTS, not one, because of unresolved « all »
-	// (`TaggedAtLeast`). [ExpandAllTrunks] already turned resolved « all » into
+	// TWO SETS OF MANAGED PORTS, not one, because of unresolved 'all'
+	// (`TaggedAtLeast`). [ExpandAllTrunks] already turned resolved 'all' into
 	// an exact site VLAN list (add and remove). TaggedAtLeast remains only while
 	// the site plan is empty: stripping tagged membership would be guessing.
 	//
-	// On this platform, « do not remove » is not coded by looking at intent: a removal
+	// On this platform, 'do not remove' is not coded by looking at intent: a removal
 	// is what happens by itself when one rewrites a complete list without putting a
-	// member back. An unresolved « all » port is therefore declared UNMANAGED for
+	// member back. An unresolved 'all' port is therefore declared UNMANAGED for
 	// TAGGED list merge, which preserves it.
 	//
 	// It stays MANAGED for UNTAGGED lists either way: a port has exactly one native
@@ -313,14 +321,14 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		}
 		// A port FROZEN by the safeguard is not managed for this apply: its lists must
 		// not move on one side when its PVID stayed on the other (cf. `frozen`). Treated
-		// exactly like a « libre » port, which makes it fall into the category mergeMembers
+		// exactly like a 'libre' port, which makes it fall into the category mergeMembers
 		// preserves unconditionally.
 		if frozen[name] {
 			continue
 		}
 		managed[name] = true
 		if p.TaggedAtLeast {
-			continue // unresolved « all »: do not manage tagged membership yet
+			continue // unresolved 'all': do not manage tagged membership yet
 		}
 		managedTagged[name] = true
 	}
@@ -386,7 +394,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		var haveUntagged = membersOf(current2, m.VLAN, false)
 
 		// THE MERGE, and it is the most important function in this file. Note the TWO sets
-		// of managed ports: `managedTagged` excludes unresolved « all » ports, which
+		// of managed ports: `managedTagged` excludes unresolved 'all' ports, which
 		// preserves their tagged membership until the site plan exists (cf. above).
 		var newTagged = mergeMembers(haveTagged, m.Tagged, managedTagged)
 		var newUntagged = mergeMembers(haveUntagged, m.Untagged, managed)
@@ -445,7 +453,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 
 	// --- 4. Ingress filtering, port by port, LAST ---
 	//
-	// « DECLARE BEFORE FILTERING », and here the order is on the WIRE, therefore real.
+	// 'DECLARE BEFORE FILTERING', and here the order is on the WIRE, therefore real.
 	// Setting `ingress-filtering=yes` or
 	// `frame-types=admit-only-untagged-and-priority-tagged` DROPS traffic the instant the
 	// device responds; doing it before member lists carry membership would cut that port
@@ -527,7 +535,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 
 	out.PortsWritten = sortedBoolKeys(written)
 
-	// NO « SAVE » STEP. RouterOS has already written to non-volatile memory when it
+	// NO 'SAVE' STEP. RouterOS has already written to non-volatile memory when it
 	// responded. That is the fundamental difference from Instant On, and it is stated
 	// here rather than passed over in silence: there is nothing to confirm, and therefore
 	// nothing to cancel on power loss.
@@ -538,8 +546,8 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 
 // membership is ONE VLAN's membership, as RouterOS arranges it.
 //
-// meshcraft reasons by PORT (« what does this port carry? »), RouterOS by VLAN (« who is
-// a member? »). Writing therefore requires the inverse pivot of the read.
+// meshcraft reasons by PORT ('what does this port carry?'), RouterOS by VLAN ('who is
+// a member?'). Writing therefore requires the inverse pivot of the read.
 type membership struct {
 	VLAN     int
 	Tagged   []string
@@ -574,7 +582,7 @@ func membershipFor(desired map[string]PortState) []membership {
 	for _, name = range names {
 		var p = desired[name]
 		if p.Mode == "" || p.Mode == "libre" {
-			continue // « absent = unmanaged »
+			continue // 'absent = unmanaged'
 		}
 		if p.PVID > 0 {
 			at(p.PVID).Untagged = append(at(p.PVID).Untagged, name)
@@ -610,15 +618,15 @@ func membershipFor(desired map[string]PortState) []membership {
 //
 //   - those meshcraft manages and wants → write;
 //   - those meshcraft manages and no longer wants → remove;
-//   - those meshcraft DOES NOT MANAGE — a port left « libre » in the plan, a port added
+//   - those meshcraft DOES NOT MANAGE — a port left 'libre' in the plan, a port added
 //     manually by the operator, an interface that is not a front-panel port → PRESERVE,
 //     absolutely.
 //
 // Keeping only the first category would be naive behavior, and it would destroy the
 // third on every apply: every port an operator configured outside meshcraft would
 // disappear from its VLANs on the first apply. That is the translation, on this
-// platform, of the standard model's « absent = unmanaged » rule: what meshcraft does not
-// claim, it does not touch — and on a full-list write, « do not touch » demands explicit
+// platform, of the standard model's 'absent = unmanaged' rule: what meshcraft does not
+// claim, it does not touch — and on a full-list write, 'do not touch' demands explicit
 // effort.
 func mergeMembers(have, want []string, managed map[string]bool) []string {
 	var out []string
@@ -648,7 +656,7 @@ func mergeMembers(have, want []string, managed map[string]bool) []string {
 // message saying so.
 //
 // The TAGGED / UNTAGGED asymmetry is that of the rest of the file: an unresolved
-// « all » port (`TaggedAtLeast`) is not in `managedTagged`, so its tagged VLANs
+// 'all' port (`TaggedAtLeast`) is not in `managedTagged`, so its tagged VLANs
 // are never considered stale. It stays in `managed` for UNTAGGED, because a port
 // has exactly one native VLAN and moving it means removing it from the old one.
 //
@@ -667,7 +675,7 @@ func withStaleVLANs(wanted []membership, s DeviceState,
 	var st BridgePort
 	for name, st = range s.Ports {
 		if !managed[name] {
-			continue // « absent = unmanaged »: we do not touch it
+			continue // 'absent = unmanaged': we do not touch it
 		}
 		var id int
 		for _, id = range st.Untagged {
@@ -676,7 +684,7 @@ func withStaleVLANs(wanted []membership, s DeviceState,
 			}
 		}
 		if !managedTagged[name] {
-			continue // unresolved « all »: no tagged VLAN is considered stale
+			continue // unresolved 'all': no tagged VLAN is considered stale
 		}
 		for _, id = range st.Tagged {
 			if !asked[id] {
@@ -699,7 +707,7 @@ func withStaleVLANs(wanted []membership, s DeviceState,
 // isStale says a membership to write requests NO members — therefore it comes from
 // withStaleVLANs, and it is a pure removal.
 //
-// The distinction serves the message: « no bridge entry » is an anomaly when the plan
+// The distinction serves the message: 'no bridge entry' is an anomaly when the plan
 // requests this VLAN, and a non-event when removing a port from it.
 func isStale(m membership) bool { return len(m.Tagged) == 0 && len(m.Untagged) == 0 }
 
@@ -733,7 +741,7 @@ func placeCPU(bridge string, vlanID, planVLAN int, st DeviceState, entry BridgeV
 }
 
 // lacking returns elements of `have` that are NOT in `want` — i.e. the removals an
-// « additions only » just refused.
+// 'additions only' just refused.
 //
 // Serves to STATE the refusal. Both lists are sorted by functions in this file.
 func lacking(have, want []string) []string {
@@ -811,8 +819,8 @@ func vlanRowAny(s DeviceState, vlanID int) (BridgeVLAN, bool) {
 	return fallback, hasFallback
 }
 
-// boolWord renders a boolean in RouterOS words. The device serves and expects « true » /
-// « false » (observed), never 0/1 nor yes/no.
+// boolWord renders a boolean in RouterOS words. The device serves and expects 'true' /
+// 'false' (observed), never 0/1 nor yes/no.
 func boolWord(v bool) string {
 	if v {
 		return "true"
@@ -832,6 +840,17 @@ func vlanRowFor(s DeviceState, vlanID int) (BridgeVLAN, bool) {
 	return BridgeVLAN{}, false
 }
 
+// isVLANAlreadyAdded reports RouterOS refusing /interface/bridge/vlan/add because
+// that VLAN id is already on the bridge (dynamic PVID row or a prior static add).
+func isVLANAlreadyAdded(err error) bool {
+	if err == nil {
+		return false
+	}
+	var msg = strings.ToLower(err.Error())
+	return strings.Contains(msg, "vlan already added") ||
+		strings.Contains(msg, "already have such vlan")
+}
+
 // insertOnce adds an element if not already present.
 func insertOnce(list []string, item string) []string {
 	var existing string
@@ -844,7 +863,7 @@ func insertOnce(list []string, item string) []string {
 }
 
 // union returns all elements from both lists, sorted and deduplicated. Serves the
-// « additions only » of management VLANs.
+// 'additions only' of management VLANs.
 func union(a, b []string) []string {
 	var out []string
 	var item string

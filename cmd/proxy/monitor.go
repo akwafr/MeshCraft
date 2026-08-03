@@ -17,47 +17,49 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Surveillance locale : c'est le PROXY qui pingue.
+// Local monitoring: it's the PROXY that pings.
 //
-// Le controleur lui envoie la liste des devices a surveiller et les plages a
-// balayer ; le proxy pingue en continu et ne remonte que les **transitions**. Un
-// aller-retour par seconde et par device a travers le WAN livrerait la same
-// information pour un cost sans rapport — et le proxy est l'executeur local par
-// construction (docs/01-Architecture/Proxy).
+// The controller sends it the list of devices to watch and the ranges to
+// sweep; the proxy pings continuously and only reports **transitions**. A
+// round trip per second per device across the WAN would deliver the same
+// information at a wildly disproportionate cost — and the proxy is the local
+// executor by design (docs/01-Architecture/Proxy).
 //
-// ICMP demande une socket brute, donc CAP_NET_RAW : already accordee par le
-// docker-compose genere comme par unit systemd. Sans elle, la surveillance se
-// desactive proprement en le disant, rather que de faire semblant.
+// ICMP needs a raw socket, hence CAP_NET_RAW: already granted by the
+// generated docker-compose as well as by the systemd unit. Without it,
+// monitoring cleanly disables itself while saying so, rather than pretending
+// to work.
 
-// Monitor tient state de surveillance du proxy.
+// Monitor holds the proxy's monitoring state.
 type Monitor struct {
 	mu       sync.Mutex
 	cfg      tunnel.WatchConfig
-	states   map[string]*targetState // key : IP
+	states   map[string]*targetState // key: IP
 	events   chan tunnel.Event
 	sock     *icmp.PacketConn
 	echoID   int
 	seq      int
-	pending  map[string]time.Time // IP → date d'envoi du dernier echo
+	pending  map[string]time.Time // IP -> timestamp the last echo was sent
 	sweeping bool
 }
 
 type targetState struct {
 	deviceID string
 	name     string
-	// up : dernier etat CONNU. nil = aucun avis encore.
+	// up: last KNOWN state. nil = no verdict yet.
 	//
-	// Ce nil n'est PAS silencieux, et le commentaire qui vivait ici pretendait le
-	// contraire (« evite d'annoncer une transition au tout premier ping ») : `onReply`
-	// comme `evaluate` traitent un nil comme une bascule et l'annoncent, ce qui est le
-	// comportement voulu — un device qu'on vient d'ajouter a la surveillance doit
-	// produire un premier constat, sans quoi son statut resterait `unknown` jusqu'a sa
-	// first panne. C'est exactement l'invariant sur lequel on raisonne pour
-	// diagnostiquer un statut manquant, donc il valait d'be dit juste.
+	// This nil is NOT silent, and the comment that used to live here claimed
+	// the opposite ("avoids announcing a transition on the very first ping"):
+	// both `onReply` and `evaluate` treat a nil as a flip and announce it,
+	// which is the intended behavior — a device that has just been added to
+	// monitoring must produce a first verdict, otherwise its status would
+	// stay `unknown` until its first outage. This is exactly the invariant
+	// used to reason about a missing status, so it was worth stating
+	// correctly.
 	//
-	// Ce qu'un nil evite est autre chose : conclure avant d'avoir pinged. Une cible qui
-	// n'a pas encore been interrogee n'est ni en ligne ni injoignable, et `Snapshot` la
-	// passe pour cette raison.
+	// What a nil does avoid is something else: concluding before having
+	// pinged. A target that hasn't been polled yet is neither online nor
+	// unreachable, and `Snapshot` skips it for that reason.
 	up     *bool
 	misses int
 }
@@ -71,26 +73,26 @@ func NewMonitor() *Monitor {
 	}
 }
 
-// Events est le flux a pousser au controleur.
+// Events is the stream to push to the controller.
 func (m *Monitor) Events() <-chan tunnel.Event { return m.events }
 
-// emit depose un evenement sans jamais bloquer : un controleur injoignable ne
-// doit pas figer la surveillance.
+// emit enqueues an event without ever blocking: an unreachable controller
+// must not freeze monitoring.
 func (m *Monitor) emit(ev tunnel.Event) {
 	ev.TS = time.Now().UTC()
 	select {
 	case m.events <- ev:
 	default:
-		slog.Warn("file d'evenements pleine — evenement abandonne", "type", ev.Type)
+		slog.Warn("event queue full — event dropped", "type", ev.Type)
 	}
 }
 
-// SetConfig remplace la configuration de surveillance. Une config complete
-// remplace la previous : rien a reconcilier, donc aucune divergence possible.
+// SetConfig replaces the monitoring configuration. A full config replaces
+// the previous one: nothing to reconcile, so no divergence is possible.
 func (m *Monitor) SetConfig(cfg tunnel.WatchConfig) {
-	// La collecte SNMP suit la same config : une seule source de verite cote
-	// controleur, donc aucune divergence possible entre ce qui est pinged et ce
-	// qui est interroge.
+	// SNMP collection follows the same config: a single source of truth on
+	// the controller side, so no divergence is possible between what is
+	// pinged and what is polled.
 	if snmpCollector != nil {
 		snmpCollector.SetWatches(cfg.SNMP)
 	}
@@ -111,42 +113,43 @@ func (m *Monitor) SetConfig(cfg tunnel.WatchConfig) {
 		}
 		st.deviceID, st.name = t.DeviceID, t.Name
 	}
-	// Une cible retiree de la liste cesse d'be surveillee, sans evenement : ce
-	// n'est pas une panne, c'est une decision d'exploitation.
+	// A target removed from the list stops being monitored, with no event:
+	// this isn't an outage, it's an operational decision.
 	var ip string
 	for ip = range m.states {
 		if !seen[ip] {
 			delete(m.states, ip)
 		}
 	}
-	slog.Info("surveillance configuree", "devices", len(cfg.Targets),
-		"plages", len(cfg.Prefixes))
+	slog.Info("monitoring configured", "devices", len(cfg.Targets),
+		"prefixes", len(cfg.Prefixes))
 }
 
-// Snapshot rend state COURANT de chaque cible surveillee, sous forme d'evenements
-// marques `Resync`.
+// Snapshot returns the CURRENT state of every monitored target, as events
+// marked `Resync`.
 //
-// POURQUOI CE N'EST PAS REDONDANT AVEC LES TRANSITIONS. Le proxy ne remonte que des
-// bascules, et une bascule perdue ne se rejoue jamais : la file de 256 entries jette
-// quand elle est pleine, l'evenement en cours write est perdu si le tunnel tombe
-// a cet instant, et une reconnexion ne reannonce rien puisque `SetConfig` conserve
-// state memory des cibles already connues. Constate sur un CSS326 reste `unknown`
-// dix-neuf heures alors qu'il repondait au ping sans faute : son unique transition
-// avait disparu dans une coupure, et seule une panne reelle — un reboot manuel —
-// a fini par rewrite son statut. Le cliche ferme ce trou par construction, sans rien
-// changer au regime permanent : il ne part only l'ouverture du flux.
+// WHY THIS ISN'T REDUNDANT WITH THE TRANSITIONS. The proxy only reports
+// flips, and a lost flip is never replayed: the queue of 256 entries drops
+// events once full, the event being written is lost if the tunnel goes down
+// at that exact instant, and a reconnection re-announces nothing since
+// `SetConfig` keeps in-memory state for targets already known. Observed on a
+// CSS326 that stayed `unknown` for nineteen hours while it was responding to
+// pings flawlessly: its one transition had vanished in an outage, and only a
+// real failure — a manual reboot — eventually rewrote its status. The
+// snapshot closes this gap by construction, without changing anything about
+// steady-state behavior: it only fires when the stream opens.
 //
-// Ce qui est PASSE, et pourquoi :
+// What gets SKIPPED, and why:
 //
-//   - une cible sans avis (`up == nil`) n'a rien a dire. Elle n'a pas encore been
-//     pingee, et annoncer « en ligne » ou « injoignable » serait inventer un constat
-//     que personne n'a fait ;
-//   - une cible sans `deviceID` ne concerne aucun device connu du controleur, qui
-//     l'ignorerait de toute way (cf. applyDeviceState).
+//   - a target with no verdict (`up == nil`) has nothing to say. It hasn't
+//     been pinged yet, and announcing "online" or "unreachable" would be
+//     inventing a finding nobody made;
+//   - a target with no `deviceID` doesn't correspond to any device known to
+//     the controller, which would ignore it anyway (see applyDeviceState).
 //
-// L'ordre est STABLE, par adresse. Deux cliches du same etat doivent produire la same
-// suite d'octets : c'est ce qui rend un flux de reconnexion comparable d'une fois sur
-// l'autre, et un test reproductible.
+// The order is STABLE, by address. Two snapshots of the same state must
+// produce the same byte sequence: this is what makes a reconnection stream
+// comparable from one time to the next, and a test reproducible.
 func (m *Monitor) Snapshot() []tunnel.Event {
 	m.mu.Lock()
 	var ips = make([]string, 0, len(m.states))
@@ -177,19 +180,19 @@ func (m *Monitor) Snapshot() []tunnel.Event {
 	return out
 }
 
-// Run demarre la surveillance. Ne rend la main only l'arret du contexte.
+// Run starts monitoring. Only returns when the context is done.
 func (m *Monitor) Run(ctx context.Context) {
 	var conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		// Sans CAP_NET_RAW, on le dit clairement au lieu de rester muet.
-		slog.Error("surveillance ICMP indisponible : socket brute refused "+
-			"(CAP_NET_RAW manquante ?) — state des devices ne sera pas suivi",
+		// Without CAP_NET_RAW, we say so clearly instead of staying silent.
+		slog.Error("ICMP monitoring unavailable: raw socket refused "+
+			"(missing CAP_NET_RAW?) — device state will not be tracked",
 			"err", err)
 		return
 	}
 	m.sock = conn
 	defer conn.Close() //nolint:errcheck
-	slog.Info("surveillance ICMP active")
+	slog.Info("ICMP monitoring active")
 
 	go m.readReplies(ctx)
 	go m.sweepLoop(ctx)
@@ -225,8 +228,8 @@ func (m *Monitor) downAfter() int {
 	return tunnel.DefaultDownAfter
 }
 
-// pingRound envoie un echo a chaque cible, puis juge celles qui n'ont pas
-// repondu depuis assez longtemps.
+// pingRound sends an echo to each target, then judges those that haven't
+// responded for long enough.
 func (m *Monitor) pingRound() {
 	m.mu.Lock()
 	var targets = make([]string, 0, len(m.states))
@@ -240,14 +243,14 @@ func (m *Monitor) pingRound() {
 		m.sendEcho(ip)
 	}
 
-	// On laisse le temps aux responses d'arriver avant de conclure.
+	// We leave time for replies to arrive before concluding.
 	time.AfterFunc(m.pingInterval()*3/4, m.evaluate)
 }
 
 func (m *Monitor) sendEcho(ip string) {
 	var addr = net.ParseIP(ip)
 	if addr == nil || addr.To4() == nil {
-		return // IPv6 : a traiter avec ip6:ipv6-icmp, pas encore livre
+		return // IPv6: to be handled with ip6:ipv6-icmp, not yet shipped
 	}
 	m.mu.Lock()
 	m.seq = (m.seq + 1) & 0xffff
@@ -266,8 +269,9 @@ func (m *Monitor) sendEcho(ip string) {
 	_, _ = m.sock.WriteTo(data, &net.IPAddr{IP: addr.To4()})
 }
 
-// readReplies lit les responses en continu. Une seule socket pour tout le parc :
-// surveiller cent devices costs cent paquets par seconde, pas cent sockets.
+// readReplies continuously reads replies. A single socket for the whole
+// fleet: monitoring a hundred devices costs a hundred packets per second,
+// not a hundred sockets.
 func (m *Monitor) readReplies(ctx context.Context) {
 	var buf = make([]byte, 1500)
 	for {
@@ -277,7 +281,7 @@ func (m *Monitor) readReplies(ctx context.Context) {
 		_ = m.sock.SetReadDeadline(time.Now().Add(2 * time.Second))
 		var n, peer, err = m.sock.ReadFrom(buf)
 		if err != nil {
-			continue // timeout de lecture : normal
+			continue // read timeout: normal
 		}
 		var msg, parseErr = icmp.ParseMessage(1, buf[:n])
 		if parseErr != nil || msg.Type != ipv4.ICMPTypeEchoReply {
@@ -285,7 +289,7 @@ func (m *Monitor) readReplies(ctx context.Context) {
 		}
 		var echo, ok = msg.Body.(*icmp.Echo)
 		if !ok || echo.ID != m.echoID {
-			continue // la response d'un autre processus
+			continue // another process's reply
 		}
 		m.onReply(peer.String())
 	}
@@ -301,7 +305,7 @@ func (m *Monitor) onReply(ip string) {
 		latency = int(time.Since(sentAt).Milliseconds())
 	}
 	if !watched {
-		// Reponse d'une adresse qu'on balaye, pas d'un device suivi.
+		// Reply from an address we're sweeping, not from a tracked device.
 		m.mu.Unlock()
 		m.noteSweepHit(ip)
 		return
@@ -313,8 +317,8 @@ func (m *Monitor) onReply(ip string) {
 	var deviceID, name = st.deviceID, st.name
 	m.mu.Unlock()
 
-	// TRANSITION seulement : un device qui va bien depuis une heure n'a rien
-	// a dire chaque seconde.
+	// TRANSITION only: a device that's been fine for an hour has nothing to
+	// say every second.
 	if wasUp == nil || !*wasUp {
 		m.emit(tunnel.Event{
 			Type: tunnel.EventDeviceUp, DeviceID: deviceID, IP: ip,
@@ -323,7 +327,8 @@ func (m *Monitor) onReply(ip string) {
 	}
 }
 
-// evaluate declares injoignables les cibles silencieuses depuis assez de rondes.
+// evaluate declares unreachable the targets that have been silent for
+// enough rounds.
 func (m *Monitor) evaluate() {
 	var limit = m.downAfter()
 	type fallen struct {
@@ -338,7 +343,7 @@ func (m *Monitor) evaluate() {
 	for ip, st = range m.states {
 		var _, stillPending = m.pending[ip]
 		if !stillPending {
-			continue // une response est arrivee
+			continue // a reply arrived
 		}
 		delete(m.pending, ip)
 		st.misses++
@@ -346,7 +351,7 @@ func (m *Monitor) evaluate() {
 			continue
 		}
 		if st.up != nil && !*st.up {
-			continue // already annonce
+			continue // already announced
 		}
 		var no = false
 		st.up = &no
@@ -363,7 +368,7 @@ func (m *Monitor) evaluate() {
 	}
 }
 
-// --- Balayage continu des plages locales ---
+// --- Continuous sweeping of local ranges ---
 
 var sweepHits = struct {
 	sync.Mutex
@@ -379,9 +384,9 @@ func (m *Monitor) noteSweepHit(ip string) {
 	sweepHits.seen[ip] = true
 }
 
-// sweepLoop balaye en continu les plages confiees au proxy. Le rythme est lent
-// par construction : decouvrir un device nouveau n'est pas urgent, et un
-// balayage permanent a plein regime ressemblerait a une attaque.
+// sweepLoop continuously sweeps the ranges entrusted to the proxy. The pace
+// is slow by design: discovering a new device isn't urgent, and a
+// continuous sweep at full speed would look like an attack.
 func (m *Monitor) sweepLoop(ctx context.Context) {
 	var period = tunnel.DefaultSweepInterval
 	m.mu.Lock()
@@ -425,15 +430,15 @@ func (m *Monitor) sweepOnce(ctx context.Context) {
 		var addrs, err = discovery.ExpandPrefix(prefix)
 		if err != nil {
 			m.emit(tunnel.Event{Type: tunnel.EventSweepDone, Prefix: prefix,
-				Detail: "non enumerable : " + err.Error()})
+				Detail: "cannot enumerate: " + err.Error()})
 			continue
 		}
 		sweepHits.Lock()
 		sweepHits.seen = map[string]bool{}
 		sweepHits.Unlock()
 
-		// Cadence maitrisee : 200 echos/s suffisent a couvrir un /24 en une
-		// seconde et un /16 en cinq minutes, sans saturer un lien lent.
+		// Controlled pace: 200 echoes/s is enough to cover a /24 in one
+		// second and a /16 in five minutes, without saturating a slow link.
 		var ip string
 		var sent int
 		for _, ip = range addrs {
@@ -446,7 +451,7 @@ func (m *Monitor) sweepOnce(ctx context.Context) {
 				time.Sleep(time.Second)
 			}
 		}
-		// Laisser rentrer les dernieres responses.
+		// Let the last replies come in.
 		time.Sleep(2 * time.Second)
 
 		sweepHits.Lock()
@@ -464,10 +469,10 @@ func (m *Monitor) sweepOnce(ctx context.Context) {
 	}
 }
 
-// --- Cablage avec le tunnel ---
+// --- Wiring with the tunnel ---
 
-// handleWatchStream lit les configurations de surveillance poussees par le
-// controleur sur un stream dedie.
+// handleWatchStream reads the monitoring configurations pushed by the
+// controller over a dedicated stream.
 func (m *Monitor) handleWatchStream(dec *json.Decoder) error {
 	for {
 		var cfg tunnel.WatchConfig

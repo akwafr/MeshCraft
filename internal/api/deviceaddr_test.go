@@ -7,17 +7,18 @@ import (
 	"time"
 
 	"meshcraft/internal/driver"
+	_ "meshcraft/internal/driver/instanton"
 	"meshcraft/internal/model"
 )
 
 // Per-device management addressing mode, tested WITHOUT A DATABASE.
 //
-// The three functions covered here are pure by design: they decide whether has
+// The three functions covered here are pure by design: they decide whether a
 // static device found in place stays put, and therefore whether meshcraft leaves
-// it alone or flags drift. Testing through HTTP and has database would tie the
-// guarantee to has site fixture.
+// it alone or flags drift. Testing through HTTP and a database would tie the
+// guarantee to a site fixture.
 
-// devWith builds has device for these tests. Both jsonb fields are written as the
+// devWith builds a device for these tests. Both jsonb fields are written as the
 // database returns them, so tests use the same decoding as production.
 func devWith(mode string, observedMode, observedAddr string, readBack bool) model.Device {
 	var d model.Device
@@ -48,39 +49,39 @@ func planDHCP() model.MgmtPlan {
 // as drift to fix.
 func TestEffectiveAddrModeOrdre(t *testing.T) {
 	var cas = []struct {
-		name           string
-		dev            model.Device
-		plan           model.MgmtPlan
+		name         string
+		dev          model.Device
+		plan         model.MgmtPlan
 		mode, origin string
 	}{
 		{
-			name:  "decided static, observed cannot override",
+			name: "decided static, observed cannot override",
 			dev:  devWith(model.MgmtAddrStatic, driver.MgmtAddrModeDHCP, "10.99.0.36", true),
 			plan: planDHCP(), mode: model.MgmtAddrStatic, origin: "device",
 		},
 		{
-			name:  "decided DHCP on device still static",
+			name: "decided DHCP on device still static",
 			dev:  devWith(model.MgmtAddrDHCP, driver.MgmtAddrModeStatic, "10.99.0.36", true),
 			plan: planDHCP(), mode: model.MgmtAddrDHCP, origin: "device",
 		},
 		{
-			name:  "OBSERVED STATIC KEPT, site plan is DHCP",
+			name: "OBSERVED STATIC KEPT, site plan is DHCP",
 			dev:  devWith(model.MgmtAddrInherit, driver.MgmtAddrModeStatic, "10.99.0.36", true),
 			plan: planDHCP(), mode: model.MgmtAddrStatic, origin: "observed",
 		},
 		{
-			name:  "observed lease kept",
+			name: "observed lease kept",
 			dev:  devWith(model.MgmtAddrInherit, driver.MgmtAddrModeDHCP, "10.99.0.42", true),
 			plan: planDHCP(), mode: model.MgmtAddrDHCP, origin: "observed",
 		},
 		{
-			name:  "never read back: site plan decides",
+			name: "never read back: site plan decides",
 			dev:  devWith(model.MgmtAddrInherit, "", "", false),
 			plan: planDHCP(), mode: model.MgmtAddrDHCP, origin: "site_plan",
 		},
 		{
 			name: "never read back, allocating plan: static expected",
-			dev: devWith(model.MgmtAddrInherit, "", "", false),
+			dev:  devWith(model.MgmtAddrInherit, "", "", false),
 			plan: model.MgmtPlan{
 				Configured: true, SubnetV4: "10.99.0.0/24",
 				Source: model.MgmtSourceMeshcraft,
@@ -88,7 +89,7 @@ func TestEffectiveAddrModeOrdre(t *testing.T) {
 			mode: model.MgmtAddrStatic, origin: "site_plan",
 		},
 		{
-			name:  "read back but unreadable mode, no plan: do NOT conclude",
+			name: "read back but unreadable mode, no plan: do NOT conclude",
 			dev:  devWith(model.MgmtAddrInherit, "", "10.99.0.36", true),
 			plan: model.MgmtPlan{},
 			mode: "", origin: "unknown",
@@ -112,8 +113,8 @@ func TestEffectiveAddrModeOrdre(t *testing.T) {
 // TestAddrDriftOf: divergence between what meshcraft wants and what the device carries.
 //
 // Both NEGATIVE cases matter as much as positives. inherit cannot drift — it
-// demands nothing — and has never-read device cannot be flagged: that would turn
-// ignorance into blame on has fleet largely not yet read back. Same trade-off as
+// demands nothing — and a never-read device cannot be flagged: that would turn
+// ignorance into blame on a fleet largely not yet read back. Same trade-off as
 // VLAN path, and it must hold in both places.
 func TestAddrDriftOf(t *testing.T) {
 	var cas = []struct {
@@ -158,9 +159,9 @@ func TestAddrDriftOf(t *testing.T) {
 
 // TestAddrDriftAddressPrefix: ADDRESS drift is not flagged on notation difference.
 //
-// Concrete trap across has whole product line: SwOS does NOT carry has prefix
+// Concrete trap across a whole product line: SwOS does NOT carry a prefix
 // (/sys.b has ip, no mask) where RouterOS renders "10.99.0.54/24". Comparing raw
-// strings would flag permanent drift on every CSS326 for has notation difference.
+// strings would flag permanent drift on every CSS326 for a notation difference.
 func TestAddrDriftAddressPrefix(t *testing.T) {
 	var d = devWith(model.MgmtAddrStatic, driver.MgmtAddrModeStatic, "10.99.0.36", true)
 	d.MgmtAddr.StaticIP = "10.99.0.36/24"
@@ -175,7 +176,7 @@ func TestAddrDriftAddressPrefix(t *testing.T) {
 			"two addresses")
 	}
 
-	// Intent already matches how meshcraft reaches the device: a older observation
+	// Intent already matches how meshcraft reaches the device: an older observation
 	// that still shows the previous address is stale, not a drift to push.
 	d.MgmtAddr.StaticIP = "10.99.0.38/16"
 	d.MgmtIP = "10.99.0.38"
@@ -187,9 +188,9 @@ func TestAddrDriftAddressPrefix(t *testing.T) {
 
 // TestValidateDeviceAddressing: what is rejected AT INPUT TIME.
 //
-// Each rejection in this table matches has failure you would hunt elsewhere: has
-// gateway outside the subnet yields has device reachable only on its own link,
-// has guessed mask silences has device as surely as has wrong address, and has gateway
+// Each rejection in this table matches a failure you would hunt elsewhere: a
+// gateway outside the subnet yields a device reachable only on its own link,
+// a guessed mask silences a device as surely as a wrong address, and a gateway
 // entered on SwOS goes nowhere.
 func TestValidateDeviceAddressing(t *testing.T) {
 	var full = MgmtAddrCaps{Known: true, Static: true, DHCP: true, Gateway: true, DNS: true}
@@ -197,40 +198,40 @@ func TestValidateDeviceAddressing(t *testing.T) {
 	var unknown = MgmtAddrCaps{}
 
 	var cas = []struct {
-		name      string
-		in        deviceAddrInput
-		plan      model.MgmtPlan
-		caps      MgmtAddrCaps
-		rejected  bool
-		wantIP    string
+		name     string
+		in       deviceAddrInput
+		plan     model.MgmtPlan
+		caps     MgmtAddrCaps
+		rejected bool
+		wantIP   string
 	}{
 		{
-			name:  "prefix borrowed from site subnet",
+			name: "prefix borrowed from site subnet",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.99.0.36"},
 			plan: planDHCP(), caps: full, wantIP: "10.99.0.36/24",
 		},
 		{
-			name:  "explicit prefix kept as-is",
+			name: "explicit prefix kept as-is",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.99.0.36/25"},
 			plan: planDHCP(), caps: full, wantIP: "10.99.0.36/25",
 		},
 		{
-			name:  "bare address without site plan: REJECTED, do not guess mask",
+			name: "bare address without site plan: REJECTED, do not guess mask",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.99.0.36"},
 			plan: model.MgmtPlan{}, caps: full, rejected: true,
 		},
 		{
-			name:  "bare address outside subnet: REJECTED, prefix not borrowable",
+			name: "bare address outside subnet: REJECTED, prefix not borrowable",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.100.0.36"},
 			plan: planDHCP(), caps: full, rejected: true,
 		},
 		{
-			name:  "out-of-plan address WITH prefix: accepted, off-plan device is legitimate",
+			name: "out-of-plan address WITH prefix: accepted, off-plan device is legitimate",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.100.0.36/24"},
 			plan: planDHCP(), caps: full, wantIP: "10.100.0.36/24",
 		},
 		{
-			name:  "network address: REJECTED",
+			name: "network address: REJECTED",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic, StaticIP: "10.99.0.0/24"},
 			plan: planDHCP(), caps: full, rejected: true,
 		},
@@ -279,17 +280,17 @@ func TestValidateDeviceAddressing(t *testing.T) {
 			plan: planDHCP(), caps: full, rejected: true,
 		},
 		{
-			name:  "static without address: REJECTED",
+			name: "static without address: REJECTED",
 			in:   deviceAddrInput{Mode: model.MgmtAddrStatic},
 			plan: planDHCP(), caps: full, rejected: true,
 		},
 		{
-			name:  "unknown mode: REJECTED",
+			name: "unknown mode: REJECTED",
 			in:   deviceAddrInput{Mode: "auto"},
 			plan: planDHCP(), caps: full, rejected: true,
 		},
 		{
-			name:  "empty mode = inherit, legitimate rollback",
+			name: "empty mode = inherit, legitimate rollback",
 			in:   deviceAddrInput{},
 			plan: planDHCP(), caps: full,
 		},
@@ -326,7 +327,7 @@ func TestValidateDeviceAddressing(t *testing.T) {
 //
 // That makes the trial reversible: operator switches to DHCP, finds it unsuitable,
 // and gets prior addressing back without retyping. Corollary in the same test: stale
-// input must not REJECT has DHCP switch, or the gesture we want easy becomes hardest.
+// input must not REJECT a DHCP switch, or the gesture we want easy becomes hardest.
 func TestValidateGardeLaStatiqueEnDHCP(t *testing.T) {
 	var in = deviceAddrInput{
 		Mode: model.MgmtAddrDHCP, StaticIP: "10.99.0.36/24", StaticGW: "10.99.0.1",
@@ -338,6 +339,32 @@ func TestValidateGardeLaStatiqueEnDHCP(t *testing.T) {
 	}
 	if got.StaticIP != "10.99.0.36/24" || got.StaticGateway != "10.99.0.1" {
 		t.Errorf("static config lost on DHCP switch: %+v", got)
+	}
+}
+
+// TestAddrCapsSurviveSTPObserved: Extra.stp_observed is a nested object. Decoding
+// Extra as map[string]string used to fail and hide the connector (ANNOTATION only).
+func TestAddrCapsSurviveSTPObserved(t *testing.T) {
+	var d = model.Device{
+		Model: "HPE Networking Instant On Switch 48p Gigabit 4p SFP+ 1930 JL685A",
+		Extra: json.RawMessage(`{
+			"driver":"aruba-instant-on-1930",
+			"config_mode":"push",
+			"stp_observed":{"enabled":false,"is_root":false}
+		}`),
+	}
+	var caps = addrCapsOf(d)
+	if !caps.Known {
+		t.Fatal("connector must stay known when Extra carries nested stp_observed")
+	}
+	if !caps.ApplySameVLAN {
+		t.Fatalf("Instant On ApplySameVLAN must stay true, got %+v", caps)
+	}
+	if pushBlockedReason(caps) != "" {
+		t.Fatalf("push must not be blocked as ANNOTATION, got %q", pushBlockedReason(caps))
+	}
+	if !readableAddrOf(d) {
+		t.Fatal("readableAddrOf must survive nested Extra")
 	}
 }
 

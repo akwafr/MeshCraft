@@ -2,23 +2,23 @@ package distrib
 
 import "testing"
 
-// La comparaison de versions de proxy, et le default qu'elle a porte.
+// Proxy version comparison, and the bug it used to carry.
 //
-// Ce paquet n'avait aucun test. Celui-ci existe pour une raison precise : la seule
-// ligne de decision de tout le cycle de mise a jour — `candidate > current` — se
-// trompait sur le cas le plus courant d'un parc de developpement, et se trompait dans
-// le sens qui BLOQUE. Un proxy annonce `dev` was plus « recent » que tout horodagage
-// de build, donc a jour pour toujours.
+// This package had no test. This one exists for a precise reason: the single
+// decision line of the entire upgrade cycle — `candidate > current` — got it
+// wrong on the most common case in a development fleet, and got it wrong in
+// the direction that BLOCKS. A proxy reporting `dev` was "newer" than any
+// build timestamp, and therefore up to date forever.
 //
-// Ce n'was pas visible : l'interface affichait « up_to_date », ce qui est exactement
-// ce qu'on veut lire. Le proxy de reference est reste ainsi jusqu'a ce qu'on cherche
-// pourquoi il annoncait `dev`.
+// This wasn't visible: the UI showed "up_to_date", which is exactly what
+// you want to read. The reference proxy stayed that way until someone
+// looked into why it was reporting `dev`.
 
 // TestIsNewerNeLaisseAucunProxyBloque
 //
-// LE CAS QUI COMPTE est la troisieme ligne : `dev` → un horodatage. Sans elle, le
-// controleur n'a plus aucun moyen de recuperer un proxy mal stampe, et la rule
-// d'architecture « aucune intervention sur la machine du proxy, jamais » est morte.
+// THE CASE THAT MATTERS is the third line: `dev` → a timestamp. Without it,
+// the controller has no way left to recover a mis-stamped proxy, and the
+// architecture rule "no intervention on the proxy's machine, ever" is dead.
 func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
 	var cas = []struct {
 		candidate, current string
@@ -26,38 +26,38 @@ func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
 		pourquoi           string
 	}{
 		{"20260729.213000", "20260726.181502", true,
-			"deux horodatages : la comparaison lexicographique EST la chronologie"},
+			"two timestamps: lexicographic comparison IS chronology"},
 		{"20260726.181502", "20260729.213000", false,
-			"on ne descend jamais en version sans epinglage explicite"},
+			"we never downgrade a version without an explicit pin"},
 		{"20260729.213000", "20260729.213000", false,
-			"la same version n'est pas une mise a jour"},
+			"the same version isn't an upgrade"},
 
 		{"20260729.213000", "dev", true,
-			"LE DEFAULT CORRIGE : « dev » se trie AFTER les chiffres, donc l'ancien " +
-				"`candidate > current` rendait faux — un proxy stampe « dev » n'was plus " +
-				"joignable par aucune mise a jour, et ne se reparait que sur sa machine"},
+			"THE BUG THAT WAS FIXED: \"dev\" sorts AFTER digits, so the old " +
+				"`candidate > current` returned false — a proxy stamped \"dev\" was no " +
+				"longer reachable by any upgrade, and could only be fixed on its own machine"},
 		{"20260729.213000", "hors-build", true,
-			"le default de compilation actuel : same traitement, et c'est le but"},
+			"the current build-outside-the-pipeline default: same handling, and that's the point"},
 		{"20260729.213000", "0.1.0", true,
-			"une version produit applied there par erreur ne se situe pas dans le temps"},
+			"a version some build tool placed there by mistake has no position in time"},
 		{"20260729.213000", "", true,
-			"une courante vide n'est pas comparable non plus — la porte qui la refuse " +
-				"est ailleurs (upgradeOffer attend que le proxy se present)"},
+			"an empty current isn't comparable either — the gate that rejects it " +
+				"is elsewhere (upgradeOffer expects the proxy to identify itself)"},
 
 		{"dev", "20260726.181502", false,
-			"on ne PROPOSE jamais l'inconnu : c'est la rule already written pour une " +
-				"version cible vide"},
-		{"", "20260726.181502", false, "cible vide : rien a proposer"},
+			"we never OFFER the unknown: that's the same rule already applied to an " +
+				"empty target version"},
+		{"", "20260726.181502", false, "empty target: nothing to offer"},
 		{"latest", "dev", false,
-			"deux valeurs non comparables ne font pas une mise a jour, sinon un " +
-				"controleur mal empaquete pousserait n'importe quoi en boucle"},
+			"two non-comparable values don't make an upgrade, otherwise a " +
+				"badly packaged controller would push anything in a loop"},
 
-		{"2026072.213000", "dev", false, "sept chiffres de date : pas un horodatage"},
-		{"20260729.21300", "dev", false, "cinq chiffres d'heure : pas un horodatage"},
-		{"20260729213000", "dev", false, "le point est le separateur, il est exige"},
+		{"2026072.213000", "dev", false, "seven date digits: not a timestamp"},
+		{"20260729.21300", "dev", false, "five time digits: not a timestamp"},
+		{"20260729213000", "dev", false, "the dot is the separator, it's required"},
 		{"20260729.213000 ", "dev", false,
-			"un espace en queue vient d'un fichier mal lu, pas d'un build"},
-		{"v20260729.213000", "dev", false, "un prefix n'est pas dans le format"},
+			"a trailing space comes from a badly read file, not from a build"},
+		{"v20260729.213000", "dev", false, "a prefix isn't part of the format"},
 	}
 	var c = cas[0]
 	for _, c = range cas {
@@ -69,18 +69,19 @@ func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
 	}
 }
 
-// TestIsNewerEstAntisymetrique : deux horodatages distincts ne peuvent pas be chacun
-// plus recent que l'autre.
+// TestIsNewerEstAntisymetrique: two distinct timestamps cannot each be newer
+// than the other.
 //
-// Un control de coherence, et il attrape la faute qu'on ferait en « reparant » cette
-// fonction a la va-vite — rendre vrai from que les deux different ferait osciller un parc
-// entre deux versions, chaque heartbeat proposant l'autre.
+// A consistency check, and it catches the mistake one would make by
+// "fixing" this function too hastily — returning true as soon as the two
+// differ would make a fleet oscillate between two versions, each heartbeat
+// offering the other one.
 func TestIsNewerEstAntisymetrique(t *testing.T) {
 	var a, b = "20260726.181502", "20260729.213000"
 	if IsNewer(a, b) && IsNewer(b, a) {
-		t.Error("les deux sens sont vrais : un parc oscillerait entre deux versions")
+		t.Error("both directions are true: a fleet would oscillate between two versions")
 	}
 	if !IsNewer(b, a) {
-		t.Error("le build le plus recent doit be propose")
+		t.Error("the newer build must be offered")
 	}
 }

@@ -30,32 +30,32 @@ func TestSNMPKindScope(t *testing.T) {
 			tag: "snmpv3-sha-des", rejected: true,
 		},
 		{
-			name:  "v2c with an ops tag: rejected too",
+			name: "v2c with an ops tag: rejected too",
 			kind: "snmp_v2c", tag: "regie", rejected: true,
 		},
 		{
-			name:  "v2c with a group: rejected, v2c plan resolves at site",
+			name: "v2c with a group: rejected, v2c plan resolves at site",
 			kind: "snmp_v2c", group: "instant-on-1930", rejected: true,
 		},
 		{name: "site v2c: accepted", kind: "snmp_v2c"},
 		{
-			name:  "v3 without tag: rejected, a site does not share a v3 key",
+			name: "v3 without tag: rejected, a site does not share a v3 key",
 			kind: "snmp_v3", rejected: true,
 		},
 		{
-			name:  "v3 under an ops tag: rejected",
+			name: "v3 under an ops tag: rejected",
 			kind: "snmp_v3", tag: "regie", rejected: true,
 		},
 		{
-			name:  "v3 under a v3 tag: accepted",
+			name: "v3 under a v3 tag: accepted",
 			kind: "snmp_v3", tag: "snmpv3-sha-des", wantTag: "snmpv3-sha-des",
 		},
 		{
-			name:  "v3 without encryption: named explicitly, so accepted",
+			name: "v3 without encryption: named explicitly, so accepted",
 			kind: "snmp_v3", tag: "snmpv3-sha256-nopriv", wantTag: "snmpv3-sha256-nopriv",
 		},
 		{
-			name:  "v3 with unknown algorithm: rejected rather than assumed good",
+			name: "v3 with unknown algorithm: rejected rather than assumed good",
 			kind: "snmp_v3", tag: "snmpv3-rc4-aes128", rejected: true,
 		},
 		// Existing behavior unchanged: all three scopes keep their meaning for
@@ -64,7 +64,7 @@ func TestSNMPKindScope(t *testing.T) {
 		{name: "group admin", kind: "admin", group: "instant-on-1930"},
 		{name: "tagged admin", kind: "admin", tag: "regie", wantTag: "regie"},
 		{
-			name:  "invented kind: rejected, nothing would consume it",
+			name: "invented kind: rejected, nothing would consume it",
 			kind: "snmp", rejected: true,
 		},
 	}

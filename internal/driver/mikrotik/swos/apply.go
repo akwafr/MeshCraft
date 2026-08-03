@@ -10,116 +10,117 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// Ecriture de l'appartenance VLAN des ports.
+// Writing port VLAN membership.
 //
 // ┌───────────────────────────────────────────────────────────────────────────┐
-// │ VERIFIED SUR HARDWARE LE 29 JUILLET 2026, et ce qui suit garde les deux    │
-// │ halves : le chemin write EST exerce, l'encadre d'origine reste      │
-// │ lisible pour ce qui ne l'est pas.                                          │
+// │ VERIFIED ON HARDWARE ON JULY 29, 2026, and what follows keeps both        │
+// │ halves: the write path IS exercised, and the original doc comment stays   │
+// │ readable for what isn't.                                                   │
 // │                                                                            │
-// │ CE QUI L'EST : la pose d'appartenance VLAN et de VLAN natif sur le        │
-// │ CSS326-24G-2S+ du parc (10.99.0.36). Vingt-quatre ports written, aucun     │
-// │ refus, le masque du VLAN 99 passe de 26 membres a 2, device toujours  │
-// │ joignable, ecart nul a la relecture. La table /vlan.b et la page /fwd.b   │
-// │ acceptent donc bien le corps que ce fichier compose.                      │
+// │ WHAT IS VERIFIED: setting VLAN membership and native VLAN on the          │
+// │ fleet's CSS326-24G-2S+ (10.99.0.36). Twenty-four ports written, no        │
+// │ refusal, the VLAN 99 mask goes from 26 members to 2, device still         │
+// │ reachable, zero drift on re-read. The /vlan.b table and the /fwd.b page   │
+// │ do therefore accept the body this file composes.                          │
 // │                                                                            │
-// │ CE QUI NE L'EST PAS : le wake du filtrage (`disabled` → `enabled`),     │
-// │ aucun port du parc n'etant en `disabled` ; la restauration d'une          │
-// │ sauvegarde ; et le mot de passe d'administration (admin.go).              │
+// │ WHAT IS NOT: waking up filtering (`disabled` → `enabled`), since no       │
+// │ port in the fleet is `disabled`; restoring a backup; and the              │
+// │ administration password (admin.go).                                       │
 // │                                                                            │
-// │ L'ENCADRE D'ORIGINE, pour memory :                                        │
+// │ THE ORIGINAL DOC COMMENT, for the record:                                 │
 // │                                                                            │
-// │ Rien de ce fichier n'a been execute contre un device. Le geste est     │
-// │ observed a la lettre dans le JavaScript de l'embedded interface d'un        │
-// │ CSS326-24G-2S+ en SwOS 2.17, et les corps produits sont verified sur les   │
-// │ captures reelles de cet device (voir apply_test.go, qui compare le     │
-// │ corps engendre a la page servie par le switch). Mais l'outil disponible    │
-// │ pour l'atteindre a travers le tunnel est en LECTURE SEULE, par decision    │
-// │ d'architecture du projet : « write sur un device passe par un         │
-// │ connecteur, pas par cet outil ».                                           │
+// │ Nothing in this file has ever been run against a device. The gesture is   │
+// │ observed to the letter in the JavaScript of a CSS326-24G-2S+'s embedded   │
+// │ interface running SwOS 2.17, and the produced bodies are verified against │
+// │ real captures from that device (see apply_test.go, which compares the     │
+// │ generated body against the page served by the switch). But the tool      │
+// │ available to reach it through the tunnel is READ ONLY, by architectural   │
+// │ decision of the project: "writing to a device goes through a              │
+// │ connector, not through this tool".                                        │
 // │                                                                            │
-// │ La campagne write est a mener after integration. Les commandes        │
-// │ exactes sont dans le rapport de livraison.                                 │
+// │ The write campaign is to be carried out after integration. The exact      │
+// │ commands are in the delivery report.                                      │
 // └───────────────────────────────────────────────────────────────────────────┘
 //
-// TROIS RULES GOUVERNENT CE FICHIER, ET AUCUNE N'EST NEGOCIABLE
+// THREE RULES GOVERN THIS FILE, AND NONE IS NEGOTIABLE
 //
-// 1. LIRE, MODIFIER, REWRITE — jamais un delta.
+// 1. READ, MODIFY, REWRITE — never a delta.
 //
-// SwOS n'accepte pas write partielle. Son interface recompose l'objet ENTIER
-// de la page a partir de tous ses champs modifiables et le poste tel quel ; il n'y a
-// ni « ajouter », ni « retirer », ni « modifier ce champ ». Poster /fwd.b sans son
-// tableau `srt` laisserait donc the device libre de remettre a zero les limites de
-// storm de ses vingt-six ports en posant un VLAN. Chaque write RELIT donc la
-// page, ne touche que ce qu'elle doit, et renvoie le jeu complet — dont la liste est
-// celle de la sauvegarde de configuration de the device (cf. pages.go).
+// SwOS does not accept partial writes. Its interface recomposes the ENTIRE object
+// of the page from all its modifiable fields and posts it as-is; there is
+// no "add", no "remove", no "modify this field". Posting /fwd.b without its
+// `srt` array would leave the device free to reset the storm
+// limits of its twenty-six ports when setting a VLAN. Every write therefore RE-READS
+// the page, touches only what it must, and sends back the complete set — whose
+// list is that of the device's configuration backup (cf. pages.go).
 //
-// 2. UNE TABLE S'WRITES ENTIRE, donc omettre une ligne la SUPPRIME.
+// 2. A TABLE IS WRITTEN WHOLE, so omitting a row DELETES it.
 //
-// La table des VLAN se poste comme une liste complete. C'est le comportement voulu
-// quand on retire un VLAN, et une coupure de service quand on l'a oublie. Toutes les
-// lignes lues sont donc conservees telles quelles, y compris leurs champs qu'on ne
-// comprend pas.
+// The VLAN table is posted as a complete list. That's the intended behavior
+// when removing a VLAN, and a service outage when it was forgotten. All
+// rows that were read are therefore kept exactly as they are, including fields we
+// don't understand.
 //
-// 3. ON NE TOUCHE JAMAIS AU VLAN QUI PORTE L'ADMINISTRATION.
+// 3. THE VLAN CARRYING ADMINISTRATION IS NEVER TOUCHED.
 //
-// Ce n'est pas une limitation temporaire qu'on levera par commodite. Ce model n'a
-// NI SSH, NI TELNET, NI PORT SERIAL : une write qui retire le port d'uplink de son
-// VLAN de management rend the device definitivement muet, et le seul recours est
-// un deplacement avec un trombone. Et contrairement a l'Instant On, il n'y a same pas
-// le filet du « appliquer puis sauver » — sur SwOS tout est persistant
-// immediatement, une coupure d'alimentation n'annule rien.
+// This isn't a temporary limitation to be lifted for convenience. This model has
+// NEITHER SSH, NOR TELNET, NOR A SERIAL PORT: a write that removes the uplink port
+// from its management VLAN makes the device permanently unreachable, and the only
+// recourse is a site visit with a paperclip. And unlike the Instant On, there isn't
+// even the "apply then save" safety net either — on SwOS everything is persistent
+// immediately, and a power outage cancels nothing.
 //
-// Le seul filet qui existe est une sauvegarde de configuration prise AVANT, et
-// ApplyPorts la prend.
+// The only safety net that exists is a configuration backup taken BEFORE, and
+// ApplyPorts takes it.
 
-// `ApplyResult` n'est plus defini ici : c'est un ALIAS du type du contrat (cf.
-// contract.go). Son champ `Backup` existe POUR CETTE PLATEFORME — c'est written noir
-// sur blanc dans internal/driver/state.go : « Existe pour une plateforme et une
-// raison : SwOS applique et persiste d'un seul geste, une coupure d'alimentation
-// n'annule rien, et cette copie est le SEUL retour arriere qui existe. » Ce que
-// ApplyPorts en fait n'a donc pas changed, et ne doit pas changer : la copie est prise
-// juste avant la FIRST write, et elle ne se reconstitue pas after.
+// `ApplyResult` is no longer defined here: it's an ALIAS of the contract type (cf.
+// contract.go). Its `Backup` field exists FOR THIS PLATFORM SPECIFICALLY — it's spelled
+// out in internal/driver/state.go: "Exists for one platform and one
+// reason: SwOS applies and persists in a single step, a power outage
+// cancels nothing, and this copy is the ONLY way back that exists." What
+// ApplyPorts does with it therefore hasn't changed, and must not change: the copy is taken
+// right before the FIRST write, and it is not reconstituted afterward.
 
-// ApplyPorts pose l'appartenance VLAN des ports sur the device.
+// ApplyPorts sets port VLAN membership on the device.
 //
-// L'ordre : relire state, complete la table des VLAN, decider, prendre une
-// sauvegarde, write. Completer la table AVANT d'y affecter des ports n'est pas une
-// preference — un port ne peut be membre que d'un VLAN declared, et l'ordre inverse
-// laisserait la half du plan appliquee. Et la sauvegarde vient juste avant la
-// first write, pas avant la decision : quand il n'y a rien a write, il n'y a
-// rien a sauvegarder.
+// The order: re-read state, complete the VLAN table, decide, take a
+// backup, write. Completing the table BEFORE assigning ports to it isn't a
+// preference — a port can only be a member of a declared VLAN, and the reverse order
+// would leave half the plan applied. And the backup comes right before the
+// first write, not before the decision: when there is nothing to write, there is
+// nothing to back up.
 //
-// LE GARDE-FOU est dans PlanPorts, qui est PURE et donc verifiable sur des captures
-// reelles. Sa rule est propre a SwOS et ne se deduit pas de celle de l'Instant On :
-// ce qui est protege n'est pas « le VLAN natif est celui du management » mais
-// « l'tagging du VLAN de management sur ce port ne change pas ». Lire son
-// commentaire — la version naive ne protegeait RIEN sur l'reference device,
-// dont la session arrive tagged sur une cage au VLAN natif 1.
+// THE SAFEGUARD is in PlanPorts, which is PURE and therefore testable against real
+// captures. Its rule is specific to SwOS and cannot be deduced from the Instant On's:
+// what's protected isn't "the native VLAN is the management one" but
+// "the tagging of the management VLAN on this port doesn't change". Read its
+// doc comment — the naive version protected NOTHING on the reference device,
+// whose session arrives tagged on a cage with native VLAN 1.
 //
-// DEUX VLAN sont consideres comme de management : celui que le plan du site souhaite,
-// et celui que l'DEVICE declares. Ils different tant qu'un device n'a pas been
-// migre, et ne proteger que le premier laisserait rewrite celui qui porte la session.
+// TWO VLANs are considered management VLANs: the one the site plan wants,
+// and the one the DEVICE declares. They differ as long as a device hasn't been
+// migrated, and protecting only the first would allow rewriting the one that carries
+// the session.
 //
-// `plan.Force` leve le garde-fou. Jamais enabled par default, ni par une pose
-// automatique : c'est un geste explicite de l'exploitant, qui connait sa topologie
-// mieux que meshcraft et accepte le risque du deplacement.
+// `plan.Force` lifts the safeguard. Never enabled by default, nor by an
+// automatic run: it's an explicit gesture from the operator, who knows their topology
+// better than meshcraft and accepts the risk of a site visit.
 //
-// LE NOMMAGE DES PORTS N'EST PAS UN PARAMETER. Il vient de la GEOMETRY lue a l'instant
-// sur /link.b (cf. [Facade]), donc du same snapshot que la lecture state qui a
-// produit the UI. Le passer a chaque appel laisserait la lecture et la pose diverger
-// d'une lettre — et sur une plateforme qui NUMEROTE ses ports, « SFP1 » traduit avec la
-// mauvaise front panel est une write sur le mauvais port, i.e. un client coupe.
+// PORT NAMING IS NOT A PARAMETER. It comes from the GEOMETRY read at that instant
+// from /link.b (cf. [Facade]), so from the same snapshot as the state read that
+// produced the UI. Passing it on every call would let the read and the write diverge
+// by a hair — and on a platform that NUMBERS its ports, "SFP1" translated with the
+// wrong front panel is a write to the wrong port, i.e. a cut-off client.
 func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResult, error) {
 	var out ApplyResult
 	var desired = driver.ExpandAllTrunks(plan.Desired, plan.SiteVLANs)
 	var force = plan.Force
 
-	// 1. On ne differe jamais contre un etat en cache : les quatre pages sont relues
-	//    MAINTENANT. Elles le sont en UNE passe, et le same snapshot sert ensuite a
-	//    composer les ecritures — sur une plateforme where chaque page costs deux
-	//    requests HTTP et where les access sont serialises, la redemander serait la payer
-	//    deux fois pour rien.
+	// 1. We never operate against cached state: the four pages are re-read
+	//    NOW. They are read in ONE pass, and the same snapshot is then used to
+	//    compose the writes — on a platform where each page costs two
+	//    HTTP requests and where accesses are serialized, requesting it again would mean
+	//    paying for it twice for nothing.
 	var snap, err = a.readAll(ctx)
 	if err != nil {
 		return out, err
@@ -133,42 +134,42 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResu
 
 	var protected = map[int]string{}
 	if plan.MgmtVLAN > 0 {
-		protected[plan.MgmtVLAN] = "VLAN de management du plan du site"
+		protected[plan.MgmtVLAN] = "management VLAN from the site plan"
 	}
 	if current.MgmtVLAN > 0 {
-		protected[current.MgmtVLAN] = "VLAN de management declared par the device"
+		protected[current.MgmtVLAN] = "management VLAN declared by the device"
 	}
-	// Aucun VLAN de management connu n'est un cas LEGITIME sur SwOS, contrairement a
-	// l'Instant On : `avln` a 0 veut dire « administration accepted depuis n'importe
-	// quel VLAN », et un device sorti d'usine est dans cet etat. Refuser
-	// to write empecherait d'adopter un CSS neuf.
+	// Having no known management VLAN is a LEGITIMATE case on SwOS, unlike
+	// on the Instant On: `avln` at 0 means "administration accepted from any
+	// VLAN whatsoever", and a device fresh out of the factory is in that state. Refusing
+	// to write would prevent adopting a brand-new CSS.
 	//
-	// La protection se reporte alors sur le LIEN seul, et c'est dit a the operator :
-	// tout port actif est epargne, ce qui est plus conservateur que le cas nominal.
+	// Protection then falls back to the LINK alone, and this is told to the operator:
+	// every active port is spared, which is more conservative than the nominal case.
 	var mgmtUnknown = len(protected) == 0
 	if mgmtUnknown {
-		a.step(true, "aucun VLAN de management a epargner",
-			"the device accepte l'administration depuis n'importe quel VLAN : "+
-				"TOUT port qui porte un lien actif sera epargne, faute de savoir lequel "+
-				"porte la session")
+		a.step(true, "no management VLAN to spare",
+			"the device accepts administration from any VLAN whatsoever: "+
+				"EVERY port carrying an active link will be spared, for lack of knowing which one "+
+				"carries the session")
 	}
 
-	// 2. Completer la table des VLAN.
+	// 2. Complete the VLAN table.
 	//
-	//    Le plan VLAN DU SITE est applied en entier, pas seulement les VLAN qu'un port
-	//    utilise : un device adopte doit connaitre les VLAN de son site, sans
-	//    quoi y affecter un port depuis l'interface de the device — ou brancher un
-	//    trunk — ne proposerait rien.
+	//    The SITE's VLAN plan is applied in full, not just the VLANs a port
+	//    uses: an adopted device must know its site's VLANs, without
+	//    which assigning a port to one from the device's interface — or plugging in a
+	//    trunk — would offer nothing.
 	//
-	//    LE VLAN DE MANAGEMENT PASSE EN TETE, et il n'est jamais laisse orphelin :
-	//    voir wantedVLANs. Quand il manque a la table, la ligne created receives d'office
-	//    les ports qui portent un LIEN — sans quoi la create serait le geste qui coupe
-	//    access (voir mgmtSeed).
+	//    THE MANAGEMENT VLAN COMES FIRST, and it is never left orphaned:
+	//    see wantedVLANs. When it's missing from the table, the created row automatically
+	//    receives the ports that carry a LINK — without which creating it would be the gesture that
+	//    cuts off access (see mgmtSeed).
 	var wanted = wantedVLANs(desired, plan.SiteVLANs, protected)
 	var seed = mgmtSeed(current, protected, snap.vlanRows, snap.facade)
 	var newRows, created, buildErr = withVLANs(snap.vlanRows, wanted, ports, seed)
 	if buildErr != nil {
-		a.step(false, "table des VLAN non modifiable", buildErr.Error())
+		a.step(false, "VLAN table not modifiable", buildErr.Error())
 		return out, buildErr
 	}
 	var vid int
@@ -177,33 +178,33 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResu
 		if len(members) == 0 {
 			continue
 		}
-		var note = fmt.Sprintf("VLAN de management %d absent de la table : la ligne created "+
-			"receives d'office les %d port(s) qui portent un lien. Create un VLAN de "+
-			"management SANS membre le rendrait filtre et sans porte de sortie — sur un "+
-			"port en mode « optional », un VLAN non declared passe librement, et le "+
-			"declare vide est donc ce qui coupe access. Faute de savoir lequel porte la "+
-			"session, tous les ports actifs sont retenus.", vid, len(members))
+		var note = fmt.Sprintf("management VLAN %d absent from the table: the created row "+
+			"automatically receives the %d port(s) carrying a link. Creating a "+
+			"management VLAN with NO members would make it filtered with no way out — on a "+
+			"port in \"optional\" mode, a VLAN that isn't declared passes freely, and "+
+			"declaring it empty is therefore what cuts off access. For lack of knowing which one carries the "+
+			"session, all active ports are kept.", vid, len(members))
 		out.Skipped = append(out.Skipped, note)
-		a.step(true, "ligne de VLAN de management created avec les ports actifs", note)
+		a.step(true, "management VLAN row created with the active ports", note)
 	}
 
-	// 3. Poser l'appartenance des ports DANS la table, les VLAN natifs et le MODE
-	//    VLAN dans /fwd.b. Trois halves du same geste : l'une dit qui est membre,
-	//    l'autre quel VLAN sort untagged, la troisieme si le port regarde la table.
+	// 3. Set port membership IN the table, native VLANs, and VLAN MODE
+	//    in /fwd.b. Three halves of the same gesture: one says who's a member,
+	//    another which VLAN goes out untagged, the third whether the port even looks at the table.
 	var fwd = snap.fwd
 	var dvid, hasDvid = fwd.Nums(FieldDefaultVLAN)
 	if !hasDvid || len(dvid) < ports {
-		var e = fmt.Errorf("/fwd.b : tableau « %s » absent ou trop court (%d valeurs "+
-			"pour %d ports) — write refused, poser un VLAN natif a l'aveugle "+
-			"deplacerait le trafic de ports qu'on n'a pas lus", FieldDefaultVLAN,
+		var e = fmt.Errorf("/fwd.b: array %q absent or too short (%d values "+
+			"for %d ports) — write refused, setting a native VLAN blindly "+
+			"would move traffic on ports we haven't read", FieldDefaultVLAN,
 			len(dvid), ports)
-		a.step(false, "VLAN natifs illisibles", e.Error())
+		a.step(false, "native VLANs unreadable", e.Error())
 		return out, e
 	}
-	// Le mode VLAN est FACULTATIF a writing, et il faut que ce soit dit ici : son
-	// absence n'empeche pas de poser l'appartenance, elle empeche seulement de
-	// wake un filtrage off. Refuser la pose entire pour ca serait refuser de
-	// configurer un switch parce qu'on ne peut pas tout configurer.
+	// The VLAN mode is OPTIONAL to write, and that must be said here: its
+	// absence doesn't prevent setting membership, it only prevents
+	// waking up filtering. Refusing the entire write over that would mean refusing to
+	// configure a switch just because we can't configure everything.
 	var modes, hasModes = fwd.Nums(FieldVLANMode)
 	if !hasModes || len(modes) < ports {
 		modes = nil
@@ -214,46 +215,46 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResu
 		Modes: modes, Protected: protected, Force: force,
 	})
 	if planErr != nil {
-		a.step(false, "appartenance non posable", planErr.Error())
+		a.step(false, "membership not settable", planErr.Error())
 		return out, planErr
 	}
 	out.Skipped = append(out.Skipped, decided.Skipped...)
 	var changes = decided.Changes
 	var s string
 	for _, s = range decided.Skipped {
-		a.step(false, "port epargne par le garde-fou", s)
+		a.step(false, "port spared by the safeguard", s)
 	}
 
-	// Appliquer le plan a the snapshot, DANS CET ORDRE : d'abord les appartenances
-	// gagnees, ensuite celles perdues, enfin les VLAN natifs et le mode.
+	// Apply the plan to the snapshot, IN THIS ORDER: first the memberships
+	// gained, then those lost, finally the native VLANs and the mode.
 	//
-	// « AJOUTER AVANT DE RETIRER » n'est pas une elegance : la table s'written d'un seul
-	// POST, donc l'ordre a l'interieur de cette boucle ne se voit pas sur le fil. Il se
-	// voit dans le RESULT — un port qui doit passer du VLAN 50 au VLAN 60 est membre
-	// des deux a l'instant du calcul, jamais d'aucun. Sur une plateforme where
-	// appartenance et tagging sont la same data, cet « instant d'aucun » est ce
-	// qui coupe un client si writing stops au milieu.
+	// "ADD BEFORE REMOVING" isn't elegance for its own sake: the table is written in a single
+	// POST, so the order inside this loop isn't visible on the wire. It's visible
+	// in the RESULT — a port that must move from VLAN 50 to VLAN 60 is a member
+	// of both at the moment of computation, never of neither. On a platform where
+	// membership and tagging are the same data, this "moment of neither" is what
+	// cuts off a client if writing stops halfway.
 	var touched bool
 	var ch PortChange
 	for _, ch = range changes {
 		for _, vid = range ch.Join {
 			var row = rowFor(newRows, vid)
 			if row == nil || !row.SetBit(FieldVLANMembers, ch.Index, true) {
-				var e = fmt.Errorf("/vlan.b : le masque de membres du VLAN %d n'est pas "+
-					"modifiable (champ « %s » de forme inattendue)", vid, FieldVLANMembers)
-				a.step(false, "appartenance non posable", e.Error())
+				var e = fmt.Errorf("/vlan.b: the member mask of VLAN %d is not "+
+					"modifiable (field %q has an unexpected shape)", vid, FieldVLANMembers)
+				a.step(false, "membership not settable", e.Error())
 				return out, e
 			}
 		}
 		for _, vid = range ch.Leave {
 			var row = rowFor(newRows, vid)
 			if row == nil {
-				continue // la ligne a disparu de la table : rien a en retirer
+				continue // the row has disappeared from the table: nothing to remove from it
 			}
 			if !row.SetBit(FieldVLANMembers, ch.Index, false) {
-				var e = fmt.Errorf("/vlan.b : le masque de membres du VLAN %d n'est pas "+
-					"modifiable (champ « %s » de forme inattendue)", vid, FieldVLANMembers)
-				a.step(false, "appartenance non retirable", e.Error())
+				var e = fmt.Errorf("/vlan.b: the member mask of VLAN %d is not "+
+					"modifiable (field %q has an unexpected shape)", vid, FieldVLANMembers)
+				a.step(false, "membership not removable", e.Error())
 				return out, e
 			}
 		}
@@ -262,54 +263,54 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResu
 		}
 		if ch.RaiseMode && modes != nil {
 			modes[ch.Index] = ch.Mode
-			a.step(true, "filtrage VLAN reveille sur "+ch.Port,
-				fmt.Sprintf("/fwd.b « %s » passe de disabled a enabled : sans quoi ce port "+
-					"IGNORE la table des VLAN et tout ce qui est written pour lui reste "+
-					"decoratif", FieldVLANMode))
+			a.step(true, "VLAN filtering woken up on "+ch.Port,
+				fmt.Sprintf("/fwd.b %q switches from disabled to enabled: without this, this port "+
+					"IGNORES the VLAN table and everything written for it stays "+
+					"decorative", FieldVLANMode))
 		}
 		out.PortsWritten = append(out.PortsWritten, ch.Port)
 		touched = true
 	}
 
 	if !touched && len(created) == 0 {
-		a.step(true, "rien a write",
-			"the device porte already l'appartenance VLAN et les VLAN natifs demandes — "+
-				"aucune page n'est postee, ce qui est le comportement voulu sur une "+
-				"plateforme sans retour arriere")
+		a.step(true, "nothing to write",
+			"the device already carries the requested VLAN membership and native VLANs — "+
+				"no page is posted, which is the intended behavior on a "+
+				"platform with no way back")
 		return out, nil
 	}
 
-	// 4. La sauvegarde, juste AVANT la first write — et seulement s'il y a
-	//    quelque chose a write, une lecture de plus ne se prenant pas pour rien.
+	// 4. The backup, right BEFORE the first write — and only if there is
+	//    something to write, since one more read isn't free.
 	//
-	//    Sur cette plateforme, c'est le SEUL retour arriere possible : la
-	//    configuration est persistante d'office et une coupure d'alimentation
-	//    n'annule rien. Son failure n'empeche pas to write — bloquer une pose pour un
-	//    filet serait excessif — mais il est consigne, parce que the operator doit
-	//    savoir qu'il travaille sans.
+	//    On this platform, this is the ONLY possible way back: the
+	//    configuration is persistent by default and a power outage
+	//    cancels nothing. Its failure doesn't prevent writing — blocking a run for a
+	//    safety net would be excessive — but it is logged, because the operator must
+	//    know they're working without one.
 	out.Backup, err = a.Backup(ctx)
 	if err != nil {
-		a.step(false, "AUCUNE sauvegarde disponible avant write",
-			"la pose continue, mais sans retour arriere possible : "+err.Error())
+		a.step(false, "NO backup available before write",
+			"the run continues, but with no possible way back: "+err.Error())
 	}
 
-	// 5. Ecrire. La table d'abord : affecter un port a un VLAN inexistant est refused,
-	//    et l'ordre inverse laisserait /fwd.b designer un VLAN natif que la table ne
-	//    connait pas.
+	// 5. Write. The table first: assigning a port to a nonexistent VLAN is refused,
+	//    and the reverse order would leave /fwd.b naming a native VLAN the table doesn't
+	//    know about.
 	if err = a.postRaw(ctx, PageVLAN, EncodeTable(newRows),
-		fmt.Sprintf("table des VLAN written (%d ligne(s), %s)", len(newRows),
+		fmt.Sprintf("VLAN table written (%d row(s), %s)", len(newRows),
 			createdSummary(created))); err != nil {
 		return out, err
 	}
 	out.VLANsCreated = created
 
-	// Puis les VLAN natifs ET le mode VLAN, dans le jeu de champs COMPLET de /fwd.b.
+	// Then the native VLANs AND the VLAN mode, in the COMPLETE field set of /fwd.b.
 	//
-	// AFTER la table, et l'ordre est ici sur le FIL, donc reel : « declare avant de
-	// filtrer ». Passer un port de `disabled` a `enabled` active le filtrage a la
-	// sortie ; le faire avant que la table ne porte l'appartenance ferait tomber le
-	// trafic de ce port pendant l'intervalle entre les deux requests — et
-	// definitivement si la seconde fails.
+	// AFTER the table, and the order here is really on the wire, so it's real: "declare
+	// before filtering". Switching a port from `disabled` to `enabled` activates filtering
+	// on egress; doing it before the table carries the membership would drop
+	// this port's traffic during the interval between the two requests — and
+	// permanently if the second one fails.
 	fwd.SetNums(FieldDefaultVLAN, dvid)
 	if modes != nil {
 		fwd.SetNums(FieldVLANMode, modes)
@@ -318,168 +319,168 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan driver.PortPlan) (ApplyResu
 	var missing []string
 	body, missing = fwd.Only(FwdWritableFields(ports))
 	if len(missing) > 0 {
-		// Refuser rather que d'envoyer une page truncated. The device serait libre de
-		// remettre a zero l'isolation de ports, les limites de storm et les rates
-		// ingress de tous ses ports, et il le ferait en silence.
-		var e = fmt.Errorf("/fwd.b : ce firmware ne sert pas les champs %s attendus par "+
-			"le connecteur — write refused, renvoyer la page sans eux laisserait "+
-			"the device les remettre a zero", strings.Join(missing, ", "))
-		a.step(false, "jeu de champs de /fwd.b inattendu", e.Error())
+		// Refuse rather than send a truncated page. The device would be free to
+		// reset port isolation, storm limits, and ingress rates
+		// of all its ports to zero, and it would do so silently.
+		var e = fmt.Errorf("/fwd.b: this firmware doesn't serve the fields %s expected by "+
+			"the connector — write refused, sending back the page without them would let "+
+			"the device reset them to zero", strings.Join(missing, ", "))
+		a.step(false, "unexpected /fwd.b field set", e.Error())
 		return out, e
 	}
 	if err = a.postRaw(ctx, PageFwd, body.Encode(),
-		fmt.Sprintf("VLAN natifs written (%d port(s) : %s)", len(out.PortsWritten),
+		fmt.Sprintf("native VLANs written (%d port(s): %s)", len(out.PortsWritten),
 			strings.Join(out.PortsWritten, ", "))); err != nil {
 		return out, err
 	}
 
-	// 6. Pas d'etape de sauvegarde : sur SwOS, ce qui est poste est already persistant
-	//    (cf. Capabilities.Commit). C'est l'exact inverse de l'Instant On, et c'est
-	//    pourquoi la copie prise a l'etape 4 est le seul filet.
-	a.step(true, "write terminee",
-		"SwOS persiste immediatement : il n'y a pas de sauvegarde a faire, et pas de "+
-			"reboot qui annulerait ceci")
+	// 6. No backup step: on SwOS, what's posted is already persistent
+	//    (cf. Capabilities.Commit). This is the exact opposite of the Instant On, and that's
+	//    why the copy taken at step 4 is the only safety net.
+	a.step(true, "write complete",
+		"SwOS persists immediately: there is no backup to make, and no "+
+			"reboot that would cancel this")
 	return out, nil
 }
 
-// PortChange describes ce qu'une pose changerait sur UN port. Rien de plus, et surtout
-// rien qui ne change pas.
+// PortChange describes what a run would change on ONE port. Nothing more, and above all
+// nothing that doesn't change.
 type PortChange struct {
 	Port string `json:"port"`
-	// Index est le rang SwOS du port, base 0.
+	// Index is the port's SwOS rank, 0-based.
 	Index int `json:"index"`
-	// Join : les VLAN dont le port doit DEVENIR membre. Ceux dont il l'est already n'y
-	// figurent pas.
+	// Join: the VLANs the port must BECOME a member of. Ones it already is a member
+	// of are not listed.
 	Join []int `json:"join,omitempty"`
-	// Leave : les VLAN dont le port doit SORTIR, parce que le plan ne les demande
-	// plus.
+	// Leave: the VLANs the port must LEAVE, because the plan no longer
+	// requests them.
 	//
-	// Jamais un VLAN de management, jamais le VLAN natif effectif, jamais rien sur un
-	// port a plancher (« all »), et rien du tout sur un port actif quand the device
-	// accepte l'administration depuis n'importe quel VLAN — [planLeaves] tient ces
-	// quatre refus et les explique.
+	// Never a management VLAN, never the effective native VLAN, never anything on a
+	// port set to trunk-all ("all"), and nothing at all on an active port when the device
+	// accepts administration from any VLAN whatsoever — [planLeaves] holds these
+	// four refusals and explains them.
 	Leave []int `json:"leave,omitempty"`
-	// PVID : le VLAN natif a poser. Zero veut dire « inchange », jamais « VLAN 0 » —
-	// SwOS n'a pas de VLAN 0, et le confondre deplacerait le trafic d'un port.
+	// PVID: the native VLAN to set. Zero means "unchanged", never "VLAN 0" —
+	// SwOS has no VLAN 0, and confusing the two would move a port's traffic.
 	PVID int `json:"pvid,omitempty"`
-	// Mode est la valeur a write dans /fwd.b `vlan`, et RaiseMode dit s'il y a
-	// quelque chose a write.
+	// Mode is the value to write into /fwd.b `vlan`, and RaiseMode says whether there is
+	// anything to write.
 	//
-	// DEUX CHAMPS ET NON UN, parce que VLANModeDisabled VAUT ZERO : un `Mode` seul,
-	// avec zero pour « inchange », ferait ETEINDRE le filtrage VLAN de tous les ports
-	// qu'on ne voulait pas toucher — l'exact contraire de ce que ce champ existe pour
-	// faire. Le same trap que `PVID` juste au-dessus, sauf qu'ici la valeur
-	// dangereuse est justement celle du zero.
+	// TWO FIELDS AND NOT ONE, because VLANModeDisabled IS ZERO: a single `Mode`,
+	// with zero meaning "unchanged", would TURN OFF VLAN filtering on every port
+	// we didn't want to touch — the exact opposite of what this field exists to
+	// do. The same trap as `PVID` just above, except here the
+	// dangerous value is precisely zero.
 	Mode      uint32 `json:"mode,omitempty"`
 	RaiseMode bool   `json:"raise_mode,omitempty"`
 }
 
-// PortsInput rassemble ce dont [PlanPorts] a besoin pour decider.
+// PortsInput gathers what [PlanPorts] needs in order to decide.
 //
-// UN AGREGAT ET NON HUIT PARAMETRES, pour la same raison que [driver.PortPlan] en
-// porte cinq : le jour where la decision a besoin d'une contrainte de plus, la signature
-// change en un seul endroit. Un parameter positionnel ajoute au milieu d'une liste de
-// huit est, de surcroit, exactement la faute qui fait passer `ports` there where le code
-// attend `prefix` — et sur une plateforme qui NUMEROTE ses ports, une confusion de ce
-// genre est une write sur le mauvais port.
+// AN AGGREGATE AND NOT EIGHT PARAMETERS, for the same reason [driver.PortPlan]
+// carries five: the day the decision needs one more constraint, the signature
+// changes in a single place. A positional parameter added in the middle of a list of
+// eight is, on top of that, exactly the mistake that lets `ports` slip in where the code
+// expects `prefix` — and on a platform that NUMBERS its ports, a mix-up of that
+// kind is a write to the wrong port.
 type PortsInput struct {
-	// Current est state LU, qui donne les VLAN natifs et state des liens.
+	// Current is the state that was READ, which gives native VLANs and link state.
 	Current State
-	// Table est la table des VLAN ALREADY COMPLETEE des VLAN manquants : un port ne peut
-	// rejoindre qu'un VLAN qui existe.
+	// Table is the VLAN table ALREADY COMPLETED with missing VLANs: a port can only
+	// join a VLAN that exists.
 	Table []*Page
-	// Desired est l'intention, par nom de port du model standard.
+	// Desired is the intent, by standard-model port name.
 	Desired map[string]PortState
-	// Facade describes la front panel ET son nommage : combien de ports, where sont les cages, et
-	// les deux familles de noms qu'un plan peut employer (cf. Facade). Elle vient de la
-	// GEOMETRY LUE sur the device, jamais de l'appel (cf. ApplyPorts).
+	// Facade describes the front panel AND its naming: how many ports, where the cages are, and
+	// the two naming families a plan may use (cf. Facade). It comes from the
+	// GEOMETRY READ from the device, never from the caller (cf. ApplyPorts).
 	Facade Facade
-	// Modes est le tableau /fwd.b `vlan` tel que the device l'a servi, ou nil quand
-	// ce firmware ne le sert pas. Nil fait renoncer a wake un filtrage off —
-	// pas a poser l'appartenance.
+	// Modes is the /fwd.b `vlan` array as the device served it, or nil when
+	// this firmware doesn't serve it. Nil means giving up on waking up filtering —
+	// not giving up on setting membership.
 	Modes []uint32
-	// Protected porte les VLAN de management a epargner, et le motif de chacun.
+	// Protected carries the management VLANs to spare, and the reason for each.
 	Protected map[int]string
-	// Force leve les garde-fous. Geste explicite de l'exploitant, jamais un default.
+	// Force lifts the safeguards. An explicit gesture from the operator, never a default.
 	Force bool
 }
 
-// PortsPlan est ce qu'une pose ferait, et ce qu'elle refuse de faire.
+// PortsPlan is what a run would do, and what it refuses to do.
 type PortsPlan struct {
 	Changes []PortChange
-	// Skipped porte les refus, en phrases destinees a l'exploitant : un garde-fou qui
-	// protege sans le dire passe pour un bogue.
+	// Skipped carries the refusals, in sentences meant for the operator: a safeguard that
+	// protects without saying so looks like a bug.
 	Skipped []string
 }
 
-// PlanPorts decide, SANS RIEN WRITE, ce qu'une pose changerait et ce qu'elle
-// refusera de toucher.
+// PlanPorts decides, WITHOUT WRITING ANYTHING, what a run would change and what it
+// will refuse to touch.
 //
-// Fonction PURE, et c'est tout l'interet : c'est elle qui decide quel port garde son
-// VLAN natif, donc elle qui decide si the device restera joignable. Une erreur ici
-// ne se voit qu'au moment where un switch devient muet, sur un model qui n'a ni SSH, ni
-// Telnet, ni serial port. La sortir du chemin network est ce qui permet de l'eprouver
-// sur les captures reelles de the device (voir apply_test.go) rather que sur du
-// hardware en service.
+// A PURE function, and that's the whole point: it's the one that decides which port keeps its
+// native VLAN, so it's the one that decides whether the device stays reachable. A mistake here
+// only becomes visible the moment a switch goes silent, on a model that has neither SSH, nor
+// Telnet, nor a serial port. Pulling it out of the network path is what allows testing it
+// against real captures from the device (see apply_test.go) rather than against
+// live hardware in production.
 //
-// `in.Table` est la table des VLAN ALREADY COMPLETEE des VLAN manquants : un port ne
-// peut rejoindre qu'un VLAN qui existe.
+// `in.Table` is the VLAN table ALREADY COMPLETED with missing VLANs: a port can
+// only join a VLAN that exists.
 //
-// Ce qui est rendu :
+// What is returned:
 //
-//   - les changements, dans un ordre stable, et UNIQUEMENT ceux qui bougent quelque
-//     chose. Un port already conforme n'y figure pas — sur cette plateforme writing
-//     est persistante d'office et sans retour arriere, donc un POST qui ne change
-//     rien est un risque pris pour rien, et il serait pris a CHAQUE passage de
-//     reconciliation, sur tout le parc ;
-//   - les motifs de refus, en clair, destines a l'exploitant.
+//   - the changes, in a stable order, and ONLY the ones that move something.
+//     A port that's already compliant isn't listed — on this platform writing
+//     is persistent by default and with no way back, so a POST that changes
+//     nothing is a risk taken for nothing, and it would be taken on EVERY reconciliation
+//     pass, across the whole fleet;
+//   - the reasons for refusal, in plain language, meant for the operator.
 //
-// QUATRE DECISIONS PAR PORT, et non plus deux. La first livraison ne calculait que
-// l'appartenance a GAGNER et le VLAN natif ; s'y ajoutent maintenant l'appartenance a
-// PERDRE ([planLeaves]) et le wake du filtrage ([planModeRaise]). Les deux
-// manquantes were celles qui decidaient si la pose CONVERGE et si elle AGIT.
+// FOUR DECISIONS PER PORT, not just two anymore. The first delivery only computed
+// membership to GAIN and the native VLAN; now added are membership to
+// LOSE ([planLeaves]) and waking up filtering ([planModeRaise]). The two
+// missing ones were the ones that decided whether the run CONVERGES and whether it ACTS.
 func PlanPorts(in PortsInput) (PortsPlan, error) {
 	var out PortsPlan
-	// Deduit rather que passe : deux parameters qui doivent rester consistent sont deux
-	// parameters dont l'un peut mentir, et celui-there decide si un port actif est epargne.
+	// Derived rather than passed in: two parameters that must stay consistent are two
+	// parameters where one can lie, and this one decides whether an active port is spared.
 	var mgmtUnknown = len(in.Protected) == 0
 
 	var name string
 	for _, name = range sortedNames(in.Desired) {
 		var want = in.Desired[name]
 		if want.Mode == "" || want.Mode == "libre" {
-			continue // « absent = non managed » : meshcraft ne reclame pas ce port
+			continue // "absent = not managed": meshcraft doesn't claim this port
 		}
 		var index, ok = in.Facade.Index(name)
 		if !ok {
 			out.Skipped = append(out.Skipped, fmt.Sprintf(
-				"%s ignored : ce nom ne designe pas un port de cet device, qui en a %d et "+
-					"les nomme « %s » … « %s » (l'ancienne numerotation « %s1 » reste accepted). "+
-					"Envoyer un number de port faux est une write au mauvais endroit.",
+				"%s ignored: this name doesn't designate a port on this device, which has %d and "+
+					"names them %q … %q (the old numbering %q remains accepted). "+
+					"Sending a wrong port number is a write to the wrong place.",
 				name, in.Facade.Ports(), in.Facade.Name(0),
 				in.Facade.Name(in.Facade.Ports()-1), in.Facade.legacy))
 			continue
 		}
 
-		// LE NOM CANONIQUE, i.e. celui de la FACADE, donc celui de the device.
+		// THE CANONICAL NAME, i.e. the FACADE's, so the device's own.
 		//
-		// Un plan peut designer un port sous l'ancienne numerotation continue (« GE25 »)
-		// et [Facade.Index] l'accepte ; state LU, lui, est toujours named par la front panel
-		// (« SFP1 »). Chercher state avec le nom du plan rendrait donc le port INCONNU —
-		// PVID 0, aucun VLAN, AUCUN LIEN — et « aucun lien » est tres exactement ce qui
-		// LEVE les garde-fous de ce fichier. Une intention heritee de l'ancienne convention
-		// aurait ainsi desarme la protection du port qui porte la session, sur la seule
-		// plateforme du parc qui n'a ni SSH, ni Telnet, ni serial port.
+		// A plan may designate a port under the old continuous numbering ("GE25")
+		// and [Facade.Index] accepts it; the state that was READ, though, is always named by the front panel
+		// ("SFP1"). Looking up state with the plan's name would therefore make the port UNKNOWN —
+		// PVID 0, no VLAN, NO LINK — and "no link" is precisely what
+		// LIFTS this file's safeguards. An intent inherited from the old convention
+		// would thereby have disarmed the protection of the port carrying the session, on the
+		// only platform in the fleet that has neither SSH, nor Telnet, nor a serial port.
 		//
-		// C'est aussi lui qui part dans les messages et dans `PortsWritten` : ce que
-		// l'exploitant doit lire est le nom que son switch affiche.
+		// It's also this name that goes into the messages and into `PortsWritten`: what
+		// the operator must read is the name their switch displays.
 		var canon = in.Facade.Name(index)
 		var now = in.Current.Ports[canon]
-		var linked = in.Current.LinkUp[canon]
-		// Le VLAN natif EFFECTIF, i.e. celui que le port aura a la fin : celui du
-		// plan quand il en designe un, celui de the device sinon. C'est lui qui sert de
-		// reference a tout le reste — appartenance a garder, mode a wake — parce que
-		// la pose doit raisonner sur state d'ARRIVEE, pas sur celui de depart.
+		var linked = in.Current.HasLink(canon)
+		// The EFFECTIVE native VLAN, i.e. the one the port will have at the end: the
+		// plan's when it designates one, the device's otherwise. This is what serves as
+		// the reference for everything else — membership to keep, mode to wake up — because
+		// the run must reason about the ARRIVAL state, not the starting one.
 		var effectivePVID = now.PVID
 		var nativeFrozen bool
 		if !in.Force && linked && want.PVID != now.PVID {
@@ -487,15 +488,15 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 				in.Protected, mgmtUnknown)
 			if refus != "" {
 				out.Skipped = append(out.Skipped, refus)
-				// LE PORT EST GELE EN ENTIER, et pas seulement son VLAN natif.
+				// THE PORT IS FROZEN ENTIRELY, not just its native VLAN.
 				//
-				// Une version qui refusait le seul changement de natif et continuait sur
-				// l'appartenance produisait exactement l'incoherence que la lecture state
-				// signale comme une anomalie : un port dont le natif reste 99 et dont
-				// l'appartenance est rewritten pour le VLAN 100. Le trafic untagged entre
-				// alors en 99 sur un port qui n'est plus membre de 99, et rien n'en sort.
-				// Sur le port qui porte la session, c'est la panne exacte que le garde-fou
-				// existe pour empecher — il l'aurait causee lui-same.
+				// A version that refused only the native-VLAN change and continued with
+				// membership produced exactly the inconsistency that the state read
+				// flags as an anomaly: a port whose native VLAN stays 99 while its
+				// membership is rewritten for VLAN 100. Untagged traffic then enters
+				// on 99 on a port that's no longer a member of 99, and nothing goes out.
+				// On the port carrying the session, that's the exact outage this safeguard
+				// exists to prevent — it would have caused it itself.
 				nativeFrozen = true
 			}
 		}
@@ -506,13 +507,13 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 			effectivePVID = want.PVID
 		}
 
-		// L'appartenance GAGNEE : le port doit be membre de son VLAN natif ET de chacun
-		// de ses VLAN tagged.
+		// The membership GAINED: the port must be a member of its native VLAN AND of each
+		// of its tagged VLANs.
 		var ch = PortChange{Port: canon, Index: index}
 		var members = map[int]bool{}
 		var vid int
 		for _, vid = range askedVLANs(want) {
-			// Le VLAN 1 n'est PAS dans la table, et il n'a pas a y be : voir
+			// VLAN 1 is NOT in the table, and it doesn't need to be: see
 			// implicitVLAN.
 			if vid == implicitVLAN {
 				members[vid] = true
@@ -520,17 +521,17 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 			}
 			var row = rowFor(in.Table, vid)
 			if row == nil {
-				// La table a been completee en amont : n'arriver ici voudrait dire qu'un
-				// VLAN reclame par un port n'a pas pu y entrer.
+				// The table was completed upstream: reaching here would mean a
+				// VLAN claimed by a port failed to be added to it.
 				out.Skipped = append(out.Skipped, fmt.Sprintf(
-					"%s : le VLAN %d n'est pas dans la table — appartenance non applied", canon, vid))
+					"%s: VLAN %d is not in the table — membership not applied", canon, vid))
 				continue
 			}
 			var deja, lisible = row.Bit(FieldVLANMembers, index)
 			if !lisible {
-				return PortsPlan{}, fmt.Errorf("/vlan.b : le masque de membres du VLAN %d "+
-					"n'est pas lisible au rang du port %s (champ « %s » absent ou de forme "+
-					"inattendue) — l'appartenance serait devinee", vid, canon, FieldVLANMembers)
+				return PortsPlan{}, fmt.Errorf("/vlan.b: the member mask of VLAN %d "+
+					"is not readable at this port's rank %s (field %q absent or of an "+
+					"unexpected shape) — membership would be guessed", vid, canon, FieldVLANMembers)
 			}
 			members[vid] = true
 			if !deja {
@@ -538,7 +539,7 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 			}
 		}
 
-		// L'appartenance PERDUE, avec ses quatre refus.
+		// The membership LOST, with its four refusals.
 		var leaves, leaveErr = planLeaves(canon, index, want, effectivePVID, in.Table,
 			linked, in.Protected, in.Force)
 		if leaveErr != nil {
@@ -551,12 +552,12 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 			ch.PVID = want.PVID
 		}
 
-		// Le REVEIL du filtrage, decide sur l'appartenance d'ARRIVEE.
+		// Waking up filtering, decided on the ARRIVAL membership.
 		if in.Modes != nil && index < len(in.Modes) {
-			// `members` ne porte que ce que le plan demande ; l'appartenance d'arrivee
-			// comprend aussi ce que le port garde. Sans cette fusion, un port dont le plan
-			// ne redit pas le VLAN de management passerait pour non membre, et le wake
-			// serait refused sur tous les ports actifs d'un parc correctement configure.
+			// `members` only carries what the plan asks for; the arrival membership
+			// also includes what the port keeps. Without this merge, a port whose plan
+			// doesn't restate the management VLAN would look like it's not a member, and waking
+			// it up would be refused on every active port of a correctly configured fleet.
 			var held, heldErr = heldVLANs(in.Table, index)
 			if heldErr != nil {
 				return PortsPlan{}, heldErr
@@ -579,78 +580,78 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 		}
 
 		if len(ch.Join) == 0 && len(ch.Leave) == 0 && ch.PVID == 0 && !ch.RaiseMode {
-			continue // already conforme : ne rien envoyer vaut mieux qu'un aller-retour
+			continue // already compliant: sending nothing beats a round trip
 		}
 		out.Changes = append(out.Changes, ch)
 	}
 	return out, nil
 }
 
-// implicitVLAN est le VLAN 1, et il n'est PAS une ligne de la table des VLAN.
+// implicitVLAN is VLAN 1, and it is NOT a row in the VLAN table.
 //
-// OBSERVED sur l'reference device, et c'est une discovery qui change le
-// garde-fou : ses deux cages SFP ont un « Default VLAN ID » de 1 (/fwd.b
-// `dvid[24]=dvid[25]=0x01`) alors que sa table des VLAN ne contient QUE les VLAN 99
-// et 100. Le VLAN 1 existe donc comme default implicite du hardware, sans ligne.
+// OBSERVED on the reference device, and it's a discovery that changes the
+// safeguard: its two SFP cages have a "Default VLAN ID" of 1 (/fwd.b
+// `dvid[24]=dvid[25]=0x01`) even though its VLAN table contains ONLY VLANs 99
+// and 100. VLAN 1 therefore exists as the hardware's implicit default, with no row.
 //
-// Deux consequences, et les deux comptent :
+// Two consequences, and both matter:
 //
-//   - un port dont le VLAN natif est 1 n'a AUCUNE appartenance a poser. Chercher une
-//     ligne pour le VLAN 1 et se plaindre de son absence ferait echouer la pose sur un
-//     device parfaitement configure — c'est ce que faisait la first version ;
-//   - il ne faut SURTOUT PAS create cette ligne. La create transformerait le VLAN 1 en
-//     VLAN declared, dont seuls les ports listes seraient membres — i.e.
-//     changerait le comportement de tout le trafic untagged de the device, alors
-//     que personne ne l'a requested. Le connecteur Instant On saute lui aussi les VLAN
-//     inferieurs ou egaux a 1, pour une raison voisine.
+//   - a port whose native VLAN is 1 has NO membership at all to set. Looking for a
+//     row for VLAN 1 and complaining about its absence would make the run fail on a
+//     perfectly configured device — that's what the first version did;
+//   - that row must ABSOLUTELY NOT be created. Creating it would turn VLAN 1 into a
+//     declared VLAN, of which only the listed ports would be members — i.e.
+//     it would change the behavior of all of the device's untagged traffic, when
+//     no one requested that. The Instant On connector also skips VLANs
+//     less than or equal to 1, for a related reason.
 const implicitVLAN = 1
 
-// whyNativeChangeIsUnsafe dit pourquoi changer le VLAN natif d'un port ACTIF serait
-// dangereux — et rend une string vide quand ce ne l'est pas.
+// whyNativeChangeIsUnsafe says why changing the native VLAN of an ACTIVE port would be
+// dangerous — and returns an empty string when it isn't.
 //
-// LE GARDE-FOU DE SwOS N'EST PAS CELUI DE L'INSTANT ON, et c'est le observed sur
-// hardware qui l'a montre.
+// SwOS's SAFEGUARD IS NOT THE INSTANT ON's, and it's what was observed on
+// hardware that showed it.
 //
-// Sur l'Instant On, la rule est « ne pas toucher au VLAN natif d'un port actif qui
-// est membre untagged du VLAN de management ». Transposee telle quelle ici, elle ne
-// protege RIEN : sur l'reference device, la session d'administration arrive
-// TAGGED en VLAN 99 sur une cage dont le VLAN natif est 1. Le VLAN natif de ce port
-// n'est donc pas le VLAN de management, et la rule de l'Instant On l'aurait laisse
-// rewrite librement.
+// On the Instant On, the rule is "don't touch the native VLAN of an active port that
+// is an untagged member of the management VLAN". Transposed as-is here, it
+// protects NOTHING: on the reference device, the administration session arrives
+// TAGGED on VLAN 99 on a cage whose native VLAN is 1. This port's native VLAN
+// is therefore not the management VLAN, and the Instant On's rule would have let it
+// be rewritten freely.
 //
-// Ce qui compte actually sur SwOS est la RULE D'ETIQUETTAGE : une trame sort d'un
-// port non tagged si son VLAN est le VLAN natif de ce port, tagged sinon. Changer le
-// VLAN natif d'un port change donc l'tagging de DEUX VLAN — l'ancien natif devient
-// tagged, le nouveau devient untagged — et laisse tous les autres inchanges.
+// What actually matters on SwOS is the TAGGING RULE: a frame leaves a
+// port untagged if its VLAN is that port's native VLAN, tagged otherwise. Changing a
+// port's native VLAN therefore changes the tagging of TWO VLANs — the old native one becomes
+// tagged, the new one becomes untagged — and leaves all the others unchanged.
 //
-// La condition de surete est donc precise : le changement doit preserver
-// l'tagging de CHAQUE VLAN de management sur ce port. Autrement dit, pour chaque
-// VLAN protege v, « v est untagged sur ce port » doit valoir la same chose avant et
+// The safety condition is therefore precise: the change must preserve the
+// tagging of EVERY management VLAN on this port. In other words, for each
+// protected VLAN v, "v is untagged on this port" must have the same value before and
 // after.
 //
-// Ce que cela donne en pratique, et c'est exactement le comportement voulu :
+// What this produces in practice, and it's exactly the intended behavior:
 //
-//   - faire passer une cage d'uplink du VLAN natif 1 au VLAN natif 100, alors que
-//     l'administration arrive tagged en 99 : AUTORISE. Le 99 reste tagged avant comme
-//     after, la session ne bouge pas ;
-//   - faire passer cette same cage au VLAN natif 99 : REFUSED. L'administration
-//     passerait de tagged a non tagged, et le voisin qui l'envoie tagged ne serait
-//     plus entendu ;
-//   - faire passer un access port qui porte l'administration NON tagged vers un
-//     autre VLAN : REFUSED. C'est le cas classique, celui que couvrait already la rule de
-//     l'Instant On.
+//   - switching an uplink cage from native VLAN 1 to native VLAN 100, while
+//     administration arrives tagged on 99: ALLOWED. 99 stays tagged both before and
+//     after, the session doesn't move;
+//   - switching that same cage to native VLAN 99: REFUSED. Administration
+//     would go from tagged to untagged, and the neighbor sending it tagged would no longer
+//     be heard;
+//   - switching an access port carrying administration UNTAGGED to
+//     another VLAN: REFUSED. This is the classic case, the one the Instant On's rule
+//     already covered.
 //
-// Et quand aucun VLAN de management n'est connu, rien n'est prouvable : tout port
-// actif est epargne.
+// And when no management VLAN is known, nothing is provable: every active port
+// is spared.
 func whyNativeChangeIsUnsafe(port string, nowPVID, wantPVID int,
 	protected map[int]string, mgmtUnknown bool) string {
 	if mgmtUnknown {
 		return fmt.Sprintf(
-			"%s non modifie : il porte un lien ACTIF et the device accepte "+
-				"l'administration depuis n'importe quel VLAN, donc rien ne dit que ce n'est "+
-				"pas lui qui porte la session. Ce model n'a aucune console de secours.", port)
+			"%s not modified: it carries an ACTIVE link and the device accepts "+
+				"administration from any VLAN whatsoever, so nothing says it isn't "+
+				"the one carrying the session. This model has no rescue console.", port)
 	}
-	// Ordre stable : deux executions doivent produire le same message.
+	// Stable order: two runs must produce the same message.
 	var vlans = make([]int, 0, len(protected))
 	var v int
 	for v = range protected {
@@ -662,21 +663,21 @@ func whyNativeChangeIsUnsafe(port string, nowPVID, wantPVID int,
 		var nonTagueAvant = nowPVID == v
 		var nonTagueApres = wantPVID == v
 		if nonTagueAvant == nonTagueApres {
-			continue // l'tagging de ce VLAN de management ne change pas
+			continue // the tagging of this management VLAN doesn't change
 		}
 		if nonTagueAvant {
 			return fmt.Sprintf(
-				"%s non modifie : il porte un lien ACTIF et l'administration y arrive NON "+
-					"TAGGED dans le VLAN %d (%s). Lui donner le VLAN natif %d ferait passer "+
-					"l'administration en tagged sur ce port, et couperait access. Ce model "+
-					"n'a ni SSH, ni Telnet, ni serial port : l'erreur se repare sur site.",
+				"%s not modified: it carries an ACTIVE link and administration arrives "+
+					"UNTAGGED there on VLAN %d (%s). Giving it native VLAN %d would make "+
+					"administration go out tagged on this port, and would cut off access. This model "+
+					"has neither SSH, nor Telnet, nor a serial port: the mistake gets fixed on site.",
 				port, v, protected[v], wantPVID)
 		}
 		return fmt.Sprintf(
-			"%s non modifie : il porte un lien ACTIF et l'administration y arrive TAGGED "+
-				"dans le VLAN %d (%s). Lui donner le VLAN natif %d ferait sortir "+
-				"l'administration sans tag sur ce port, et couperait access. Ce model "+
-				"n'a ni SSH, ni Telnet, ni serial port : l'erreur se repare sur site.",
+			"%s not modified: it carries an ACTIVE link and administration arrives TAGGED "+
+				"there on VLAN %d (%s). Giving it native VLAN %d would make "+
+				"administration go out untagged on this port, and would cut off access. This model "+
+				"has neither SSH, nor Telnet, nor a serial port: the mistake gets fixed on site.",
 			port, v, protected[v], wantPVID)
 	}
 	return ""
@@ -810,7 +811,7 @@ func mgmtSeed(current State, protected map[int]string, rows []*Page,
 		var indices []int
 		var i int
 		for i = 0; i < f.Ports(); i++ {
-			if current.LinkUp[f.Name(i)] {
+			if current.HasLink(f.Name(i)) {
 				indices = append(indices, i)
 			}
 		}

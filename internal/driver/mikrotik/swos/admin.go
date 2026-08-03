@@ -11,71 +11,71 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// La session d'administration d'un switch SwOS.
+// Admin is an administration session to a SwOS switch.
 //
-// Il n'y a PAS de session, et c'est le premier fait a integrate. SwOS
-// s'authentifie par en-tete HTTP `Authorization: Digest` (MD5, qop=auth), pas par
-// un formulaire qui poserait un cookie : chaque request re-present les
-// identifiants, et rien ne survit d'une request a l'autre. Un connecteur qui
-// « ouvrirait une session » et croirait ensuite y be encore se tromperait sur la
-// nature de la plateforme.
+// There is NO session, and that's the first fact to internalize. SwOS
+// authenticates via the HTTP `Authorization: Digest` header (MD5, qop=auth), not via
+// a form that would set a cookie: every request re-presents the
+// credentials, and nothing survives from one request to the next. A connector that
+// "opened a session" and then believed it was still in one would be wrong about the
+// nature of the platform.
 //
-// Cette mecanique n'est pas reimplemented ici : elle est dans le transport partage
-// (`driver.WebSession.SetAuth` avec `driver.AuthDigest`), et c'est there qu'elle doit
-// vivre — le calcul d'un digest Digest n'a rien de propre a MikroTik.
+// This mechanism is not reimplemented here: it lives in the shared transport
+// (`driver.WebSession.SetAuth` with `driver.AuthDigest`), and that's where it belongs —
+// computing a Digest digest has nothing MikroTik-specific about it.
 //
-// Ce qui est propre a SwOS, en revanche, et qui vit ici :
+// What IS specific to SwOS, and what lives here:
 //
-//   - le SCHEMA est impose, pas negocie. `AuthDigest` et non `AuthAuto` : SwOS ne
-//     sert que du Digest, et lui present  du Basic donnerait un second 401 qu'on
-//     lirait comme un mot de passe faux — l'erreur la plus couteuse a diagnostiquer
-//     sur un device dont on n'a pas la console ;
-//   - la forme du corps des ecritures, qui n'est ni un formulaire ni du JSON
-//     (cf. postRaw) ;
-//   - tout est consigne dans un transcript. Sur une plateforme dont la
-//     configuration est persistante d'office et sans filet (cf.
-//     Capabilities.Commit), savoir AFTER COUP ce qui a been envoye n'est pas un
-//     confort de developpeur : c'est la seule way de comprendre un failure sans
-//     retourner sur site — et ce model n'a pas de serial port.
+//   - the SCHEME is imposed, not negotiated. `AuthDigest`, not `AuthAuto`: SwOS only
+//     serves Digest, and presenting it with Basic would produce a second 401 that
+//     would read as a wrong password — the most expensive error to diagnose
+//     on a device you don't have console access to;
+//   - the shape of the write request body, which is neither a form nor JSON
+//     (cf. postRaw);
+//   - everything is logged to a transcript. On a platform whose
+//     configuration is persistent by default and with no safety net (cf.
+//     Capabilities.Commit), knowing AFTER THE FACT what was actually sent is not a
+//     developer convenience: it's the only way to understand a failure without
+//     going back on site — and this model has no serial port.
 
-// `Step` n'est plus defini ici : c'est now un ALIAS du type du contrat
-// (`type Step = driver.Step`, cf. contract.go). Les trois connecteurs en portaient
-// une copie identique, chacun en ecrivant dans son commentaire qu'il recopiait la
-// forme des autres « pour que l'API n'ait qu'une way de present  une pose ». Trois
-// definitions identiques par convention tiennent jusqu'au jour where l'une gagne un
-// champ : ce jour-there, la conversion silencieuse de la couche API le perd, et un ecart
-// de configuration devient invisible. Le champ `Steps` ci-dessous n'a pas changed
-// d'une ligne pour autant — c'est tout l'interet d'un alias.
+// `Step` is no longer defined here: it is now an ALIAS of the contract type
+// (`type Step = driver.Step`, cf. contract.go). The three connectors used to each carry
+// an identical copy, every one of them noting in its comment that it mirrored the
+// shape of the others "so the API would have only one way to represent a step." Three
+// identical-by-convention definitions hold up until the day one of them gains a
+// field: on that day, the silent conversion in the API layer drops it, and a
+// configuration drift becomes invisible. The `Steps` field below hasn't changed
+// by a single line for all that — that's the whole point of an alias.
 
-// Admin est une session vers un switch SwOS.
+// Admin is a session to a SwOS switch.
 type Admin struct {
 	web *driver.WebSession
-	// Steps est le transcript, dans l'ordre.
+	// Steps is the transcript, in order.
 	Steps []Step
-	// User est le compte used. Sur SwOS il n'y en a qu'un (cf.
-	// Capabilities.Admin) — le champ existe pour que l'appelant n'ait pas a
-	// distinguer cette plateforme des autres.
+	// User is the account used. On SwOS there's only one (cf.
+	// Capabilities.Admin) — the field exists so the caller doesn't have to
+	// treat this platform differently from the others.
 	User string
-	// accepted est le candidat qui a ouvert cet access, tel qu'il a been fourni par
-	// l'appelant (cf. Admin.Accepted). Renseigne par Driver.Authenticate, VIDE sur un
-	// Admin obtenu par OpenAdmin — i.e. quand personne n'a presented de
-	// candidat, ce qui est le cas de la discovery.
+	// accepted is the candidate that opened this access, exactly as supplied by
+	// the caller (cf. Admin.Accepted). Set by Driver.Authenticate, EMPTY on an
+	// Admin obtained via OpenAdmin — i.e. when no candidate was ever presented,
+	// which is the case during discovery.
 	//
-	// Il porte un SECRET : rien de ce champ ne doit atterrir dans un transcript, qui
-	// est fait pour be montre et conserve.
+	// It carries a SECRET: nothing from this field should ever land in a transcript,
+	// which is meant to be shown and kept.
 	accepted Candidate
-	// prefix est le prefix de nommage des ports du model standard, tel que la cible
-	// le porte (driver.Target.PortPrefix). VIDE tant que personne ne l'a dit, et c'est
-	// portPrefix() qui applique alors le default rather que to write a l'aveugle : ce
-	// connecteur NUMEROTE ses ports, et traduire « GE12 » en l'index 12 est ce qui
-	// decide sur quel port writing atterrit.
+	// prefix is the port-naming prefix of the standard model, as carried by the
+	// target (driver.Target.PortPrefix). EMPTY until someone has said otherwise, and it's
+	// portPrefix() that then applies the default rather than writing blindly: this
+	// connector NUMBERS its ports, and translating "GE12" into index 12 is what
+	// decides which port a write lands on.
 	prefix string
-	// ports est la geometry du model, lue une fois sur /link.b. Zero tant qu'elle
-	// n'a pas been lue : aucune write ne se fait sans elle, le jeu de champs de
-	// /fwd.b en dependant.
+	// ports is the model's geometry, read once from /link.b. Zero until it
+	// has been read: no write happens without it, since the field set of
+	// /fwd.b depends on it.
 	ports int
 	sfp   int
-	// sfpFirst est l'index de la first cage SFP.
+	// sfpFirst is the index of the first SFP cage.
 	sfpFirst int
 }
 
@@ -83,16 +83,16 @@ func (a *Admin) step(ok bool, what string, detail ...string) {
 	a.Steps = append(a.Steps, Step{What: what, Detail: strings.Join(detail, " "), OK: ok})
 }
 
-// OpenAdmin ouvre une session vers un switch SwOS.
+// OpenAdmin opens a session to a SwOS switch.
 //
-// HTTP EN CLAIR, et ce n'est pas un oubli : SwOS n'ecoute que sur le port 80.
-// Constate sur 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17) — ni 443, ni 22, ni 23. La
-// confidentialite du lien repose donc entirely sur le tunnel du proxy, et une
-// tentative en HTTPS echouerait sans rien apprendre.
+// PLAIN HTTP, and that's not an oversight: SwOS only listens on port 80.
+// Confirmed on 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17) — not 443, not 22, not 23. The
+// confidentiality of the link therefore rests entirely on the proxy tunnel, and an
+// HTTPS attempt would simply fail without revealing anything.
 //
-// `secret` peut be VIDE, et c'est le cas d'un device sorti d'usine : SwOS
-// admet un mot de passe vide, l'reference device en portait un, et le
-// Digest se calcule tres bien avec (cf. Capabilities.Admin.Notes).
+// `secret` can be EMPTY, which is the case for a device fresh out of the factory: SwOS
+// accepts an empty password, the reference device had one, and the
+// Digest computes just fine with it (cf. Capabilities.Admin.Notes).
 func OpenAdmin(host, user, secret string, d driver.Dialer) *Admin {
 	if user == "" {
 		user = FixedAdminName
@@ -102,24 +102,24 @@ func OpenAdmin(host, user, secret string, d driver.Dialer) *Admin {
 	return &Admin{web: web, User: user}
 }
 
-// DefaultPortPrefix est le prefix de la famille NUMEROTEE de meshcraft, celle que ce
-// connecteur accepte encore en lecture et does not write plus.
+// DefaultPortPrefix is the prefix of meshcraft's NUMBERED naming family, the one this
+// connector still accepts on read and no longer writes.
 //
-// « GE », la same convention que le connecteur Instant On, avec une numerotation
-// CONTINUE cages comprises : GE1 a GE24 le cuivre, GE25 / GE26 les deux cages d'un
-// CSS326-24G-2S+. C'est ce que ce connecteur ECRIVAIT ; il written now les noms de
-// the device (« Port1 », « SFP1 »), et ce prefix ne sert plus only relire les
-// intentions already enregistrees sous l'ancienne convention. Le raisonnement complet est
-// dans l'encadre de naming.go.
+// "GE", the same convention as the Instant On connector, with CONTINUOUS numbering
+// including cages: GE1 to GE24 for copper, GE25 / GE26 for the two cages of a
+// CSS326-24G-2S+. This is what this connector USED TO WRITE; it now writes the
+// device's own names ("Port1", "SFP1"), and this prefix now only serves to re-read
+// intentions already recorded under the old convention. The full reasoning is
+// in the doc comment block of naming.go.
 const DefaultPortPrefix = "GE"
 
-// portPrefix rend le prefix de la famille numerotee a accepter sur cet access.
+// portPrefix returns the numbered-family prefix to accept on this access.
 //
-// Un DEFAULT et non un refus, parce que ce prefix n'est pas une information sur
-// the device mais une convention de nommage de meshcraft : refuser de lire un
-// device dont la cible n'a pas renseigne le champ empecherait de relever un
-// switch tout neuf. Le contrat le dit ainsi : « Vide, ils appliquent leur propre default
-// rather que to write a l'aveugle. »
+// A DEFAULT and not a refusal, because this prefix isn't information about
+// the device but a meshcraft naming convention: refusing to read a
+// device whose target hasn't set the field would prevent surveying a
+// brand-new switch. The contract puts it this way: "When empty, they apply their own default
+// rather than writing blindly."
 func (a *Admin) portPrefix() string {
 	if a.prefix == "" {
 		return DefaultPortPrefix
@@ -127,17 +127,17 @@ func (a *Admin) portPrefix() string {
 	return a.prefix
 }
 
-// facade rend la front panel NOMMEE de cet access : la geometry lue sur /link.b, plus les
-// deux familles de noms que [Facade.Index] sait relire.
+// facade returns the NAMED front panel of this access: the geometry read from /link.b, plus the
+// two naming families that [Facade.Index] knows how to resolve.
 //
-// Elle n'a de sens qu'AFTER une lecture de geometry (readAll ou Geometry) : avant, le
-// nombre de ports vaut zero, donc aucun nom ne se traduit en index — ce qui est le bon
-// refus, puisqu'write sans avoir lu la front panel serait write a l'aveugle.
+// It only makes sense AFTER a geometry read (readAll or Geometry): before that, the
+// port count is zero, so no name translates to an index — which is the correct
+// refusal, since writing without having read the front panel would be writing blindly.
 func (a *Admin) facade() Facade {
 	return NewFacade(a.ports, a.sfp, a.sfpFirst, a.portPrefix())
 }
 
-// Get lit une page et l'analyse comme un OBJET.
+// Get reads a page and parses it as an OBJECT.
 func (a *Admin) Get(ctx context.Context, page string) (*Page, error) {
 	var body, err = a.raw(ctx, page)
 	if err != nil {
@@ -145,17 +145,17 @@ func (a *Admin) Get(ctx context.Context, page string) (*Page, error) {
 	}
 	var obj, parseErr = ParseObject(body)
 	if parseErr != nil {
-		a.step(false, "page "+page+" illisible", parseErr.Error())
-		return nil, fmt.Errorf("%s : %w", page, parseErr)
+		a.step(false, "page "+page+" unreadable", parseErr.Error())
+		return nil, fmt.Errorf("%s: %w", page, parseErr)
 	}
-	a.step(true, "page "+page+" lue",
-		fmt.Sprintf("%d champ(s) : %s", len(obj.Keys()),
+	a.step(true, "page "+page+" read",
+		fmt.Sprintf("%d field(s): %s", len(obj.Keys()),
 			strings.Join(obj.Keys(), ", ")))
 	return obj, nil
 }
 
-// GetTable lit une page et l'analyse comme une TABLE. Une table vide est un
-// result, pas une erreur.
+// GetTable reads a page and parses it as a TABLE. An empty table is a
+// result, not an error.
 func (a *Admin) GetTable(ctx context.Context, page string) ([]*Page, error) {
 	var body, err = a.raw(ctx, page)
 	if err != nil {
@@ -163,107 +163,107 @@ func (a *Admin) GetTable(ctx context.Context, page string) ([]*Page, error) {
 	}
 	var rows, parseErr = ParseTable(body)
 	if parseErr != nil {
-		a.step(false, "table "+page+" illisible", parseErr.Error())
-		return nil, fmt.Errorf("%s : %w", page, parseErr)
+		a.step(false, "table "+page+" unreadable", parseErr.Error())
+		return nil, fmt.Errorf("%s: %w", page, parseErr)
 	}
-	a.step(true, "table "+page+" lue", fmt.Sprintf("%d ligne(s)", len(rows)))
+	a.step(true, "table "+page+" read", fmt.Sprintf("%d row(s)", len(rows)))
 	return rows, nil
 }
 
-// errCredentialsRefused est le refus D'IDENTIFIANTS, distingue de tout autre failure.
+// errCredentialsRefused is the CREDENTIALS refusal, distinguished from any other failure.
 //
-// Une SENTINELLE et pas seulement un message, parce que deux appelants ont besoin de
-// faire la difference et qu'aucun ne peut la faire sur du texte : Driver.Authenticate
-// doit passer au candidat SUIVANT quand the device refuse, et s'STOP net quand
-// il ne repond pas — insister avec les autres candidats ne prouverait rien et
-// brouillerait le diagnostic. Driver.Identify a exactement le same besoin.
+// A SENTINEL and not just a message, because two callers need to tell the
+// difference and neither can do it from text: Driver.Authenticate
+// must move on to the NEXT candidate when the device refuses, and STOP outright when
+// it doesn't respond — persisting with the other candidates would prove nothing and
+// would muddy the diagnosis. Driver.Identify has exactly the same need.
 //
-// Comparer des strings pour cela reviendrait a faire dependre le nombre d'essais
-// consommes sur un device d'un label qu'on est libre de reformuler. Le message
-// rendu a l'exploitant, lui, ne change pas : « /sys.b : identifiants refused par
-// the device ».
-var errCredentialsRefused = errors.New("identifiants refused par the device")
+// Comparing strings for this would make the number of attempts
+// spent on a device depend on a label that's free to be reworded. The message
+// rendered to the operator, though, doesn't change: "/sys.b: credentials refused by
+// the device".
+var errCredentialsRefused = errors.New("credentials refused by the device")
 
-// raw lit une page et rend son corps, en refusant ce qui n'en est visiblement pas
-// une.
+// raw reads a page and returns its body, refusing anything that's visibly not
+// one.
 //
-// Le control de longueur n'est pas de la paranoia : sur cette plateforme, un
-// chemin inconnu rend l'interface web ENTIRE en HTTP 200 (44 807 octets sur le
-// reference model). Sans ce garde-fou, une faute de frappe dans un nom de page
-// se presenterait comme une response valide, et l'analyseur signalerait une syntaxe
-// invalide there where le vrai default est le chemin.
+// The length check is not paranoia: on this platform, an unknown
+// path returns the ENTIRE web interface as HTTP 200 (44,807 bytes on the
+// reference model). Without this guard, a typo in a page name
+// would present itself as a valid response, and the parser would report an
+// invalid syntax where the real error is the path.
 func (a *Admin) raw(ctx context.Context, page string) (string, error) {
 	var resp, err = a.web.Get(ctx, page)
 	if err != nil {
-		a.step(false, "lecture de "+page, err.Error())
+		a.step(false, "reading "+page, err.Error())
 		return "", err
 	}
 	if resp.Status == 401 {
-		a.step(false, "authentification refused sur "+page,
-			fmt.Sprintf("HTTP 401 — compte « %s » ; challenge : %s", a.User,
+		a.step(false, "authentication refused on "+page,
+			fmt.Sprintf("HTTP 401 — account %q; challenge: %s", a.User,
 				header(resp.Headers, hdrAuthenticate)))
-		return "", fmt.Errorf("%s : %w", page, errCredentialsRefused)
+		return "", fmt.Errorf("%s: %w", page, errCredentialsRefused)
 	}
 	if resp.Status != 200 {
-		a.step(false, "lecture de "+page, fmt.Sprintf("HTTP %d", resp.Status))
-		return "", fmt.Errorf("%s : HTTP %d", page, resp.Status)
+		a.step(false, "reading "+page, fmt.Sprintf("HTTP %d", resp.Status))
+		return "", fmt.Errorf("%s: HTTP %d", page, resp.Status)
 	}
 	if resp.Truncated {
-		// Une page tronquee est un objet dont l'accolade fermante manque :
-		// l'analyseur le dirait, mais avec un message qui accuserait la syntaxe.
-		a.step(false, "response tronquee sur "+page,
-			fmt.Sprintf("%d octets, borne atteinte", len(resp.Body)))
-		return "", fmt.Errorf("%s : response tronquee", page)
+		// A truncated page is an object whose closing brace is missing:
+		// the parser would say so, but with a message that would blame the syntax.
+		a.step(false, "truncated response on "+page,
+			fmt.Sprintf("%d bytes, limit reached", len(resp.Body)))
+		return "", fmt.Errorf("%s: truncated response", page)
 	}
 	if strings.Contains(resp.Body, "<!doctype") || strings.Contains(resp.Body, "<html") {
-		a.step(false, "chemin inconnu de the device : "+page,
-			fmt.Sprintf("HTTP 200 mais l'interface web complete (%d octets) a been servie "+
-				"a la place des data — sur SwOS, un chemin qui n'existe pas ne rend pas 404",
+		a.step(false, "path unknown to the device: "+page,
+			fmt.Sprintf("HTTP 200 but the complete web interface (%d bytes) was served "+
+				"instead of the data — on SwOS, a path that doesn't exist doesn't return 404",
 				len(resp.Body)))
-		return "", fmt.Errorf("%s : page inexistante sur ce firmware "+
-			"(the device a servi son interface web)", page)
+		return "", fmt.Errorf("%s: page doesn't exist on this firmware "+
+			"(the device served its web interface)", page)
 	}
 	return resp.Body, nil
 }
 
-// Backup rapatrie la configuration ENTIRE en une request.
+// Backup retrieves the ENTIRE configuration in a single request.
 //
-// LECTURE SEULE, et le filet de security de cette plateforme. SwOS applique et
-// persiste d'un seul geste (cf. Capabilities.Commit) : il n'existe aucun rollback
-// gratuit, et la seule way de revenir en arriere after une write malheureuse
-// est de restaurer un fichier de sauvegarde. Le prendre AVANT to write ne costs
-// qu'une request et environ trois kilo-octets.
+// READ ONLY, and this platform's safety net. SwOS applies and
+// persists changes in a single step (cf. Capabilities.Commit): there is no free
+// rollback, and the only way to go back after an unfortunate write
+// is to restore a backup file. Taking it BEFORE writing costs
+// only one request and roughly three kilobytes.
 //
-// La restauration, elle, n'est pas ici : c'est un POST multipart vers la same
-// URL, qu'aucun essai n'a pu valider (cf. le rapport de livraison). La proposer
-// sans l'avoir verified serait promettre un filet qui n'existe peut-be pas.
+// Restoring, however, is not implemented here: it's a multipart POST to the same
+// URL, which no attempt managed to validate (cf. the delivery report). Offering it
+// without having verified it would promise a safety net that might not exist.
 func (a *Admin) Backup(ctx context.Context) (string, error) {
 	var body, err = a.raw(ctx, PageBackup)
 	if err != nil {
 		return "", err
 	}
-	// The device rend un corps VIDE quand la configuration est celle d'usine —
-	// son interface affiche alors « Default configuration. Nothing to save. ».
-	// Ce n'est pas un failure, et le confondre avec une lecture ratee ferait refuser
-	// to write sur un device fraichement remis a zero, i.e. exactement
-	// celui qu'on veut adopter.
+	// The device returns an EMPTY body when the configuration is the factory one —
+	// its interface then displays "Default configuration. Nothing to save.".
+	// This is not a failure, and confusing it with a failed read would cause a refusal
+	// to write to a freshly reset device, i.e. exactly
+	// the one we want to adopt.
 	if strings.TrimSpace(body) == "" {
-		a.step(true, "aucune sauvegarde a prendre",
-			"the device porte la configuration d'usine : il n'y a rien a restaurer")
+		a.step(true, "no backup to take",
+			"the device holds the factory configuration: there is nothing to restore")
 		return "", nil
 	}
-	a.step(true, "sauvegarde de configuration prise avant write",
-		fmt.Sprintf("%d octets — c'est le SEUL retour arriere de cette plateforme", len(body)))
+	a.step(true, "configuration backup taken before write",
+		fmt.Sprintf("%d bytes — this is this platform's ONLY way back", len(body)))
 	return body, nil
 }
 
-// Geometry lit la geometry du model : nombre de ports, nombre de cages SFP,
-// index de la first cage.
+// Geometry reads the model's geometry: port count, SFP cage count,
+// index of the first cage.
 //
-// Necessaire AVANT toute write sur /fwd.b, dont le jeu de champs inscriptible
-// depend du nombre de ports (cf. FwdWritableFields). La lire rather que la deduire
-// du nom du model est le choix sur : c'est the device qui sait combien de ports
-// il a.
+// Necessary BEFORE any write to /fwd.b, whose writable field set
+// depends on the port count (cf. FwdWritableFields). Reading it rather than deducing
+// it from the model name is the safe choice: it's the device that knows how many
+// ports it has.
 func (a *Admin) Geometry(ctx context.Context) (int, int, int, error) {
 	if a.ports > 0 {
 		return a.ports, a.sfp, a.sfpFirst, nil
@@ -274,206 +274,206 @@ func (a *Admin) Geometry(ctx context.Context) (int, int, int, error) {
 	}
 	var ports, sfp, first, geoErr = geometryOf(link)
 	if geoErr != nil {
-		a.step(false, "geometry du model illisible", geoErr.Error())
+		a.step(false, "model geometry unreadable", geoErr.Error())
 		return 0, 0, 0, geoErr
 	}
 	a.ports, a.sfp, a.sfpFirst = ports, sfp, first
-	a.step(true, "geometry du model lue",
-		fmt.Sprintf("%d ports dont %d cage(s) SFP, la first a l'index %d",
+	a.step(true, "model geometry read",
+		fmt.Sprintf("%d ports including %d SFP cage(s), the first at index %d",
 			ports, sfp, first))
 	return ports, sfp, first, nil
 }
 
-// geometryOf extrait la geometry de /link.b. Fonction pure, donc verifiable sur
-// une capture.
+// geometryOf extracts the geometry from /link.b. A pure function, so it's testable
+// against a capture.
 func geometryOf(link *Page) (int, int, int, error) {
 	var prt, ok = link.Num(FieldPortCount)
 	if !ok || prt == 0 || prt > 512 {
-		return 0, 0, 0, fmt.Errorf("/link.b ne dit pas combien de ports a cet device "+
-			"(champ %q absent ou hors bornes)", FieldPortCount)
+		return 0, 0, 0, fmt.Errorf("/link.b doesn't say how many ports this device has "+
+			"(field %q missing or out of range)", FieldPortCount)
 	}
-	// Le nombre de cages est facultatif : un model tout cuivre n'en a pas.
+	// The cage count is optional: an all-copper model doesn't have any.
 	var sfp, _ = link.Num(FieldSFPCount)
 	if sfp > prt {
-		return 0, 0, 0, fmt.Errorf("/link.b annonce %d cage(s) SFP pour %d port(s)", sfp, prt)
+		return 0, 0, 0, fmt.Errorf("/link.b reports %d SFP cage(s) for %d port(s)", sfp, prt)
 	}
-	// `sfpo` absent : l'interface de the device place les cages a la FIN.
+	// `sfpo` absent: the device's interface places the cages at the END.
 	var first, hasOffset = link.Num(FieldSFPOffset)
 	if !hasOffset {
 		first = prt - sfp
 	}
 	if first > prt {
-		return 0, 0, 0, fmt.Errorf("/link.b place la first cage SFP a l'index %d "+
-			"pour %d port(s)", first, prt)
+		return 0, 0, 0, fmt.Errorf("/link.b places the first SFP cage at index %d "+
+			"for %d port(s)", first, prt)
 	}
 	return int(prt), int(sfp), int(first), nil
 }
 
-// postRaw envoie une write a the device.
+// postRaw sends a write to the device.
 //
-// Le geste est celui de son interface (`Q` dans son JavaScript) : un POST vers
-// l'URL DE LA PAGE, dont le corps est l'objet complet dans la syntaxe des pages —
-// ni un formulaire, ni du JSON. Les octets envoyes ici sont, a l'octet pres, ceux
-// que le navigateur envoie : `PostForm` du transport partage transmet le corps TEL
-// QUEL, sans le reencoder.
+// The gesture matches its interface (`Q` in its JavaScript): a POST to
+// THE PAGE'S URL, whose body is the full object in the pages' syntax —
+// neither a form nor JSON. The bytes sent here are, byte for byte, the same
+// ones the browser sends: the shared transport's `PostForm` transmits the body AS
+// IS, without re-encoding it.
 //
-// Le type de contenu est celui de l'interface de the device, `text/plain`, et
-// non le `application/x-www-form-urlencoded` d'un formulaire : c'est pour ce
-// connecteur que `PostText` a been ajoute au transport partage. Rien n'indique que
-// SwOS lise cet en-tete — le corps part dans un evaluateur — mais rien ne le
-// prouve non plus, et sur cette plateforme un refus est MUET. Envoyer ce que
-// the device a toujours vu costs moins cher que de le decouvrir sur le terrain.
+// The content type is that of the device's interface, `text/plain`, and
+// not the `application/x-www-form-urlencoded` of a form: it's for this
+// connector that `PostText` was added to the shared transport. Nothing indicates that
+// SwOS reads this header — the body ends up in an evaluator — but nothing
+// proves otherwise either, and on this platform a refusal is SILENT. Sending what
+// the device has always seen costs less than discovering the hard way in the field.
 //
-// Ce que the device repond quand il accepte : 200 et un corps VIDE. Son interface
-// ne lit rien d'autre que le code HTTP — il n'y a donc aucun message d'erreur a
-// traduire, et la seule verification possible est de RELIRE la page.
+// What the device answers when it accepts: 200 and an EMPTY body. Its interface
+// reads nothing but the HTTP code — so there is no error message to
+// translate, and the only possible verification is to RE-READ the page.
 func (a *Admin) postRaw(ctx context.Context, page, body, what string) error {
 	return a.post(ctx, page, body, what, true)
 }
 
-// postRawSecret est postRaw pour une page dont le corps porte un SECRET.
+// postRawSecret is postRaw for a page whose body carries a SECRET.
 //
-// Le transcript est fait pour be lu, montre et conserve : une community SNMP ou un
-// digest de mot de passe qui y atterrit y reste. Seule la taille du corps est
-// consignee — assez pour verify qu'une write est bien partie, pas assez pour
-// divulguer ce qu'elle portait.
+// The transcript is meant to be read, shown, and kept: an SNMP community or a
+// password digest that lands in it stays there. Only the body's size is
+// logged — enough to verify that a write did go out, not enough to
+// disclose what it carried.
 func (a *Admin) postRawSecret(ctx context.Context, page, body, what string) error {
 	return a.post(ctx, page, body, what, false)
 }
 
 func (a *Admin) post(ctx context.Context, page, body, what string, logBody bool) error {
-	var sent = fmt.Sprintf("%d octets (corps non consigne : il porte un secret)", len(body))
+	var sent = fmt.Sprintf("%d bytes (body not logged: it carries a secret)", len(body))
 	if logBody {
-		sent = "corps envoye : " + excerpt(body, 400)
+		sent = "body sent: " + excerpt(body, 400)
 	}
 	var resp, err = a.web.PostText(ctx, page, body)
 	if err != nil {
-		a.step(false, what, "POST "+page+" : "+err.Error())
+		a.step(false, what, "POST "+page+": "+err.Error())
 		return err
 	}
 	if resp.Status != 200 {
-		a.step(false, what+" — REFUSED par the device",
+		a.step(false, what+" — REFUSED by the device",
 			fmt.Sprintf("POST %s → HTTP %d | %s", page, resp.Status, sent))
-		return fmt.Errorf("%s : the device a repondu HTTP %d", page, resp.Status)
+		return fmt.Errorf("%s: the device responded HTTP %d", page, resp.Status)
 	}
 	a.step(true, what, fmt.Sprintf("POST %s → HTTP 200 | %s", page, sent))
 	return nil
 }
 
-// --- Le mot de passe d'administration ---
+// --- The administration password ---
 
-// FixedAdminName est le SEUL nom de compte de SwOS.
+// FixedAdminName is the ONLY account name on SwOS.
 //
-// Ce n'est pas une hypothese de prudence : la plateforme n'a pas de notion de
-// compte. Le formulaire de changement de mot de passe ne porte que trois champs
-// (ancien, nouveau, confirmation), la page qui le receives ne contient qu'une key
-// (`{pwd:”}`), et la sauvegarde de configuration ENTIRE de the device ne
-// mentionne aucun nom d'utilisateur — observed sur CSS326-24G-2S+ en SwOS 2.17,
-// testdata/backup.swb. Il n'y a donc rien a nommer.
+// This isn't a cautious assumption: the platform has no notion of an
+// account. The password-change form carries only three fields
+// (old, new, confirmation), the page that receives it contains only one key
+// (`{pwd:”}`), and the ENTIRE configuration backup of the device
+// mentions no username at all — observed on the CSS326-24G-2S+ running SwOS 2.17,
+// testdata/backup.swb. So there is nothing to name.
 //
-// Consequence pour meshcraft, et elle compte : le nom de compte unifie du parc
-// (`mcadmin`) ne peut PAS be applied ici. C'est le role de
-// AdminAccount.EffectiveUsername de le resoudre en `admin`, et de
-// Capabilities.Admin.Custom=false de l'annoncer avant qu'une pose ne l'apprenne.
+// Consequence for meshcraft, and it matters: the fleet's unified account name
+// (`mcadmin`) can NOT be applied here. It's AdminAccount.EffectiveUsername's
+// job to resolve it to `admin`, and Capabilities.Admin.Custom=false's job to
+// announce it before a run finds out the hard way.
 const FixedAdminName = "admin"
 
-// maxPasswordLen est la longueur maximale admise, imposee par l'interface de
-// the device : elle refuse au-dela de 15 caracteres, pour l'ancien
-// (« Bad old password ») comme pour le nouveau (« New password is too long »).
+// maxPasswordLen is the maximum length accepted, imposed by the device's
+// interface: it refuses anything over 15 characters, for the old password
+// ("Bad old password") as well as the new one ("New password is too long").
 const maxPasswordLen = 15
 
-// SetPassword change le mot de passe d'administration.
+// SetPassword changes the administration password.
 //
-// NON VERIFIED SUR HARDWARE. Le geste et l'algorithme sont observed a la lettre dans
-// le JavaScript de the device, mais aucune write n'a pu be menee depuis
-// l'hote de developpement — l'outil access a travers le tunnel est en lecture
-// seule par decision d'architecture. Voir le rapport de livraison pour la commande
-// exacte a passer.
+// NOT VERIFIED ON HARDWARE. The gesture and the algorithm are observed to the letter
+// in the device's JavaScript, but no write could ever be carried out from
+// the development host — the tool's access through the tunnel is read
+// only, by architectural decision. See the delivery report for the exact
+// command to run.
 //
-// Le geste : `POST /!pwd.b`, corps `{pwd:'<64 chiffres hex>'}`.
+// The gesture: `POST /!pwd.b`, body `{pwd:'<64 hex digits>'}`.
 //
-// Les codes de retour de the device, tels que son interface les distingue :
-// 200 accepted, **405 ancien mot de passe incorrect**. Ce 405 est le seul message
-// d'erreur utile de toute la plateforme, et le traduire correctement evite de
-// conclure a une panne there where il ne manque qu'un secret.
+// The device's return codes, as its interface distinguishes them:
+// 200 accepted, **405 wrong old password**. This 405 is the only useful error
+// message on the whole platform, and translating it correctly avoids
+// concluding there's an outage where the only thing missing is a secret.
 //
-// The device RECHARGE ensuite sa page : le nouveau secret prend effet
-// immediatement, et la request suivante doit le present .
+// The device then RELOADS its page: the new secret takes effect
+// immediately, and the following request must present it.
 func (a *Admin) SetPassword(ctx context.Context, oldSecret, newSecret string) error {
 	var blob, err = PasswordBlob(newSecret, oldSecret)
 	if err != nil {
-		a.step(false, "mot de passe refused avant envoi", err.Error())
+		a.step(false, "password refused before sending", err.Error())
 		return err
 	}
-	// La valeur n'est pas du texte a hex-encoder mais un digest ALREADY en
-	// hexadecimal : il se pose brut. Le reencoder doublerait l'encodage et
-	// the device lirait un secret de 64 caracteres qui n'est pas le bon.
+	// The value isn't text to hex-encode but a digest that's ALREADY in
+	// hexadecimal: it's sent raw. Re-encoding it would double the encoding, and
+	// the device would read a 64-character secret that isn't the right one.
 	var page = NewPage()
 	page.set("pwd", Value{Kind: KindStr, Raw: blob})
 
 	var resp, postErr = a.web.PostText(ctx, PagePassword, page.Encode())
 	if postErr != nil {
-		a.step(false, "changement du mot de passe d'administration", postErr.Error())
+		a.step(false, "administration password change", postErr.Error())
 		return postErr
 	}
 	switch resp.Status {
 	case 200:
-		// The device porte now le nouveau secret : la session doit le
-		// present , sinon toute lecture suivante repondrait 401 et passerait pour
-		// une panne.
+		// The device now holds the new secret: the session must
+		// present it, otherwise every following read would answer 401 and would look
+		// like an outage.
 		a.web.SetAuth(driver.AuthDigest, a.User, newSecret)
-		a.step(true, "mot de passe d'administration changed",
-			"POST "+PagePassword+" → HTTP 200 ; la session present now le nouveau secret")
+		a.step(true, "administration password changed",
+			"POST "+PagePassword+" → HTTP 200; the session now presents the new secret")
 		return nil
 	case 405:
-		a.step(false, "ancien mot de passe incorrect",
-			"POST "+PagePassword+" → HTTP 405 : the device a rejete l'ANCIEN secret, "+
-				"le nouveau n'a pas been applied")
-		return fmt.Errorf("the device refuse l'ancien mot de passe (HTTP 405)")
+		a.step(false, "wrong old password",
+			"POST "+PagePassword+" → HTTP 405: the device rejected the OLD secret, "+
+				"the new one was not applied")
+		return fmt.Errorf("the device refuses the old password (HTTP 405)")
 	}
-	a.step(false, "changement du mot de passe REFUSED",
+	a.step(false, "password change REFUSED",
 		fmt.Sprintf("POST %s → HTTP %d", PagePassword, resp.Status))
-	return fmt.Errorf("changement de mot de passe refused (HTTP %d)", resp.Status)
+	return fmt.Errorf("password change refused (HTTP %d)", resp.Status)
 }
 
-// PasswordBlob calcule ce que SwOS attend dans `{pwd:…}`.
+// PasswordBlob computes what SwOS expects in `{pwd:…}`.
 //
-// L'algorithme est observed a la lettre dans le JavaScript de the device
-// (fonctions `sa` et `ra` de son index.html, CSS326-24G-2S+ en SwOS 2.17) :
+// The algorithm is observed to the letter in the device's JavaScript
+// (functions `sa` and `ra` of its index.html, CSS326-24G-2S+ running SwOS 2.17):
 //
-//	tampon = octets(ancien) + 0x00 + octets(nouveau), complete de 0x00 a 32 octets
-//	key    = ancien, ou « * » si l'ancien est VIDE, repete puis coupe a 16 octets
-//	flux   = RC4(key), sans rejet initial
-//	pour i de 0 a 63 : tampon[i mod 32] ^= flux[i]
-//	result = hexadecimal des 32 octets
+//	buffer = bytes(old) + 0x00 + bytes(new), padded with 0x00 to 32 bytes
+//	key    = old, or "*" if old is EMPTY, repeated then cut to 16 bytes
+//	stream = RC4(key), with no initial drop
+//	for i from 0 to 63: buffer[i mod 32] ^= stream[i]
+//	result = hexadecimal of the 32 bytes
 //
-// Deux details qu'on ne devinerait pas et qui decident du success :
+// Two details you would not guess and that decide success:
 //
-//   - la key RC4 est l'ANCIEN mot de passe. Un device sorti d'usine en a un
-//     vide, hence le remplacement par « * » — sans lui, RC4 n'aurait pas de key, et
-//     c'est tres exactement le cas de l'reference device, dont le mot de
-//     passe est vide ;
-//   - le flux est applique SOIXANTE-QUATRE fois sur trente-deux octets, donc deux
-//     tours. S'stop a 32 produit un digest plausible que the device rejette.
+//   - the RC4 key is the OLD password. A device fresh out of the factory has an
+//     empty one, hence the substitution with "*" — without it, RC4 would have no key,
+//     and that is exactly the case of the reference device, whose password
+//     is empty;
+//   - the stream is applied SIXTY-FOUR times over thirty-two bytes, i.e. two
+//     passes. Stopping at 32 produces a plausible-looking digest that the device rejects.
 //
-// Les caracteres doivent be de l'ASCII : l'interface de the device construit
-// ses octets avec `charCodeAt`, qui rend des unites UTF-16. Au-dela de 127, ce que
-// le navigateur envoie et ce que Go enverrait divergeraient, et le mot de passe
-// applied ne serait pas celui qu'on croit — sur une plateforme sans serial port, cela
-// se repare avec un trombone. La verification est donc faite ICI, avant l'envoi.
+// The characters must be ASCII: the device's interface builds
+// its bytes with `charCodeAt`, which returns UTF-16 code units. Beyond 127, what
+// the browser would send and what Go would send would diverge, and the password
+// applied would not be the one intended — on a platform with no serial port, that
+// gets fixed with a paperclip. The check is therefore done HERE, before sending.
 func PasswordBlob(newSecret, oldSecret string) (string, error) {
-	var err = checkPassword("nouveau mot de passe", newSecret)
+	var err = checkPassword("new password", newSecret)
 	if err != nil {
 		return "", err
 	}
-	if err = checkPassword("ancien mot de passe", oldSecret); err != nil {
+	if err = checkPassword("old password", oldSecret); err != nil {
 		return "", err
 	}
 
 	var buf = make([]byte, 32)
 	copy(buf, oldSecret)
-	// L'octet NUL separates l'ancien du nouveau ; il est already en place puisque le
-	// tampon part a zero. Le nouveau commence juste after.
+	// The NUL byte separates the old password from the new one; it's already in
+	// place since the buffer starts at zero. The new one begins right after.
 	if len(oldSecret)+1 < len(buf) {
 		copy(buf[len(oldSecret)+1:], newSecret)
 	}
@@ -491,8 +491,8 @@ func PasswordBlob(newSecret, oldSecret string) (string, error) {
 	if rcErr != nil {
 		return "", rcErr
 	}
-	// XORKeyStream sur des zeros rend le flux lui-same : c'est la way la plus
-	// directe d'obtenir les 64 octets de flux qu'exige l'algorithme.
+	// XORKeyStream on zeros returns the stream itself: it's the most
+	// direct way to obtain the 64 stream bytes the algorithm requires.
 	var ks = make([]byte, 64)
 	stream.XORKeyStream(ks, ks)
 	var i int
@@ -504,24 +504,24 @@ func PasswordBlob(newSecret, oldSecret string) (string, error) {
 
 func checkPassword(label, s string) error {
 	if len(s) > maxPasswordLen {
-		return fmt.Errorf("%s : %d caracteres, the device en accepte %d au plus",
+		return fmt.Errorf("%s: %d characters, the device accepts at most %d",
 			label, len(s), maxPasswordLen)
 	}
 	var i int
 	for i = 0; i < len(s); i++ {
 		if s[i] > 0x7f {
-			return fmt.Errorf("%s : SwOS n'accepte que de l'ASCII, et le caractere a la "+
-				"position %d n'en est pas — le poser rendrait the device inaccessible", label, i+1)
+			return fmt.Errorf("%s: SwOS only accepts ASCII, and the character at "+
+				"position %d is not one — sending it would make the device inaccessible", label, i+1)
 		}
 	}
 	return nil
 }
 
-// Note ajoute au transcript ce qu'un chemin a repondu. Sert a la reconnaissance
-// d'un firmware inconnu : distinguer une page absente d'une page vide sans ouvrir
-// de navigateur.
+// Note adds to the transcript what a path answered. Used for recognizing
+// an unknown firmware: telling an absent page apart from an empty one without opening
+// a browser.
 func (a *Admin) Note(page string, status int, body string) {
 	a.step(status == 200 && !strings.Contains(body, "<!doctype"),
-		"response de "+page,
-		fmt.Sprintf("HTTP %d, %d octets : %s", status, len(body), excerpt(body, 200)))
+		"response from "+page,
+		fmt.Sprintf("HTTP %d, %d bytes: %s", status, len(body), excerpt(body, 200)))
 }

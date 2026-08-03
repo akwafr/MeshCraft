@@ -170,7 +170,7 @@ func TestWordLengthRoundTrip(t *testing.T) {
 // TestReservedPrefixIsMisalignment: 0xF8 through 0xFF are not lengths.
 //
 // The specification reserves them for control bytes. Encountering them does NOT mean
-// « giant word »: it means we are no longer reading the stream we think we are.
+// 'giant word': it means we are no longer reading the stream we think we are.
 // Continuing would consume random bytes until a timeout whose message would say
 // nothing — hence a refusal that NAMES the misalignment.
 func TestReservedPrefixIsMisalignment(t *testing.T) {
@@ -272,7 +272,7 @@ func TestValueWithEqualsIsNotTruncated(t *testing.T) {
 // TestPresentEmptyAttrIsNotAbsent
 //
 // The protocol uses this for FLAGS (`=once=` on `monitor`). Confusing the two would
-// read « this module does not report signal loss » where the firmware simply does not
+// read 'this module does not report signal loss' where the firmware simply does not
 // say so — two facts indistinguishable on screen that call for different conclusions.
 func TestPresentEmptyAttrIsNotAbsent(t *testing.T) {
 	var rep = parseReply(Sentence{"!re", "=sfp-rx-loss", "=name=sfp-sfpplus1"})
@@ -291,8 +291,8 @@ func TestPresentEmptyAttrIsNotAbsent(t *testing.T) {
 
 // TestTrapBecomesErrorWithMessage
 //
-// A `!trap` returned as an empty record would conclude « this menu is empty » where
-// the device said « you do not have permission ». The two are fixed by opposite
+// A `!trap` returned as an empty record would conclude 'this menu is empty' where
+// the device said 'you do not have permission'. The two are fixed by opposite
 // actions: look for a missing feature, or fix a group policy.
 func TestTrapBecomesErrorWithMessage(t *testing.T) {
 	var c = simulatedDevice(t, func(phrase Sentence) []Sentence {
@@ -368,7 +368,7 @@ func TestMismatchedTagAbandonsSession(t *testing.T) {
 
 // TestCommandWithoutSlashRefusedBeforeSend
 //
-// A command of this protocol starts with « / ». Without that, the device would read it
+// A command of this protocol starts with '/'. Without that, the device would read it
 // as an attribute word and respond with an unrelated `!fatal` — a diagnosis impossible
 // to tie back to its cause. Refusal therefore happens BEFORE sending.
 func TestCommandWithoutSlashRefusedBeforeSend(t *testing.T) {
@@ -379,7 +379,7 @@ func TestCommandWithoutSlashRefusedBeforeSend(t *testing.T) {
 	})
 	var _, err = c.Do(context.Background(), "interface/print")
 	if err == nil {
-		t.Fatal("a command without « / » must be refused")
+		t.Fatal("a command without '/' must be refused")
 	}
 	if called {
 		t.Error("refusal must happen BEFORE anything is sent")
@@ -393,8 +393,8 @@ func TestCommandWithoutSlashRefusedBeforeSend(t *testing.T) {
 // controller's memory with FIVE bytes sent.
 func TestWordTooLongRefusedWithoutAllocating(t *testing.T) {
 	var clientSide, deviceSide = net.Pipe()
-	defer clientSide.Close()     //nolint:errcheck
-	defer deviceSide.Close()     //nolint:errcheck
+	defer clientSide.Close() //nolint:errcheck
+	defer deviceSide.Close() //nolint:errcheck
 	var c = &APIConn{conn: clientSide, br: bufio.NewReader(clientSide)}
 
 	go func() {
@@ -448,7 +448,7 @@ func TestModernLoginInOneSentence(t *testing.T) {
 //
 // # Three details that produce the SAME unreadable symptom
 //
-// « cannot log in » on a secret that is nonetheless good, with nothing to say which
+// 'cannot log in' on a secret that is nonetheless good, with nothing to say which
 // of the three:
 //
 //  1. the leading NUL byte is in the HASH, the leading `00` is in the RETURNED string.
@@ -497,7 +497,7 @@ func TestLegacyLoginRespondsToChallenge(t *testing.T) {
 	if seenResponse != expectedResponse {
 		t.Errorf("wrong challenge response.\n  got:      %s\n  expected: %s\n"+
 			"The three possible causes are in this test's comment, and they all produce "+
-			"the same « cannot log in » on a good secret.",
+			"the same 'cannot log in' on a good secret.",
 			seenResponse, expectedResponse)
 	}
 	// The secret must NEVER travel in clear on this path: the only property legacy
@@ -510,7 +510,7 @@ func TestLegacyLoginRespondsToChallenge(t *testing.T) {
 
 // TestUnreadableChallengeRefusedWithReason
 //
-// A challenge that is not hexadecimal must not be hashed « anyway »: that would produce
+// A challenge that is not hexadecimal must not be hashed 'anyway': that would produce
 // a valid and false digest, therefore a refusal whose message would say nothing.
 func TestUnreadableChallengeRefusedWithReason(t *testing.T) {
 	var c = simulatedDevice(t, func(phrase Sentence) []Sentence {
@@ -527,7 +527,7 @@ func TestUnreadableChallengeRefusedWithReason(t *testing.T) {
 
 // TestLoginRefusalSurfacesDeviceReason
 //
-// « cannot log in » has TWO causes on this platform, and the device does not distinguish
+// 'cannot log in' has TWO causes on this platform, and the device does not distinguish
 // them: a wrong secret, or a valid secret in a group that does not carry the `api`
 // policy. The message must name the second, or you search for a password for an hour.
 func TestLoginRefusalSurfacesDeviceReason(t *testing.T) {
@@ -548,7 +548,7 @@ func TestLoginRefusalSurfacesDeviceReason(t *testing.T) {
 
 // TestEmptyDoesNotCountAsRecord — RouterOS ≥ 7.18.
 //
-// `!empty` says « there is nothing », explicitly. Counting it as a record would
+// `!empty` says 'there is nothing', explicitly. Counting it as a record would
 // fabricate an empty one, and a caller testing `len(rows) > 0` would conclude it
 // found something.
 func TestEmptyDoesNotCountAsRecord(t *testing.T) {
@@ -568,7 +568,7 @@ func TestEmptyDoesNotCountAsRecord(t *testing.T) {
 //
 // `/login`'s `!done` carries the challenge in `=ret=`: dropping it would lose legacy
 // login, and the symptom would be an unauthenticated session whose first command
-// answers « not enough permissions » — a message that sends you looking for group
+// answers 'not enough permissions' — a message that sends you looking for group
 // policy where a sentence is missing.
 func TestDoneWithAttrsPreservesThem(t *testing.T) {
 	var c = simulatedDevice(t, func(phrase Sentence) []Sentence {

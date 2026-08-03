@@ -68,11 +68,54 @@ export function seriesOf(t: DeviceTelemetry | undefined, metric: string): TeleSe
   return t?.device.find((s) => s.metric === metric);
 }
 
+/** Align sparse timestamped samples onto a fixed chart grid; null = empty slot. */
+export function densifyPoints(
+  points: { ts: string; value: number }[],
+  stepSeconds: number,
+  windowSeconds: number,
+): (number | null)[] {
+  if (stepSeconds <= 0 || windowSeconds <= 0) {
+    return points.map((p) => p.value);
+  }
+  var n = Math.floor(windowSeconds / stepSeconds) + 1;
+  if (n < 2) n = 2;
+  var endMs = Date.now();
+  if (points.length > 0) {
+    var last = Date.parse(points[points.length - 1].ts);
+    if (!Number.isNaN(last)) endMs = last;
+  }
+  var halfMs = (stepSeconds * 1000) / 2;
+  var samples = points
+    .map((p) => ({ t: Date.parse(p.ts), v: p.value }))
+    .filter((p) => !Number.isNaN(p.t));
+  var out: (number | null)[] = [];
+  var i = 0;
+  for (i = 0; i < n; i++) {
+    var want = endMs - (n - 1 - i) * stepSeconds * 1000;
+    var best: number | null = null;
+    var bestDist = halfMs + 1;
+    var j = 0;
+    for (j = 0; j < samples.length; j++) {
+      var d = Math.abs(samples[j].t - want);
+      if (d <= halfMs && d < bestDist) {
+        bestDist = d;
+        best = samples[j].v;
+      }
+    }
+    out.push(best);
+  }
+  return out;
+}
+
 /** Both traffic directions for one port, as drawn on the device page. */
 export function portTraffic(t: DeviceTelemetry | undefined, port: string) {
-  const pick = (metric: string) =>
-    t?.ports.find((s) => s.metric === metric && s.port === port)?.points.map((p) => p.value) ?? [];
-  return { rx: pick(M.octIn), tx: pick(M.octOut) };
+  var step = t?.step_seconds ?? 0;
+  var window = t?.window_seconds ?? 0;
+  var densify = (metric: string) => {
+    var raw = t?.ports.find((s) => s.metric === metric && s.port === port)?.points ?? [];
+    return densifyPoints(raw, step, window);
+  };
+  return { rx: densify(M.octIn), tx: densify(M.octOut) };
 }
 
 /** Human-readable uptime (rounded to largest meaningful step). */
@@ -331,9 +374,10 @@ export function TelemetryPanel({
               series={temps.map((s, i) => ({
                 name: s.sensor || t("telemetry.board"),
                 color: i === 0 ? SERIES.out : SERIES.third,
-                points: s.points.map((p) => p.value),
+                points: s.points,
               }))}
               stepSeconds={tel?.step_seconds ?? 0}
+              windowSeconds={tel?.window_seconds ?? 0}
               digits={1}
             />
           )}
@@ -346,21 +390,35 @@ export function TelemetryPanel({
                   ? [{
                       name: t("telemetry.processor"),
                       color: SERIES.in,
-                      points: cpu.points.map((p) => p.value),
+                      points: cpu.points,
                     }]
                   : []),
-                ...(memFree && memTotal && memTotal.points.length === memFree.points.length
+                ...(memFree && memTotal
                   ? [{
                       name: t("telemetry.memory"),
                       color: SERIES.third,
-                      points: memFree.points.map((p, i) => {
-                        const tot = memTotal.points[i]?.value ?? 0;
-                        return tot > 0 ? ((tot - p.value) / tot) * 100 : 0;
-                      }),
+                      // Pair by timestamp on the densified grid via combined series:
+                      // build % used points from free/total at matching times.
+                      points: (() => {
+                        const step = tel?.step_seconds ?? 0;
+                        const win = tel?.window_seconds ?? 0;
+                        const free = densifyPoints(memFree.points, step, win);
+                        const tot = densifyPoints(memTotal.points, step, win);
+                        const out: { ts: string; value: number }[] = [];
+                        const end = Date.now();
+                        free.forEach((f, i) => {
+                          const tval = tot[i];
+                          if (f == null || tval == null || tval <= 0) return;
+                          const ts = new Date(end - (free.length - 1 - i) * step * 1000).toISOString();
+                          out.push({ ts, value: ((tval - f) / tval) * 100 });
+                        });
+                        return out;
+                      })(),
                     }]
                   : []),
               ]}
               stepSeconds={tel?.step_seconds ?? 0}
+              windowSeconds={tel?.window_seconds ?? 0}
             />
           )}
           {hasErrSeries && (
@@ -369,13 +427,14 @@ export function TelemetryPanel({
               unit="/s"
               series={[
                 ...(errIn
-                  ? [{ name: t("telemetry.incoming"), color: SERIES.in, points: errIn.points.map((p) => p.value) }]
+                  ? [{ name: t("telemetry.incoming"), color: SERIES.in, points: errIn.points }]
                   : []),
                 ...(errOut
-                  ? [{ name: t("telemetry.outgoing"), color: SERIES.out, points: errOut.points.map((p) => p.value) }]
+                  ? [{ name: t("telemetry.outgoing"), color: SERIES.out, points: errOut.points }]
                   : []),
               ]}
               stepSeconds={tel?.step_seconds ?? 0}
+              windowSeconds={tel?.window_seconds ?? 0}
               digits={2}
             />
           )}
@@ -425,22 +484,29 @@ function TeleChart({
   unit,
   series,
   stepSeconds,
+  windowSeconds,
   digits = 0,
 }: {
   title: string;
   unit: string;
-  series: { name: string; color: string; points: number[] }[];
+  series: { name: string; color: string; points: { ts: string; value: number }[] }[];
   stepSeconds: number;
+  windowSeconds: number;
   digits?: number;
 }) {
   const { t } = useTranslation();
-  if (series.every((s) => s.points.length === 0)) return null;
+  const densified = series.map((s) => ({
+    name: s.name,
+    color: s.color,
+    points: densifyPoints(s.points, stepSeconds, windowSeconds),
+  }));
+  if (densified.every((s) => s.points.every((v) => v == null))) return null;
   return (
     <div>
       <div className="kicker" style={{ marginBottom: 4 }}>{title}</div>
       <LineChart
         height={132}
-        series={series}
+        series={densified}
         format={(v) => fmtNum(v, digits) + " " + unit}
         xLabel={(i, n) => {
           if (i === n - 1) return t("telemetry.now");

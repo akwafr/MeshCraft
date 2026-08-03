@@ -32,39 +32,39 @@ func TestDeuxPhrasesSeulementPourV3(t *testing.T) {
 		// Single-phrase kinds. Accepting has second would create has secret nothing
 		// consumes: never pushed, never rotated, yet displayed.
 		{
-			name:  "admin with second phrase: rejected",
+			name: "admin with second phrase: rejected",
 			kind: credKindAdmin, secret: "password", secret2: "other", rejected: true,
 		},
 		{
-			name:  "v2c community with second phrase: rejected",
+			name: "v2c community with second phrase: rejected",
 			kind: snmpprov.KindV2c, secret: "public-ro", secret2: "other", rejected: true,
 		},
 		{name: "ordinary admin", kind: credKindAdmin, secret: "password"},
 		{name: "ordinary v2c community", kind: snmpprov.KindV2c, secret: "public-ro"},
 		{
-			name:  "admin with nothing: label edit only, allowed",
+			name: "admin with nothing: label edit only, allowed",
 			kind: credKindAdmin,
 		},
 
 		// SNMPv3: the pair, the whole pair.
 		{
-			name:  "v3 with two distinct phrases: accepted",
+			name: "v3 with two distinct phrases: accepted",
 			kind: snmpprov.KindV3, secret: "AuthPhrase1", secret2: "PrivPhrase2",
 		},
 		{
-			name:  "v3 without encryption phrase: rejected, it is REQUIRED",
+			name: "v3 without encryption phrase: rejected, it is REQUIRED",
 			kind: snmpprov.KindV3, secret: "AuthPhrase1", rejected: true,
 		},
 		{
-			name:  "v3 without auth phrase: rejected too, both rotate together",
+			name: "v3 without auth phrase: rejected too, both rotate together",
 			kind: snmpprov.KindV3, secret2: "PrivPhrase2", rejected: true,
 		},
 		{
-			name:  "v3 with same phrase twice: rejected, encryption would add nothing",
+			name: "v3 with same phrase twice: rejected, encryption would add nothing",
 			kind: snmpprov.KindV3, secret: "SamePhrase", secret2: "SamePhrase", rejected: true,
 		},
 		{
-			name:  "v3 with no phrases: allowed, vault untouched",
+			name: "v3 with no phrases: allowed, vault untouched",
 			kind: snmpprov.KindV3,
 		},
 	}

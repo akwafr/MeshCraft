@@ -28,94 +28,9 @@ import {
 } from "../lldp";
 import { PortSquare, StatusDot } from "../netui";
 import { ghostPeerLinkStroke, linkCapacityMbps, linkSpeedLabel, topologyLinkStroke } from "../topologyLinks";
+import { TopologyLinkLabels } from "../TopologyLinkLabels";
 import { LinkTrafficTip, type LinkTrafficHover } from "../LinkTrafficTip";
-
-/** Rounded label behind topology link text — readable over crossing strokes. */
-function LinkLabelPill({
-  x,
-  y,
-  text,
-  fill = "var(--text-dim)",
-  fontSize = 9,
-  letterSpacing,
-}: {
-  x: number;
-  y: number;
-  text: string;
-  fill?: string;
-  fontSize?: number;
-  letterSpacing?: number;
-}) {
-  if (!text) return null;
-  const padX = 5;
-  const padY = 2.5;
-  const w = Math.max(20, text.length * fontSize * 0.58 + padX * 2);
-  const h = fontSize + padY * 2;
-  return (
-    <g pointerEvents="none">
-      <rect
-        x={x - w / 2}
-        y={y - h / 2}
-        width={w}
-        height={h}
-        rx={h / 2}
-        fill="var(--bg-panel)"
-        stroke="var(--border)"
-        strokeWidth={0.8}
-        opacity={0.94}
-      />
-      <text
-        x={x}
-        y={y + fontSize * 0.35}
-        fill={fill}
-        fontSize={fontSize}
-        letterSpacing={letterSpacing}
-        textAnchor="middle"
-      >
-        {text}
-      </text>
-    </g>
-  );
-}
-
-/** Port names near each end of a topology link. */
-function LinkPortEnds({
-  x1,
-  y1,
-  x2,
-  y2,
-  portA,
-  portB,
-  ox = 0,
-  oy = 0,
-}: {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  portA?: string | null;
-  portB?: string | null;
-  ox?: number;
-  oy?: number;
-}) {
-  const at = (t: number) => ({
-    x: x1 + (x2 - x1) * t + ox,
-    y: y1 + (y2 - y1) * t + oy,
-  });
-  // Close to the box edges (segment already stops on the border).
-  const a = at(0.1);
-  const b = at(0.9);
-  return (
-    <>
-      {portA ? (
-        <LinkLabelPill x={a.x} y={a.y - 11} text={portA} fontSize={8} fill="var(--text)" />
-      ) : null}
-      {portB ? (
-        <LinkLabelPill x={b.x} y={b.y - 11} text={portB} fontSize={8} fill="var(--text)" />
-      ) : null}
-    </>
-  );
-}
+import { claimHoverTip, registerHoverTip, releaseHoverTip } from "../hoverExclusive";
 
 type PlanBox = { x: number; y: number; w: number; h: number };
 
@@ -153,19 +68,20 @@ const linkDiagColor = (status: DeviceLink["status"]) =>
 const NODE_W = 176;
 const NODE_CX = 88;
 const NODE_CY = 38;
-// DEFAULT height of a node, by the time it is rendered and measured. A switch
-// loaded with ports largely exceeds this value: being satisfied with this would bring out
-// the equipment of the framework of its place. The actual height is measured (nodeH).
+// DEFAULT height of a node, until it has been rendered and measured. A
+// switch loaded with ports comfortably exceeds this value: settling for it
+// would make the device spill out of its zone frame. The actual height is
+// measured afterwards (nodeH).
 const NODE_H = 104;
 const ZONE_PAD = 16;
 const ZONE_PAD_TOP = 26;
 
-// LLDP_OFFSET: by how much an OBSERVED link shifts from the entered link that it doubles.
+// LLDP_OFFSET: by how much an OBSERVED link shifts from the entered link it duplicates.
 //
-// The two join the same box edges: without offset, an observation which confirms a
-// statement would be superimposed to the pixel, and one of the two would disappear.
-// Five pixels are enough to distinguish them without the line appearing to join
-// two other pieces of equipment.
+// Both join the same box edges: without an offset, an observation that confirms
+// a declared link would be superimposed pixel-for-pixel, and one of the two
+// would disappear. Five pixels are enough to tell them apart without the line
+// looking like it connects to different equipment.
 const LLDP_OFFSET = 5;
 
 // Zoom: essential when a site has a lot of equipment.
@@ -173,12 +89,12 @@ const ZOOM_KEY = "meshcraft.planZoom";
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2;
 const ZOOM_STEP = 1.2;
-// Below this factor the nodes switch to compact view: the boxes of
-// port are no longer readable, you might as well not draw them (and not pay the
-// rendu de plusieurs milliers d'entre elles).
+// Below this factor, nodes switch to compact view: port boxes are no longer
+// readable, so we might as well not draw them (and skip paying the
+// rendering cost for several thousand of them).
 const LOD_ZOOM = 0.6;
-// Sliding margin still available beyond the rightmost switch /
-// the lowest: the plane therefore never has an impassable edge.
+// Sliding margin still available beyond the rightmost or lowest switch: the
+// plan therefore never has a hard edge.
 const WORLD_SLACK = 280;
 const WORLD_MAX = 12000;
 
@@ -265,6 +181,10 @@ export default function Plan() {
   const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
   // 24 h bandwidth tip while the pointer rests on a topology link.
   const [linkHover, setLinkHover] = useState<LinkTrafficHover | null>(null);
+  const linkTrafficTipId = "topology-link-traffic";
+  useEffect(() => {
+    return registerHoverTip(linkTrafficTipId, () => setLinkHover(null));
+  }, [linkTrafficTipId]);
   // Temporary position while dragging (device id or LLDP peer key → {x,y}).
   const [dragPos, setDragPos] = useState<Record<string, { x: number; y: number }>>({});
   const dragRef = useRef<{
@@ -278,11 +198,11 @@ export default function Plan() {
   /**
    * ACTUAL height of each node, measured after rendering.
    *
-   * A place frame calculated on a guessed height does not contain what it
-   * claims to contain: as soon as a switch has more ports than average, it
-   * overflows from its own place. The frame being the only thing that says “these
-   * equipment is there”, an overflow is not a cosmetic defect — it
-   * fait mentir le plan.
+   * A zone frame computed from a guessed height doesn't actually contain
+   * what it claims to: as soon as a switch has more ports than average, it
+   * overflows its own zone. Since the frame is the only thing saying "this
+   * device lives here", an overflow is not a cosmetic glitch — it makes the
+   * plan lie.
    */
   const [nodeH, setNodeH] = useState<Record<string, number>>({});
   // ONE observer for all nodes, released when unmounted: create one
@@ -317,8 +237,8 @@ export default function Plan() {
   };
 
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  // Scrolling to apply just after a zoom change, to keep under
-  // the cursor the point of the plan which was there.
+  // Scroll offset to apply right after a zoom change, so the point of the
+  // plan that was under the cursor stays under the cursor.
   const scrollFix = useRef<{ left: number; top: number } | null>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(() => {
@@ -401,8 +321,8 @@ export default function Plan() {
     setZoom(z);
   };
 
-  // Ctrl/⌘ + wheel: zoom. Non-passive listener, otherwise impossible to prevent
-  // le zoom du navigateur.
+  // Ctrl/⌘ + wheel: zoom. Non-passive listener, otherwise the browser's own
+  // zoom cannot be prevented.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -415,9 +335,9 @@ export default function Plan() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoom]);
 
-  // Real time. Significant bonus here: the flow is not sent back to
-  // the tab that writes (see TAB_ID in api.ts), so drag and drop does not
-  // does not trigger a reload per saved move.
+  // Real-time. A meaningful bonus here: the update is not echoed back to
+  // the tab that wrote it (see TAB_ID in api.ts), so drag-and-drop does not
+  // trigger a reload on every saved move.
   const refetchInterval = useSiteLive(siteId);
 
   const { data: devices, error } = useQuery({
@@ -438,18 +358,21 @@ export default function Plan() {
     refetchInterval,
   });
   /**
-   * The LLDP neighborhood OBSERVED, query SEPARATE from that of the links entered.
+   * The OBSERVED LLDP neighborhood, in a query SEPARATE from the one for
+   * entered links.
    *
-   * Separated and not merged, for the reason which also applies to the base: they are two
-   * natures of fact. A seized connection is an intention that survives unplugging;
-   * a neighbor is a minute-old observation. Serve them with the same request
-   * would have invited them to display the same — and above all, the absence of findings should not
-   * never remove the declared site plan.
+   * Kept separate rather than merged, for the same reason that applies to
+   * the inventory: these are two different natures of fact. A hand-entered
+   * link is an intention that survives the cable being unplugged; a
+   * neighbor is a minute-old observation. Serving them from the same
+   * request would have invited them to be displayed the same way — and
+   * above all, the absence of an LLDP observation must never erase the
+   * declared site plan.
    *
-   * `refetchInterval` is that of the site, as for links: the controller does not
-   * notifie PAS les changements de voisinage (cf. handleProxyLLDP, qui explique
-   * why wake up all browsers twice per minute and per switch would have
-   * cost more than it brings).
+   * `refetchInterval` is the site's, same as for links: the controller does
+   * NOT notify neighborhood changes (see handleProxyLLDP, which explains
+   * why waking up every browser twice a minute per switch would cost more
+   * than it would bring).
    */
   const { data: lldp } = useQuery({
     queryKey: ["lldp", siteId],
@@ -575,9 +498,9 @@ export default function Plan() {
   })();
 
   /**
-   * Scope of the plan. It FOLLOWS the content (plus a sliding margin) and
-   * couvre au minimum la zone visible : aucune bande visible mais interdite au
-   * deposit, regardless of screen width or zoom.
+   * Extent of the plan. It FOLLOWS the content (plus a sliding margin) and
+   * covers at minimum the visible area: no strip that is visible but off
+   * limits for placement, regardless of screen width or zoom.
    */
   const extent = (() => {
     let mx = 0;
@@ -654,8 +577,8 @@ export default function Plan() {
   const onPointerMove = (e: React.PointerEvent) => {
     const dr = dragRef.current;
     if (!dr || role === "viewer") return;
-    // The pointer coordinates are in screen pixels: we return to space
-    // of the plan by dividing by the zoom factor of the start of the drag.
+    // Pointer coordinates are in screen pixels: we convert back to plan
+    // space by dividing by the zoom factor captured at the start of the drag.
     const x = Math.max(0, Math.min(WORLD_MAX - NODE_W, e.clientX / dr.zoom - dr.dx));
     const y = Math.max(0, Math.min(WORLD_MAX - NODE_H, e.clientY / dr.zoom - dr.dy));
     const prev = dragPos[dr.id];
@@ -733,6 +656,15 @@ export default function Plan() {
     return ports.find((p) => p.port === portName);
   };
 
+  const stpEdgeHint = (sp?: { edge?: boolean; edge_mode?: string }) => {
+    if (!sp) return "";
+    if (sp.edge_mode === "yes") return "edge";
+    if (sp.edge_mode === "auto") return "auto";
+    if (sp.edge_mode === "no") return "";
+    if (sp.edge) return "edge";
+    return "";
+  };
+
   const linkOnline = (a: Device | undefined, aPort: string, b: Device | undefined, bPort: string) => {
     if (!a || !b) return false;
     if (a.status === "off" || b.status === "off") return false;
@@ -751,8 +683,8 @@ export default function Plan() {
   };
 
   /**
-   * Rates of a port: same seeds as the switch view, so that the values
-   * match from one screen to another.
+   * Port rates: computed the same way as in the switch view, so the
+   * values match from one screen to another.
    */
   const portRates = (dev: Device | undefined, portName: string) => {
     if (!dev) return null;
@@ -814,7 +746,10 @@ export default function Plan() {
       clientY: e.clientY,
     };
   };
-  const onLinkHover = (h: LinkTrafficHover) => setLinkHover(h);
+  const onLinkHover = (h: LinkTrafficHover) => {
+    claimHoverTip(linkTrafficTipId);
+    setLinkHover(h);
+  };
   const onLinkHoverMove = (e: React.MouseEvent, key: string) => {
     setLinkHover((cur) =>
       cur && cur.key === key
@@ -823,7 +758,11 @@ export default function Plan() {
     );
   };
   const onLinkHoverLeave = (key: string) => {
-    setLinkHover((cur) => (cur?.key === key ? null : cur));
+    setLinkHover((cur) => {
+      if (cur?.key !== key) return cur;
+      releaseHoverTip(linkTrafficTipId);
+      return null;
+    });
   };
 
   const diagnostics = (links ?? []).filter((l) => l.status !== "up" || l.note);
@@ -831,8 +770,8 @@ export default function Plan() {
 
   /**
    * The dotted frames are DERIVED from the equipment: one zone per
-   * location, drawn around its switches. Moving a distorted switch
-   * donc son cadre, et changer son emplacement le fait changer de zone —
+   * location, drawn around its switches. Moving a switch therefore
+   * distorts its frame, and changing its location makes it change zone —
    * no geometry to maintain by hand.
    */
   const measure = (id: string) => (el: HTMLDivElement | null) => {
@@ -853,8 +792,9 @@ export default function Plan() {
     return [...byLocation].map(([label, members]) => {
       const xs = members.map((d) => posOf(d).x);
       const ys = members.map((d) => posOf(d).y);
-      // The bottom of the frame follows the LOWEST descending node, actual height
-      // understood — and not the lowest knot placed, which may be the shortest.
+      // The bottom of the frame follows the LOWEST-reaching node, actual
+      // height included — not the node placed lowest on screen, which
+      // might be the shortest one.
       const bottoms = members.map((d) => posOf(d).y + (nodeH[d.id] ?? NODE_H));
       const left = Math.min(...xs) - ZONE_PAD;
       const top = Math.min(...ys) - ZONE_PAD_TOP;
@@ -1087,11 +1027,6 @@ export default function Plan() {
                   });
               const towardA = lx1 <= lx2 ? "◂" : "▸";
               const towardB = lx1 <= lx2 ? "▸" : "◂";
-              const at = (t: number) => ({
-                x: lx1 + (lx2 - lx1) * t,
-                y: ly1 + (ly2 - ly1) * t,
-              });
-              const pA = at(0.28), pB = at(0.72);
               const stpA = stpPortOf(a, l.a_port);
               const stpB = b ? stpPortOf(b, l.b_port ?? "") : undefined;
               const midLabel = !online
@@ -1102,11 +1037,18 @@ export default function Plan() {
                       (stpA?.path_cost || stpB?.path_cost)
                         ? `cost ${stpA?.path_cost || stpB?.path_cost}`
                         : "",
+                      stpEdgeHint(stpA) || stpEdgeHint(stpB),
                     ].filter(Boolean).join(" · ") || drv.label
                   : drv.label;
               const peerPort = l.b_port || l.b_port_label || ghost?.portLabel || "";
               const peerName = b?.name || ghost?.label || "?";
               const hoverKey = `lldp-${l.a_device}-${l.a_port}-${l.b_device ?? ghost?.key}-${l.b_port ?? ""}`;
+              const speedText =
+                midLabel + (!isGhost && lldpLinkKind(l) === "one_side" ? " · ½" : "");
+              const stpExtra =
+                stpView && online && b
+                  ? [stpA?.state, stpB?.state].filter(Boolean).join(" / ")
+                  : "";
               return (
                 <g
                   key={hoverKey}
@@ -1140,39 +1082,20 @@ export default function Plan() {
                     strokeDasharray={st.strokeDasharray} opacity={st.opacity}
                     filter={st.filter}
                   />
-                  <LinkPortEnds
-                    x1={lx1} y1={ly1} x2={lx2} y2={ly2}
+                  <TopologyLinkLabels
+                    x1={lx1}
+                    y1={ly1}
+                    x2={lx2}
+                    y2={ly2}
                     portA={l.a_port}
                     portB={peerPort}
+                    speedText={speedText}
+                    speedFill={!online ? st.stroke : "var(--text)"}
+                    speedLetterSpacing={1}
+                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
+                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    extraText={stpExtra || null}
                   />
-                  <LinkLabelPill
-                    x={(lx1 + lx2) / 2}
-                    y={(ly1 + ly2) / 2 - 6}
-                    text={midLabel + (!isGhost && lldpLinkKind(l) === "one_side" ? " · ½" : "")}
-                    fill={!online ? st.stroke : "var(--text)"}
-                    letterSpacing={1}
-                  />
-                  {stpView && online && b && (
-                    <LinkLabelPill
-                      x={(lx1 + lx2) / 2}
-                      y={(ly1 + ly2) / 2 + 12}
-                      text={[stpA?.state, stpB?.state].filter(Boolean).join(" / ")}
-                    />
-                  )}
-                  {!stpView && online && r.from && (
-                    <>
-                      <LinkLabelPill
-                        x={pA.x}
-                        y={pA.y + 12}
-                        text={`${towardA} ${fmtMbps(r.toA)}`}
-                      />
-                      <LinkLabelPill
-                        x={pB.x}
-                        y={pB.y + 12}
-                        text={`${towardB} ${fmtMbps(r.toB)}`}
-                      />
-                    </>
-                  )}
                 </g>
               );
             })}
@@ -1195,8 +1118,6 @@ export default function Plan() {
               });
               const towardA = x1 <= x2 ? "◂" : "▸";
               const towardB = x1 <= x2 ? "▸" : "◂";
-              const at = (t: number) => ({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
-              const pA = at(0.28), pB = at(0.72);
               const stpA = stpPortOf(a, l.a_port);
               const stpB = stpPortOf(b, l.b_port);
               const midLabel = !online
@@ -1207,6 +1128,7 @@ export default function Plan() {
                       (stpA?.path_cost || stpB?.path_cost)
                         ? `cost ${stpA?.path_cost || stpB?.path_cost}`
                         : "",
+                      stpEdgeHint(stpA) || stpEdgeHint(stpB),
                     ].filter(Boolean).join(" · ") || drv.label
                   : drv.label;
               const selected = selectedLinkId === l.id;
@@ -1216,6 +1138,10 @@ export default function Plan() {
                   : !online || l.note
                     ? st.stroke
                     : "var(--text)";
+              const stpExtra =
+                stpView && online
+                  ? [stpA?.state, stpB?.state].filter(Boolean).join(" / ")
+                  : "";
               return (
                 <g
                   key={l.id}
@@ -1257,35 +1183,20 @@ export default function Plan() {
                     filter={selected ? undefined : st.filter}
                     opacity={st.opacity}
                   />
-                  <LinkPortEnds x1={x1} y1={y1} x2={x2} y2={y2} portA={l.a_port} portB={l.b_port} />
-                  <LinkLabelPill
-                    x={(x1 + x2) / 2}
-                    y={(y1 + y2) / 2 - 6}
-                    text={midLabel + (l.note && online ? " ⚠" : "")}
-                    fill={midFill}
-                    letterSpacing={1}
+                  <TopologyLinkLabels
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    portA={l.a_port}
+                    portB={l.b_port}
+                    speedText={midLabel + (l.note && online ? " ⚠" : "")}
+                    speedFill={midFill}
+                    speedLetterSpacing={1}
+                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
+                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    extraText={stpExtra || null}
                   />
-                  {stpView && online && (
-                    <LinkLabelPill
-                      x={(x1 + x2) / 2}
-                      y={(y1 + y2) / 2 + 12}
-                      text={[stpA?.state, stpB?.state].filter(Boolean).join(" / ")}
-                    />
-                  )}
-                  {!stpView && online && r.from && (
-                    <>
-                      <LinkLabelPill
-                        x={pA.x}
-                        y={pA.y + 12}
-                        text={`${towardA} ${fmtMbps(r.toA)}`}
-                      />
-                      <LinkLabelPill
-                        x={pB.x}
-                        y={pB.y + 12}
-                        text={`${towardB} ${fmtMbps(r.toB)}`}
-                      />
-                    </>
-                  )}
                 </g>
               );
             })}
@@ -1402,7 +1313,7 @@ export default function Plan() {
                     </QuickTip>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginLeft: 15 }}>
                       {devPorts.map((pr) => (
-                        <PortSquare key={pr.name} name={pr.name} port={pr.p} vm={vm} size={9} off={off} />
+                        <PortSquare key={pr.name} name={pr.name} displayName={pr.display} port={pr.p} vm={vm} size={9} off={off} />
                       ))}
                     </div>
                     <div className="note" style={{ fontSize: 9, margin: "6px 0 0 15px" }}>

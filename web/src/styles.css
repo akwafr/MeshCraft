@@ -11,6 +11,11 @@
   --danger: #e5484d;
   --ok: #46a758;
   --warn: #f5a623;
+  /* --indeterminate: "nobody can see this device right now".
+     Deliberately a YELLOW distinct from the orange of --warn: an alert says the
+     device has a problem, this says meshcraft has lost the vantage point and the
+     device may be perfectly fine. Conflating them sends people to the wrong rack. */
+  --indeterminate: #e8d44d;
   --radius: 8px;
 }
 
@@ -169,13 +174,17 @@ button.rename:focus-visible {
   color: var(--accent);
   outline: none;
 }
-button.rename span {
+/* Only the EDIT AFFORDANCE (the ✎, marked aria-hidden) is revealed on hover.
+   This used to target every span in the button, which hid the proxy VERSION —
+   also a span — until the row was hovered. A hover must never be required to
+   read content. */
+button.rename span[aria-hidden] {
   opacity: 0;
   font-size: 11px;
   transition: opacity 0.1s;
 }
-button.rename:hover span,
-button.rename:focus-visible span {
+button.rename:hover span[aria-hidden],
+button.rename:focus-visible span[aria-hidden] {
   opacity: 0.9;
 }
 
@@ -386,6 +395,12 @@ button,
 button:hover,
 .btn:hover {
   background: var(--accent-hover);
+  /* A blue fill ALWAYS carries white text. Without this the blanket hover
+     turned any button blue while leaving grey (--text-dim) text on it —
+     unreadable on the serial and proxy pages. Ghost/danger/secondary override
+     this below with their own hover, so only genuinely blue-filled buttons are
+     forced white. Part of the rule "a colour and its text travel together". */
+  color: #fff;
 }
 button.secondary {
   background: var(--bg-hover);
@@ -2128,6 +2143,16 @@ button.secondary.on {
 .port-drift {
   animation: port-fade-drift 1.6s ease-in-out infinite;
 }
+/* Live provisioning: a port being written RIGHT NOW. Faster and fuller than
+   pending — this is active work, and the movement should read as "happening",
+   not "waiting". */
+@keyframes port-fade-applying {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 124, 255, 0.2); }
+  50%      { box-shadow: 0 0 0 3px rgba(79, 124, 255, 1); }
+}
+.port-applying {
+  animation: port-fade-applying 0.85s ease-in-out infinite;
+}
 /* QuickTip layout wrappers — shrink-wrap so tips don't stretch the row. */
 .quicktip-inline {
   display: inline-flex;
@@ -2149,11 +2174,13 @@ button.secondary.on {
    remains, the movement stops. The information never depends on blinking alone. */
 @media (prefers-reduced-motion: reduce) {
   .port-pending,
-  .port-drift {
+  .port-drift,
+  .port-applying {
     animation: none;
   }
   .port-pending { box-shadow: 0 0 0 2px rgba(79, 124, 255, 0.95); }
   .port-drift { box-shadow: 0 0 0 2px rgba(245, 166, 35, 0.95); }
+  .port-applying { box-shadow: 0 0 0 3px rgba(79, 124, 255, 1); }
 }
 
 /* Arbitration banner: it appears only on DRIFT — the only case that requires a
@@ -2358,12 +2385,22 @@ button.secondary.on {
 .dot.dot-drift {
   animation: dot-fade-drift 1.6s ease-in-out infinite;
 }
+/* Live provisioning dot: faster, fuller pulse — the connector is writing now. */
+@keyframes dot-fade-applying {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 124, 255, 0.15); }
+  50%      { box-shadow: 0 0 0 4px rgba(79, 124, 255, 0.85); }
+}
+.dot.dot-applying {
+  animation: dot-fade-applying 0.85s ease-in-out infinite;
+}
 /* Color alone carries the information: without motion, nothing is lost. */
 @media (prefers-reduced-motion: reduce) {
   .dot.dot-pending,
-  .dot.dot-drift {
+  .dot.dot-drift,
+  .dot.dot-applying {
     animation: none;
   }
+  .dot.dot-applying { box-shadow: 0 0 0 4px rgba(79, 124, 255, 0.85); }
 }
 
 /* --- Debug area: a log stream, so monospace and a bounded height.
@@ -2523,4 +2560,262 @@ button.chip.on {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Configuration → Spanning-Tree dual list */
+.stp-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 14px 12px;
+  align-items: stretch;
+  margin-top: 18px;
+  max-width: 760px;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, rgba(79, 124, 255, 0.06), transparent 48%),
+    var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.stp-dual--readonly {
+  opacity: 0.85;
+}
+.stp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.stp-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 1.2em;
+}
+.stp-col-head .kicker {
+  margin: 0;
+}
+.stp-col-count {
+  flex: none;
+  min-width: 1.4em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.stp-col--preferred .stp-col-count {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent-hover);
+}
+.stp-list {
+  appearance: none;
+  width: 100%;
+  min-height: 220px;
+  margin: 0;
+  padding: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.stp-list:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.stp-list:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.stp-list:disabled {
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+.stp-list--preferred {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background:
+    linear-gradient(180deg, rgba(79, 124, 255, 0.07), transparent 42%),
+    var(--bg);
+}
+.stp-list--empty {
+  color: var(--text-dim);
+  font-style: italic;
+  cursor: default;
+}
+.stp-list option {
+  padding: 8px 10px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+.stp-list option:checked,
+.stp-list option:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-hover));
+  color: var(--text);
+}
+.stp-list option:disabled {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.stp-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  align-self: center;
+  flex: none;
+  padding: 4px 0;
+}
+.stp-actions-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+.stp-action-btn {
+  min-width: 7.5rem;
+  justify-content: flex-start;
+}
+.stp-action-btn:disabled {
+  opacity: 0.4;
+}
+
+@media (max-width: 720px) {
+  .stp-dual {
+    grid-template-columns: 1fr;
+    max-width: none;
+  }
+  .stp-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    padding: 0;
+  }
+  .stp-actions-sep {
+    display: none;
+  }
+  .stp-action-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    justify-content: center;
+  }
+  .stp-list {
+    min-height: 160px;
+  }
+}
+
+/* Device console overlay (cf. pages/DeviceConsole.tsx).
+   Nearly full-viewport rather than the 480px .modal: a terminal that shows
+   twenty columns is not a terminal, and a relayed vendor UI was laid out for a
+   full browser window. */
+.console-backdrop {
+  z-index: 60;
+  padding: 24px;
+}
+.console-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(1400px, 96vw);
+  height: min(860px, 92vh);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  overflow: hidden;
+}
+.console-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.console-device {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+.console-note {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.console-note.error {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+/* The terminal owns the remaining height: xterm measures its container, so a
+   height that depends on content would collapse it to nothing. */
+.console-term {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #0b0e14;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  overflow: hidden;
+}
+.console-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 24px;
+}
+.console-state {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.console-state.connecting { color: var(--text-dim); }
+.console-state.open { color: var(--ok); }
+.console-state.closed { color: var(--warn); }
+.console-webnote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.console-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* Placeholder shown instead of the vendor-UI frame until the operator asks for
+   it: a device that refuses framing renders blank and cannot tell us so, and an
+   unprompted blank rectangle teaches distrust of the whole panel. */
+.console-frame-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: transparent;
+}
+
+/* A port the switch shut itself (err-disabled): the red frame comes from the
+   inline style; the fill pulses so it is unmissable on a full facade. Kept
+   distinct from the drift animations — this is a fault, not a pending change. */
+@keyframes port-errdisabled-pulse {
+  0%, 100% { background-color: rgba(229, 72, 77, 0.15); }
+  50%      { background-color: rgba(229, 72, 77, 0.55); }
+}
+.port-errdisabled {
+  animation: port-errdisabled-pulse 1s ease-in-out infinite;
 }

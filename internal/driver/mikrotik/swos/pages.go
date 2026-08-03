@@ -6,111 +6,111 @@ import (
 	"strings"
 )
 
-// La carte des pages de SwOS, et la SIGNIFICATION de leurs champs.
+// SwOS page map, and the meaning of their fields.
 //
-// Il n'existe aucune documentation de ces pages. Tout ce qui suit est observed dans
-// le JavaScript que the device sert lui-same (une page `index.html` de 44 807
-// octets sur un CSS326-24G-2S+ en SwOS 2.17, script integralement en ligne), qui
-// est la SEULE reference de la plateforme : il nomme chaque champ, dit son type,
-// son encodage, ses bornes, et montre par quelle request l'interface l'written.
-// C'est la same method que celle du connecteur Instant On sur sa propre gamme.
+// There is no documentation for these pages. Everything below was observed in
+// the JavaScript that the device serves itself (a 44,807-byte `index.html` on a
+// CSS326-24G-2S+ running SwOS 2.17, with the script fully inline), which is
+// the only reference for this platform: it names each field, its type,
+// encoding, bounds, and shows which request the UI uses to write it.
+// Same approach as the Instant On connector on its product line.
 //
-// Chaque constante ci-dessous porte l'endroit hence elle vient. Une valeur sans
-// source dans ce fichier serait une valeur invented, et une capability invented
-// finit par abimer un device.
+// Each constant below notes where it comes from. A value without a source in
+// this file would be invented, and an invented capability eventually damages
+// a device.
 
-// Les pages de data. Toutes servies sous authentification HTTP Digest, en
+// Data pages. All served under HTTP Digest authentication as
 // `application/x-javascript`.
 //
-// TRAP MAJEUR de cette plateforme : un chemin INCONNU ne rend pas 404. Il rend
-// l'interface web complete, en HTTP 200, `text/html`. Constate sur
-// 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17) : /vlans.b, /poe.b, /igmp.b, /dhcp.b,
-// /cfg.b, /mact.b, /leds.b, /fan.b repondent tous les huit par les 44 807 octets
-// de l'interface. Conclure a l'existence d'une page sur un HTTP 200 est donc faux ;
-// c'est l'analyseur qui tranche, en refusant ce qui n'est pas une page SwOS.
+// Major trap on this platform: an unknown path does not return 404. It returns
+// the full web UI as HTTP 200, `text/html`. Verified on
+// 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17): /vlans.b, /poe.b, /igmp.b, /dhcp.b,
+// /cfg.b, /mact.b, /leds.b, /fan.b all eight respond with the 44,807-byte
+// UI. Inferring page existence from HTTP 200 is therefore wrong;
+// the parser decides, by rejecting anything that is not a SwOS page.
 const (
-	// PageSys : identity, adressage de management, RSTP global, IGMP, snooping
-	// DHCP, sante. La page la plus dense de la plateforme.
+	// PageSys: identity, management addressing, global RSTP, IGMP, DHCP
+	// snooping, health. The densest page on the platform.
 	PageSys = "/sys.b"
-	// PageLink : etat et configuration des ports (activation, nom, lien, rate,
-	// duplex, control de flux), et la GEOMETRY du model (`prt`, `sfp`, `sfpo`).
+	// PageLink: port state and configuration (enable, name, link, rate,
+	// duplex, flow control), and model geometry (`prt`, `sfp`, `sfpo`).
 	PageLink = "/link.b"
-	// PageFwd : commutation — isolation de ports, verrouillage, mirroring, limite
-	// de storm, rate ingress, et le VLAN PAR PORT (`vlan`, `vlni`, `dvid`).
+	// PageFwd: switching — port isolation, locking, mirroring, storm limit,
+	// ingress rate, and per-port VLAN (`vlan`, `vlni`, `dvid`).
 	PageFwd = "/fwd.b"
-	// PageVLAN : la TABLE des VLAN, une ligne par VLAN.
+	// PageVLAN: the VLAN table, one row per VLAN.
 	PageVLAN = "/vlan.b"
-	// PageHost : table des hotes STATIQUES (configuree).
+	// PageHost: static host table (configured).
 	PageHost = "/host.b"
-	// PageDynHost : table des hotes APPRIS. Lecture seule (le « ! » du nom marque
-	// les pages que l'interface does not write jamais).
+	// PageDynHost: learned host table. Read-only (the « ! » in the name marks
+	// pages the UI never writes).
 	PageDynHost = "/!dhost.b"
-	// PageSFP : diagnostic optique des cages SFP (SFF-8472).
+	// PageSFP: optical diagnostic for SFP cages (SFF-8472).
 	PageSFP = "/sfp.b"
-	// PageSNMP : agent SNMP — activation, community, contact, localisation.
+	// PageSNMP: SNMP agent — enable, community, contact, location.
 	PageSNMP = "/snmp.b"
-	// PageACL : la table des rules ACL.
+	// PageACL: ACL rule table.
 	PageACL = "/acl.b"
-	// PageStats : compteurs et rates par port.
+	// PageStats: per-port counters and rates.
 	PageStats = "/stats.b"
-	// PageRSTP : etat RSTP par port.
+	// PageRSTP: per-port RSTP state.
 	PageRSTP = "/rstp.b"
-	// PageLACP : aggregation par port.
+	// PageLACP: per-port aggregation.
 	PageLACP = "/lacp.b"
-	// PageIGMPGroups : groupes IGMP appris. Lecture seule.
+	// PageIGMPGroups: learned IGMP groups. Read-only.
 	PageIGMPGroups = "/!igmp.b"
-	// PagePassword : le mot de passe d'administration. Lue, elle rend
-	// `{pwd:''}` — jamais le secret. Ecrite, elle le change (cf. admin.go).
+	// PagePassword: admin password. On read, returns `{pwd:''}` — never the
+	// secret. On write, changes it (see admin.go).
 	PagePassword = "/!pwd.b"
-	// PageBackup : la configuration ENTIRE, en texte, en une seule request.
-	// `application/octet-stream`, mais c'est bien du texte.
+	// PageBackup: the entire configuration, as text, in a single request.
+	// `application/octet-stream`, but it is plain text.
 	PageBackup = "/backup.swb"
 )
 
-// Les points d'ACTION de SwOS. Aucun n'a de corps utile : l'interface y poste le
-// caractere `*`.
+// SwOS action endpoints. None take a useful body: the UI POSTs the
+// character `*`.
 //
-// OBSERVED, et a savoir avant d'explorer cette plateforme : ces chemins IGNORENT
-// la method GET. Un `GET /reset` et un `GET /reboot` rendent tous deux HTTP 200
-// avec un corps VIDE et ne font RIEN — verified sur 10.99.0.36, dont l'uptime a
-// continue de croitre (149 281 s puis 149 801 s) et dont la table de VLAN was
-// inchangee juste after. C'est ce qui rend l'exploration en lecture seule
-// actually sans risque sur cette plateforme, et ce n'est pas une chose qu'on
-// devrait avoir a decouvrir en la tentant.
+// Observed, and worth knowing before exploring this platform: these paths ignore
+// GET. A `GET /reset` and a `GET /reboot` both return HTTP 200 with an empty
+// body and do nothing — verified on 10.99.0.36, whose uptime kept increasing
+// (149,281 s then 149,801 s) and whose VLAN table was unchanged immediately
+// after. That is what makes read-only exploration actually safe on this
+// platform, and not something we should have to discover by trying it.
 const (
-	// ActionReboot redemarre. La configuration de SwOS etant persistante d'office
-	// (cf. Capabilities.Commit), un reboot n'annule RIEN.
+	// ActionReboot reboots. SwOS configuration is persistent by default
+	// (see Capabilities.Commit), so a reboot cancels nothing.
 	ActionReboot = "/reboot"
-	// ActionReset remet la configuration d'usine.
+	// ActionReset factory-resets configuration.
 	ActionReset = "/reset"
-	// ActionLogout clot la session de l'interface.
+	// ActionLogout closes the UI session.
 	ActionLogout = "/logout"
 )
 
-// Le jeu de champs INSCRIPTIBLE de chaque page, et pourquoi cette liste existe.
+// Writable field set for each page, and why this list exists.
 //
-// L'interface de the device n'envoie pas de delta : son bouton « Apply All »
-// recompose l'objet ENTIER de la page a partir de tous ses champs modifiables
-// (`Sa` dans son JavaScript, qui parcourt les definitions et saute celles marquees
-// en lecture seule), puis le poste tel quel. Ecrire sur SwOS est donc forcement un
-// LIRE-MODIFIER-REWRITE, et une page renvoyee truncated laisse the device libre
-// de remettre a zero ce qu'on n'a pas dit. Sur /fwd.b, cela voudrait dire perdre
-// l'isolation de ports, les limites de storm et les rates ingress en posant un
-// VLAN.
+// The device UI does not send deltas: its « Apply All » button rebuilds the
+// entire page object from all modifiable fields (`Sa` in its JavaScript, which
+// walks the definitions and skips those marked read-only), then POSTs it as-is.
+// Writing on SwOS is therefore necessarily read-modify-rewrite, and a truncated
+// page response leaves the device free to zero what we did not say. On /fwd.b,
+// that would mean losing port isolation, storm limits, and ingress rates when
+// setting a VLAN.
 //
-// Hence vient la liste : de la SAUVEGARDE DE CONFIGURATION de the device,
-// `GET /backup.swb`, qui enumerates page par page exactement les champs que
-// the device stocke — i.e. les champs inscriptibles, et rien d'autre.
-// Capture reelle jointe au paquet (testdata/backup.swb, CSS326-24G-2S+, SwOS 2.17).
-// C'est une source bien meilleure qu'une lecture de page vivante, qui melange
-// l'inscriptible et la telemetry.
+// Hence this list: from the device configuration backup, `GET /backup.swb`,
+// which enumerates page by page exactly the fields the device stores — i.e.
+// writable fields, and nothing else. Real capture bundled in testdata
+// (testdata/backup.swb, CSS326-24G-2S+, SwOS 2.17). This is a much better
+// source than a live page read, which mixes writable fields and telemetry.
 //
-// Seules les pages que ce connecteur WRITES sont declarees ici. Declare les autres
-// inviterait a s'en servir sans avoir verified leur effet ; leur contenu se lit dans
-// testdata/backup.swb, qui est le observed.
+// Only pages this connector writes are declared here. Declaring the others
+// would invite use without verified effect; their content is in
+// testdata/backup.swb, which is the observed source.
 var writableFields = map[string][]string{
 	// /snmp.b
 	PageSNMP: {FieldSNMPEnabled, FieldSNMPCommunity, FieldSNMPContact, FieldSNMPLocation},
+	// /rstp.b — backup.swb persists `ena`. Live page also carries `edge` (and
+	// p2p/role/…); we POST `ena` + `edge` — both accepted on CSS326 lab.
+	PageRSTP: {"ena"},
 	// /sys.b — order and keys from testdata/backup.swb (CSS326-24G-2S+, SwOS 2.17).
 	// Omitting any of these on POST would let the device zero them; `allp`/`alla`/
 	// `allm`/`avln` are the fields that mute administration when mishandled.
@@ -122,9 +122,9 @@ var writableFields = map[string][]string{
 	},
 }
 
-// WritableFields rend le jeu de champs inscriptible d'une page, et dit s'il est
-// connu. Une page dont on ne connait pas le jeu ne s'written pas : c'est la rule
-// « une capability inconnue est supposee absente » appliquee a writing.
+// WritableFields returns the writable field set for a page, and whether it is
+// known. A page whose set is unknown must not be written: the rule
+// « an unknown capability is assumed absent » applied to writing.
 func WritableFields(page string) ([]string, bool) {
 	var f, ok = writableFields[page]
 	if !ok {
@@ -133,16 +133,16 @@ func WritableFields(page string) ([]string, bool) {
 	return append([]string{}, f...), true
 }
 
-// FwdWritableFields rend le jeu inscriptible de /fwd.b pour un model a `ports`
+// FwdWritableFields returns the writable set for /fwd.b for a model with `ports`
 // ports.
 //
-// Cette page est la seule dont le jeu de champs DEPEND de la taille du model :
-// elle porte un masque d'isolation par port SOURCE, `fp1` a `fp<ports>` — 26 sur un
-// CSS326-24G-2S+. Recopier tel quel le jeu observed sur ce model vers un model plus
-// petit enverrait des masques pour des ports qui n'existent pas ; vers un plus
-// grand, il en oublierait, et the device serait libre d'y remettre l'isolation a
-// zero. La liste se recompose donc a la bonne taille, l'ordre restant celui de la
-// sauvegarde.
+// This page is the only one whose field set depends on model size: it carries a
+// per-source-port isolation mask, `fp1` through `fp<ports>` — 26 on a
+// CSS326-24G-2S+. Copying the field set observed on this model verbatim to a
+// smaller model would send masks for ports that do not exist; to a larger one,
+// it would omit some, and the device would be free to zero isolation there.
+// The list is therefore rebuilt at the correct size, order unchanged from the
+// backup.
 func FwdWritableFields(ports int) []string {
 	var out []string
 	var i int
@@ -154,118 +154,116 @@ func FwdWritableFields(ports int) []string {
 		"srt", "suni", "fmc", "ir")
 }
 
-// vlanRowFields est le jeu de champs d'UNE ligne de /vlan.b, dans l'ordre de la
-// sauvegarde. La table s'written ENTIRE : il n'y a pas d'ajout ni de suppression
-// ligne a ligne sur cette plateforme (l'interface reconstruit la liste et la poste).
+// vlanRowFields is the field set for one row of /vlan.b, in backup order. The
+// table is written entirely: there is no per-row add or delete on this platform
+// (the UI rebuilds the list and POSTs it).
 var vlanRowFields = []string{
 	FieldVLANName, FieldVLANMembers, FieldVLANID, "piso", "lrn", "mrr", "igmp",
 }
 
-// --- Champs de /sys.b ---
+// --- /sys.b fields ---
 
-// Identite et firmware. Tous en lecture seule.
+// Identity and firmware. All read-only except where noted.
 const (
-	// FieldBoard : la reference du model, string hex-encoded
+	// FieldBoard: model reference, hex-encoded string
 	// (`'4353533332362d3234472d32532b'` = « CSS326-24G-2S+ »).
 	FieldBoard = "brd"
-	// FieldSerial : le serial number.
+	// FieldSerial: serial number.
 	FieldSerial = "sid"
-	// FieldVersion : la version de SwOS (`'322e3137'` = « 2.17 »).
+	// FieldVersion: SwOS version (`'322e3137'` = « 2.17 »).
 	FieldVersion = "ver"
-	// FieldBuild : l'horodatage de compilation du firmware, en secondes Unix.
+	// FieldBuild: firmware build timestamp, Unix seconds.
 	FieldBuild = "bld"
-	// FieldRevision : la revision hardware, souvent vide.
+	// FieldRevision: hardware revision, often empty.
 	FieldRevision = "rev"
-	// FieldMarket : le nom commercial de la carte, souvent vide.
+	// FieldMarket: board marketing name, often empty.
 	FieldMarket = "mrkt"
-	// FieldIdentity : le nom systeme, MODIFIABLE (« Identity » dans l'interface).
+	// FieldIdentity: system name, writable (« Identity » in the UI).
 	FieldIdentity = "id"
-	// FieldMAC : l'adresse MAC de the device, 12 chiffres hex SANS separateur et
-	// SANS inversion (`'b869f45f14a8'` = b8:69:f4:5f:14:a8).
+	// FieldMAC: device MAC address, 12 hex digits without separator and
+	// without byte swap (`'b869f45f14a8'` = b8:69:f4:5f:14:a8).
 	FieldMAC = "mac"
-	// FieldUptime : le temps de fonctionnement, en HUNDREDTHS de seconde
-	// (`scale:100` dans l'interface).
+	// FieldUptime: uptime in hundredths of a second
+	// (`scale:100` in the UI).
 	FieldUptime = "upt"
-	// FieldTemp : la temperature, en degrees Celsius entiers, sans facteur
-	// d'echelle. Relevee a 0x44 puis 0x45 (68 puis 69 °C) a quelques minutes
-	// d'intervalle sur 10.99.0.36 : c'est bien un capteur vivant.
+	// FieldTemp: temperature in whole degrees Celsius, no scale factor.
+	// Read 0x44 then 0x45 (68 then 69 °C) minutes apart on 10.99.0.36: a live
+	// sensor.
 	FieldTemp = "temp"
 )
 
-// Adressage de management. C'est le groupe le plus dangereux de la plateforme : se
-// tromper sur l'un de ces cinq champs rend the device injoignable, et ce model
-// n'a PAS de serial port.
+// Management addressing. This is the most dangerous group on the platform: getting
+// any of these five fields wrong makes the device unreachable, and this model
+// has no serial port.
 const (
-	// FieldIP : l'adresse statique. Voir DecodeIPv4 pour l'ordre des octets.
+	// FieldIP: static address. See DecodeIPv4 for byte order.
 	FieldIP = "ip"
-	// FieldCurrentIP : l'adresse EN COURS d'utilisation, en lecture seule. Differe
-	// de `ip` quand the device est en DHCP.
+	// FieldCurrentIP: address in use, read-only. Differs from `ip` when the
+	// device uses DHCP.
 	FieldCurrentIP = "cip"
-	// FieldAddrMode : le mode d'adressage — 0 « DHCP with fallback », 1 « static »,
-	// 2 « DHCP only » (les trois options du selecteur de l'interface, dans cet
-	// ordre).
+	// FieldAddrMode: addressing mode — 0 « DHCP with fallback », 1 « static »,
+	// 2 « DHCP only » (the three UI selector options, in that order).
 	FieldAddrMode = "iptp"
-	// FieldAllowVLAN : « Allow From VLAN » — le VLAN depuis lequel l'administration
-	// est accepted. 0 = tous. C'est le VLAN de management de the device.
+	// FieldAllowVLAN: « Allow From VLAN » — VLAN from which administration is
+	// accepted. 0 = all. This is the device management VLAN.
 	FieldAllowVLAN = "avln"
-	// FieldAllowFrom / FieldAllowMask : « Allow From » — le sous-network autorise a
-	// administrer. 0/0 = tous.
+	// FieldAllowFrom / FieldAllowMask: « Allow From » — subnet allowed to
+	// administer. 0/0 = all.
 	FieldAllowFrom = "alla"
 	FieldAllowMask = "allm"
-	// FieldAllowPorts : « Allow From Ports » — masque des ports par lesquels
-	// l'administration est accepted.
+	// FieldAllowPorts: « Allow From Ports » — port mask for administration.
 	FieldAllowPorts = "allp"
 )
 
-// Les modes d'adressage de FieldAddrMode.
+// FieldAddrMode addressing modes.
 const (
 	AddrDHCPFallback uint32 = 0
 	AddrStatic       uint32 = 1
 	AddrDHCPOnly     uint32 = 2
 )
 
-// --- Champs de /link.b ---
+// --- /link.b fields ---
 
-// Geometrie du model et etat des ports.
+// Model geometry and port state.
 const (
-	// FieldPortCount : le nombre TOTAL de ports, cages SFP comprises (0x1a = 26 sur
-	// un CSS326-24G-2S+).
+	// FieldPortCount: total port count, SFP cages included (0x1a = 26 on a
+	// CSS326-24G-2S+).
 	FieldPortCount = "prt"
-	// FieldSFPCount : le nombre de cages SFP (0x02).
+	// FieldSFPCount: number of SFP cages (0x02).
 	FieldSFPCount = "sfp"
-	// FieldSFPOffset : l'index de la FIRST cage SFP (0x18 = 24, donc les ports
-	// d'index 24 et 25 — numerotes 25 et 26 — sont les cages).
+	// FieldSFPOffset: index of the first SFP cage (0x18 = 24, so ports
+	// indexed 24 and 25 — numbered 25 and 26 — are the cages).
 	//
-	// Champ FACULTATIF : quand il manque, l'interface place les cages a la fin
-	// (`t = void 0==d.sfpo ? da : d.sfpo`, avec da = prt - sfp). Reproduire ce
-	// repli est necessary, un model plus ancien pouvant l'omettre.
+	// Optional field: when missing, the UI places cages at the end
+	// (`t = void 0==d.sfpo ? da : d.sfpo`, with da = prt - sfp). Reproducing
+	// this fallback is necessary; older models may omit it.
 	FieldSFPOffset = "sfpo"
-	// FieldEnabled : masque des ports administrativement enabled.
+	// FieldEnabled: mask of administratively enabled ports.
 	FieldEnabled = "en"
-	// FieldLink : masque des ports qui portent un LIEN.
+	// FieldLink: mask of ports with link up.
 	FieldLink = "lnk"
-	// FieldDuplex : masque des ports en duplex integral.
+	// FieldDuplex: mask of full-duplex ports.
 	FieldDuplex = "dpx"
-	// FieldSpeed : le rate NEGOCIE, un index par port dans SpeedLabels.
+	// FieldSpeed: negotiated rate, one index per port in SpeedLabels.
 	//
-	// N'a de sens que sur un port qui porte un lien. Sur 10.99.0.36, les 25 ports
-	// sans lien portent l'index 7 — hors des bornes de la table — et le seul port
-	// avec lien (index 25, la cage SFP2) porte 3, i.e. 10G, ce que confirme
-	// le transceiver insere (`SFP-10G-BX`). Rendre un rate pour un port off
-	// serait donc inventer une valeur.
+	// Meaningful only on a linked port. On 10.99.0.36, the 25 unlinked ports
+	// carry index 7 — outside the label table — and the only linked port
+	// (index 25, SFP2 cage) carries 3, i.e. 10G, confirmed by the inserted
+	// transceiver (`SFP-10G-BX`). Reporting a rate for an off port would
+	// invent a value.
 	FieldSpeed = "spd"
-	// FieldPortName : le nom de chaque port, string hex-encoded. Par default
+	// FieldPortName: each port name, hex-encoded string. Default
 	// « Port1 »… « Port24 », « SFP1 », « SFP2 ».
 	FieldPortName = "nm"
 )
 
-// SpeedLabels traduit l'index de FieldSpeed. L'ordre est celui de la table de
-// l'interface : `"10M 100M 1G 10G 5G 2.5G 40G".split(" ")`. Il n'est PAS croissant,
-// et le supposer trie donnerait un rate faux.
+// SpeedLabels maps FieldSpeed indices. Order matches the UI table:
+// `"10M 100M 1G 10G 5G 2.5G 40G".split(" ")`. It is not ascending;
+// assuming sorted order yields a wrong rate.
 var SpeedLabels = []string{"10M", "100M", "1G", "10G", "5G", "2.5G", "40G"}
 
-// SpeedLabel traduit un index de rate. Un index hors table n'est pas « 10M » :
-// c'est une absence, et elle se dit.
+// SpeedLabel maps a rate index. An out-of-table index is not « 10M »:
+// it means absent, and is reported as such.
 func SpeedLabel(i uint32) (string, bool) {
 	if i >= uint32(len(SpeedLabels)) {
 		return "", false
@@ -273,22 +271,22 @@ func SpeedLabel(i uint32) (string, bool) {
 	return SpeedLabels[i], true
 }
 
-// --- Champs de /fwd.b : le VLAN par port ---
+// --- /fwd.b fields: per-port VLAN ---
 
 const (
-	// FieldVLANMode : le mode VLAN de chaque port — 0 « disabled », 1 « optional »,
+	// FieldVLANMode: per-port VLAN mode — 0 « disabled », 1 « optional »,
 	// 2 « enabled », 3 « strict ».
 	FieldVLANMode = "vlan"
-	// FieldVLANReceive : ce que le port accepte a ingress — 0 « any »,
+	// FieldVLANReceive: what the port accepts on ingress — 0 « any »,
 	// 1 « only tagged », 2 « only untagged ».
 	FieldVLANReceive = "vlni"
-	// FieldDefaultVLAN : le « Default VLAN ID » du port, i.e. son PVID.
+	// FieldDefaultVLAN: « Default VLAN ID » for the port, i.e. its PVID.
 	FieldDefaultVLAN = "dvid"
-	// FieldForceVLAN : masque des ports en « Force VLAN ID ».
+	// FieldForceVLAN: mask of ports in « Force VLAN ID » mode.
 	FieldForceVLAN = "fvid"
 )
 
-// Les modes VLAN de FieldVLANMode.
+// FieldVLANMode VLAN modes.
 const (
 	VLANModeDisabled uint32 = 0
 	VLANModeOptional uint32 = 1
@@ -296,7 +294,7 @@ const (
 	VLANModeStrict   uint32 = 3
 )
 
-// VLANModeLabel nomme un mode VLAN avec les mots de l'interface de the device.
+// VLANModeLabel names a VLAN mode using the device UI labels.
 func VLANModeLabel(m uint32) (string, bool) {
 	switch m {
 	case VLANModeDisabled:
@@ -311,118 +309,116 @@ func VLANModeLabel(m uint32) (string, bool) {
 	return "", false
 }
 
-// --- Champs de /vlan.b : la table des VLAN ---
+// --- /vlan.b fields: VLAN table ---
 
 const (
-	// FieldVLANID : l'identifiant du VLAN.
+	// FieldVLANID: VLAN identifier.
 	FieldVLANID = "vid"
-	// FieldVLANName : son nom, string hex-encoded, 16 octets au plus.
+	// FieldVLANName: VLAN name, hex-encoded string, 16 bytes max.
 	FieldVLANName = "nm"
-	// FieldVLANMembers : masque des ports MEMBRES du VLAN.
+	// FieldVLANMembers: mask of ports that are VLAN members.
 	FieldVLANMembers = "mbr"
 )
 
-// --- Champs de /snmp.b ---
+// --- /snmp.b fields ---
 
 const (
-	// FieldSNMPEnabled : l'agent est-il actif.
+	// FieldSNMPEnabled: whether the SNMP agent is active.
 	FieldSNMPEnabled = "en"
-	// FieldSNMPCommunity : la community, string hex-encoded, 64 octets au plus
-	// (`ga:64` dans l'interface). UNE seule, et il n'existe aucun champ de version
-	// ni d'utilisateur v3 sur toute la plateforme.
+	// FieldSNMPCommunity: community string, hex-encoded, 64 bytes max
+	// (`ga:64` in the UI). A single community; no version or v3 user fields
+	// exist anywhere on the platform.
 	FieldSNMPCommunity = "com"
-	// FieldSNMPContact / FieldSNMPLocation : sysContact et sysLocation, 64 octets.
+	// FieldSNMPContact / FieldSNMPLocation: sysContact and sysLocation, 64 bytes.
 	FieldSNMPContact  = "ci"
 	FieldSNMPLocation = "loc"
 )
 
-// --- Champs de /sfp.b : diagnostic optique ---
+// --- /sfp.b fields: optical diagnostic ---
 
 const (
-	// FieldSFPVendor, FieldSFPPart, FieldSFPSerial : identity du transceiver,
-	// strings hex-encodees rembourrees par des ESPACES (champs SFF-8472 de taille
-	// fixe). A rogner a l'affichage, jamais a la lecture.
+	// FieldSFPVendor, FieldSFPPart, FieldSFPSerial: transceiver identity,
+	// hex-encoded strings padded with spaces (fixed-size SFF-8472 fields).
+	// Trim for display, never on read.
 	FieldSFPVendor = "vnd"
 	FieldSFPPart   = "pnr"
 	FieldSFPSerial = "ser"
-	// FieldSFPTemp : temperature du transceiver, en °C. La valeur 0xffffff80
-	// (-128 en complement a deux) est le « pas de module » de l'interface
-	// (`u:-128`), pas une temperature.
+	// FieldSFPTemp: transceiver temperature in °C. Value 0xffffff80
+	// (-128 two's complement) is the UI « no module » sentinel
+	// (`u:-128`), not a temperature.
 	FieldSFPTemp = "tmp"
-	// FieldSFPVcc : tension d'alimentation, a diviser par 1 000 pour des volts
+	// FieldSFPVcc: supply voltage; divide by 1,000 for volts
 	// (`scale:1E3`).
 	FieldSFPVcc = "vcc"
-	// FieldSFPTxBias : courant de polarisation transmit, en mA.
+	// FieldSFPTxBias: transmit bias current in mA.
 	FieldSFPTxBias = "tbs"
-	// FieldSFPTxPower / FieldSFPRxPower : puissances optiques. L'interface les
-	// affiche en dBm par `10·log10(v/10000)` (`scale:1E4, ma:1`) — la valeur brute
-	// est donc en dixiemes de microwatt.
+	// FieldSFPTxPower / FieldSFPRxPower: optical power. The UI shows dBm via
+	// `10·log10(v/10000)` (`scale:1E4, ma:1`) — raw value is tenths of
+	// microwatt.
 	FieldSFPTxPower = "tpw"
 	FieldSFPRxPower = "rpw"
 )
 
-// sfpNoModule est la valeur de FieldSFPTemp quand la cage est vide.
+// sfpNoModule is FieldSFPTemp when the cage is empty.
 const sfpNoModule uint32 = 0xffffff80
 
-// --- Champs de /stats.b ---
+// --- /stats.b fields ---
 
 const (
-	// FieldRxBytes / FieldTxBytes : octets recus et emis. Les compagnons `rbh` et
-	// `tbh` en portent les 32 bits HAUTS.
+	// FieldRxBytes / FieldTxBytes: received and transmitted bytes. Companions
+	// `rbh` and `tbh` hold the upper 32 bits.
 	FieldRxBytes     = "rb"
 	FieldRxBytesHigh = "rbh"
 	FieldTxBytes     = "tb"
 	FieldTxBytesHigh = "tbh"
-	// FieldRxPackets / FieldTxPackets : paquets totaux.
+	// FieldRxPackets / FieldTxPackets: total packet counts.
 	FieldRxPackets = "rtp"
 	FieldTxPackets = "ttp"
-	// FieldRxRate / FieldTxRate : les RATES, computed par the device lui-same.
-	// A diviser par 100 pour des bits par seconde (`scale:.01`).
+	// FieldRxRate / FieldTxRate: rates computed by the device itself.
+	// Divide by 100 for bits per second (`scale:.01`).
 	//
-	// Ce champ est ce qui permet a ce connecteur de tenir un plancher de collecte
-	// large sans perdre la precision du rate : le rate snapshot n'a pas besoin
-	// d'be derive de deux lectures de compteur, the device le sert already.
+	// This field lets the connector keep a wide collection floor without losing
+	// rate precision: the snapshot rate need not be derived from two counter
+	// reads; the device already serves it.
 	FieldRxRate = "rrb"
 	FieldTxRate = "trb"
-	// FieldRxErrors : erreurs de MAC en receive, et FieldRxFCS les erreurs de
-	// sequence de control.
+	// FieldRxErrors: MAC receive errors; FieldRxFCS: frame check sequence
+	// errors.
 	FieldRxErrors = "rte"
 	FieldRxFCS    = "rfcs"
 )
 
-// Counter64 recompose un compteur 64 bits a partir de ses deux halves.
+// Counter64 combines a 64-bit counter from its two halves.
 //
-// Les compteurs d'octets de SwOS sont scindes : `rb` porte les 32 bits bas, `rbh`
-// les 32 bits hauts. Lire `rb` seul fait repasser le compteur a zero tous les
-// 4 Go — sur un lien 10G, toutes les trois secondes et demie, ce qui produirait
-// une courbe de trafic entirely fausse.
+// SwOS byte counters are split: `rb` holds the low 32 bits, `rbh` the high
+// 32 bits. Reading `rb` alone wraps every 4 GiB — on a 10G link, every three
+// and a half seconds, producing an entirely wrong traffic curve.
 func Counter64(low, high uint32) uint64 {
 	return uint64(high)<<32 | uint64(low)
 }
 
-// --- Encodages transverses ---
+// --- Cross-cutting encodings ---
 
-// DecodeIPv4 traduit une adresse de SwOS en notation pointee.
+// DecodeIPv4 converts a SwOS address to dotted notation.
 //
-// L'ordre des octets est celui du LITTLE-ENDIAN : le PREMIER octet de la notation
-// pointee est l'octet de POIDS FAIBLE. `0x2400630a` se lit donc 10.99.0.36 et non
-// 36.0.99.10.
+// Byte order is little-endian: the first octet in dotted notation is the
+// least significant byte. `0x2400630a` reads as 10.99.0.36, not 36.0.99.10.
 //
-// Ce n'est pas une supposition tiree de la valeur observee, c'est le code de
-// the device. Son decoder (`L.C`) fait `for(d=0;4>d;++d){ b += a&255; a>>=8 }`,
-// et son encodeur (`L.B`) fait l'inverse, `e = e>>8&0xFFFFFF | f<<24` sur les
-// octets pris dans l'ordre de lecture — rejouer cet encodeur sur 10.99.0.36 rend
-// bien 0x2400630A. Les deux sens concordent, et l'adresse ainsi decodee est celle
-// par laquelle the device repond actually.
+// This is not inferred from an observed value; it is the device code. Its
+// decoder (`L.C`) does `for(d=0;4>d;++d){ b += a&255; a>>=8 }`, and its
+// encoder (`L.B`) does the inverse, `e = e>>8&0xFFFFFF | f<<24` on bytes
+// taken in read order — replaying that encoder on 10.99.0.36 yields
+// 0x2400630A. Both directions agree, and the decoded address is the one
+// the device actually responds on.
 //
-// C'est exactement le genre de detail qui fait afficher une adresse fausse, puis
-// write une adresse fausse : l'inverser ferait poser 36.0.99.10 a un device
-// qu'on croit envoyer en 10.99.0.36, et il faudrait alors se deplacer.
+// This is exactly the kind of detail that displays a wrong address, then
+// writes a wrong address: reversing it would POST 36.0.99.10 to a device
+// believed to be at 10.99.0.36, and you would have to move physically.
 func DecodeIPv4(v uint32) string {
 	return fmt.Sprintf("%d.%d.%d.%d", v&0xff, v>>8&0xff, v>>16&0xff, v>>24&0xff)
 }
 
-// EncodeIPv4 est l'inverse exact de DecodeIPv4.
+// EncodeIPv4 is the exact inverse of DecodeIPv4.
 func EncodeIPv4(s string) (uint32, bool) {
 	var parts = strings.Split(strings.TrimSpace(s), ".")
 	if len(parts) != 4 {
@@ -440,8 +436,8 @@ func EncodeIPv4(s string) (uint32, bool) {
 	return out, true
 }
 
-// DecodeMAC met les deux-points dans une MAC de SwOS. Aucune inversion : ces
-// champs sont servis dans l'ordre de lecture.
+// DecodeMAC inserts colons into a SwOS MAC. No byte swap: these fields are
+// served in read order.
 func DecodeMAC(raw string) (string, bool) {
 	if len(raw) != 12 {
 		return "", false

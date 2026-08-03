@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -400,10 +399,8 @@ func (s *Server) kickRelocateAfterMgmtWrite(ctx context.Context, d model.Device,
 // deviceIdentity recovers a device's serial number and connector by going back through
 // the discovery candidate it came from.
 func (s *Server) deviceIdentity(ctx context.Context, d model.Device) (serial, driverName string) {
-	var extra map[string]string
-	_ = json.Unmarshal(d.Extra, &extra)
-	driverName = extra["driver"]
-	var discoveredID = extra["discovered_id"]
+	driverName = driver.DriverNameFromExtra(d.Extra)
+	var discoveredID = driver.ExtraString(d.Extra, "discovered_id")
 	if discoveredID == "" {
 		return "", driverName
 	}

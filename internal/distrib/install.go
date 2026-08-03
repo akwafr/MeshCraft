@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-// Installation « sans Docker » : un script POSIX sh qui télécharge le binaire de
-// la bonne architecture, en vérifie le SHA-256, crée un compte de service non
-// privilégié et pose une unité systemd durcie.
+// "Dockerless" installation: a POSIX sh script that downloads the binary for
+// the right architecture, verifies its SHA-256, creates an unprivileged
+// service account, and installs a hardened systemd unit.
 //
-// Les chemins sont ceux que le proxy utilise déjà (cf. cmd/proxy) : l'état vit
-// dans /var/lib/meshcraft, et c'est aussi là que se rangera le binaire d'une
-// mise à jour automatique (cf. docs/01-Architecture/Versionnage et mise à jour
-// du proxy).
+// The paths are the ones the proxy already uses (cf. cmd/proxy): state lives
+// in /var/lib/meshcraft, and that's also where an automatic update's binary
+// will be placed (cf. docs/01-Architecture/Versionnage et mise à jour du
+// proxy).
 const (
 	unitName  = "meshcraft-proxy.service"
 	binPath   = "/usr/local/bin/meshcraft-proxy"
@@ -23,25 +23,25 @@ const (
 	serviceID = "meshcraft"
 )
 
-// unameCases associe les réponses possibles de `uname -m` au suffixe d'artefact
-// publié par le contrôleur.
+// unameCases maps the possible responses of `uname -m` to the artifact
+// suffix published by the controller.
 var unameCases = []struct {
-	patterns string // motifs de case sh, séparés par |
-	arch     string // suffixe de l'artefact
+	patterns string // sh case patterns, separated by |
+	arch     string // artifact suffix
 }{
 	{"x86_64|amd64", "amd64"},
 	{"aarch64|arm64|armv8*", "arm64"},
 	{"armv7*|armv6*|arm", "arm"},
 }
 
-// SystemdUnit renvoie l'unité systemd du proxy. Elle ne contient aucun secret :
-// l'URL du contrôleur et le token d'enrollment vivent dans un fichier
-// d'environnement en 0600, car un fichier d'unité est lisible par tous.
+// SystemdUnit returns the proxy's systemd unit. It contains no secret: the
+// controller URL and enrollment token live in a 0600 environment file,
+// since a unit file is readable by everyone.
 func (s *Service) SystemdUnit(r *http.Request) string {
 	var base = s.externalBase(r).String()
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	b.WriteString("Description=meshcraft proxy — point de présence réseau\n")
+	b.WriteString("Description=meshcraft proxy — network point of presence\n")
 	b.WriteString("Documentation=" + base + "\n")
 	b.WriteString("After=network-online.target\n")
 	b.WriteString("Wants=network-online.target\n\n")
@@ -53,13 +53,13 @@ func (s *Service) SystemdUnit(r *http.Request) string {
 	b.WriteString("ExecStart=" + binPath + "\n")
 	b.WriteString("Restart=always\n")
 	b.WriteString("RestartSec=5s\n")
-	// systemd crée et donne au service son répertoire d'état.
+	// systemd creates the state directory and grants it to the service.
 	b.WriteString("StateDirectory=" + serviceID + "\n")
 	b.WriteString("StateDirectoryMode=0750\n")
 	b.WriteString("WorkingDirectory=" + stateDir + "\n\n")
 
-	b.WriteString("# Moindre privilège : deux capabilities suffisent — le scan ARP/ND et\n")
-	b.WriteString("# l'écoute de syslog (514/udp) et des traps (162/udp).\n")
+	b.WriteString("# Least privilege: two capabilities are enough — the ARP/ND scan and\n")
+	b.WriteString("# listening for syslog (514/udp) and traps (162/udp).\n")
 	b.WriteString("AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE\n")
 	b.WriteString("CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE\n")
 	b.WriteString("NoNewPrivileges=yes\n")
@@ -72,8 +72,8 @@ func (s *Service) SystemdUnit(r *http.Request) string {
 	b.WriteString("RestrictNamespaces=yes\n")
 	b.WriteString("RestrictSUIDSGID=yes\n")
 	b.WriteString("LockPersonality=yes\n")
-	// AF_PACKET est nécessaire au scan ARP, AF_NETLINK à la lecture des
-	// interfaces locales annoncées au contrôleur.
+	// AF_PACKET is needed for the ARP scan, AF_NETLINK for reading the local
+	// interfaces reported to the controller.
 	b.WriteString("RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_PACKET\n")
 	b.WriteString("SystemCallArchitectures=native\n")
 	b.WriteString("SystemCallFilter=@system-service\n\n")
@@ -83,9 +83,9 @@ func (s *Service) SystemdUnit(r *http.Request) string {
 	return b.String()
 }
 
-// InstallScript génère le script d'installation. Il embarque le token
-// d'enrollment (usage unique, TTL court) et les SHA-256 des artefacts servis au
-// moment de la génération : un binaire non conforme n'est jamais installé.
+// InstallScript generates the installation script. It embeds the enrollment
+// token (single use, short TTL) and the SHA-256 sums of the artifacts served
+// at generation time: a binary that doesn't match is never installed.
 func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt time.Time) (string, error) {
 	var arts, err = s.ListArtifacts()
 	if err != nil {
@@ -102,14 +102,14 @@ func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt t
 	var base = s.externalBase(r).String()
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
-	b.WriteString("# meshcraft proxy — installation en service systemd (sans Docker).\n")
-	b.WriteString("# Généré par le contrôleur " + base + "\n")
+	b.WriteString("# meshcraft proxy — installation as a systemd service (Dockerless).\n")
+	b.WriteString("# Generated by controller " + base + "\n")
 	b.WriteString("#\n")
-	b.WriteString("# Le token d'enrollment embarqué ci-dessous est à USAGE UNIQUE et expire le\n")
-	b.WriteString("# " + expiresAt.UTC().Format("2006-01-02 15:04:05") + " UTC. Passé ce délai, générez-en un autre.\n")
+	b.WriteString("# The enrollment token embedded below is SINGLE USE and expires on\n")
+	b.WriteString("# " + expiresAt.UTC().Format("2006-01-02 15:04:05") + " UTC. After that, generate another one.\n")
 	b.WriteString("#\n")
-	b.WriteString("# Le script est idempotent : relancé, il remplace le binaire et l'unité sans\n")
-	b.WriteString("# toucher à l'identité déjà enrôlée (" + stateDir + "/state.json).\n")
+	b.WriteString("# The script is idempotent: re-run, it replaces the binary and the unit\n")
+	b.WriteString("# without touching the already-enrolled identity (" + stateDir + "/state.json).\n")
 	b.WriteString("set -eu\n\n")
 
 	b.WriteString("CONTROLLER=\"" + base + "\"\n")
@@ -125,7 +125,7 @@ func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt t
 	b.WriteString("fi\n")
 	b.WriteString("command -v systemctl >/dev/null 2>&1 || {\n")
 	b.WriteString("  echo \"systemd not found on this host: run the binary by hand with\" >&2\n")
-	b.WriteString("  echo \"MESHCRAFT_CONTROLLER et MESHCRAFT_ENROLL_TOKEN, ou utilisez Docker.\" >&2\n")
+	b.WriteString("  echo \"MESHCRAFT_CONTROLLER and MESHCRAFT_ENROLL_TOKEN, or use Docker.\" >&2\n")
 	b.WriteString("  exit 1\n")
 	b.WriteString("}\n\n")
 
@@ -144,32 +144,32 @@ func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt t
 		b.WriteString(fmt.Sprintf("  %s) ART=%q; SUM=%q ;;\n", c.patterns, art.Name, art.SHA256))
 	}
 	b.WriteString("  *)\n")
-	b.WriteString("    echo \"architecture $(uname -m) non distribuée par ce contrôleur\" >&2\n")
+	b.WriteString("    echo \"architecture $(uname -m) not distributed by this controller\" >&2\n")
 	b.WriteString("    exit 1 ;;\n")
 	b.WriteString("esac\n\n")
 
 	b.WriteString("TMP=\"$(mktemp)\"\n")
 	b.WriteString("trap 'rm -f \"$TMP\"' EXIT\n")
-	b.WriteString("echo \"→ téléchargement de $ART\"\n")
+	b.WriteString("echo \"→ downloading $ART\"\n")
 	b.WriteString("if command -v curl >/dev/null 2>&1; then\n")
 	b.WriteString("  curl -fSL \"$CONTROLLER/downloads/proxy/$ART\" -o \"$TMP\"\n")
 	b.WriteString("elif command -v wget >/dev/null 2>&1; then\n")
 	b.WriteString("  wget -qO \"$TMP\" \"$CONTROLLER/downloads/proxy/$ART\"\n")
 	b.WriteString("else\n")
-	b.WriteString("  echo \"ni curl ni wget disponibles\" >&2; exit 1\n")
+	b.WriteString("  echo \"neither curl nor wget available\" >&2; exit 1\n")
 	b.WriteString("fi\n\n")
 
-	b.WriteString("# Intégrité vérifiée AVANT installation : un binaire non conforme n'est\n")
-	b.WriteString("# jamais posé sur le système.\n")
+	b.WriteString("# Integrity verified BEFORE installation: a binary that doesn't match is\n")
+	b.WriteString("# never placed on the system.\n")
 	b.WriteString("GOT=\"$(sha256sum \"$TMP\" | cut -d' ' -f1)\"\n")
 	b.WriteString("if [ \"$GOT\" != \"$SUM\" ]; then\n")
-	b.WriteString("  echo \"SHA-256 inattendu : $GOT (attendu $SUM)\" >&2\n")
+	b.WriteString("  echo \"unexpected SHA-256: $GOT (expected $SUM)\" >&2\n")
 	b.WriteString("  exit 1\n")
 	b.WriteString("fi\n")
-	b.WriteString("echo \"→ SHA-256 conforme\"\n\n")
+	b.WriteString("echo \"→ SHA-256 matches\"\n\n")
 
-	b.WriteString("# Compte de service non privilégié : le proxy ne stocke aucun secret\n")
-	b.WriteString("# d'équipement, il n'a rien à faire en root.\n")
+	b.WriteString("# Unprivileged service account: the proxy stores no device secrets, it\n")
+	b.WriteString("# has no business running as root.\n")
 	b.WriteString("if ! id " + serviceID + " >/dev/null 2>&1; then\n")
 	b.WriteString("  useradd --system --home-dir \"$STATE\" --shell /usr/sbin/nologin " + serviceID + " 2>/dev/null \\\n")
 	b.WriteString("    || adduser --system --home \"$STATE\" --shell /usr/sbin/nologin " + serviceID + " 2>/dev/null \\\n")
@@ -180,8 +180,8 @@ func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt t
 	b.WriteString("install -d -m 0750 \"$STATE\"\n")
 	b.WriteString("chown " + serviceID + " \"$STATE\"\n\n")
 
-	b.WriteString("# Le token est un secret : fichier d'environnement en 0600, jamais dans\n")
-	b.WriteString("# l'unité systemd (lisible par tous).\n")
+	b.WriteString("# The token is a secret: 0600 environment file, never in the systemd\n")
+	b.WriteString("# unit (readable by everyone).\n")
 	b.WriteString("install -d -m 0755 /etc/meshcraft\n")
 	b.WriteString("cat > \"$ENV_FILE\" <<EOF\n")
 	b.WriteString("MESHCRAFT_CONTROLLER=$CONTROLLER\n")
@@ -196,9 +196,9 @@ func (s *Service) InstallScript(r *http.Request, enrollToken string, expiresAt t
 
 	b.WriteString("systemctl daemon-reload\n")
 	b.WriteString("systemctl enable --now " + unitName + "\n\n")
-	b.WriteString("echo \"✓ proxy installé et démarré.\"\n")
-	b.WriteString("echo \"  journal  : journalctl -u " + serviceID + "-proxy -f\"\n")
-	b.WriteString("echo \"  état     : $STATE/state.json\"\n")
-	b.WriteString("echo \"  Le token est consommé : il peut être retiré de $ENV_FILE.\"\n")
+	b.WriteString("echo \"✓ proxy installed and started.\"\n")
+	b.WriteString("echo \"  log      : journalctl -u " + serviceID + "-proxy -f\"\n")
+	b.WriteString("echo \"  state    : $STATE/state.json\"\n")
+	b.WriteString("echo \"  The token has been consumed: it may be removed from $ENV_FILE.\"\n")
 	return b.String(), nil
 }

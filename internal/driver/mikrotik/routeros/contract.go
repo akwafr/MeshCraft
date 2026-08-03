@@ -32,7 +32,7 @@ import (
 //
 // The types the API layer exchanges with a live connector now live in
 // internal/driver (cf. state.go). This package had its own, with comments saying
-// they copied « the same shape as the Instant On connector ». Three identical
+// they copied 'the same shape as the Instant On connector'. Three identical
 // definitions by convention hold until one gains a field: on that day, the API's
 // silent conversion drops that field without any test noticing, and a
 // configuration drift becomes invisible.
@@ -100,8 +100,8 @@ type (
 // What will FAIL COMPILATION the day the contract moves.
 //
 // A runtime type assertion (`admin.(driver.SNMPConfigurator)`) would fail
-// silently, in the field: the caller would fall back to its message « this
-// platform cannot do that » for a capability this connector does have, and
+// silently, in the field: the caller would fall back to its message 'this
+// platform cannot do that' for a capability this connector does have, and
 // nobody would know a signature had drifted. These declarations cost zero bytes
 // at runtime and turn that silent failure into a build error.
 //
@@ -128,7 +128,7 @@ var (
 // authenticates with HTTP Basic re-presented on every request (OBSERVED: without
 // credentials, `/rest/system/identity` returns 401 with `WWW-Authenticate:
 // Basic`). There is no cookie to keep, no session to close — hence the absence of
-// `Close` in the contract, and hence « proving » can mean only one thing here:
+// `Close` in the contract, and hence 'proving' can mean only one thing here:
 // SUCCEED AT ONE AUTHENTICATED READ.
 //
 // THE CHOSEN READ IS `/system/identity`, the cheapest that requires
@@ -167,8 +167,8 @@ var (
 // worse:
 //
 //   - the device DOES NOT RESPOND (transport error, no HTTP code). Trying further
-//     candidates against a refused TCP proves nothing and muddies diagnosis: « no
-//     credential accepted » and « the device does not respond » are fixed by
+//     candidates against a refused TCP proves nothing and muddies diagnosis: 'no
+//     credential accepted' and 'the device does not respond' are fixed by
 //     unrelated actions, and the message must decide;
 //   - the device responds 403. This is the nastiest case on this platform, and it
 //     must be read correctly: 403 means the SECRET IS GOOD and the account's
@@ -214,7 +214,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 		// attempts; the same pair twice is only one.
 		var key = cand.Username + "\x00" + cand.Secret
 		if tried[key] {
-			c.step(true, "duplicate candidate skipped: \u00ab "+cand.Why+" \u00bb",
+			c.step(true, "duplicate candidate skipped: '"+cand.Why+"'",
 				"the same account/secret pair was already presented — replaying it "+
 					"would empty the attempt budget without learning anything")
 			continue
@@ -228,7 +228,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 			// first-hand the device accepted them.
 			c.User = cand.Username
 			c.accepted = cand
-			c.step(true, "connected as \u00ab "+cand.Username+" \u00bb ("+cand.Why+")",
+			c.step(true, "connected as '"+cand.Username+"' ("+cand.Why+")",
 				"authenticated read of /rest/system/identity succeeded")
 			return c, nil
 		}
@@ -242,7 +242,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 				"no attempt was consumed beyond the first", tgt.Host, err)
 		case 403:
 			// The secret IS good. See the early-stop section.
-			return c, fmt.Errorf("account \u00ab %s \u00bb (%s) is ACCEPTED by %s but its "+
+			return c, fmt.Errorf("account '%s' (%s) is ACCEPTED by %s but its "+
 				"group does not carry the `rest-api` policy: meshcraft cannot read "+
 				"anything despite a valid secret. Fix on the device, in `/user/group` — "+
 				"the three factory groups (`read`, `write`, `full`) carry it; a custom "+
@@ -250,7 +250,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 				"just found",
 				cand.Username, cand.Why, tgt.Host)
 		}
-		refusals = append(refusals, fmt.Sprintf("\u00ab %s \u00bb (%s): %s",
+		refusals = append(refusals, fmt.Sprintf("'%s' (%s): %s",
 			cand.Username, cand.Why, err.Error()))
 	}
 
@@ -267,7 +267,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 // Confusing them would exhaust the attempt budget on a cut tunnel, or hunt for a
 // password when the problem is a group policy.
 //
-// It DELIBERATELY bypasses [Client.List]: List logs a « read refused » to the
+// It DELIBERATELY bypasses [Client.List]: List logs a 'read refused' to the
 // transcript for every candidate that fails, which would drown the one line that
 // matters — the candidate that got in. The authentication transcript is written
 // by Authenticate, with each candidate's `Why`, because that is what the
@@ -305,7 +305,7 @@ func (d *Driver) WritesExtra(name string) bool { return WritesExtra(name) }
 
 // Connector returns the identity of the connector that produced this access.
 //
-// For MESSAGES: « this platform cannot declare an SNMPv3 user » helps nobody if
+// For MESSAGES: 'this platform cannot declare an SNMPv3 user' helps nobody if
 // the screen does not say which platform. Also keeps the caller from carrying
 // the connector name alongside the access — two variables that would eventually
 // refer to two different devices.
@@ -324,8 +324,8 @@ func (c *Client) Account() string { return c.User }
 //
 // Returned by the contract because the caller needs it: the device's CURRENT
 // secret is the one that just got in. This replaces a reconstruction from the
-// TRANSCRIPT the API layer used — find a step whose label starts with « connected
-// as », then cross-check its `Why` against the candidate list. A transcript
+// TRANSCRIPT the API layer used — find a step whose label starts with 'connected
+// as', then cross-check its `Why` against the candidate list. A transcript
 // label is text for a human: rewording it is legitimate, with no apparent
 // consequence, and silently broke credential apply. That coupling need not
 // survive the contract, and the transcript line written by [Driver.Authenticate]
@@ -344,27 +344,27 @@ func (c *Client) Transcript() []Step { return c.Steps }
 // --- Raw read, reconnaissance tool ---
 
 // ReadRaw returns the contents of the named unit. On this platform, a unit is a
-// REST MENU PATH — « interface/bridge/vlan », « snmp/community », « user ».
+// REST MENU PATH — 'interface/bridge/vlan', 'snmp/community', 'user'.
 //
 // READ-ONLY, and a RECONNAISSANCE tool rather than a product feature: on an
 // undocumented API, one cannot WRITE a menu until its real field set has been
 // seen. This package carries the proof — the `max-l2mtu` frame ceiling had been
-// declared « not published » from enumerating the 87 fields of
+// declared 'not published' from enumerating the 87 fields of
 // `/interface/ethernet` alone, while `/interface` serves it. Replaying a capture
 // showed the contradiction.
 //
 // THE NAME IS SANITIZED, by [menuPath], the same gate as all other reads: it
 // goes into a URL, and a `?` or `..` segment would divert the request to another
-// device endpoint — `net/http` normalizing the path before sending, «
-// interface/../../etc » would become « /etc ».
+// device endpoint — `net/http` normalizing the path before sending, '
+// interface/../../etc' would become '/etc'.
 //
 // WHAT IS RETURNED IS THE DECODED RECORD SET, RE-ENCODED AS INDENTED JSON,
 // not the response bytes verbatim. That is a choice, not a convenience:
 //
 //   - going through [Client.List] gives this read everything this connector
-//     learned about this API, especially the meaning of return codes — « a 500
+//     learned about this API, especially the meaning of return codes — 'a 500
 //     does NOT distinguish an absent menu from a menu that contains only
-//     sub-menus; try a sub-path before concluding ». On a reconnaissance tool,
+//     sub-menus; try a sub-path before concluding'. On a reconnaissance tool,
 //     that sentence is what matters, not the bytes;
 //   - what reconnaissance seeks is the FIELD SET, and it is fully preserved:
 //     [flatten] keeps even values that are not strings, in their JSON form.
@@ -381,7 +381,7 @@ func (c *Client) ReadRaw(ctx context.Context, unit string) (string, error) {
 	return string(out), nil
 }
 
-// RawKind names, for a human, what « a unit » means here.
+// RawKind names, for a human, what 'a unit' means here.
 //
 // For the UI, and not ornament: without it, the debug probe would ask for a
 // section name `wcd` from someone looking at a MikroTik, and failure would
@@ -397,8 +397,8 @@ func (c *Client) RawKind() string { return "REST menu" }
 // # [driver.Persister]: NOTHING TO SAVE, AND THEREFORE NO SAFETY NET
 //
 // RouterOS is [driver.CommitImmediate]: configuration is in non-volatile memory
-// the moment the device responds. There is no candidate configuration, no « make
-// durable » step, and no native commit-confirmed — RouterOS's is tied to an
+// the moment the device responds. There is no candidate configuration, no 'make
+// durable' step, and no native commit-confirmed — RouterOS's is tied to an
 // interactive session, out of reach of an API re-authenticated on every
 // request.
 //

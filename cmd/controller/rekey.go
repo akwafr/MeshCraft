@@ -1,34 +1,35 @@
 package main
 
-// Le mode `-rekey` du controleur : bascule la key du coffre de la base vers
-// l'environnement, en rechiffrant tout ce qui est scelle.
+// The controller's `-rekey` mode: switches the vault key from the database
+// to the environment, rekeying everything that is sealed.
 //
-// POURQUOI UN MODE DU BINAIRE, ET PAS AUTRE CHOSE. Trois formes were
-// possibles, et le choix n'est pas cosmetique :
+// WHY A BINARY MODE, AND NOT SOMETHING ELSE. Three forms were possible, and
+// the choice is not cosmetic:
 //
-//   - Une route d'API serait le PIRE choix. Elle laisserait en permanence, sur
-//     un produit expose, un point ingress capable de rewrite tout le coffre en
-//     une request. La bascule est un acte qui arrive une fois dans la vie d'une
-//     instance ; lui dedier une surface permanente, c'est payer un risque
-//     permanent pour un usage unique. Elle ne pourrait pas non plus garantir ce
-//     qui compte le plus ici : que personne d'autre does not write pendant l'operation,
-//     puisqu'elle serait justement servie par le processus qui written.
+//   - An API route would be the WORST choice. It would permanently leave, on
+//     an exposed product, an ingress point capable of rewriting the entire
+//     vault in a single request. The switchover is an act that happens once
+//     in an instance's lifetime; dedicating a permanent surface to it means
+//     paying a permanent risk for a one-time use. It also could not
+//     guarantee the thing that matters most here: that nobody else writes
+//     during the operation, since it would precisely be served by the
+//     process that writes.
 //
-//   - Un binaire de plus (cmd/rekey) obligerait a toucher le Dockerfile, a
-//     distribuer et versionner un outil supplementaire, et surtout a DUPLIQUER
-//     la logique de key. Le jour where les deux copies divergent, l'outil de
-//     bascule bascule autre chose que ce que le controleur lit.
+//   - One more binary (cmd/rekey) would require touching the Dockerfile,
+//     distributing and versioning an extra tool, and above all DUPLICATING
+//     the key logic. The day the two copies diverge, the switchover tool
+//     switches over something other than what the controller reads.
 //
-//   - Un mode du controleur, retenu : la logique de key est already ici
-//     (keyguard.go), il n'y a rien a distribuer, l'image existante sait le faire
-//     (`docker compose run --rm controller -rekey`), et le processus qui
-//     rechiffre est exactement celui qui verifiera l'empreinte au demarrage
-//     suivant. Le mode ne demarre PAS le serveur HTTP : il fait son travail,
-//     imprime son compte rendu et sort.
+//   - A controller mode, the one chosen: the key logic is already here
+//     (keyguard.go), there is nothing to distribute, the existing image
+//     already knows how to do it (`docker compose run --rm controller
+//     -rekey`), and the process doing the rekeying is exactly the one that
+//     will verify the fingerprint on the next startup. The mode does NOT
+//     start the HTTP server: it does its job, prints its report, and exits.
 //
-// La sortie est volontairement bavarde et chiffree : un exploitant doit pouvoir
-// comparer ligne a ligne avec l'inventaire des colonnes scellees. « Termine »
-// sans compte n'est pas verifiable.
+// The output is deliberately verbose and figure-heavy: an operator must be
+// able to compare it line by line against the inventory of sealed columns.
+// "Done" with no count is not verifiable.
 
 import (
 	"context"
@@ -42,37 +43,40 @@ import (
 	"meshcraft/internal/store"
 )
 
-// runRekey execute la bascule. Renvoie une erreur ; l'appelant sort en code 1.
+// runRekey performs the switchover. Returns an error; the caller exits with
+// code 1.
 //
-// force : passe outre le garde-fou « d'autres connexions a la base sont
-// ouvertes ». Il existe parce que ce garde-fou peut se tromper (un pgbouncer, un
-// psql d'observation), mais son default est de refuser : la faute qu'il attrape —
-// un controleur reste allume, qui garde l'ancienne key en memory et continuera
-// de sceller avec elle after le commit — costs des secrets perdus.
+// force: bypasses the "other connections to the database are open"
+// safeguard. It exists because that safeguard can be wrong (a pgbouncer, a
+// psql observation session), but its default is to refuse: the fault it
+// catches — a controller left running, which keeps the old key in memory
+// and will keep sealing with it after the commit — costs lost secrets.
 func runRekey(ctx context.Context, cfg config.Config, st *store.Store, force bool) error {
-	fmt.Println("=== meshcraft — rechiffrement du coffre a identifiants ===")
+	fmt.Println("=== meshcraft — rekeying the credentials vault ===")
 	fmt.Println()
 
-	// La NOUVELLE key vient de l'environnement. Refuser tot et clairement :
-	// lancer le rechiffrement sans savoir vers quoi on bascule n'a aucun sens.
+	// The NEW key comes from the environment. Refuse early and clearly:
+	// running the rekey process without knowing what we're switching to
+	// makes no sense.
 	if cfg.SecretKey == "" {
-		return errors.New("MESHCRAFT_SECRET_KEY est vide.\n\n" +
-			"Le rechiffrement bascule le coffre de la key rangee en base VERS une key\n" +
-			"fournie par l'environnement : la nouvelle key doit donc be dans\n" +
-			"MESHCRAFT_SECRET_KEY (64 caracteres hexadecimaux).\n\n" +
+		return errors.New("MESHCRAFT_SECRET_KEY is empty.\n\n" +
+			"The rekey process switches the vault FROM the key stored in the database\n" +
+			"TO a key supplied by the environment: the new key must therefore be in\n" +
+			"MESHCRAFT_SECRET_KEY (64 hexadecimal characters).\n\n" +
 			"    openssl rand -hex 32\n\n" +
-			"NOTEZ-LA AVANT DE LANCER L'OPERATION, dans votre coffre a secrets. Apres la\n" +
-			"bascule, elle est le SEUL moyen de lire les secrets de cette base : le\n" +
-			"rechiffrement retire l'ancienne key, et aucune copie ne reste cote serveur.")
+			"WRITE IT DOWN BEFORE STARTING THE OPERATION, in your secrets vault. After\n" +
+			"the switchover, it is the ONLY way to read this database's secrets: the\n" +
+			"rekey process removes the old key, and no copy remains server-side.")
 	}
 	var newKey, err = secretbox.ParseHexKey(cfg.SecretKey)
 	if err != nil {
-		return fmt.Errorf("MESHCRAFT_SECRET_KEY : %w", err)
+		return fmt.Errorf("MESHCRAFT_SECRET_KEY: %w", err)
 	}
 
-	// L'ANCIENNE key se lit en base, et sans la create : si elle n'y est plus,
-	// c'est soit une bascule already faite, soit une base qu'on ne peut plus lire.
-	// Les deux se traitent, mais pas de la same way.
+	// The OLD key is read from the database, and never created: if it is no
+	// longer there, it means either a switchover already happened, or a
+	// database that can no longer be read. Both are handled, but not the
+	// same way.
 	var oldKey []byte
 	oldKey, err = st.InstanceSecretValue(ctx, store.CredentialsKeyName)
 	if errors.Is(err, store.ErrNotFound) {
@@ -83,159 +87,160 @@ func runRekey(ctx context.Context, cfg config.Config, st *store.Store, force boo
 	}
 
 	if secretbox.SameFingerprint(secretbox.Fingerprint(oldKey), secretbox.Fingerprint(newKey)) {
-		return errors.New("MESHCRAFT_SECRET_KEY contient ALREADY la key rangee en base.\n\n" +
-			"Rechiffrer n'apporterait rien : la key serait la same de chaque cote, et la\n" +
-			"sortir de la base sans la changer laisserait une copie de la key de\n" +
-			"production dans les sauvegardes existantes.\n\n" +
-			"Engendrez une key NEUVE (openssl rand -hex 32) et relancez.")
+		return errors.New("MESHCRAFT_SECRET_KEY ALREADY contains the key stored in the database.\n\n" +
+			"Rekeying would achieve nothing: the key would be the same on both sides, and\n" +
+			"taking it out of the database without changing it would leave a copy of the\n" +
+			"production key in existing backups.\n\n" +
+			"Generate a FRESH key (openssl rand -hex 32) and try again.")
 	}
 
-	// Garde-fou : un controleur reste allume garde l'ancienne key en memory.
-	// L'operation elle-same resterait atomique (les verrous s'en chargent), mais
-	// tout secret enregistre AFTER le commit par ce processus-there serait scelle
-	// avec une key que la base ne reconnait plus.
+	// Safeguard: a controller left running keeps the old key in memory. The
+	// operation itself would remain atomic (the locks take care of that),
+	// but any secret saved AFTER the commit by that other process would be
+	// sealed with a key the database no longer recognizes.
 	var others int
 	if others, err = st.OtherConnections(ctx); err != nil {
 		return err
 	}
 	if others > 0 && !force {
-		return fmt.Errorf(`%d autre(s) connexion(s) sont ouvertes sur cette base.
+		return fmt.Errorf(`%d other connection(s) are open on this database.
 
-Le controleur est probablement encore en service. Il garde l'ANCIENNE key en
-memory : after le rechiffrement, chaque secret qu'il enregistrerait serait
-scelle avec une key que la base ne reconnait plus — et perdu.
+The controller is probably still in service. It keeps the OLD key in
+memory: after the rekey process, every secret it saves would be sealed with
+a key the database no longer recognizes — and lost.
 
     docker compose stop controller
     docker compose run --rm controller -rekey
 
-Si vous savez que ces connexions sont inoffensives (psql d'observation,
-pgbouncer), relancez avec -rekey-force.`, others)
+If you know these connections are harmless (an observation psql session, a
+pgbouncer), rerun with -rekey-force.`, others)
 	}
 	if others > 0 {
-		fmt.Printf("ATTENTION : %d autre(s) connexion(s) sur la base, ignorees (-rekey-force).\n\n", others)
+		fmt.Printf("WARNING: %d other connection(s) on the database, ignored (-rekey-force).\n\n", others)
 	}
 
-	// Inventaire AVANT. C'est lui que l'exploitant compare au compte rendu : un
-	// total qui tombe juste par rapport a un inventaire pris after coup ne prouve
-	// rien.
+	// Inventory BEFORE. This is what the operator compares against the
+	// report: a total that matches against an inventory taken afterward
+	// proves nothing.
 	var before []store.RekeyCount
 	if before, err = st.CountSealed(ctx); err != nil {
 		return err
 	}
-	fmt.Println("Inventaire AVANT (valeurs scellees non vides) :")
+	fmt.Println("Inventory BEFORE (non-empty sealed values):")
 	printCounts(before, false)
 	fmt.Println()
-	fmt.Printf("Ancienne key (base)      : empreinte %s\n", secretbox.KeyShortID(oldKey))
-	fmt.Printf("Nouvelle key (env)       : empreinte %s\n", secretbox.KeyShortID(newKey))
+	fmt.Printf("Old key (database)      : fingerprint %s\n", secretbox.KeyShortID(oldKey))
+	fmt.Printf("New key (environment)    : fingerprint %s\n", secretbox.KeyShortID(newKey))
 	fmt.Println()
 
 	var report store.RekeyReport
 	report, err = st.RekeyCredentials(ctx, oldKey, newKey, store.RekeyOptions{
-		// 30 s : assez pour laisser passer une write normale qui trainait, trop
-		// peu pour rester pendu sans explication si le controleur written encore.
+		// 30s: enough to let a lingering normal write go through, too little
+		// to hang without explanation if the controller is still writing.
 		LockTimeout: 30 * time.Second,
 	})
 	if err != nil {
-		// Le compte rendu partiel est imprime quand same : savoir where ca s'est
-		// stopped aide, same si rien n'a been written.
+		// The partial report is printed anyway: knowing where it stopped
+		// helps, even if nothing was written.
 		if len(report.Columns) > 0 {
-			fmt.Println("Progression au moment de failure (RIEN N'A ETE WRITES) :")
+			fmt.Println("Progress at the time of failure (NOTHING WAS WRITTEN):")
 			printCounts(report.Columns, true)
 			fmt.Println()
 		}
-		return fmt.Errorf(`le rechiffrement a echoue : %w
+		return fmt.Errorf(`rekeying failed: %w
 
-LA TRANSACTION A ETE ANNULEE : la base est exactement dans state where elle was
-avant l'operation, entirely lisible avec l'ancienne key. L'instance redemarre
-sans MESHCRAFT_SECRET_KEY comme avant.`, err)
+THE TRANSACTION WAS ROLLED BACK: the database is in exactly the state it was
+in before the operation, fully readable with the old key. The instance
+restarts without MESHCRAFT_SECRET_KEY, as before.`, err)
 	}
 
-	fmt.Println("Compte rendu (transaction validee) :")
+	fmt.Println("Report (transaction committed):")
 	printCounts(report.Columns, true)
 	var rows, resealed, already = report.Total()
 	fmt.Println()
-	fmt.Printf("  total          : %d valeur(s) scellee(s)\n", rows)
-	fmt.Printf("  rescellees     : %d\n", resealed)
-	fmt.Printf("  already a jour    : %d\n", already)
-	fmt.Printf("  RELUES ET DECHIFFREES avec la nouvelle key avant validation : %d\n", report.Verified)
+	fmt.Printf("  total            : %d sealed value(s)\n", rows)
+	fmt.Printf("  resealed         : %d\n", resealed)
+	fmt.Printf("  already current  : %d\n", already)
+	fmt.Printf("  REREAD AND DECRYPTED with the new key before commit: %d\n", report.Verified)
 	if report.OldKeyDeleted {
-		fmt.Println("  ancienne key   : SUPPRIMEE de instance_secrets " +
-			"(une key devenue inutile n'est plus qu'une fuite en attente)")
+		fmt.Println("  old key        : DELETED from instance_secrets " +
+			"(a key that has become useless is nothing but a leak waiting to happen)")
 	}
-	fmt.Printf("  empreinte enregistree : %s\n", secretbox.KeyShortID(newKey))
+	fmt.Printf("  fingerprint recorded: %s\n", secretbox.KeyShortID(newKey))
 	fmt.Println()
 
-	// La comparaison avant/after est faite ICI, pas laissee a l'œil de
-	// l'exploitant : un total qui ne tombe pas juste doit se voir tout seul.
+	// The before/after comparison is done HERE, not left to the operator's
+	// eye: a total that doesn't match must be visible on its own.
 	var mismatch = compareInventories(before, report.Columns)
 	if mismatch != "" {
-		fmt.Println("ANOMALIE DE COMPTE : " + mismatch)
-		fmt.Println("La transaction est validee et verified ; signalez tout de same cet ecart.")
+		fmt.Println("COUNT ANOMALY: " + mismatch)
+		fmt.Println("The transaction is committed and verified; report this discrepancy anyway.")
 		fmt.Println()
 	}
 
-	fmt.Println("Termine. MESHCRAFT_SECRET_KEY est now INDISPENSABLE au demarrage :")
-	fmt.Println("elle est le seul moyen de lire ce coffre. Verifiez qu'elle est bien dans le")
-	fmt.Println(".env de l'instance ET dans votre coffre a secrets, puis redemarrez :")
+	fmt.Println("Done. MESHCRAFT_SECRET_KEY is now REQUIRED at startup:")
+	fmt.Println("it is the only way to read this vault. Make sure it is in the instance's")
+	fmt.Println(".env AND in your secrets vault, then restart:")
 	fmt.Println()
 	fmt.Println("    docker compose up -d controller")
 	return nil
 }
 
-// alreadySwitched traite le cas « plus de key en base ».
+// alreadySwitched handles the "no more key in the database" case.
 //
-// Rejouer la bascule doit be sans danger : c'est la property qui permet de
-// relancer sereinement after une interruption. Si l'empreinte enregistree est
-// celle de la key fournie, il n'y a rien a faire et on le dit. Sinon, il n'y a
-// aucune key de LECTURE disponible et le rechiffrement est impossible — refuser
-// en le disant vaut mille fois mieux que tenter quelque chose.
+// Replaying the switchover must be safe: that is the property that allows
+// rerunning it calmly after an interruption. If the recorded fingerprint
+// matches the supplied key, there is nothing to do and we say so.
+// Otherwise, there is no READ key available and rekeying is impossible —
+// refusing and saying so is a thousand times better than attempting
+// anything.
 func alreadySwitched(ctx context.Context, st *store.Store, newKey []byte) error {
 	var stored, err = st.CredentialsKeyFingerprint(ctx)
 	if err != nil {
 		return err
 	}
 	if stored != nil && secretbox.SameFingerprint(stored, secretbox.Fingerprint(newKey)) {
-		fmt.Println("Rien a faire : cette base est ALREADY basculee sur la key fournie.")
-		fmt.Printf("  empreinte en base = empreinte de MESHCRAFT_SECRET_KEY = %s\n",
+		fmt.Println("Nothing to do: this database is ALREADY switched over to the supplied key.")
+		fmt.Printf("  fingerprint in database = fingerprint of MESHCRAFT_SECRET_KEY = %s\n",
 			secretbox.KeyShortID(newKey))
-		fmt.Println("  aucune key ne subsiste dans instance_secrets.")
+		fmt.Println("  no key remains in instance_secrets.")
 		fmt.Println()
 		var counts []store.RekeyCount
 		if counts, err = st.CountSealed(ctx); err != nil {
 			return err
 		}
-		fmt.Println("Inventaire (valeurs scellees, lisibles avec cette key) :")
+		fmt.Println("Inventory (sealed values, readable with this key):")
 		printCounts(counts, false)
 		return nil
 	}
-	var what = "  aucune empreinte n'est enregistree dans cette base."
+	var what = "  no fingerprint is recorded in this database."
 	if stored != nil {
-		what = fmt.Sprintf("  empreinte enregistree en base : %s\n"+
-			"  empreinte de MESHCRAFT_SECRET_KEY : %s",
+		what = fmt.Sprintf("  fingerprint recorded in database : %s\n"+
+			"  fingerprint of MESHCRAFT_SECRET_KEY : %s",
 			secretbox.ShortID(stored), secretbox.KeyShortID(newKey))
 	}
-	return fmt.Errorf(`aucune key a lire.
+	return fmt.Errorf(`no key to read with.
 
-La table instance_secrets ne contient plus de ligne « %s », et :
+The instance_secrets table no longer contains a "%s" row, and:
 
 %s
 
-Le rechiffrement a besoin de DEUX keys : celle qui lit et celle qui written. Sans
-key de lecture, il n'y a rien a rechiffrer — et surtout rien a tenter : write
-quoi que ce soit ici transformerait un coffre illisible en coffre detruit.
+Rekeying needs TWO keys: one to read with and one to write with. With no
+read key, there is nothing to rekey — and above all nothing to attempt:
+writing anything here would turn an unreadable vault into a destroyed one.
 
-CE QU'IL FAUT FAIRE : retrouvez la key avec laquelle ces secrets ont been scelles
-et mettez-la dans MESHCRAFT_SECRET_KEY — le demarrage normal du controleur
-suffira alors, sans rechiffrement. Si elle est perdue, restaurez une sauvegarde
-anterieure a la bascule.`, store.CredentialsKeyName, what)
+WHAT TO DO: find the key with which these secrets were sealed and put it in
+MESHCRAFT_SECRET_KEY — a normal controller startup will then be enough,
+with no rekeying needed. If it is lost, restore a backup from before the
+switchover.`, store.CredentialsKeyName, what)
 }
 
-// printCounts imprime l'inventaire, une ligne par colonne scellee.
+// printCounts prints the inventory, one line per sealed column.
 func printCounts(counts []store.RekeyCount, detail bool) {
 	var c store.RekeyCount
 	for _, c = range counts {
 		if detail {
-			fmt.Printf("  %-24s %-12s  %3d trouvee(s)  %3d rescellee(s)  %3d already a jour\n",
+			fmt.Printf("  %-24s %-12s  %3d found  %3d resealed  %3d already current\n",
 				c.Table, c.Column, c.Rows, c.Resealed, c.Already)
 			continue
 		}
@@ -243,24 +248,24 @@ func printCounts(counts []store.RekeyCount, detail bool) {
 	}
 }
 
-// compareInventories confronte le compte d'avant au compte rendu. Rend une
-// description de l'ecart, vide si tout tombe juste.
+// compareInventories checks the before count against the report. Returns a
+// description of the discrepancy, empty if everything matches.
 func compareInventories(before, after []store.RekeyCount) string {
 	if len(before) != len(after) {
-		return "l'inventaire d'avant et le compte rendu ne portent pas sur le same " +
-			"nombre de colonnes"
+		return "the before inventory and the report do not cover the same " +
+			"number of columns"
 	}
 	var i int
 	for i = range before {
 		if before[i].Table != after[i].Table || before[i].Column != after[i].Column {
-			return "les colonnes de l'inventaire et du compte rendu ne sont pas les memes"
+			return "the columns in the inventory and in the report are not the same"
 		}
 		if before[i].Rows != after[i].Rows {
-			return fmt.Sprintf("%s.%s : %d valeur(s) avant, %d traitee(s)",
+			return fmt.Sprintf("%s.%s: %d value(s) before, %d processed",
 				before[i].Table, before[i].Column, before[i].Rows, after[i].Rows)
 		}
 		if before[i].Rows != after[i].Resealed+after[i].Already {
-			return fmt.Sprintf("%s.%s : %d valeur(s) mais %d rescellee(s) + %d already a jour",
+			return fmt.Sprintf("%s.%s: %d value(s) but %d resealed + %d already current",
 				before[i].Table, before[i].Column, before[i].Rows,
 				after[i].Resealed, after[i].Already)
 		}
@@ -268,14 +273,14 @@ func compareInventories(before, after []store.RekeyCount) string {
 	return ""
 }
 
-// exitRekey enrobe runRekey pour le main : imprime l'erreur sur la sortie
-// d'erreur telle quelle (les messages sont multilignes et written pour be lus
-// par un humain, pas indexes par un agregateur de logs) et sort.
+// exitRekey wraps runRekey for main: prints the error to stderr as-is (the
+// messages are multi-line and written to be read by a human, not indexed by
+// a log aggregator) and exits.
 func exitRekey(ctx context.Context, cfg config.Config, st *store.Store, force bool) {
 	var err = runRekey(ctx, cfg, st, force)
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "FAILURE : "+err.Error())
+		fmt.Fprintln(os.Stderr, "FAILURE: "+err.Error())
 		os.Exit(1)
 	}
 	os.Exit(0)
