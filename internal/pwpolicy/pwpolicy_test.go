@@ -20,7 +20,7 @@ import (
 // connectors, because the declared values they report are what the field defect
 // depends on.
 
-// TestLeDefautConstateSurMaterielEstFerme : the exact field report case.
+// TestTheDefectFoundOnHardwareIsClosed : the exact field report case.
 //
 //	POST /api/devices/<css326>/credentials/apply
 //	-> "new password: 17 characters, the device accepts at most 15"
@@ -28,7 +28,7 @@ import (
 // SwOS caps at 15. A 16- or 17-character site secret must be REFUSED by the
 // policy — that refusal triggers generation — and the technical tag must name a
 // length actually settable.
-func TestLeDefautConstateSurMaterielEstFerme(t *testing.T) {
+func TestTheDefectFoundOnHardwareIsClosed(t *testing.T) {
 	var caps = (&swos.Driver{}).Capabilities("CSS326-24G-2S+")
 	if caps.Admin.PasswordMax != 15 {
 		t.Fatalf("SwOS connector declares PasswordMax = %d: test case no longer "+
@@ -67,20 +67,20 @@ func TestLeDefautConstateSurMaterielEstFerme(t *testing.T) {
 	}
 }
 
-// TestPasDEtiquettePourUneGammeSansContrainte : the point that avoids fragmenting
+// TestNoTagForAProductLineWithoutConstraint : the point that avoids fragmenting
 // the fleet. A platform whose policy accepts the site secret gets NO technical tag
 // and keeps the site credential — Instant On 1930 (8..64) and RouterOS (no bounds
 // reported).
 //
 // If this test fails, it is not cosmetic: the whole fleet would be tagged and each
 // line would have its secret, where one was enough.
-func TestPasDEtiquettePourUneGammeSansContrainte(t *testing.T) {
+func TestNoTagForAProductLineWithoutConstraint(t *testing.T) {
 	var siteSecret = "Abcdefgh12345678" // 16, what pwgen generates by default
 	if len(siteSecret) != pwgen.DefaultLength {
 		t.Fatalf("test case must carry a secret of project length")
 	}
 	var cas = []struct {
-		nom  string
+		name string
 		caps driver.Capabilities
 	}{
 		{"Instant On 1930 (8..64)", (&instanton.Driver1930{}).Capabilities("JL683A")},
@@ -88,7 +88,7 @@ func TestPasDEtiquettePourUneGammeSansContrainte(t *testing.T) {
 	}
 	var c = cas[0]
 	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			var pol = For(c.caps.Admin)
 			var accErr = pol.Accepts(siteSecret)
 			if accErr != nil {
@@ -98,10 +98,10 @@ func TestPasDEtiquettePourUneGammeSansContrainte(t *testing.T) {
 	}
 }
 
-// TestAllerRetourFerme : the stored tag is the OUTPUT of Tag(), and ParseTag must
+// TestClosedRoundTrip : the stored tag is the OUTPUT of Tag(), and ParseTag must
 // re-read it identically. Without this closure, a spelling variant would fabricate
 // a second credential for the same constraint.
-func TestAllerRetourFerme(t *testing.T) {
+func TestClosedRoundTrip(t *testing.T) {
 	var cas = []Policy{
 		{Min: 0, Max: 15},
 		{Min: 8, Max: 64},
@@ -137,13 +137,13 @@ func TestAllerRetourFerme(t *testing.T) {
 	}
 }
 
-// TestDeuxPolitiquesUneSeuleEtiquette : the core of "derive from POLICY, not model".
+// TestTwoPoliciesOneTag : the core of "derive from POLICY, not model".
 //
 // Two different lines for which meshcraft would generate the same secret must SHARE
 // their tag. One tag per model would yield as many secrets as catalog references —
 // and multiplying secrets means multiplying what must be rotated, revealed, and
 // monitored.
-func TestDeuxPolitiquesUneSeuleEtiquette(t *testing.T) {
+func TestTwoPoliciesOneTag(t *testing.T) {
 	// (0..15) and (15..15): two ways for a device to require fifteen characters.
 	// The same secret suits both, so they share the tag.
 	var a, aErr = Policy{Min: 0, Max: 15}.Tag()
@@ -165,7 +165,7 @@ func TestDeuxPolitiquesUneSeuleEtiquette(t *testing.T) {
 			"every meshcraft-generated secret already satisfies that constraint", c, a)
 	}
 	var strict = Policy{Min: 0, Max: 15, AlphanumericOnly: true}
-	if strict.Accepts("mot-de-passe!") == nil {
+	if strict.Accepts("pass-word!") == nil {
 		t.Error("a punctuated secret must be refused by a platform that forbids it")
 	}
 	if strict.Accepts("MotDePasse1234") != nil {
@@ -173,16 +173,16 @@ func TestDeuxPolitiquesUneSeuleEtiquette(t *testing.T) {
 	}
 
 	// Two different lengths, however, do separate: the constraint changed.
-	var court, _ = Policy{Min: 0, Max: 12}.Tag()
-	if court == a {
+	var short, _ = Policy{Min: 0, Max: 12}.Tag()
+	if short == a {
 		t.Error("two secret lengths share one tag")
 	}
 }
 
-// TestPolitiqueInsatisfiable : a platform whose cap is below meshcraft's floor has
+// TestUnsatisfiablePolicy : a platform whose cap is below meshcraft's floor has
 // NO tag. Emitting `pwpolicy-len6` would create a credential nothing can fill: an
 // inert row in the vault that looks like a working row.
-func TestPolitiqueInsatisfiable(t *testing.T) {
+func TestUnsatisfiablePolicy(t *testing.T) {
 	var cas = []Policy{
 		{Min: 0, Max: 6},
 		{Min: 20, Max: 15},
@@ -196,17 +196,17 @@ func TestPolitiqueInsatisfiable(t *testing.T) {
 	}
 }
 
-// TestLeJugeRefuseCeQuIlNaPasEcrit : an operational tag must NEVER be read as a
+// TestTheJudgeRefusesWhatItDidNotWrite : an operational tag must NEVER be read as a
 // technical constraint, nor a spelling variant pass for the canonical form.
 //
 // The distinction between the two functions is deliberate and matters:
 // `IsTechnicalTag` returns true for the whole namespace — needed to forbid input —,
 // `ParseTag` accepts only what Tag() produces.
-func TestLeJugeRefuseCeQuIlNaPasEcrit(t *testing.T) {
+func TestTheJudgeRefusesWhatItDidNotWrite(t *testing.T) {
 	var refuses = []string{
-		"regie", "scene", "", "len15", "snmpv3-sha-des",
+		"ops", "scene", "", "len15", "snmpv3-sha-des",
 		"pwpolicy", "pwpolicy-", "pwpolicy-len", "pwpolicy-len015", "pwpolicy-len+15",
-		"pwpolicy-max15", "pwpolicy-len15-alnum", "pwpolicy-len6", "pwpolicy-machin",
+		"pwpolicy-max15", "pwpolicy-len15-alnum", "pwpolicy-len6", "pwpolicy-whatever",
 	}
 	var tag string
 	for _, tag = range refuses {
@@ -221,15 +221,15 @@ func TestLeJugeRefuseCeQuIlNaPasEcrit(t *testing.T) {
 	// exactly like the official tag would be set on no device.
 	var reserves = []string{
 		"pwpolicy-len15", "pwpolicy-len015", "pwpolicy-", "PWPOLICY-LEN15",
-		" pwpolicy-len15 ", "pwpolicy-machin",
+		" pwpolicy-len15 ", "pwpolicy-whatever",
 	}
 	for _, tag = range reserves {
 		if !IsTechnicalTag(tag) {
 			t.Errorf("%q escapes the reserved namespace", tag)
 		}
 	}
-	var libres = []string{"regie", "", "snmpv3-sha-des", "pwpolicy"}
-	for _, tag = range libres {
+	var unmanaged = []string{"ops", "", "snmpv3-sha-des", "pwpolicy"}
+	for _, tag = range unmanaged {
 		if IsTechnicalTag(tag) {
 			t.Errorf("%q is an operational tag: it must not be confiscated by the "+
 				"technical namespace", tag)
@@ -237,11 +237,11 @@ func TestLeJugeRefuseCeQuIlNaPasEcrit(t *testing.T) {
 	}
 }
 
-// TestEspacesDeNomsDisjoints : two technical tag families now coexist on one
+// TestDisjointNamespaces : two technical tag families now coexist on one
 // device (`snmpv3-…` and `pwpolicy-…`). Neither must be read by the other's
 // judge — an encryption tag taken for a length constraint would file an admin
 // password under a supervision identity scope.
-func TestEspacesDeNomsDisjoints(t *testing.T) {
+func TestDisjointNamespaces(t *testing.T) {
 	if IsTechnicalTag("snmpv3-sha256-aes128") {
 		t.Error("an SNMPv3 tag is recognized by the password judge")
 	}

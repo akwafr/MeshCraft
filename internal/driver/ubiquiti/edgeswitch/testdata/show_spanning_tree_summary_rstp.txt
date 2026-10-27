@@ -1,0 +1,30 @@
+show spanning-tree summary
+
+Spanning Tree Admin Mode.......... Enabled
+Spanning Tree Version............. IEEE 802.1w
+Bridge Max Age.................... 20
+Bridge Max Hops................... 20
+Bridge Tx Hold Count.............. 6
+Bridge Forwarding Delay........... 15
+Hello Time........................ 2
+Bridge Hold Time.................. 6
+BPDU Guard Mode................... Disabled
+BPDU Filter Mode.................. Disabled
+Configuration Name................ 9C-05-D6-F5-F1-37
+Configuration Revision Level...... 0
+Configuration Digest Key.......... 0xac36177f50283cd4b83821d8ab26de62
+Configuration Format Selector..... 0
+Interface   State           Role
+--------- ----------------- ----------
+0/18      Forwarding        Root
+
+
+     Associated FIDs           Associated VLANs
+     ---------------           ----------------
+     1                         1
+     42                        42
+     98                        98
+     99                        99
+     100                       100
+
+(UBNT EdgeSwitch) #

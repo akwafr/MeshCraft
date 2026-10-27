@@ -20,7 +20,7 @@ import (
 //	GET  /systemInfo              → model, serial, MAC, firmware, port count
 //	GET  /connectivity            → management VLAN, addressing
 //	POST /connectivity            → applies addressing
-//	PUT  /managementPersonality   {"locallyManaged":true}  ← « Configure Locally »
+//	PUT  /managementPersonality   {"locallyManaged":true}  ← "Configure Locally"
 //	POST /login                   {"deviceWebUiToken":"…"}
 //	POST /logout
 //	POST /restart                 {}
@@ -138,7 +138,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 func StageOf(st PortalStatus) Stage {
 	switch {
 	case strings.EqualFold(st.ManagementMode, "CLOUD"):
-		// The UI considers the device « onboarded » when mode is CLOUD:
+		// The UI considers the device "onboarded" when mode is CLOUD:
 		// it is managed by the Instant On portal, not by us.
 		return StageCloudManaged
 	case st.CanEditConnectivity:
@@ -152,7 +152,7 @@ func StageOf(st PortalStatus) Stage {
 // Better to refuse than to push an order at the wrong time.
 var ErrWrongStage = errors.New("device is not in the expected state for this action")
 
-// ConfigureLocally triggers « Configure Locally »: the device stops
+// ConfigureLocally triggers "Configure Locally": the device stops
 // waiting for the cloud portal and becomes locally manageable. This is
 // the exact equivalent of the UI button — `PUT /managementPersonality`
 // with `{"locallyManaged": true}`.

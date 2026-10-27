@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"meshcraft/internal/driver"
@@ -19,11 +20,11 @@ import (
 //
 // The controller pings nothing. It sends each proxy the list of devices on sites it
 // covers and prefixes declared on it; the proxy pings locally and only reports
-// TRANSITIONS (cf. docs/01-Architecture/Proxy and internal/tunnel/control.go).
+// TRANSITIONS (cf. docs/en/01-Architecture/Proxy.md and internal/tunnel/control.go).
 
 // PushWatchTo (re)pushes watch configuration to a proxy.
 func (s *Server) PushWatchTo(ctx context.Context, proxyID string) {
-	var cfg, bilan, err = s.watchConfigFor(ctx, proxyID)
+	var cfg, tally, err = s.watchConfigFor(ctx, proxyID)
 	if err != nil {
 		slog.Error("monitoring: configuration not computed", "err", err, "proxy_id", proxyID)
 		return
@@ -76,16 +77,16 @@ func (s *Server) PushWatchTo(ctx context.Context, proxyID string) {
 	slog.Info("monitoring pushed", "proxy_id", proxyID,
 		"devices", len(cfg.Targets), "prefixes", len(cfg.Prefixes),
 		"snmp_targets", len(cfg.SNMP),
-		"delegated_collection", bilan.delegated,
-		"no_snmp_identity", bilan.noIdentity)
+		"delegated_collection", tally.delegated,
+		"no_snmp_identity", tally.noIdentity)
 }
 
-// watchBilan: explains the gap between what a proxy PINGS and what it POLLS, without
+// watchTally: explains the gap between what a proxy PINGS and what it POLLS, without
 // recalculating anything at read time.
 //
 // Two counters not one total: the two causes do not call for the same action, and a single
 // "SNMP targets excluded: 20" would send the operator the wrong way half the time.
-type watchBilan struct {
+type watchTally struct {
 	// delegated: targets watched by this proxy that ANOTHER proxy is declared to collect.
 	// Policy, not error.
 	delegated int
@@ -101,17 +102,17 @@ type watchBilan struct {
 // not enter configuration pushed to the proxy (to whom we only send what it must do, never
 // what we decided not to ask) but is indispensable to the caller's log, cf. PushWatchTo.
 func (s *Server) watchConfigFor(ctx context.Context,
-	proxyID string) (tunnel.WatchConfig, watchBilan, error) {
+	proxyID string) (tunnel.WatchConfig, watchTally, error) {
 	var cfg = tunnel.WatchConfig{
 		Targets: []tunnel.WatchTarget{}, Prefixes: []string{},
 		PingIntervalMS: int(tunnel.DefaultPingInterval.Milliseconds()),
 		DownAfter:      tunnel.DefaultDownAfter,
 		SweepIntervalS: int(tunnel.DefaultSweepInterval.Seconds()),
 	}
-	var bilan watchBilan
+	var tally watchTally
 	var eligible, err = s.Store.DevicesWatchedBy(ctx, proxyID)
 	if err != nil {
-		return cfg, bilan, err
+		return cfg, tally, err
 	}
 	// Site coverage says who is ELIGIBLE; it does not say who is identifiable. An instance
 	// proxy covering two sites reusing 192.168.1.0/24 would get two devices at the same
@@ -123,7 +124,7 @@ func (s *Server) watchConfigFor(ctx context.Context,
 	var domains map[string]bool
 	domains, err = s.Store.ProxyDomains(ctx, proxyID)
 	if err != nil {
-		return cfg, bilan, err
+		return cfg, tally, err
 	}
 	var sel = selectWatch(eligible, domains)
 	cfg.Targets = s.withRenumberTargets(sel.targets)
@@ -151,7 +152,7 @@ func (s *Server) watchConfigFor(ctx context.Context,
 		s.NotifySiteChanged(siteID, ChangeSync)
 	}
 
-	bilan.delegated = sel.delegated
+	tally.delegated = sel.delegated
 	// SNMP targets: controller decides WHO to poll and at what cadence, proxy executes. It
 	// knows connector capabilities and the vault; the proxy knows neither.
 	var trapCapable int
@@ -160,7 +161,40 @@ func (s *Server) watchConfigFor(ctx context.Context,
 	// Count is taken HERE, by difference, rather than returned by it: same information and
 	// costs nothing, where a third return would imply this function distinguishes reasons it
 	// does not.
-	bilan.noIdentity = len(sel.collect) - len(cfg.SNMP)
+	tally.noIdentity = len(sel.collect) - len(cfg.SNMP)
+
+	// STREAMING targets, built from the SAME selection and mutually exclusive with
+	// the SNMP list above: `snmpWatchesFor` skips any device whose connector
+	// declares a gNMI channel, and this builds those.
+	//
+	// The exclusivity is a controller invariant and it is enforced HERE because
+	// this is the only place that holds both lists. A device present in both would
+	// have its interface counters produced by two collectors with two different
+	// label sets — the SNMP path carries `ifindex` and `iftype`, the gNMI path
+	// deliberately carries neither — and VictoriaMetrics would store two adjacent
+	// half-populated series under one name. Nothing would error; both series would
+	// look plausible; every rate computed from either would be wrong by whatever
+	// fraction of the samples went to the other. That is the failure
+	// internal/metricbuf/names.go's labelling rule exists to prevent.
+	// LOGGED UNCONDITIONALLY, like the trap line below and for the same reason.
+	//
+	// This was `if len(cfg.GNMI) > 0` until 2026-08-10, which made the one state
+	// worth reporting the one state that produced no line: gnmiWatchesFor skips a
+	// device with no `gnmi` credential SILENTLY, deferring to "the count logged by
+	// the caller", and the caller stayed quiet at zero. A fleet whose every
+	// streaming device was skipped looked exactly like a fleet with no streaming
+	// devices — and core01.lab sat in precisely that state from 2026-08-07
+	// until somebody went looking in the metrics store three days later.
+	//
+	// `gnmi_skipped_no_credential` is therefore the field that matters here. Zero
+	// targets with a nonzero skip is a misconfiguration an operator can fix; zero
+	// with zero is a fleet that simply does not stream, and the two must never
+	// again be the same silence.
+	var gnmiNoCred int
+	cfg.GNMI, gnmiNoCred = s.gnmiWatchesFor(ctx, sel.collect)
+	slog.Info("monitoring: streaming telemetry targets", "proxy_id", proxyID,
+		"gnmi_targets", len(cfg.GNMI), "gnmi_skipped_no_credential", gnmiNoCred,
+		"snmp_targets", len(cfg.SNMP))
 
 	// Trap listening: decided by controller, like the rest of watch (cf.
 	// tunnel.WatchConfig.TrapListen).
@@ -186,7 +220,7 @@ func (s *Server) watchConfigFor(ctx context.Context,
 
 	var prefixes, pErr = s.Store.ListScanPrefixes(ctx, proxyID)
 	if pErr != nil {
-		return cfg, bilan, pErr
+		return cfg, tally, pErr
 	}
 	var p model.ScanPrefix
 	for _, p = range prefixes {
@@ -194,7 +228,7 @@ func (s *Server) watchConfigFor(ctx context.Context,
 			cfg.Prefixes = append(cfg.Prefixes, p.Prefix)
 		}
 	}
-	return cfg, bilan, nil
+	return cfg, tally, nil
 }
 
 // --- Attachment, from store to targets ---
@@ -218,7 +252,7 @@ type watchSelection struct {
 	// collect: rows where this proxy is reference collector — the only ones to poll in SNMP.
 	collect []model.WatchedDevice
 	// delegated: how many watched targets ANOTHER proxy is declared to collect. For log
-	// summary, cf. watchBilan.
+	// summary, cf. watchTally.
 	delegated int
 	// kept / rejected: raw netscope output, returned as-is because exclusion tracking
 	// (watchexcl.go) and the log reason over candidates and their REASONS, which ping
@@ -393,7 +427,7 @@ func snmpCandidates(eligible []model.WatchedDevice,
 // rate; the connector FLOOR bounds it from below. The code took `MinInterval` for the cadence
 // itself, whereas that field means "never more often than" (cf. driver.MonitorChannel): an
 // entire fleet ended up polled at the maximum rate the platform tolerates — exactly what
-// docs/01-Architecture/Unified monitoring and pipelines §1 forbids outright, and which was
+// docs/en/01-Architecture/Unified monitoring and pipelines.md §1 forbids outright, and which was
 // already recorded there as a known gap.
 //
 // The two values below REVERSE the previous arbitration, and that is deliberate:
@@ -475,6 +509,20 @@ const (
 	// are, it does not tell their history — the event log would, and it deliberately carries no
 	// neighborhood events (cf. docs/en/01-Architecture/Event log.md).
 	wantedLLDPInterval = 60 * time.Second
+	// wantedFDBInterval: forwarding-table (learned MAC) cadence.
+	//
+	// THIRTY SECONDS — every connector's fdb channel floor, exactly, so nothing
+	// clamps and nothing warns. Honesty about what it buys, because the number
+	// was 60 first: a bridge ages a dynamic entry out after ~300 s
+	// (dot1dTpAgingTime default), so sixty seconds already missed no client the
+	// switch itself remembered — thirty buys sub-minute MOTION (a laptop
+	// rewired between polls shows at its new jack within half a minute), which
+	// is what the Clients page's operator asked of it. Cost is bounded and
+	// measured: three walks per device per cycle on the Q-BRIDGE platforms,
+	// the C2960X's per-VLAN sessions the loudest at ~28 walks/minute
+	// (maxFDBVLANs bounds it); no sample-path cost at all — FDB pushes
+	// snapshots, not series.
+	wantedFDBInterval = 30 * time.Second
 )
 
 // unknownFloorInterval: the floor kept when we do NOT KNOW.
@@ -543,7 +591,7 @@ func intervalFor(d model.Device, mon driver.MonitoringCapabilities, known bool,
 		// LOGGED ORIGIN is therefore more precise than before: it said the KIND of channel
 		// kept (`snmp`, `web`), which taught nothing since the kind is now fixed. It now says
 		// the floor comes from the SNMP channel, or that there is none.
-		var ch, ok = mon.BestOfKind("snmp", metric)
+		var ch, ok = mon.BestOfKind(driver.KindSNMP, metric)
 		if ok {
 			floor, origin = ch.MinInterval, "connector snmp channel"
 		} else {
@@ -598,7 +646,7 @@ func optionalIntervalFor(d model.Device, mon driver.MonitoringCapabilities, know
 	if !known {
 		return 0
 	}
-	var ch, ok = mon.BestOfKind("snmp", metric)
+	var ch, ok = mon.BestOfKind(driver.KindSNMP, metric)
 	if !ok {
 		return 0
 	}
@@ -677,19 +725,47 @@ func (s *Server) snmpWatchesFor(ctx context.Context,
 			continue
 		}
 		var st snmpIdentityState
-		if st, err = s.snmpPlanFor(ctx, d); err != nil ||
-			st.Plan.Kind != snmpprov.KindV2c || st.CredentialID == "" {
+		if st, err = s.snmpPlanFor(ctx, d); err != nil || st.CredentialID == "" {
 			continue
 		}
-		// Second phrase deliberately ignored: we only pass here for v2c, where community IS
-		// the secret and there is never a second one.
-		var _, enc, _, revErr = s.Store.RevealSiteCredential(ctx, st.CredentialID)
+		// Two plans the collector can speak: v2c (community) and v3 authNoPriv
+		// (the `mcmonitor` USM identity — the S3400's regime, whose platform has
+		// no privacy user form at all). A v3 plan WITH privacy is still filtered
+		// out: the collector does not do priv yet, and half-speaking a plan would
+		// collect nothing while reporting the device supervised.
+		var v3 = st.Plan.Kind == snmpprov.KindV3 && st.Plan.Priv == ""
+		if st.Plan.Kind != snmpprov.KindV2c && !v3 {
+			continue
+		}
+		// A device whose connector declares gNMI is collected THERE and not here.
+		//
+		// The exclusion sits before the credential read on purpose: an Arista has
+		// no v2c community to resolve once its connector stops declaring SNMP
+		// channels, so leaving it in would only make it fall out one step later,
+		// counted as `no_snmp_identity` — a device deliberately carried on another
+		// protocol would be reported as one whose secrets are missing, and
+		// somebody would go looking for a vault problem that does not exist.
+		if carriedOnGNMI(st.Driver, d.Model) {
+			continue
+		}
+		// Second phrase deliberately ignored on BOTH plans: for v2c the community
+		// IS the secret and there is never a second one; for v3 authNoPriv the
+		// second passphrase exists in the vault but has nowhere to go — handing
+		// it out anyway is how a secret gets dropped on the floor (the argument
+		// is snmpapply.go's, verbatim).
+		var cred, enc, _, revErr = s.Store.RevealSiteCredential(ctx, st.CredentialID)
 		if revErr != nil {
 			continue
 		}
-		var community string
-		if community, err = s.Secrets.Open(enc); err != nil || community == "" {
+		var clear string
+		if clear, err = s.Secrets.Open(enc); err != nil || clear == "" {
 			continue
+		}
+		var community, v3User, v3Alg, v3Secret string
+		if v3 {
+			v3User, v3Alg, v3Secret = cred.Username, st.Plan.Auth, clear
+		} else {
+			community = clear
 		}
 
 		// Cadences: POLICY chooses, connector FLOOR bounds. Connector alone was not enough — it
@@ -724,19 +800,227 @@ func (s *Server) snmpWatchesFor(ctx context.Context,
 		// indefinitely, for an answer we already know.
 		var lldp = optionalIntervalFor(d, mon, known,
 			snmppoll.MetricLLDP, wantedLLDPInterval)
+		// The FORWARDING TABLE, same opt-in rule. The regime differs per
+		// platform (Q-BRIDGE, flat BRIDGE, community@vlan) and was measured on
+		// each before its connector declared the channel — cf. snmppoll/fdb.go
+		// for the survey table.
+		var fdb = optionalIntervalFor(d, mon, known,
+			snmppoll.MetricFDB, wantedFDBInterval)
 		out = append(out, tunnel.SNMPWatch{
 			DeviceID: d.ID, IP: d.MgmtIP, Community: community,
+			V3User: v3User, V3AuthAlg: v3Alg, V3AuthSecret: v3Secret,
 			StateIntervalS:    int(state.Seconds()),
 			CountersIntervalS: int(counters.Seconds()),
 			HealthIntervalS:   int(health.Seconds()),
 			OpticalIntervalS:  int(optical.Seconds()),
 			LLDPIntervalS:     int(lldp.Seconds()),
+			FDBIntervalS:      int(fdb.Seconds()),
+			// community@vlan is a v2c-only mechanism (the community itself
+			// addresses the VLAN instance); a v3 watch must never compose
+			// user@vlan. No platform hits both today — the guard is for the
+			// day IOS moves to v3, where the answer is contexts, not this.
+			FDBPerVLAN: mon.FDBPerVLAN && !v3,
 			// Facade bounds what we collect: beyond it are aggregates and logical interfaces no
 			// screen could display.
 			MaxIfIndex: facadePortCount(d),
 		})
 	}
 	return out, trapCapable
+}
+
+// --- Streaming telemetry ---
+
+// carriedOnGNMI says whether a device's telemetry travels over gNMI rather than
+// SNMP.
+//
+// # ONE QUESTION, ASKED IN ONE PLACE
+//
+// The decision is read off the connector's declared channels and nowhere else:
+// if it declares a `gnmi` channel for `if_counters`, the device is a streaming
+// device. Not a per-site setting, not a flag on the device — because the thing
+// that actually decides is whether the PLATFORM serves gNMI, which is exactly
+// what a connector declaration is for.
+//
+// `if_counters` is the probe metric rather than `if_state`, and the choice is
+// deliberate: counters are the bulky set that makes streaming worth having, and a
+// connector that declared only `if_state` over gNMI would be describing a partial
+// migration nobody has asked for. Requiring the expensive one means a platform is
+// either carried on gNMI or it is not, with no half state for an operator to
+// discover from a graph.
+//
+// A connector declaring NEITHER kind falls to SNMP, which is the right default:
+// `if_state` and `if_counters` live entirely in MIB-II and every agent serves
+// them, so an undeclared platform still gets collected.
+func carriedOnGNMI(driverName, model string) bool {
+	var drv, known = driver.Get(driverName)
+	if !known {
+		return false
+	}
+	var _, ok = drv.Capabilities(model).Monitoring.
+		BestOfKind(driver.KindGNMI, snmppoll.MetricIfCounters)
+	return ok
+}
+
+// collectKindOf names the protocol that collects a device, for the interface.
+//
+// Derived from the same question the watch builder asks (carriedOnGNMI), so a
+// pill can never disagree with what is actually subscribed — two answers to
+// "which collector" is exactly the confusion this field exists to end.
+//
+// Empty when the connector is unknown: a device meshcraft cannot identify is not
+// collected by anything, and naming a protocol for it would be an invention.
+func collectKindOf(driverName, model string) string {
+	var _, known = driver.Get(driverName)
+	if !known {
+		return ""
+	}
+	if carriedOnGNMI(driverName, model) {
+		return "gnmi"
+	}
+	return "snmp"
+}
+
+// gnmiIntervalFor resolves a streamed metric's cadence, and returns 0 when the
+// connector declares no gNMI channel for it.
+//
+// The analogue of `optionalIntervalFor` and it follows that function's rule
+// rather than `intervalFor`'s — no fallback floor, nothing collected unless
+// DECLARED. The reason is stronger here than it is for the SNMP sensors: there is
+// no gNMI equivalent of "MIB-II, which every agent serves". A path is served
+// because the platform's YANG models say so, and subscribing to one a device does
+// not model produces a subscription that establishes and then delivers nothing
+// for ever — quieter than an SNMP "no such object", and therefore worse.
+func gnmiIntervalFor(d model.Device, mon driver.MonitoringCapabilities,
+	metric string, wanted time.Duration) time.Duration {
+
+	var ch, ok = mon.BestOfKind(driver.KindGNMI, metric)
+	if !ok {
+		return 0
+	}
+	var kept, raised = effectiveInterval(wanted, ch.MinInterval)
+	if raised {
+		// Logged for the same reason the SNMP path logs it: an operations decision
+		// that is not honoured must not have to be discovered by comparing graphs.
+		//
+		// It means something slightly different here, and the difference is worth
+		// knowing when reading this line. An SNMP floor bounds how often WE ask; a
+		// streaming floor bounds how often the DEVICE is asked to sample. Lowering
+		// it does not reduce our traffic — the stream arrives when it arrives — it
+		// protects the switch's own sampling loop.
+		slog.Warn("streaming telemetry: wanted cadence lowered to floor",
+			"device_id", d.ID, "name", d.Name, "model", d.Model,
+			"metric", metric, "wanted", wanted.String(), "kept", kept.String(),
+			"floor", "connector gnmi channel")
+	}
+	return kept
+}
+
+// gnmiWatchesFor builds the streaming targets for a proxy.
+//
+// Mirrors `snmpWatchesFor` and diverges in exactly two places, both of which are
+// the point of the whole lot:
+//
+//  1. THE CREDENTIAL IS A DEVICE LOGIN. A gNMI subscriber authenticates against
+//     the switch's AAA stack, so this resolves a `gnmi`-kind site credential —
+//     username AND secret — where the SNMP path resolves a read-only v2c
+//     community. A device with no such credential is SKIPPED rather than
+//     subscribed anonymously: EOS rejects an anonymous Subscribe per attempt, and
+//     the proxy's supervisor retries, which on a box with a lockout policy is how
+//     meshcraft would lock out its own service account;
+//  2. TRANSPORT SECURITY TRAVELS WITH THE TARGET. Plaintext is opt-in per site
+//     and never defaulted here — see the `plaintext` note below.
+//
+// Devices whose connector declares no gNMI channel are absent from the result
+// entirely; they are the ones `snmpWatchesFor` keeps.
+// RETURNS THE SKIPPED-FOR-CREDENTIAL COUNT ALONGSIDE THE TARGETS, and that
+// second value is not bookkeeping — it is the only thing that can surface an
+// entire fleet going dark. See the caller.
+func (s *Server) gnmiWatchesFor(ctx context.Context,
+	devices []model.WatchedDevice) ([]tunnel.GNMIWatch, int) {
+
+	var noCred int
+	var out = []tunnel.GNMIWatch{}
+	var w model.WatchedDevice
+	for _, w = range devices {
+		if w.MgmtIP == "" {
+			continue
+		}
+		var d, err = s.Store.GetDevice(ctx, w.ID)
+		if err != nil {
+			continue
+		}
+		// The connector name comes from what was OBSERVED on the device
+		// (`devices.extra.driver`, falling back to the discovery candidate), never
+		// deduced here — same source `connectorFor` uses, so a device cannot be
+		// collected as one platform and configured as another.
+		var _, driverName = s.deviceIdentity(ctx, d)
+		var drv, known = driver.Get(driverName)
+		if !known {
+			continue
+		}
+		var mon = drv.Capabilities(d.Model).Monitoring
+		var _, streams = mon.BestOfKind(driver.KindGNMI, snmppoll.MetricIfCounters)
+		if !streams {
+			continue
+		}
+
+		var cred, credErr = s.gnmiCredentialFor(ctx, d, s.groupNameOfCtx(ctx, d))
+		if credErr != nil || cred.Username == "" || cred.Password == "" {
+			// Silent per device, on purpose and for the same reason the SNMP path
+			// is: a site that has not created a `gnmi` credential yet would
+			// otherwise produce one line per device at every proxy connection,
+			// indefinitely, for a state that does not change until somebody acts.
+			// The aggregate is what surfaces it — see the count logged by the
+			// caller.
+			//
+			// THAT DEFERRAL WAS BROKEN UNTIL 2026-08-10 and this counter is the
+			// repair. The caller logged its aggregate only `if len(cfg.GNMI) > 0`,
+			// so the one case this silence defers to it for — EVERY gNMI-capable
+			// device skipped for want of a credential — produced no line either.
+			// Two silences composing into total silence, and it was not
+			// theoretical: core01.lab streamed for 23 hours on 2026-08-07 and
+			// then stopped for want of a `gnmi` credential, with nothing in the
+			// logs, nothing in `events`, and no series after that day.
+			noCred++
+			continue
+		}
+
+		var state = gnmiIntervalFor(d, mon,
+			snmppoll.MetricIfState, wantedStateInterval)
+		var counters = gnmiIntervalFor(d, mon,
+			snmppoll.MetricIfCounters, wantedCountersInterval)
+		var health = gnmiIntervalFor(d, mon,
+			snmppoll.MetricHealth, wantedHealthInterval)
+		var lldp = gnmiIntervalFor(d, mon,
+			snmppoll.MetricLLDP, wantedLLDPInterval)
+		var optical = gnmiIntervalFor(d, mon,
+			snmppoll.MetricOptical, wantedOpticalInterval)
+
+		out = append(out, tunnel.GNMIWatch{
+			DeviceID: d.ID, IP: d.MgmtIP,
+			Username: cred.Username, Password: cred.Password,
+			// PLAINTEXT IS NEVER SET FROM A DEFAULT. It comes from the credential's
+			// own configuration, so turning it on is an explicit act recorded
+			// against a named credential rather than a property of the code. Over
+			// plaintext the password two lines above travels in clear in gRPC
+			// metadata on the management network, and the one thing that must not
+			// happen is for that to become a property nobody chose.
+			Plaintext:  cred.Plaintext,
+			SkipVerify: cred.SkipVerify,
+			CAPEM:      cred.CAPEM,
+			// No MaxIfIndex equivalent, and its absence is a fact about the
+			// protocol rather than an omission: gNMI has no interface index to
+			// bound. The subscription is keyed on the OpenConfig interface name
+			// wildcard, and a platform's logical interfaces are excluded by the
+			// paths chosen, not by a numeric ceiling.
+			StateIntervalS:    int(state.Seconds()),
+			CountersIntervalS: int(counters.Seconds()),
+			HealthIntervalS:   int(health.Seconds()),
+			LLDPIntervalS:     int(lldp.Seconds()),
+			OpticalIntervalS:  int(optical.Seconds()),
+		})
+	}
+	return out, noCred
 }
 
 // handleProxyEvent handles an event reported by a proxy. These are transitions: each deserves
@@ -776,6 +1060,10 @@ func (s *Server) handleProxyEvent(proxyID string, ev tunnel.Event) {
 		s.applySNMPState(ctx, ev)
 	case tunnel.EventPortUp, tunnel.EventPortDown:
 		s.applyPortTransition(ctx, proxyID, ev)
+	case tunnel.EventGNMIFailing, tunnel.EventGNMIRecovered:
+		// A gNMI subscription that will not stay up. Gated at `authorityPoll` by
+		// the table above, like every other fact derived from collection.
+		s.applyGNMISubState(ctx, ev)
 	case tunnel.EventTrapSeen:
 		// PROOF event: a trap from this device was accepted. The only fact that turns
 		// "meshcraft wrote an address in the device" into "the return path works" — placement
@@ -786,6 +1074,13 @@ func (s *Server) handleProxyEvent(proxyID string, ev tunnel.Event) {
 		// response says nothing about what the device is. Identification scan remains an
 		// explicit action.
 		slog.Debug("host seen by a proxy", "ip", ev.IP, "prefix", ev.Prefix, "proxy", proxyID)
+	case tunnel.EventResyncDone:
+		// The hub has ALREADY recorded it (cf. tunnel.Hub.readEvents): session state
+		// must not depend on this handler. What is left here is the journal line, and
+		// it earns its place — it is the only way to see, after the fact, that a proxy
+		// declared itself caught up, which is what every held reachability verdict at
+		// startup was waiting for.
+		slog.Info("proxy finished resyncing", "proxy_id", proxyID)
 	case tunnel.EventSweepDone:
 		slog.Info("monitoring sweep finished", "proxy_id", proxyID,
 			"prefix", ev.Prefix, "scanned", ev.Scanned, "responders", ev.Found,
@@ -846,6 +1141,13 @@ func (s *Server) applyDeviceState(ctx context.Context, proxyID string, ev tunnel
 		return
 	}
 	var verdict = judgeReach(obs, s.Tunnels.Connected)
+	if s.holdStatusWrite(ev.DeviceID, verdict, obs) {
+		// A witness of this device is still restating what it knows, and we are inside
+		// the startup window. Nothing is written and nothing is journalled: the
+		// observation is already recorded above, so re-judging it in a second costs one
+		// read and loses nothing (cf. holdReach).
+		return
+	}
 	var status, note = verdict.Status, verdict.Note
 
 	var severity = model.SevNotice
@@ -897,13 +1199,21 @@ func (s *Server) applyDeviceState(ctx context.Context, proxyID string, ev tunnel
 		// put a recovery in the log for a device nobody has looked at yet.
 		return
 	}
-	_ = s.Store.InsertEvent(ctx, model.Event{
+	var ev2 = model.Event{
 		SiteID: &siteID, DeviceID: &deviceID,
 		Type:     map[bool]string{true: "device.unreachable", false: "device.recovered"}[status == "off"],
 		Severity: severity,
 		Message:  "\"" + dev.Name + "\" — " + message,
 		Actor:    "monitoring",
-	})
+	}
+	var evID, insErr = s.Store.InsertEventID(ctx, ev2)
+	if insErr == nil {
+		// Alerting is a subscriber of the journal (ADR-0024). Filed here rather
+		// than in `emit` because this path has no *http.Request — and filing
+		// never opens a socket, so a dead Telegram cannot slow the monitoring
+		// write path down.
+		s.fileAlerts(ctx, evID, ev2)
+	}
 }
 
 // applySNMPState updates SNMP collection reachability. Parallel to applyDeviceState
@@ -954,6 +1264,122 @@ func (s *Server) applySNMPState(ctx context.Context, ev tunnel.Event) {
 		Message:  "\"" + dev.Name + "\" — " + message,
 		Actor:    "monitoring",
 	})
+}
+
+// --- gNMI subscription health ---
+
+// gnmiCausePhrase turns the CLASS a proxy reported into the sentence that names
+// the gesture repairing it.
+//
+// PURE, and a switch over a closed vocabulary rather than free text from the
+// tunnel, for the reason stated on tunnel.Event.Cause: this is a branch, and text
+// arriving from a proxy is not something to branch on. It is also the only place
+// the two causes are allowed to read differently, which is the entire point of
+// distinguishing them — a refused login and a silent device produce the same
+// empty graph and are repaired by different people.
+//
+// The `auth` sentence names the credential explicitly. That is not padding: the
+// fault it describes has a cause nobody guesses on their own — the `gnmi`
+// credential is a separate `site_credentials` row holding its own copy of the
+// admin password, so rotating the admin credential leaves it stale with no
+// warning anywhere. An operator reading "authentication failed" on a switch they
+// can log into by hand will look at the switch. This tells them not to.
+//
+// The default is deliberately weak and says so. A proxy that could not classify
+// the failure must not have its uncertainty rounded up into an accusation
+// against a credential that may be perfectly good.
+func gnmiCausePhrase(cause string) string {
+	switch cause {
+	case tunnel.CauseAuth:
+		return "the device REFUSED THE LOGIN. The `gnmi` credential is a " +
+			"separate site credential holding its own copy of the password: " +
+			"rotating the admin credential does NOT update it, and it must be " +
+			"re-entered for this site"
+	case tunnel.CauseUnreachable:
+		return "the device did not answer on its gNMI port — it is off, " +
+			"firewalled, not serving gNMI, or its certificate is not trusted"
+	}
+	return "the subscription would not stay up, and the transport did not report " +
+		"why in a form the proxy could classify — the proxy's own journal carries " +
+		"the underlying error"
+}
+
+// applyGNMISubState records that a device's gNMI telemetry is, or is no longer,
+// failing to collect.
+//
+// # Why this writes an EVENT and no status
+//
+// applySNMPState's counterpart writes a device column and lets the store
+// deduplicate. There is no gNMI column, and this deliberately does not add one:
+// the condition is per SUBSCRIPTION — a device holds up to four and they fail
+// independently — so a single per-device light would either lie about the three
+// that work or need a schema that this repair does not need in order to break
+// the silence. What was missing on 2026-08-10 was a LINE, on the device sheet,
+// saying telemetry is not being collected and why. That is what this writes.
+//
+// The consequence is that there is nothing to deduplicate against, which is why
+// the proxy holds the threshold and reports transitions only: the controller
+// writes what it is told, once per transition, and a proxy that restated the
+// condition on every reconnection would fill the log by itself.
+func (s *Server) applyGNMISubState(ctx context.Context, ev tunnel.Event) {
+	if ev.DeviceID == "" {
+		return
+	}
+	var dev, getErr = s.Store.GetDevice(ctx, ev.DeviceID)
+	if getErr != nil {
+		// Refused UPSTREAM already if the proxy had no business naming this
+		// device; reaching here with an unknown identifier is a device deleted
+		// between the push and the event, which is a race and not a fault.
+		slog.Debug("gnmi subscription state for an unknown device",
+			"device", ev.DeviceID, "type", ev.Type)
+		return
+	}
+	// `metric` NAMES WHICH subscription, and it is not optional information: an
+	// `if_counters` set that dies leaves the graphs empty while port transitions
+	// keep working, and the reverse leaves the fleet log quiet while the graphs
+	// stay full. Empty only from a proxy older than this event, and then it is
+	// left out rather than guessed at.
+	var which = "gNMI telemetry"
+	if ev.Metric != "" {
+		which = "gNMI telemetry (" + ev.Metric + ")"
+	}
+	var evType = "device.gnmi_recovered"
+	var severity = model.SevNotice
+	var message = which + " is being collected again"
+	if ev.Type == tunnel.EventGNMIFailing {
+		evType = "device.gnmi_failing"
+		// WARNING and not ERROR, matching device.snmp_unreachable: telemetry has
+		// stopped, which is a fleet losing visibility rather than a fleet losing
+		// service. The severity that matters is that it is no longer NOTICE — the
+		// whole defect was that this condition read as healthy.
+		severity = model.SevWarning
+		message = which + " is NOT being collected: " + gnmiCausePhrase(ev.Cause)
+	}
+	if ev.Detail != "" {
+		// The proxy's own words for HOW LONG. It composes them from a duration and
+		// an attempt count and never from an error string, so there is nothing in
+		// here that could carry a device login (cf. cmd/proxy/gnmi.go,
+		// gnmiFailingEvent).
+		message += " (" + ev.Detail + ")"
+	}
+	var deviceID = ev.DeviceID
+	var siteID = dev.SiteID
+	var insErr = s.Store.InsertEvent(ctx, model.Event{
+		SiteID: &siteID, DeviceID: &deviceID,
+		Type:     evType,
+		Severity: severity,
+		Message:  "\"" + dev.Name + "\" — " + message,
+		Actor:    "monitoring",
+	})
+	if insErr != nil {
+		slog.Warn("gnmi subscription state not logged", "err", insErr,
+			"device", ev.DeviceID, "type", ev.Type)
+		return
+	}
+	// ChangeEvent and not ChangeDevice: what moved is a line in the site log. No
+	// device record changed — there is no column for this — so waking the device
+	// screens would refetch what has not moved.
+	s.NotifySiteChanged(siteID, ChangeEvent)
 }
 
 // --- Port transitions ---
@@ -1059,11 +1485,17 @@ func (s *Server) writePortDecisions(ctx context.Context, decisions []portDecisio
 			// there is no line to write. Otherwise every laptop plug-in would produce one.
 			continue
 		}
-		if err = s.Store.InsertEvent(ctx, ev); err != nil {
+		var evID int64
+		if evID, err = s.Store.InsertEventID(ctx, ev); err != nil {
 			slog.Warn("port transition not logged", "err", err,
 				"device_id", dec.DeviceID, "ifindex", dec.IfIndex)
 			continue
 		}
+		// The third filing site, and the one the exclusion rule is really about
+		// (ADR-0024): a port event reaches a channel only if the port carries an
+		// operator description or faces a device the fleet knows. Everything
+		// else stays here, in the journal, on the port's own record.
+		s.fileAlerts(ctx, evID, ev)
 		// Both aggregate kinds deserve application trace: they carry how many observations
 		// arrived via the fast path, i.e. what the trap channel actually brings on this fleet.
 		// An ordinary transition was already traced at entry.
@@ -1260,11 +1692,28 @@ func (s *Server) forgetDroppedReach(ctx context.Context, proxyID string,
 // a proxy detached, revoked, or no longer covering the site. Without it, losing an
 // observer would leave its verdict standing indefinitely.
 func (s *Server) recomputeReach(ctx context.Context, deviceID string) {
+	s.recomputeReachBecause(ctx, deviceID, "a change of observers")
+}
+
+// recomputeReachBecause is recomputeReach with the WHY the journal will carry.
+//
+// Two callers, two different sentences, one path: a set of observers that changed
+// (above) and a startup hold that has just released (cf. armReachRetry). Merging them
+// under one wording would put "after a change of observers" in the journal for a device
+// whose observers did not change — the log line would be describing a different event
+// from the one that happened.
+func (s *Server) recomputeReachBecause(ctx context.Context, deviceID, why string) {
 	var obs, err = s.Store.ProxyReachFor(ctx, deviceID)
 	if err != nil {
 		return
 	}
 	var verdict = judgeReach(obs, s.Tunnels.Connected)
+	if s.holdStatusWrite(deviceID, verdict, obs) {
+		// Still waiting, and the retry has been re-armed. This is the loop that makes
+		// the hold terminate: it re-enters until the witnesses settle or the window
+		// closes, and holdReach answers false in both cases.
+		return
+	}
 	var changed, setErr = s.Store.SetDeviceStatus(ctx, deviceID, verdict.Status, verdict.Note)
 	if setErr != nil || !changed {
 		return
@@ -1279,14 +1728,106 @@ func (s *Server) recomputeReach(ctx context.Context, deviceID string) {
 		return
 	}
 	var id = deviceID
-	_ = s.Store.InsertEvent(ctx, model.Event{
+	var recEv = model.Event{
 		SiteID: &siteID, DeviceID: &id,
 		Type: map[bool]string{true: "device.unreachable",
 			false: "device.recovered"}[verdict.Status == "off"],
 		Severity: map[bool]int{true: model.SevWarning,
 			false: model.SevNotice}[verdict.Status == "off"],
-		Message: "\"" + dev.Name + "\" — status re-established after a change of " +
-			"observers: " + verdict.Note,
+		Message: "\"" + dev.Name + "\" — status re-established after " + why + ": " +
+			verdict.Note,
 		Actor: "monitoring",
+	}
+	var recID, recErr = s.Store.InsertEventID(ctx, recEv)
+	if recErr == nil {
+		// Same hook as applyDeviceState: this is the second path that writes a
+		// reachability verdict, so it is the second that must file (ADR-0024).
+		s.fileAlerts(ctx, recID, recEv)
+	}
+}
+
+// --- The startup hold, controller side (cf. reachability.go for the rule) ---
+
+// reachHoldState remembers which devices already have a re-judgement armed.
+//
+// One timer per DEVICE, never one per event: a proxy restating two hundred targets
+// would otherwise arm two hundred timers for the same device in the same second, and
+// the retry storm would land on the database exactly when the controller is busiest —
+// startup. The map holds only devices currently held, which is a handful at worst.
+type reachHoldState struct {
+	mu    sync.Mutex
+	armed map[string]bool
+}
+
+// reachSettled answers, for one proxy, "has it nothing left to restate?".
+//
+// This is where the compatibility contract is CASHED: ResyncUnsupported — a proxy that
+// did not announce FeatureResyncDone at the handshake, i.e. any proxy older than this
+// protocol change — counts as settled, so it never causes a hold and the controller
+// treats it exactly as it did before. ResyncAbsent does not: a proxy that is not
+// connected has said nothing, and at startup it is usually one that is simply not back
+// yet. That is the case worth waiting for, and the only reason the wait is safe is that
+// holdReach bounds it.
+func (s *Server) reachSettled(proxyID string) bool {
+	if s.Tunnels == nil {
+		// No hub: nothing can ever resync, so nothing may ever be waited on.
+		return true
+	}
+	switch s.Tunnels.Resync(proxyID) {
+	case tunnel.ResyncDone, tunnel.ResyncUnsupported:
+		return true
+	}
+	return false
+}
+
+// holdStatusWrite decides whether a status write waits, and arms the retry if it does.
+//
+// Returns true when the CALLER MUST NOT WRITE. It is deliberately the only place that
+// reads the clock, so the two write paths (a proxy event, a recomputation) cannot drift
+// apart on when a hold applies.
+func (s *Server) holdStatusWrite(deviceID string, v reachVerdict,
+	obs []model.ProxyReach) bool {
+	var hold, why = holdReach(v, obs, s.reachSettled, time.Since(s.startedAt))
+	if !hold {
+		return false
+	}
+	slog.Info("reachability verdict held", "device", deviceID, "verdict", v.Status,
+		"why", why, "for_at_most",
+		(reachStartupWindow - time.Since(s.startedAt)).Round(time.Second).String())
+	s.armReachRetry(deviceID)
+	return true
+}
+
+// armReachRetry schedules the re-judgement that ends a hold.
+//
+// WITHOUT THIS THE HOLD WOULD BE A FREEZE. Proxies emit on transition only, so a
+// verdict that is not written now is not re-offered later: the device would keep the
+// colour it had before the controller restarted, forever, which is a worse fault than
+// the nine-second window this exists to close. The retry re-enters recomputeReach,
+// which either writes (witnesses settled, or window closed) or arms the next one.
+func (s *Server) armReachRetry(deviceID string) {
+	s.reachHold.mu.Lock()
+	defer s.reachHold.mu.Unlock()
+	if s.reachHold.armed == nil {
+		s.reachHold.armed = map[string]bool{}
+	}
+	if s.reachHold.armed[deviceID] {
+		return
+	}
+	s.reachHold.armed[deviceID] = true
+	time.AfterFunc(reachHoldRetry, func() {
+		// Disarmed BEFORE re-judging, so the recomputation is free to arm the next
+		// round. Disarming after would drop it and leave the device held with nothing
+		// scheduled — the freeze, arrived through the back door.
+		s.reachHold.mu.Lock()
+		delete(s.reachHold.armed, deviceID)
+		s.reachHold.mu.Unlock()
+		var ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		// The wording covers BOTH ways a hold ends — the witnesses settled, or the
+		// startup window closed on one that never will. Claiming the first would put a
+		// sentence in the journal that is false in exactly the case an operator would
+		// most want to read it correctly.
+		s.recomputeReachBecause(ctx, deviceID, "the startup wait for its observers ended")
 	})
 }

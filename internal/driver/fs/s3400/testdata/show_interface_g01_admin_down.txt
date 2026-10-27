@@ -1,0 +1,5 @@
+GigaEthernet0/1 is administratively down, line protocol is down
+  protocolstatus upTimes 0, downTimes 0, alloc at 2000-1-1 0:0:27
+  Ifindex is 129, unique port number is 1
+  Hardware is Giga-TX, address is 649d.9922.7b96 (bia 649d.9922.7b96)
+  MTU 1500 bytes, BW 1000000 kbit, DLY 10 usec

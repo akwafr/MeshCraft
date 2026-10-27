@@ -20,8 +20,8 @@ import (
 //
 // What they do not establish: that the device accepts. That is the orchestrator's write campaign.
 
-// fwdDeReference reads /fwd.b as the device served it.
-func fwdDeReference(t *testing.T) *Page {
+// referenceFwd reads /fwd.b as the device served it.
+func referenceFwd(t *testing.T) *Page {
 	t.Helper()
 	var page, err = ParseObject(capture(t, "fwd.b"))
 	if err != nil {
@@ -40,7 +40,7 @@ func fwdDeReference(t *testing.T) *Page {
 // The test therefore compares the produced body to the field set the device STORES, as
 // enumerated by its own configuration backup.
 func TestFwdBodyReturnsCompleteFieldSet(t *testing.T) {
-	var fwd = fwdDeReference(t)
+	var fwd = referenceFwd(t)
 
 	// A native VLAN changed on port 1, as ApplyPorts would do.
 	var dvid, ok = fwd.Nums(FieldDefaultVLAN)
@@ -124,7 +124,7 @@ func TestWritingRefusedOnUnexpectedFieldSet(t *testing.T) {
 // (`u:268435455`): ApplyPorts sets the desired ports there, and creating a VLAN with
 // all ports as members would pass all traffic everywhere.
 func TestVLANCreatedWithDeviceDefaults(t *testing.T) {
-	var row = newVLANRow(VLAN{ID: 42, Name: "atelier"}, 26)
+	var row = newVLANRow(VLAN{ID: 42, Name: "workshop"}, 26)
 
 	// Field order follows the device backup.
 	var stored, err = ParseBackup(capture(t, "backup.swb"))
@@ -141,9 +141,9 @@ func TestVLANCreatedWithDeviceDefaults(t *testing.T) {
 		t.Errorf("field order of a created row differs from the device.\n  created: %v\n  read   : %v", row.Keys(), rows[0].Keys())
 	}
 
-	var cas = []struct {
-		champ  string
-		attend uint32
+	var cases = []struct {
+		field string
+		want  uint32
 	}{
 		{FieldVLANID, 42},
 		{FieldVLANMembers, 0}, // empty: ApplyPorts sets the ports
@@ -152,17 +152,17 @@ func TestVLANCreatedWithDeviceDefaults(t *testing.T) {
 		{"mrr", 0},
 		{"igmp", 0},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		var got, has = row.Num(c.champ)
-		if !has || got != c.attend {
-			t.Errorf("%s = %d (ok=%v), expected %d", c.champ, got, has, c.attend)
+	var c = cases[0]
+	for _, c = range cases {
+		var got, has = row.Num(c.field)
+		if !has || got != c.want {
+			t.Errorf("%s = %d (ok=%v), expected %d", c.field, got, has, c.want)
 		}
 	}
 	var name string
 	name, ok = row.Text(FieldVLANName)
-	if !ok || name != "atelier" {
-		t.Errorf("name = %q (ok=%v), expected \"atelier\"", name, ok)
+	if !ok || name != "workshop" {
+		t.Errorf("name = %q (ok=%v), expected \"workshop\"", name, ok)
 	}
 }
 
@@ -204,10 +204,10 @@ func TestTableCompletedWithoutLosingRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("/vlan.b: %v", err)
 	}
-	var avant = EncodeTable(rows)
+	var before = EncodeTable(rows)
 
 	var out, created, buildErr = withVLANs(rows,
-		[]VLAN{{ID: 42, Name: "atelier"}, {ID: 99}}, 26, nil)
+		[]VLAN{{ID: 42, Name: "workshop"}, {ID: 99}}, 26, nil)
 	if buildErr != nil {
 		t.Fatalf("completion refused: %v", buildErr)
 	}
@@ -230,11 +230,11 @@ func TestTableCompletedWithoutLosingRows(t *testing.T) {
 	}
 	// Original rows did not move by a single byte.
 	var encoded = EncodeTable(out)
-	var ligne string
-	for _, ligne = range strings.Split(strings.Trim(avant, "[]"), "},{") {
-		ligne = strings.Trim(ligne, "{}")
-		if !strings.Contains(encoded, ligne) {
-			t.Errorf("an original row was altered: %q missing from produced body", ligne)
+	var line string
+	for _, line = range strings.Split(strings.Trim(before, "[]"), "},{") {
+		line = strings.Trim(line, "{}")
+		if !strings.Contains(encoded, line) {
+			t.Errorf("an original row was altered: %q missing from produced body", line)
 		}
 	}
 }
@@ -242,17 +242,17 @@ func TestTableCompletedWithoutLosingRows(t *testing.T) {
 // TestTableRefusesSwOSBounds: what the device would refuse, we refuse first.
 func TestTableRefusesSwOSBounds(t *testing.T) {
 	var rows, _ = ParseTable(capture(t, "vlan.b"))
-	var cas = []struct {
-		nom string
-		vid int
+	var cases = []struct {
+		name string
+		vid  int
 	}{
 		{"VLAN 0", 0},
 		{"VLAN 4095", 4095},
 		{"VLAN 5000", 5000},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
 			var _, _, err = withVLANs(rows, []VLAN{{ID: c.vid}}, 26, nil)
 			if err == nil {
 				t.Errorf("VLAN %d accepted although the SwOS table ranges from 1 to 4094", c.vid)
@@ -322,10 +322,10 @@ func TestRemovalPolicyDeclared(t *testing.T) {
 	if s == "" {
 		t.Fatal("removal policy must be readable from outside the package")
 	}
-	var mot string
-	for _, mot = range []string{"retrait", "management", "motif"} {
-		if !strings.Contains(strings.ToLower(s), mot) {
-			t.Errorf("policy string must contain %q; got: %q", mot, s)
+	var word string
+	for _, word = range []string{"removal", "management", "reason"} {
+		if !strings.Contains(strings.ToLower(s), word) {
+			t.Errorf("policy string must contain %q; got: %q", word, s)
 		}
 	}
 }
@@ -338,10 +338,10 @@ func TestRemovalPolicyDeclared(t *testing.T) {
 // that is not documented looks like an oversight.
 func TestVLANReceiveAndForceVLANWritePolicy(t *testing.T) {
 	var s = receivePolicy()
-	var mot string
-	for _, mot = range []string{FieldVLANReceive, FieldForceVLAN, "trafic"} {
-		if !strings.Contains(s, mot) {
-			t.Errorf("policy string must contain %q; got: %q", mot, s)
+	var word string
+	for _, word = range []string{FieldVLANReceive, FieldForceVLAN, "traffic"} {
+		if !strings.Contains(s, word) {
+			t.Errorf("policy string must contain %q; got: %q", word, s)
 		}
 	}
 }
@@ -352,7 +352,7 @@ func TestWritableExtrasSTP(t *testing.T) {
 		t.Fatal("WritesExtra(stp) must be true once ApplySpanningTree exists")
 	}
 	var name string
-	for _, name = range []string{"poe", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "port_security"} {
 		if WritesExtra(name) {
 			t.Errorf("WritesExtra(%q) = true without apply code", name)
 		}
@@ -365,14 +365,14 @@ func TestWritableExtrasSTP(t *testing.T) {
 // verifiable without hardware: it decides which port keeps its native VLAN, and therefore
 // whether the device stays reachable.
 
-// planDe calls [PlanPorts] without supplying the VLAN mode array.
+// planFor calls [PlanPorts] without supplying the VLAN mode array.
 //
 // A test shortcut, and it says something: `Modes` at nil skips VLAN filtering wake,
 // so these tests exercise membership and native VLAN ONLY — as they always have.
 // Mode wake has its own tests, where the array is supplied explicitly
 // (see TestFiltrageReveilleSurUnPortEteint). Mixing them would pass a membership test
 // for a mode test, and vice versa.
-func planDe(current State, table []*Page, desired map[string]PortState,
+func planFor(current State, table []*Page, desired map[string]PortState,
 	facade Facade, protected map[int]string,
 	force bool) ([]PortChange, []string, error) {
 	var out, err = PlanPorts(PortsInput{
@@ -382,13 +382,13 @@ func planDe(current State, table []*Page, desired map[string]PortState,
 	return out.Changes, out.Skipped, err
 }
 
-// planDeReference prepares state and the reference device table.
-func planDeReference(t *testing.T) (State, []*Page) {
+// referencePlan prepares state and the reference device table.
+func referencePlan(t *testing.T) (State, []*Page) {
 	t.Helper()
 	// Per-port VLAN mode is ignored here, and that is not a loss: the apply decision
 	// does not use it, and it is no longer a state field — it is a note for the operator
 	// (see VLANFiltering and stateOf).
-	var st, _ = etatDeReference(t)
+	var st, _ = referenceState(t)
 	var rows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
 		t.Fatalf("/vlan.b: %v", err)
@@ -406,7 +406,7 @@ func planDeReference(t *testing.T) (State, []*Page) {
 // nothing is risk taken for nothing, and it would be taken on EVERY reconciliation pass,
 // across the entire fleet. The requested intent here is exactly the state read from the device.
 func TestPlanDoesNothingWhenAlreadyCompliant(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 
 	// Request from the device exactly what it already carries.
 	var desired = map[string]PortState{}
@@ -416,8 +416,8 @@ func TestPlanDoesNothingWhenAlreadyCompliant(t *testing.T) {
 		desired[name] = p
 	}
 
-	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
-		map[int]string{99: "VLAN de management declared par the device"}, false)
+	var changes, skipped, err = planFor(current, rows, desired, facadeCSS326(),
+		map[int]string{99: "management VLAN declared by the device"}, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -441,14 +441,14 @@ func TestPlanDoesNothingWhenAlreadyCompliant(t *testing.T) {
 // tagged and the new one to untagged. The change is safe if and only if it does not modify
 // management VLAN tagging on that port.
 func TestSafeguardProtectsManagementTagging(t *testing.T) {
-	var current, rows = planDeReference(t)
-	var protege = map[int]string{99: "VLAN de management declared par the device"}
+	var current, rows = referencePlan(t)
+	var protected = map[int]string{99: "management VLAN declared by the device"}
 
 	// SAFE CASE: SFP2 moves from native VLAN 1 to native VLAN 100. VLAN 99 stays tagged
 	// before and after, the session does not move. Refusing here would make the uplink impossible to configure.
-	var changes, skipped, err = planDe(current, rows,
+	var changes, skipped, err = planFor(current, rows,
 		map[string]PortState{"SFP2": {Mode: "trunk", PVID: 100, Tagged: []int{99}}},
-		facadeCSS326(), protege, false)
+		facadeCSS326(), protected, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -462,9 +462,9 @@ func TestSafeguardProtectsManagementTagging(t *testing.T) {
 
 	// DANGEROUS CASE: SFP2 moves to native VLAN 99, the management VLAN. Admin traffic would
 	// then leave WITHOUT a tag, and the neighbor sending it tagged would no longer be heard.
-	changes, skipped, err = planDe(current, rows,
+	changes, skipped, err = planFor(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 99}},
-		facadeCSS326(), protege, false)
+		facadeCSS326(), protected, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -485,9 +485,9 @@ func TestSafeguardProtectsManagementTagging(t *testing.T) {
 
 	// `force` lifts the safeguard — an explicit operator gesture who knows their topology
 	// better than meshcraft and accepts the relocation risk.
-	changes, skipped, err = planDe(current, rows,
+	changes, skipped, err = planFor(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 99}},
-		facadeCSS326(), protege, true)
+		facadeCSS326(), protected, true)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -504,13 +504,13 @@ func TestSafeguardProtectsManagementTagging(t *testing.T) {
 // An active port whose admin traffic arrives UNTAGGED — native VLAN equal to the management
 // VLAN — must not change native VLAN: admin would become tagged and access would break.
 func TestSafeguardProtectsClassicUntaggedCase(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 	// Put the device in the classic case: SFP2 is access on the management VLAN and carries the link.
 	current.Ports["SFP2"] = PortState{Mode: "access", PVID: 99}
 
-	var changes, skipped, err = planDe(current, rows,
+	var changes, skipped, err = planFor(current, rows,
 		map[string]PortState{"SFP2": {Mode: "access", PVID: 100}},
-		facadeCSS326(), map[int]string{99: "VLAN de management du plan du site"}, false)
+		facadeCSS326(), map[int]string{99: "management VLAN from the site plan"}, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -547,8 +547,8 @@ func TestVLAN1NeverCreatedInTable(t *testing.T) {
 
 	// And a port whose native VLAN is 1 requests NO membership: looking for a VLAN 1 row
 	// and complaining about its absence would fail apply on a perfectly configured device.
-	var current, table = planDeReference(t)
-	var changes, skipped, planErr = planDe(current, table,
+	var current, table = referencePlan(t)
+	var changes, skipped, planErr = planFor(current, table,
 		map[string]PortState{"Port1": {Mode: "trunk", PVID: 1, Tagged: []int{99}}},
 		facadeCSS326(), map[int]string{99: "plan"}, false)
 	if planErr != nil {
@@ -569,7 +569,7 @@ func TestVLAN1NeverCreatedInTable(t *testing.T) {
 // the session. Refusing this too would make an uplink impossible to configure, and that is
 // precisely the port through which the entire site passes.
 func TestPlanAllowsAddingTaggedVLANOnSessionPort(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 	// VLAN 42 must exist in the table for a port to join it.
 	var complete, _, err = withVLANs(rows, []VLAN{{ID: 42}}, 26, nil)
 	if err != nil {
@@ -580,8 +580,8 @@ func TestPlanAllowsAddingTaggedVLANOnSessionPort(t *testing.T) {
 	var desired = map[string]PortState{
 		"SFP2": {Mode: "trunk", PVID: 1, Tagged: []int{42, 99, 100}},
 	}
-	var changes, skipped, planErr = planDe(current, complete, desired, facadeCSS326(),
-		map[int]string{99: "VLAN de management declared par the device"}, false)
+	var changes, skipped, planErr = planFor(current, complete, desired, facadeCSS326(),
+		map[int]string{99: "management VLAN declared by the device"}, false)
 	if planErr != nil {
 		t.Fatalf("plan refused: %v", planErr)
 	}
@@ -611,12 +611,12 @@ func TestPlanAllowsAddingTaggedVLANOnSessionPort(t *testing.T) {
 // On a factory-default device, all ports share the same default VLAN, which is also the
 // admin VLAN. Without the LINK condition, no port would ever be modifiable.
 func TestPlanFreelyModifiesPortWithoutLink(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 	// Port1 carries native VLAN 100 and has NO link in the capture.
 	var desired = map[string]PortState{"Port1": {Mode: "access", PVID: 99}}
 
-	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
-		map[int]string{99: "VLAN de management declared par the device"}, false)
+	var changes, skipped, err = planFor(current, rows, desired, facadeCSS326(),
+		map[int]string{99: "management VLAN declared by the device"}, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
 	}
@@ -639,14 +639,14 @@ func TestPlanFreelyModifiesPortWithoutLink(t *testing.T) {
 // the session, and protection falls back to ALL active ports — more conservative than the
 // nominal case, which is the right tradeoff.
 func TestPlanSparesAllActivePortsWhenAdminVLANUnknown(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 	current.MgmtVLAN = 0
 
 	var desired = map[string]PortState{
 		"SFP2":  {Mode: "access", PVID: 100}, // active port: spared
 		"Port1": {Mode: "access", PVID: 99},  // port without link: modifiable
 	}
-	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
+	var changes, skipped, err = planFor(current, rows, desired, facadeCSS326(),
 		map[int]string{}, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)
@@ -667,13 +667,13 @@ func TestPlanSparesAllActivePortsWhenAdminVLANUnknown(t *testing.T) {
 // meshcraft does not claim ownership of what it never applied, and a port name it does
 // not understand must not become a random write.
 func TestPlanIgnoresWhatItDoesNotManage(t *testing.T) {
-	var current, rows = planDeReference(t)
+	var current, rows = referencePlan(t)
 	var desired = map[string]PortState{
 		"Port1": {Mode: "libre", PVID: 99},
 		"Port2": {},
 		"GE99":  {Mode: "access", PVID: 99}, // nonexistent port on this model
 	}
-	var changes, skipped, err = planDe(current, rows, desired, facadeCSS326(),
+	var changes, skipped, err = planFor(current, rows, desired, facadeCSS326(),
 		map[int]string{99: "plan"}, false)
 	if err != nil {
 		t.Fatalf("plan refused: %v", err)

@@ -46,27 +46,34 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 		}
 	}
 	out.Enabled = anyEna || (!rstp.Has("ena"))
-	if prio, ok := sys.Num("prio"); ok {
+	var prio, prioOK = sys.Num("prio")
+	if prioOK {
 		out.BridgePriority = int(prio)
 	}
-	if cost, ok := sys.Num("cost"); ok {
+	var cost, costOK = sys.Num("cost")
+	if costOK {
 		out.RootPathCost = int(cost)
 	}
-	if rpr, ok := sys.Num("rpr"); ok {
+	var rpr, rprOK = sys.Num("rpr")
+	if rprOK {
 		out.RootPriority = int(rpr)
 	}
 	// mac / rmac are 12 hex digits (not ASCII hex-encoded text like brd/id).
 	// Text() would decode them to binary garbage in the UI.
-	if v, ok := sys.Value("rmac"); ok && v.Kind == KindStr {
-		if mac, macOK := DecodeMAC(v.Raw); macOK {
+	var rmacV, rmacOK = sys.Value("rmac")
+	if rmacOK && rmacV.Kind == KindStr {
+		var mac, macOK = DecodeMAC(rmacV.Raw)
+		if macOK {
 			out.RootBridgeID = mac
 			if out.RootPriority > 0 {
 				out.RootBridgeID = fmt.Sprintf("%04x.%s", out.RootPriority, out.RootBridgeID)
 			}
 		}
 	}
-	if v, ok := sys.Value(FieldMAC); ok && v.Kind == KindStr {
-		if mac, macOK := DecodeMAC(v.Raw); macOK {
+	var macV, macValOK = sys.Value(FieldMAC)
+	if macValOK && macV.Kind == KindStr {
+		var mac, macOK = DecodeMAC(macV.Raw)
+		if macOK {
 			out.BridgeID = mac
 			if out.BridgePriority > 0 {
 				out.BridgeID = fmt.Sprintf("%04x.%s", out.BridgePriority, out.BridgeID)
@@ -89,7 +96,8 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 			continue
 		}
 		var p = driver.SpanningTreePort{Port: names[i]}
-		if roles, ok := rstp.Nums("role"); ok && i < len(roles) {
+		var roles, rolesOK = rstp.Nums("role")
+		if rolesOK && i < len(roles) {
 			p.Role = swosRoleName(roles[i])
 		}
 		var fwd, _ = rstp.Bit("fwd", i)
@@ -104,13 +112,16 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 				p.State = driver.STPStateDiscarding
 			}
 		}
-		if costs, ok := rstp.Nums("cst"); ok && i < len(costs) && costs[i] > 0 {
+		var costs, costsOK = rstp.Nums("cst")
+		if costsOK && i < len(costs) && costs[i] > 0 {
 			p.PathCost = int(costs[i])
 		}
-		if rpcs, ok := rstp.Nums("rpc"); ok && i < len(rpcs) && rpcs[i] > 0 {
+		var rpcs, rpcsOK = rstp.Nums("rpc")
+		if rpcsOK && i < len(rpcs) && rpcs[i] > 0 {
 			p.RootPathCost = int(rpcs[i])
 		}
-		if edge, ok := rstp.Bit("edge", i); ok {
+		var edge, edgeOK = rstp.Bit("edge", i)
+		if edgeOK {
 			// Operational edge (detected), not admin policy.
 			p.Edge = edge
 			if edge {
@@ -157,7 +168,8 @@ func swosRoleName(v uint32) string {
 
 func bareMAC(id string) string {
 	var s = strings.ToLower(id)
-	if i := strings.LastIndexByte(s, '.'); i >= 0 {
+	var i = strings.LastIndexByte(s, '.')
+	if i >= 0 {
 		s = s[i+1:]
 	}
 	return strings.ReplaceAll(s, ":", "")

@@ -1,5 +1,5 @@
--- Proxys enrôlés : identité durable + ordre de migration vers une autre
--- instance (cf. docs/01-Architecture/Proxy et Sécurité du proxy).
+-- Enrolled proxies: durable identity + migration order towards another
+-- instance (see docs/en/01-Architecture/Proxy.md and Proxy security).
 create table proxies (
     id            uuid primary key default gen_random_uuid(),
     site_id       uuid not null references sites(id) on delete cascade,
@@ -11,17 +11,17 @@ create table proxies (
     revoked       boolean not null default false,
     created_at    timestamptz not null default now(),
     last_seen     timestamptz,
-    -- Migration : ordre déposé par l'instance actuelle, consommé par le proxy
-    -- à son prochain heartbeat.
+    -- Migration: an order dropped by the current instance, consumed by the proxy
+    -- on its next heartbeat.
     migrate_url   text not null default '',
     migrate_token text not null default '',
     migrated_at   timestamptz
 );
 create index proxies_site_idx on proxies (site_id);
 
--- Journal d'événements (cf. docs/01-Architecture/Journal d'événements).
--- Table simple à ce stade : le partitionnement mensuel décrit dans le vault
--- arrivera avec le volume réel du monitoring (traps, syslog, polling).
+-- Event log (see docs/en/01-Architecture/Event log.md).
+-- A simple table at this stage: the monthly partitioning described in the vault
+-- will come with the real monitoring volume (traps, syslog, polling).
 create table events (
     id        bigint generated always as identity primary key,
     ts        timestamptz not null default now(),

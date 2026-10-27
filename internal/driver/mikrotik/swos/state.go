@@ -8,92 +8,93 @@ import (
 	"strconv"
 )
 
-// Lecture de state ACTUALLY applique sur un switch SwOS.
+// Reading the state ACTUALLY applied on a SwOS switch.
 //
-// C'est l'etape « Read » du pipeline de reconciliation : sans elle, meshcraft ne
-// peut pas savoir si ce qu'il croit est ce qui est, et « derive de configuration »
-// reste un mot.
+// This is the "Read" step of the reconciliation pipeline: without it,
+// meshcraft cannot know whether what it believes is what is, and
+// "configuration drift" remains a word.
 //
-// DEUX PAGES suffisent, et elles disent des choses complementaires :
+// TWO PAGES are enough, and they say complementary things:
 //
-//	GET /vlan.b → la TABLE des VLAN : un identifiant, un nom, et un masque des
-//	              ports MEMBRES.
-//	GET /fwd.b  → par PORT : son mode VLAN (`vlan`), ce qu'il accepte a ingress
-//	              (`vlni`), et son « Default VLAN ID » (`dvid`).
+//	GET /vlan.b → the VLAN TABLE: an identifier, a name, and a mask of MEMBER
+//	              ports.
+//	GET /fwd.b  → per PORT: its VLAN mode (`vlan`), what it accepts on ingress
+//	              (`vlni`), and its "Default VLAN ID" (`dvid`).
 //
-// LE MODEL VLAN DE SwOS, ET LA TRADUCTION QU'IL IMPOSE
+// THE SwOS VLAN MODEL, AND THE TRANSLATION IT IMPOSES
 //
-// SwOS ne dit nulle part « ce port est tagged dans ce VLAN ». Il n'y a AUCUN champ
-// pour cela — ni dans la table des VLAN, ni par port, ni dans la sauvegarde de
-// configuration complete. Ce que la plateforme porte est plus econome :
+// SwOS nowhere says "this port is tagged in this VLAN". There is NO field for
+// that — neither in the VLAN table, nor per port, nor in the complete
+// configuration backup. What the platform carries is leaner:
 //
-//   - la table des VLAN dit QUI est membre de quoi ;
-//   - chaque port a UN « Default VLAN ID », qui est son VLAN natif.
+//   - the VLAN table says WHO is a member of what;
+//   - each port has ONE "Default VLAN ID", which is its native VLAN.
 //
-// La rule d'tagging s'en deduit, et c'est la seule qui rende ces deux data
-// suffisantes : une trame sort d'un port SANS tag si son VLAN est le
-// « Default VLAN ID » de ce port, et AVEC tag sinon. C'est ce que dit la
-// documentation de MikroTik pour ce champ, et c'est ce que confirme l'absence de
-// tout autre reglage — l'interface de the device, qui expose absolument tous ses
-// champs, n'offre rien d'autre.
+// The tagging rule follows from that, and it is the only one that makes
+// these two pieces of data sufficient: a frame leaves a port WITHOUT a tag if
+// its VLAN is that port's "Default VLAN ID", and WITH a tag otherwise. That is
+// what MikroTik's documentation says for this field, and it is what the
+// absence of any other setting confirms — the device's UI, which exposes
+// absolutely all its fields, offers nothing else.
 //
-// Donc, pour un port d'index i :
+// So, for a port of index i:
 //
-//	PVID(i)   = dvid[i]
-//	Tague(i)  = { vid de la table | i est membre de vid } \ { dvid[i] }
-//	Mode(i)   = « trunk » si Tague(i) n'est pas vide, « access » sinon
+//	PVID(i)    = dvid[i]
+//	Tagged(i)  = { vid of the table | i is a member of vid } \ { dvid[i] }
+//	Mode(i)    = "trunk" if Tagged(i) is not empty, "access" otherwise
 //
-// CE QUI CORROBORE CETTE TRADUCTION SUR THE DEVICE DE REFERENCE, et ce n'est pas
-// une petite chose : appliquee telle quelle au CSS326-24G-2S+ de reference, elle
-// dit que la cage SFP2 — le seul port qui porte un lien — est un trunk de VLAN natif
-// 1 transportant les VLAN 99 et 100 tagged. Or cet device est administre en
-// VLAN 99 (`avln:0x0063`) et il REPOND. Sa table d'adresses apprises montre des
-// hotes en VLAN 99 sur ce same port. La traduction predit donc exactement l'unique
-// fait de commutation qu'on puisse observer de l'exterieur : que le VLAN 99 arrive
-// tagged par ce port. Une rule d'tagging inversee predirait le contraire, et
-// the device serait muet.
+// WHAT CORROBORATES THIS TRANSLATION ON THE REFERENCE DEVICE, and it is no
+// small thing: applied as is to the reference CSS326-24G-2S+, it says that
+// cage SFP2 — the only port carrying a link — is a trunk with native VLAN 1
+// carrying VLANs 99 and 100 tagged. Now this device is administered in VLAN
+// 99 (`avln:0x0063`) and it ANSWERS. Its learned address table shows hosts in
+// VLAN 99 on that same port. The translation therefore predicts exactly the
+// only switching fact one can observe from the outside: that VLAN 99 arrives
+// tagged through that port. An inverted tagging rule would predict the
+// opposite, and the device would be mute.
 //
-// Cela ne remplace pas une injection de trafic — c'est written ici pour qu'on sache
-// ce qui est established et ce qui ne l'est pas.
+// That does not replace a traffic injection — it is written here so that it
+// is known what is established and what is not.
 
-// `VLAN`, `PortState` et `State` ne sont plus definis ici : ce sont des ALIAS des
-// types du contrat (cf. contract.go). Ce paquet en portait des copies, et son
-// commentaire disait already pourquoi — « same forme que celle du connecteur Instant On,
-// pour que l'API n'ait qu'une way de present  une pose », « c'est ce qui permet a
-// la couche de reconciliation de comparer deux plateformes sans les distinguer ».
-// L'alias tient cette promesse au lieu de la repeter : ce que ce fichier construit EST
-// ce que la couche API relit, sans conversion, donc sans champ perdu le jour where le
-// contrat en gagne un.
+// `VLAN`, `PortState` and `State` are no longer defined here: they are ALIASES
+// of the contract types (cf. contract.go). This package used to carry copies,
+// and its comment already said why — "same shape as the Instant On
+// connector's, so the API has only one way to present a write", "that is
+// what lets the reconciliation layer compare two platforms without telling
+// them apart". The alias keeps that promise instead of repeating it: what
+// this file builds IS what the API layer reads back, with no conversion,
+// hence no field lost the day the contract gains one.
 //
-// Ce que les commentaires de ces copies portaient de propre a SwOS a been REPRIS dans
-// le contrat, a l'endroit qui en avait besoin — voir [driver.State.MgmtVLAN], dont la
-// documentation dit explicitement que zero n'est pas « inconnu » ici mais
-// « administration accepted depuis n'importe quel VLAN », et que la protection se
-// reporte alors sur le seul etat des liens (cf. ApplyPorts).
+// What the comments of those copies carried that was specific to SwOS was
+// MOVED into the contract, where it was needed — see [driver.State.MgmtVLAN],
+// whose documentation says explicitly that zero is not "unknown" here but
+// "administration accepted from any VLAN", and that protection then falls
+// back on link state alone (cf. ApplyPorts).
 //
-// UN SEUL champ n'a pas pu suivre, et il vit maintenant ci-dessous : le mode VLAN par
-// port. Le contrat ne le porte pas — il n'a rien d'universel — et c'est
-// [driver.State.Notes] qui en dit a l'exploitant ce qu'il doit savoir.
+// ONE field could not follow, and it now lives below: the per-port VLAN mode.
+// The contract does not carry it — there is nothing universal about it — and
+// [driver.State.Notes] is what tells the operator what they need to know.
 
-// VLANFiltering rend, par port, le mode VLAN que the device APPLIQUE
-// (« disabled », « optional », « enabled », « strict », cf. VLANModeLabel).
+// VLANFiltering returns, per port, the VLAN mode the device APPLIES
+// ("disabled", "optional", "enabled", "strict", cf. VLANModeLabel).
 //
-// Propre a cette plateforme, et c'est pour cela que ce n'est pas un champ de state
-// standard : « disabled » veut dire que le port ne filtre RIEN, et que le PVID comme
-// l'appartenance lus par ailleurs ne decrivent alors pas ce que le port fait
-// actually du trafic. Taire cette distinction ferait present  une configuration
-// VLAN comme active alors qu'elle est INERTE — et c'est le genre de silence qui fait
-// chercher une panne ailleurs pendant une heure.
+// Specific to this platform, and that is why it is not a standard state
+// field: "disabled" means the port filters NOTHING, and the PVID and
+// membership read elsewhere then do not describe what the port actually does
+// with traffic. Keeping quiet about that distinction would present a VLAN
+// configuration as active when it is INERT — and that is the kind of silence
+// that sends someone hunting for a fault elsewhere for an hour.
 //
-// Ce que la lecture state en fait : une phrase dans [driver.State.Notes], parce que
-// l'appelant doit l'AFFICHER et n'a aucune decision a en tirer (cf. stateOf).
+// What the state read does with it: a sentence in [driver.State.Notes],
+// because the caller must DISPLAY it and has no decision to draw from it (cf.
+// stateOf).
 type VLANFiltering map[string]string
 
-// Disabled rend, tries, les ports dont le filtrage VLAN est off.
+// Disabled returns, sorted, the ports whose VLAN filtering is off.
 //
-// Trie parce que cette liste part dans une note lue par un humain et comparee d'une
-// relecture a l'autre : un ordre de parcours de carte Go varie a chaque execution, et
-// ferait clignoter une note qui ne change pas.
+// Sorted because this list goes into a note read by a human and compared from
+// one read to the next: Go's map iteration order varies on every run, and
+// would make a note that does not change flicker.
 func (f VLANFiltering) Disabled() []string {
 	var out []string
 	var name, mode string
@@ -106,23 +107,23 @@ func (f VLANFiltering) Disabled() []string {
 	return out
 }
 
-// snapshot est l'ensemble des pages necessary a state, lues en UNE passe.
+// snapshot is the set of pages the state needs, read in ONE pass.
 //
-// Il existe pour une raison de COST, et elle est propre a cette plateforme. SwOS
-// n'a pas de session : chaque page se paie de DEUX requests HTTP, le challenge
-// Digest puis la request authentifiee. Et ce connecteur declares `MaxSessions: 1`,
-// donc ses access sont serialises. Une first version relisait /link.b deux fois
-// par lecture state, et /vlan.b et /fwd.b une seconde fois avant to write :
-// huit requests de trop sur le CPU d'un commutateur access, a chaque passage de
-// reconciliation, sur tout le parc. Passer les pages rather que les redemander
-// n'est pas une optimisation de style ici — c'est la coherence avec le cost qu'on
-// a soi-same documente.
+// It exists for a reason of COST, and that reason is specific to this
+// platform. SwOS has no session: every page costs TWO HTTP requests, the
+// Digest challenge then the authenticated request. And this connector
+// declares `MaxSessions: 1`, so its accesses are serialised. A first version
+// re-read /link.b twice per state read, and /vlan.b and /fwd.b a second time
+// before writing: eight requests too many on an access switch's CPU, on every
+// reconciliation pass, across the whole fleet. Passing the pages around rather
+// than asking for them again is not a style optimisation here — it is
+// consistency with the cost we documented ourselves.
 type snapshot struct {
 	ports    int
 	sfp      int
 	sfpFirst int
-	// facade est la geometry ET le nommage, indissociables : c'est la position des
-	// cages qui decide si l'index 24 s'appelle « SFP1 » ou « Port25 » (cf. Facade).
+	// facade is the geometry AND the naming, inseparable: the position of the
+	// cages decides whether index 24 is called "SFP1" or "Port25" (cf. Facade).
 	facade   Facade
 	link     *Page
 	fwd      *Page
@@ -130,7 +131,7 @@ type snapshot struct {
 	vlanRows []*Page
 }
 
-// readAll rapatrie les quatre pages de state : /link.b, /vlan.b, /fwd.b, /sys.b.
+// readAll fetches the four state pages: /link.b, /vlan.b, /fwd.b, /sys.b.
 func (a *Admin) readAll(ctx context.Context) (*snapshot, error) {
 	var snap = &snapshot{}
 	var err error
@@ -140,16 +141,16 @@ func (a *Admin) readAll(ctx context.Context) (*snapshot, error) {
 	}
 	snap.ports, snap.sfp, snap.sfpFirst, err = geometryOf(snap.link)
 	if err != nil {
-		a.step(false, "geometry du model illisible", err.Error())
+		a.step(false, "model geometry unreadable", err.Error())
 		return nil, err
 	}
-	// La geometry est mise en cache : les ecritures en ont besoin pour composer le
-	// jeu de champs de /fwd.b, et elles ne doivent pas relire /link.b pour l'obtenir.
+	// The geometry is cached: writes need it to compose the /fwd.b field set,
+	// and they must not re-read /link.b to get it.
 	a.ports, a.sfp, a.sfpFirst = snap.ports, snap.sfp, snap.sfpFirst
 	snap.facade = a.facade()
-	a.step(true, "geometry du model lue",
-		fmt.Sprintf("%d ports dont %d cage(s) SFP, la first a l'index %d — "+
-			"named « %s » … « %s »", snap.ports, snap.sfp, snap.sfpFirst,
+	a.step(true, "model geometry read",
+		fmt.Sprintf("%d ports including %d SFP cage(s), the first at index %d — "+
+			"named \"%s\" … \"%s\"", snap.ports, snap.sfp, snap.sfpFirst,
 			snap.facade.Name(0), snap.facade.Name(snap.ports-1)))
 
 	snap.vlanRows, err = a.GetTable(ctx, PageVLAN)
@@ -167,130 +168,146 @@ func (a *Admin) readAll(ctx context.Context) (*snapshot, error) {
 	return snap, nil
 }
 
-// ReadState relit the device. LECTURE SEULE : rien n'est modifie, ce qui permet
-// de la rejouer aussi souvent qu'on veut, y compris sur un parc en production.
+// ReadState reads the device back. READ ONLY: nothing is modified, which
+// allows replaying it as often as wanted, including on a fleet in production.
 //
-// C'est l'etape « Read » du pipeline de reconciliation, et la signature est celle du
-// contrat : aucun parameter. LES NOMS DE PORTS SONT CEUX DE THE DEVICE — « Port1 »…
-// « Port24 », « SFP1 », « SFP2 » — et ils ne viennent donc pas de l'appel : ils
-// viennent de la geometry que /link.b sert, par [Facade]. Deux appels sur le same
-// access doivent nommer les memes prises, sans quoi la pose would write sur un autre port
-// que celui que the UI a montre.
+// This is the "Read" step of the reconciliation pipeline, and the signature is
+// the contract's: no parameter. PORT NAMES ARE THE DEVICE'S — "Port1"…
+// "Port24", "SFP1", "SFP2" — and so they do not come from the call: they come
+// from the geometry /link.b serves, through [Facade]. Two calls on the same
+// access must name the same sockets, otherwise the write would land on a
+// different port from the one the UI showed.
 //
-// La famille numerotee de meshcraft (« GE25 ») reste ACCEPTED en ingress, et le prefix
-// qui la porte vient toujours de la CIBLE (`driver.Target.PortPrefix`, retenue par
-// [Driver.Authenticate]). Elle n'est plus jamais written — voir l'encadre de naming.go.
+// meshcraft's numbered family ("GE25") remains ACCEPTED on input, and the
+// prefix carrying it still comes from the TARGET (`driver.Target.PortPrefix`,
+// kept by [Driver.Authenticate]). It is never written any more — see the box in
+// naming.go.
 //
-// QUATRE PAGES, DEUX REQUETES HTTP CHACUNE : /link.b, /vlan.b, /fwd.b, /sys.b, soit
-// huit allers-retours. SwOS n'a pas de session, le Digest se renegocie a chaque fois
-// (un 401 qui porte le challenge, puis la request authentifiee) et rien de tout cela
-// ne se mutualise. C'est le cost reel d'une lecture state sur cette plateforme, et
-// c'est ce qui justifie que readAll les lise en UNE passe pour les partager avec la
-// pose (cf. snapshot).
+// FOUR PAGES, TWO HTTP REQUESTS EACH: /link.b, /vlan.b, /fwd.b, /sys.b, i.e.
+// eight round trips. SwOS has no session, Digest is renegotiated every time
+// (a 401 carrying the challenge, then the authenticated request) and none of
+// it can be pooled. That is the real cost of a state read on this platform,
+// and it is what justifies readAll reading them in ONE pass to share them with
+// the write (cf. snapshot).
 func (a *Admin) ReadState(ctx context.Context) (State, error) {
 	var snap, err = a.readAll(ctx)
 	if err != nil {
 		return State{VLANs: []VLAN{}, Ports: map[string]PortState{}}, err
 	}
-	return a.stateOf(snap)
+	var out State
+	out, err = a.stateOf(snap)
+	if err != nil {
+		return out, err
+	}
+	// Aggregates, from /lacp.b (a fifth page — two more HTTP round trips, the
+	// platform's known cost). Tolerated failure: nil reads as "not read".
+	var lags, lagErr = a.readLAGs(ctx)
+	if lagErr == nil {
+		out.LAGs = lags
+	} else {
+		out.Notes = append(out.Notes, "aggregates not read: "+lagErr.Error())
+	}
+	return out, nil
 }
 
-// stateOf reconstruit state depuis un snapshot et consigne ce qui a been compris.
+// stateOf rebuilds the state from a snapshot and records what was understood.
 func (a *Admin) stateOf(snap *snapshot) (State, error) {
 	var out = State{VLANs: []VLAN{}, Ports: map[string]PortState{}}
 
 	var err error
 	out.VLANs, err = vlansFrom(snap.vlanRows)
 	if err != nil {
-		a.step(false, "table des VLAN illisible", err.Error())
+		a.step(false, "VLAN table unreadable", err.Error())
 		return out, err
 	}
-	a.step(true, "VLAN lus sur the device",
-		fmt.Sprintf("%d VLAN(s) : %s", len(out.VLANs), vlanSummary(out.VLANs)))
+	a.step(true, "VLANs read on the device",
+		fmt.Sprintf("%d VLAN(s): %s", len(out.VLANs), vlanSummary(out.VLANs)))
 
 	var filtering VLANFiltering
 	out.Ports, filtering, err = portsFrom(snap.vlanRows, snap.fwd, snap.facade)
 	if err != nil {
-		a.step(false, "appartenance des ports illisible", err.Error())
+		a.step(false, "port membership unreadable", err.Error())
 		return out, err
 	}
-	a.step(true, "appartenance VLAN des ports reconstruite",
+	a.step(true, "port VLAN membership rebuilt",
 		fmt.Sprintf("%d port(s)", len(out.Ports)))
 
-	// LA NOTE OBLIGATOIRE DE CETTE PLATEFORME : un filtrage VLAN off rend la
-	// configuration lue INERTE.
+	// THIS PLATFORM'S MANDATORY NOTE: VLAN filtering turned off makes the read
+	// configuration INERT.
 	//
-	// Elle va dans State.Notes et pas seulement au transcript, et la difference
-	// compte : le transcript raconte ce qu'une operation a fait, les notes accompagnent
-	// l'ETAT lui-same — donc the UI qui affiche le VLAN natif et l'appartenance de ces
-	// ports. Sans cette phrase, cet UI presenterait une segmentation en place there where
-	// the device ne filtre rien : le PVID et la liste des membres sont bien
-	// configures, et le port les ignore. C'est un fait qu'aucun champ du model standard
-	// ne sait dire, et le taire ferait chercher la panne ailleurs pendant une heure.
+	// It goes into State.Notes and not only into the transcript, and the
+	// difference matters: the transcript tells what an operation did, the notes
+	// accompany the STATE itself — hence the UI that displays these ports'
+	// native VLAN and membership. Without this sentence, that UI would present
+	// a segmentation in place where the device filters nothing: the PVID and the
+	// member list are indeed configured, and the port ignores them. It is a fact
+	// no field of the standard model can express, and keeping quiet about it
+	// would send someone hunting for the fault elsewhere for an hour.
 	//
-	// Une PHRASE et pas un code : l'appelant l'affiche telle quelle et n'en tire aucune
-	// decision (le contrat est explicite there-dessus). Si une decision devait be prise,
-	// ce serait a ce connecteur de la prendre — et il refuserait.
-	var inertes = filtering.Disabled()
-	if len(inertes) > 0 {
-		var note = "Filtrage VLAN DISABLED sur " + joinComma(inertes) + " (/fwd.b " +
-			"« " + FieldVLANMode + " » = disabled) : sur ces ports, le VLAN natif et " +
-			"l'appartenance ci-dessus sont bien configures mais SANS EFFET sur le trafic — " +
-			"le port ne filtre rien et laisse tout passer. Ce qui est affiche pour eux est " +
-			"une intention, pas un comportement. Une pose meshcraft REVEILLE ce filtrage " +
-			"quand elle peut le faire sans risquer access (cf. planModeRaise)."
+	// A SENTENCE and not a code: the caller displays it as is and draws no
+	// decision from it (the contract is explicit about that). If a decision had
+	// to be made, it would be this connector's to make — and it would refuse.
+	var inert = filtering.Disabled()
+	if len(inert) > 0 {
+		var note = "VLAN filtering DISABLED on " + joinComma(inert) + " (/fwd.b " +
+			"\"" + FieldVLANMode + "\" = disabled): on these ports, the native VLAN and " +
+			"the membership above are indeed configured but WITHOUT EFFECT on traffic — " +
+			"the port filters nothing and lets everything through. What is displayed for them is " +
+			"an intent, not a behaviour. A meshcraft write WAKES this filtering up " +
+			"when it can do so without risking access (cf. planModeRaise)."
 		out.Notes = append(out.Notes, note)
-		a.step(true, "filtrage VLAN disabled sur certains ports", note)
+		a.step(true, "VLAN filtering disabled on some ports", note)
 	}
 
-	// LES TROIS AUTRES CHAMPS PAR PORT, et ce qu'ils contredisent.
+	// THE THREE OTHER PER-PORT FIELDS, and what they contradict.
 	//
-	// Le mode VLAN n'est pas le seul reglage capable de faire mentir l'appartenance
-	// affichee : « Force VLAN ID » range tout le trafic entrant dans le VLAN natif,
-	// « VLAN Receive » peut jeter le tagged ou le untagged a ingress, et un PVID sans
-	// appartenance ne mene nulle part. Ces etats sont accepted par the device sans
-	// aucun signalement, et chacun fait qu'un UI montrant le VLAN natif et la liste
-	// des VLAN tagged DESCRIBES AUTRE CHOSE que ce que le port fait du trafic.
+	// The VLAN mode is not the only setting able to make the displayed
+	// membership lie: "Force VLAN ID" puts all incoming traffic into the native
+	// VLAN, "VLAN Receive" can drop tagged or untagged traffic on ingress, and a
+	// PVID without membership leads nowhere. These states are accepted by the
+	// device without any warning, and each one makes a UI showing the native
+	// VLAN and the list of tagged VLANs DESCRIBE SOMETHING OTHER than what the
+	// port does with traffic.
 	//
-	// Meme nature que la note ci-dessus, same destination : [driver.State.Notes], des
-	// phrases que l'appelant AFFICHE sans en tirer de decision.
+	// Same nature as the note above, same destination: [driver.State.Notes],
+	// sentences the caller DISPLAYS without drawing a decision from them.
 	var anomalies = vlanAnomalies(snap.vlanRows, snap.fwd, snap.facade)
 	if len(anomalies) > 0 {
 		out.Notes = append(out.Notes, anomalies...)
 		var note string
 		for _, note = range anomalies {
-			a.step(true, "configuration VLAN contradictoire observed", note)
+			a.step(true, "contradictory VLAN configuration observed", note)
 		}
 	}
 
-	// Le VLAN de management, DEPUIS the device. La seule source qui dise par where
-	// passe la session en cours.
+	// The management VLAN, FROM the device. The only source that says where
+	// the current session goes through.
 	var avln, hasAvln = snap.sys.Num(FieldAllowVLAN)
 	if !hasAvln {
-		// Champ absent : on ne suppose pas. Sans VLAN de management connu, writing
-		// se rabattra sur la protection par le lien.
-		var note = "Le VLAN de management de the device n'a pas pu be lu : ce " +
-			"firmware ne sert pas le champ « " + FieldAllowVLAN + " » de /sys.b. Une pose " +
-			"restera possible, mais elle se protegera sur le seul etat des liens — donc " +
-			"elle epargnera TOUT port actif."
+		// Field missing: no assumption. Without a known management VLAN, the
+		// write will fall back on protection by link.
+		var note = "The device's management VLAN could not be read: this " +
+			"firmware does not serve the \"" + FieldAllowVLAN + "\" field of /sys.b. A write " +
+			"will remain possible, but it will protect itself on link state alone — so " +
+			"it will spare EVERY active port."
 		out.Notes = append(out.Notes, note)
-		a.step(false, "VLAN de management inconnu", note)
+		a.step(false, "management VLAN unknown", note)
 	} else {
 		out.MgmtVLAN = int(avln)
 		if avln == 0 {
-			// Zero est un etat LEGITIME ici, pas une ignorance — et c'est celui d'un
-			// device sorti d'usine. La note existe parce que le contrat interdit a
-			// l'appelant d'interpreter ce zero lui-same : sur l'Instant On il veut dire
-			// « inconnu » et fait refuser writing, ici il veut dire « depuis n'importe
-			// quel VLAN » et writing reste possible.
-			var note = "The device accepte l'administration depuis N'IMPORTE QUEL VLAN " +
-				"(/sys.b « " + FieldAllowVLAN + " » = 0), ce qui est son factory state : il n'y " +
-				"a aucun VLAN de management a epargner, et une pose se protegera donc sur le " +
-				"seul etat des liens — tout port actif sera epargne."
+			// Zero is a LEGITIMATE state here, not ignorance — and it is the one
+			// of a factory-fresh device. The note exists because the contract
+			// forbids the caller from interpreting this zero itself: on Instant
+			// On it means "unknown" and makes the write refuse, here it means
+			// "from any VLAN" and the write remains possible.
+			var note = "The device accepts administration from ANY VLAN " +
+				"(/sys.b \"" + FieldAllowVLAN + "\" = 0), which is its factory state: there " +
+				"is no management VLAN to spare, and a write will therefore protect itself on " +
+				"link state alone — every active port will be spared."
 			out.Notes = append(out.Notes, note)
-			a.step(true, "administration accepted depuis n'importe quel VLAN", note)
+			a.step(true, "administration accepted from any VLAN", note)
 		} else {
-			a.step(true, "VLAN de management de the device",
+			a.step(true, "device management VLAN",
 				"VLAN "+strconv.Itoa(out.MgmtVLAN))
 		}
 	}
@@ -299,33 +316,34 @@ func (a *Admin) stateOf(snap *snapshot) (State, error) {
 	upMap, err = linksFrom(snap.link, snap.facade)
 	out.Links = driver.LinksFromUp(upMap)
 	if err != nil {
-		a.step(false, "etat des liens illisible", err.Error())
+		a.step(false, "link state unreadable", err.Error())
 		return out, err
 	}
-	a.step(true, "etat des liens lu",
-		fmt.Sprintf("%d port(s) avec lien", len(out.LinkUp())))
+	a.step(true, "link state read",
+		fmt.Sprintf("%d port(s) with link", len(out.LinkUp())))
 
-	// L'ETIQUETTE LOCALE D'UN PORT, quand elle differe du nom de front panel. Meme nature
-	// que les notes ci-dessus — une phrase a afficher, aucune decision a en tirer — et
-	// elle existe pour la raison qui a fait adopter les noms de the device : que la
-	// prise dont parle meshcraft et celle que l'exploitant voit dans SwOS soient la
-	// same. Un port renomme sur the device est le seul cas where les deux ecrans
-	// divergent encore, et cette phrase est ce qui l'explique (cf. naming.go).
+	// A PORT'S LOCAL LABEL, when it differs from the faceplate name. Same nature
+	// as the notes above — a sentence to display, no decision to draw from it —
+	// and it exists for the reason that made us adopt the device's names: so
+	// that the socket meshcraft talks about and the one the operator sees in
+	// SwOS are the same. A port renamed on the device is the only case where the
+	// two screens still diverge, and this sentence is what explains it (cf.
+	// naming.go).
 	var renamed = renamedNote(snap.link, snap.facade)
 	if renamed != "" {
 		out.Notes = append(out.Notes, renamed)
-		a.step(true, "ports renommes sur the device", renamed)
+		a.step(true, "ports renamed on the device", renamed)
 	}
 	return out, nil
 }
 
-// vlansFrom lit la table des VLAN. Fonction pure, donc verifiable sur une capture.
+// vlansFrom reads the VLAN table. A pure function, hence verifiable on a
+// capture.
 //
-// Une ligne sans identifiant n'est pas ignored en silence : c'est une table qu'on ne
-// sait pas lire, et writing qui suivrait reconstruirait la table ENTIRE a partir
-// de ce qu'on en a compris — donc en perdant cette ligne. Sur cette plateforme, where
-// write une table c'est la remplacer, mieux vaut refuser de lire que de perdre un
-// VLAN.
+// A row without an identifier is not silently ignored: it is a table we cannot
+// read, and the write that followed would rebuild the ENTIRE table from what
+// we understood of it — hence losing that row. On this platform, where writing
+// a table means replacing it, refusing to read is better than losing a VLAN.
 func vlansFrom(rows []*Page) ([]VLAN, error) {
 	var out = []VLAN{}
 	var i int
@@ -333,12 +351,12 @@ func vlansFrom(rows []*Page) ([]VLAN, error) {
 	for i, row = range rows {
 		var vid, ok = row.Num(FieldVLANID)
 		if !ok {
-			return nil, fmt.Errorf("/vlan.b : la ligne %d ne porte pas de champ « %s » — "+
-				"table refused rather que lue a half, la rewrite perdrait cette ligne",
+			return nil, fmt.Errorf("/vlan.b: row %d carries no \"%s\" field — "+
+				"table refused rather than half read, the rewrite would lose this row",
 				i+1, FieldVLANID)
 		}
-		// Le nom est facultatif et souvent vide : l'reference device n'en
-		// nomme aucun.
+		// The name is optional and often empty: the reference device names
+		// none.
 		var name, _ = row.Text(FieldVLANName)
 		out = append(out, VLAN{ID: int(vid), Name: name})
 	}
@@ -352,40 +370,40 @@ func vlanSummary(vlans []VLAN) string {
 	for _, v = range vlans {
 		var s = strconv.Itoa(v.ID)
 		if v.Name != "" {
-			s += " « " + v.Name + " »"
+			s += " \"" + v.Name + "\""
 		}
 		parts = append(parts, s)
 	}
 	if len(parts) == 0 {
-		return "aucun"
+		return "none"
 	}
 	return joinComma(parts)
 }
 
-// portsFrom reconstruit la configuration PAR PORT depuis la table des VLAN et la
-// page de commutation.
+// portsFrom rebuilds the PER-PORT configuration from the VLAN table and the
+// forwarding page.
 //
-// C'est ici que se fait la bascule : the device raisonne par VLAN (« qui est
-// membre ? ») et par port pour le seul VLAN natif, meshcraft raisonne par port
-// (« que porte ce port ? »). La rule d'tagging appliquee est celle documentee en
-// tete de fichier.
+// This is where the switch of viewpoint happens: the device reasons per VLAN
+// ("who is a member?") and per port only for the native VLAN, meshcraft
+// reasons per port ("what does this port carry?"). The tagging rule applied is
+// the one documented at the top of the file.
 func portsFrom(vlanRows []*Page, fwd *Page, f Facade) (
 	map[string]PortState, VLANFiltering, error) {
 	var ports = f.Ports()
 	var dvid, hasDvid = fwd.Nums(FieldDefaultVLAN)
 	if !hasDvid {
-		return nil, nil, fmt.Errorf("/fwd.b ne porte pas le tableau « %s » : "+
-			"sans les VLAN natifs, l'appartenance des ports ne peut pas be reconstruite",
+		return nil, nil, fmt.Errorf("/fwd.b does not carry the \"%s\" array: "+
+			"without the native VLANs, port membership cannot be rebuilt",
 			FieldDefaultVLAN)
 	}
 	if len(dvid) < ports {
-		return nil, nil, fmt.Errorf("/fwd.b : « %s » ne porte que %d valeur(s) pour "+
-			"%d port(s) — page tronquee ou geometry incoherente",
+		return nil, nil, fmt.Errorf("/fwd.b: \"%s\" carries only %d value(s) for "+
+			"%d port(s) — truncated page or inconsistent geometry",
 			FieldDefaultVLAN, len(dvid), ports)
 	}
-	// Le mode VLAN est facultatif a la lecture : son absence n'empeche pas de lire
-	// l'appartenance, elle empeche seulement de dire si le filtrage est actif. On
-	// distingue les deux rather que de refuser la lecture entire.
+	// The VLAN mode is optional on read: its absence does not prevent reading
+	// membership, it only prevents saying whether filtering is active. The two
+	// are kept apart rather than refusing the whole read.
 	var modes, hasModes = fwd.Nums(FieldVLANMode)
 
 	var out = map[string]PortState{}
@@ -400,28 +418,28 @@ func portsFrom(vlanRows []*Page, fwd *Page, f Facade) (
 		for _, row = range vlanRows {
 			var vid, ok = row.Num(FieldVLANID)
 			if !ok {
-				// vlansFrom a already refused ce cas ; ici on ne fabrique rien.
+				// vlansFrom has already refused this case; nothing is made up here.
 				continue
 			}
 			var member bool
 			member, ok = row.Bit(FieldVLANMembers, i)
 			if !ok {
-				return nil, nil, fmt.Errorf("/vlan.b : le VLAN %d ne porte pas de masque "+
-					"de membres lisible (« %s ») — l'appartenance du port %s serait devinee",
+				return nil, nil, fmt.Errorf("/vlan.b: VLAN %d carries no readable member "+
+					"mask (\"%s\") — the membership of port %s would be guessed",
 					vid, FieldVLANMembers, name)
 			}
 			if !member {
 				continue
 			}
-			// Le VLAN natif du port n'est pas tagged sur ce port : c'est toute la rule.
+			// The port's native VLAN is not tagged on this port: that is the whole rule.
 			if int(vid) == st.PVID {
 				continue
 			}
 			st.Tagged = append(st.Tagged, int(vid))
 		}
 		if len(st.Tagged) > 0 {
-			// Un port qui transporte des VLAN tagged est un trunk, quel que soit son
-			// VLAN natif.
+			// A port that carries tagged VLANs is a trunk, whatever its native
+			// VLAN.
 			sort.Ints(st.Tagged)
 			st.Mode = "trunk"
 		}
@@ -437,26 +455,26 @@ func portsFrom(vlanRows []*Page, fwd *Page, f Facade) (
 	return out, filtering, nil
 }
 
-// linksFrom observes les ports qui portent un lien.
+// linksFrom reads the ports that carry a link.
 //
-// Seuls les ports AVEC lien sont rendus : l'absence dans la carte vaut « pas de
-// lien », ce qui est aussi le default prudent quand la lecture n'a rien dit. Le
-// masque manquant, en revanche, est une ERREUR et non un « aucun lien » — croire
-// qu'aucun port n'a de lien leverait le garde-fou de writing sur tous, ce qui est
-// exactement l'inverse de la prudence.
+// Only ports WITH a link are returned: absence from the map means "no link",
+// which is also the cautious default when the read said nothing. A missing
+// mask, on the other hand, is an ERROR and not "no link" — believing no port
+// has a link would lift the write guard on all of them, which is exactly the
+// opposite of caution.
 func linksFrom(link *Page, f Facade) (map[string]bool, error) {
 	var ports = f.Ports()
 	if !link.Has(FieldLink) {
-		return nil, fmt.Errorf("/link.b ne porte pas le masque « %s » : state des "+
-			"liens est inconnu, et le supposer vide ferait croire qu'aucun port ne "+
-			"porte la session en cours", FieldLink)
+		return nil, fmt.Errorf("/link.b does not carry the \"%s\" mask: link state "+
+			"is unknown, and assuming it empty would suggest no port "+
+			"carries the current session", FieldLink)
 	}
 	var out = map[string]bool{}
 	var i int
 	for i = 0; i < ports; i++ {
 		var up, ok = link.Bit(FieldLink, i)
 		if !ok {
-			return nil, fmt.Errorf("/link.b : masque « %s » trop court pour %d port(s)",
+			return nil, fmt.Errorf("/link.b: mask \"%s\" too short for %d port(s)",
 				FieldLink, ports)
 		}
 		if up {

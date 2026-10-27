@@ -3,7 +3,7 @@
 //
 // The name matters as much as the choice: it becomes a TAG (`snmpv3-sha-des`),
 // and the tag carries the fleet's SNMP identity
-// (cf. docs/01-Architecture/Tags and identifier scope). Two devices that do
+// (cf. docs/en/01-Architecture/Tags and credential scope.md). Two devices that do
 // not accept the same algorithms cannot share a v3 secret: keys derive from them.
 //
 // Overall rule: NO v3 tag = SNMPv2c. This is the default, and it is
@@ -14,6 +14,8 @@ package snmpv3
 import (
 	"sort"
 	"strings"
+
+	"meshcraft/wire/mdpv1"
 )
 
 // Strength order, weakest to strongest. This is the only thing that decides:
@@ -32,10 +34,12 @@ type Choice struct {
 	Priv string `json:"priv"`
 }
 
-// Normalize puts an algorithm in canonical form: lowercase, no separator.
+// Normalize puts an algorithm in canonical form: lowercase, no separator. The
+// form is the wire's (mdpv1.NormalizeAlg): drivers compare what a device reads
+// back against what the controller chose, and both sides must spell it the
+// same way or every poll reports a drift.
 func Normalize(a string) string {
-	var r = strings.NewReplacer("-", "", "_", "", " ", "")
-	return r.Replace(strings.ToLower(strings.TrimSpace(a)))
+	return mdpv1.NormalizeAlg(a)
 }
 
 // Supported reports whether meshcraft can name this algorithm.

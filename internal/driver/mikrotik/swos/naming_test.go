@@ -6,282 +6,290 @@ import (
 	"testing"
 )
 
-// Le NOMMAGE des ports, verified sur la capture REELLE de /link.b.
+// Port NAMING, verified on the REAL capture of /link.b.
 //
-// C'est le test qui fait foi : la convention retenue — « Port1 »… « Port24 », « SFP1 »,
-// « SFP2 » — n'est pas une preference de meshcraft, c'est ce que le CSS326-24G-2S+ de
-// reference sert lui-same dans le champ `nm` de sa page /link.b. Le verify octet a
-// octet contre la capture est ce qui distingue « on nomme comme the device » de « on
-// croit nommer comme the device ».
+// This is the authoritative test: the chosen convention — "Port1"… "Port24",
+// "SFP1", "SFP2" — is not a meshcraft preference, it is what the reference
+// CSS326-24G-2S+ itself serves in the `nm` field of its /link.b page. Checking
+// it byte by byte against the capture is what distinguishes "we name like the
+// device" from "we believe we name like the device".
 
-// facadeCSS326 est la front panel de l'reference device : 26 ports, 2 cages a partir
-// de l'index 24 (`prt:0x1a`, `sfp:0x02`, `sfpo:0x18` dans la capture).
+// facadeCSS326 is the reference device's faceplate: 26 ports, 2 cages from
+// index 24 (`prt:0x1a`, `sfp:0x02`, `sfpo:0x18` in the capture).
 func facadeCSS326() Facade { return NewFacade(26, 2, 24, DefaultPortPrefix) }
 
-// facadeCuivre est la front panel d'un model SANS cage, pour les cas synthetiques.
-func facadeCuivre(ports int) Facade { return NewFacade(ports, 0, ports, DefaultPortPrefix) }
+// facadeCopper is the faceplate of a model WITHOUT cages, for synthetic cases.
+func facadeCopper(ports int) Facade { return NewFacade(ports, 0, ports, DefaultPortPrefix) }
 
-// TestLaGeometrieDeReferenceEstCelleDeLaCapture ancre les trois nombres dont tout le
-// nommage depend. Les lire faux ferait nommer « Port25 » une cage optique.
-func TestLaGeometrieDeReferenceEstCelleDeLaCapture(t *testing.T) {
+// TestReferenceGeometryIsTheCaptures anchors the three numbers all the naming
+// depends on. Reading them wrong would name an optical cage "Port25".
+func TestReferenceGeometryIsTheCaptures(t *testing.T) {
 	var link, err = ParseObject(capture(t, "link.b"))
 	if err != nil {
-		t.Fatalf("/link.b : %v", err)
+		t.Fatalf("/link.b: %v", err)
 	}
 	var ports, sfp, first, geoErr = geometryOf(link)
 	if geoErr != nil {
-		t.Fatalf("geometry refused : %v", geoErr)
+		t.Fatalf("geometry refused: %v", geoErr)
 	}
 	if ports != 26 || sfp != 2 || first != 24 {
-		t.Fatalf("geometry = %d ports, %d cage(s), first a %d ; expected 26/2/24",
+		t.Fatalf("geometry = %d ports, %d cage(s), first at %d; expected 26/2/24",
 			ports, sfp, first)
 	}
 }
 
-// TestLesNomsDePortsSontCeuxDeLEquipement : la front panel de meshcraft rend EXACTEMENT les
-// noms que the device porte.
+// TestPortNamesAreTheDevices: meshcraft's faceplate returns EXACTLY the names
+// the device carries.
 //
-// La comparaison se fait contre le champ `nm` DECODE de la capture, pas contre une liste
-// written a la main : c'est the device qui a raison, et une liste recopiee ne prouverait
-// que la constance de la personne qui l'a recopiee.
-func TestLesNomsDePortsSontCeuxDeLEquipement(t *testing.T) {
+// The comparison is made against the DECODED `nm` field of the capture, not
+// against a hand-written list: the device is right, and a copied list would
+// only prove the consistency of whoever copied it.
+func TestPortNamesAreTheDevices(t *testing.T) {
 	var link, err = ParseObject(capture(t, "link.b"))
 	if err != nil {
-		t.Fatalf("/link.b : %v", err)
+		t.Fatalf("/link.b: %v", err)
 	}
-	var releves, ok = link.Texts(FieldPortName)
+	var observed, ok = link.Texts(FieldPortName)
 	if !ok {
-		t.Fatalf("la capture ne porte pas le champ « %s » : c'est lui qui fait foi ici",
+		t.Fatalf("the capture does not carry the \"%s\" field: it is the authority here",
 			FieldPortName)
 	}
-	if len(releves) != 26 {
-		t.Fatalf("%d nom(s) observed(s) dans la capture, expected 26", len(releves))
+	if len(observed) != 26 {
+		t.Fatalf("%d name(s) observed in the capture, expected 26", len(observed))
 	}
 
 	var f = facadeCSS326()
-	if !reflect.DeepEqual(f.Names(), releves) {
-		t.Errorf("noms de front panel = %v\nnoms observed sur the device = %v\n"+
-			"les deux doivent coincider : c'est tout l'objet de ce lot", f.Names(), releves)
+	if !reflect.DeepEqual(f.Names(), observed) {
+		t.Errorf("faceplate names = %v\nnames observed on the device = %v\n"+
+			"the two must coincide: that is the whole point of this batch", f.Names(), observed)
 	}
-	// Et les deux extremites, nommement, parce qu'un test qui ne compare que deux listes
-	// entre elles passerait aussi si les deux were fausses de la same way.
-	if releves[0] != "Port1" || releves[23] != "Port24" ||
-		releves[24] != "SFP1" || releves[25] != "SFP2" {
-		t.Errorf("la capture nomme ses ports %q, %q … %q, %q — ce lot a been written sur "+
-			"« Port1 », « Port24 », « SFP1 », « SFP2 »",
-			releves[0], releves[1], releves[24], releves[25])
+	// And both ends, by name, because a test that only compares two lists with
+	// each other would also pass if both were wrong in the same way.
+	if observed[0] != "Port1" || observed[23] != "Port24" ||
+		observed[24] != "SFP1" || observed[25] != "SFP2" {
+		t.Errorf("the capture names its ports %q, %q … %q, %q — this batch was written on "+
+			"\"Port1\", \"Port24\", \"SFP1\", \"SFP2\"",
+			observed[0], observed[1], observed[24], observed[25])
 	}
-	// Aucun renommage sur cet device : la note state doit donc rester muette.
+	// No rename on this device: the state note must therefore stay silent.
 	var note = renamedNote(link, f)
 	if note != "" {
-		t.Errorf("note de renommage sur un device aux noms d'usine : %q", note)
+		t.Errorf("rename note on a device with factory names: %q", note)
 	}
 }
 
-// TestIndexApprendLesDeuxFamilles : la traduction nom → index accepte la convention de
-// the device ET l'ancienne numerotation continue.
+// TestIndexLearnsBothFamilies: the name → index translation accepts the
+// device's convention AND the old continuous numbering.
 //
-// Le cas qui compte est celui des cages : the device appelle l'index 24 « SFP1 », la
-// famille numerotee l'appelait « GE25 ». Les deux doivent atterrir sur 24 — sans quoi
-// une intention enregistree avant ce lot poserait un VLAN sur un port cuivre.
-func TestIndexApprendLesDeuxFamilles(t *testing.T) {
+// The case that matters is the cages': the device calls index 24 "SFP1", the
+// numbered family called it "GE25". Both must land on 24 — otherwise an intent
+// recorded before this batch would set a VLAN on a copper port.
+func TestIndexLearnsBothFamilies(t *testing.T) {
 	var f = facadeCSS326()
-	var cas = []struct {
-		nom    string
-		index  int
-		attend bool
-		pourq  string
+	var cases = []struct {
+		name  string
+		index int
+		want  bool
+		why   string
 	}{
-		{"Port1", 0, true, "premier port cuivre, famille de the device"},
-		{"Port24", 23, true, "dernier port cuivre"},
-		{"SFP1", 24, true, "first cage : the device la nomme ainsi"},
-		{"SFP2", 25, true, "seconde cage, celle qui porte le lien de la capture"},
-		{"GE1", 0, true, "ancienne famille : les intentions already enregistrees"},
-		{"GE24", 23, true, "ancienne famille, dernier port cuivre"},
-		{"GE25", 24, true, "ancienne famille : la first cage was « GE25 »"},
-		{"GE26", 25, true, "ancienne famille : la seconde cage was « GE26 »"},
+		{"Port1", 0, true, "first copper port, the device's family"},
+		{"Port24", 23, true, "last copper port"},
+		{"SFP1", 24, true, "first cage: the device names it so"},
+		{"SFP2", 25, true, "second cage, the one carrying the capture's link"},
+		{"GE1", 0, true, "old family: intents already recorded"},
+		{"GE24", 23, true, "old family, last copper port"},
+		{"GE25", 24, true, "old family: the first cage was \"GE25\""},
+		{"GE26", 25, true, "old family: the second cage was \"GE26\""},
 
-		{"Port25", 0, false, "the device n'a que 24 ports cuivre : son port 25 est " +
-			"une CAGE, et elle s'appelle SFP1. Accepter ce nom ferait write sur une " +
-			"cage en croyant parler de cuivre"},
-		{"SFP3", 0, false, "il n'y a que deux cages"},
-		{"GE27", 0, false, "au-dela de la front panel"},
-		{"GE0", 0, false, "la numerotation commence a 1"},
-		{"port1", 0, false, "la casse n'est pas devinee : les deux familles sont " +
-			"engendrees par du code"},
-		{"SFP", 0, false, "un prefix sans number ne designe aucun port"},
-		{"", 0, false, "le nom vide"},
-		{"ether3", 0, false, "un nom d'une autre plateforme"},
-		{"26", 0, false, "un number sans famille : rien ne dit laquelle"},
-		{"GEabc", 0, false, "un suffixe qui n'est pas un nombre"},
-		{"Port1x", 0, false, "un suffixe qui n'est pas un entier"},
-		{"Port+1", 0, false, "un signe que Atoi accepterait ailleurs"},
+		{"Port25", 0, false, "the device has only 24 copper ports: its port 25 is " +
+			"a CAGE, and it is called SFP1. Accepting this name would write on a " +
+			"cage while believing it is copper"},
+		{"SFP3", 0, false, "there are only two cages"},
+		{"GE27", 0, false, "beyond the faceplate"},
+		{"GE0", 0, false, "numbering starts at 1"},
+		{"port1", 0, false, "case is not guessed: both families are " +
+			"generated by code"},
+		{"SFP", 0, false, "a prefix without a number designates no port"},
+		{"", 0, false, "the empty name"},
+		{"ether3", 0, false, "a name from another platform"},
+		{"26", 0, false, "a number without a family: nothing says which"},
+		{"GEabc", 0, false, "a suffix that is not a number"},
+		{"Port1x", 0, false, "a suffix that is not an integer"},
+		{"Port+1", 0, false, "a sign Atoi would accept elsewhere"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		var got, ok = f.Index(c.nom)
-		if ok != c.attend || (ok && got != c.index) {
-			t.Errorf("Index(%q) = %d,%v ; expected %d,%v — %s",
-				c.nom, got, ok, c.index, c.attend, c.pourq)
+	var c = cases[0]
+	for _, c = range cases {
+		var got, ok = f.Index(c.name)
+		if ok != c.want || (ok && got != c.index) {
+			t.Errorf("Index(%q) = %d,%v; expected %d,%v — %s",
+				c.name, got, ok, c.index, c.want, c.why)
 		}
 	}
 }
 
-// TestNomEtIndexFontUnAllerRetour : sur les 26 ports, nommer puis relire doit rendre le
-// same index.
+// TestNameAndIndexRoundTrip: across the 26 ports, naming then reading back
+// must return the same index.
 //
-// C'est le control qui attrape une formule dupliquee qui aurait diverge — [Facade.Name]
-// et [Facade.deviceIndex] decrivent la same front panel dans les deux sens, et une erreur de
-// l'une seule est exactement ce qui written sur le port voisin.
-func TestNomEtIndexFontUnAllerRetour(t *testing.T) {
+// It is the check that catches a duplicated formula that has diverged —
+// [Facade.Name] and [Facade.deviceIndex] describe the same faceplate in both
+// directions, and a mistake in only one of them is exactly what writes on the
+// neighbouring port.
+func TestNameAndIndexRoundTrip(t *testing.T) {
 	var f = facadeCSS326()
 	var i int
 	for i = 0; i < f.Ports(); i++ {
 		var back, ok = f.Index(f.Name(i))
 		if !ok || back != i {
-			t.Errorf("index %d named %q, relu %d (ok=%v)", i, f.Name(i), back, ok)
+			t.Errorf("index %d named %q, read back %d (ok=%v)", i, f.Name(i), back, ok)
 		}
 	}
 }
 
-// TestFacadeDontLesCagesNeSontPasALaFin : `sfpo` place la first cage where il veut.
+// TestFacadeWhoseCagesAreNotAtTheEnd: `sfpo` puts the first cage wherever it
+// likes.
 //
-// Aucun model du parc ne le fait, et c'est justement pourquoi le cas est verified ici :
-// la rule written est « deux compteurs independants, le cuivre compte les ports qui ne
-// sont pas des cages », et elle ne se verifies pas sur un device dont les cages sont
-// a la fin. Si un CSS de la gamme les placait at the top, ses prises cuivre resteraient
-// numerotees a partir de 1.
-func TestFacadeDontLesCagesNeSontPasALaFin(t *testing.T) {
-	// 6 ports, 2 cages en TETE (index 0 et 1).
+// No model in the fleet does so, and that is precisely why the case is
+// verified here: the written rule is "two independent counters, copper counts
+// the ports that are not cages", and it cannot be verified on a device whose
+// cages are at the end. If a CSS of the range put them at the start, its
+// copper sockets would remain numbered from 1.
+func TestFacadeWhoseCagesAreNotAtTheEnd(t *testing.T) {
+	// 6 ports, 2 cages at the START (index 0 and 1).
 	var f = NewFacade(6, 2, 0, DefaultPortPrefix)
 	var expected = []string{"SFP1", "SFP2", "Port1", "Port2", "Port3", "Port4"}
 	if !reflect.DeepEqual(f.Names(), expected) {
-		t.Fatalf("noms = %v, expected %v", f.Names(), expected)
+		t.Fatalf("names = %v, expected %v", f.Names(), expected)
 	}
 	var i int
 	for i = 0; i < f.Ports(); i++ {
 		var back, ok = f.Index(f.Name(i))
 		if !ok || back != i {
-			t.Errorf("index %d named %q, relu %d (ok=%v)", i, f.Name(i), back, ok)
+			t.Errorf("index %d named %q, read back %d (ok=%v)", i, f.Name(i), back, ok)
 		}
 	}
-	// L'ancienne famille reste continue, cages comprises : c'est ce qu'elle a toujours
-	// voulu dire, et ce que la base porte.
+	// The old family stays continuous, cages included: that is what it always
+	// meant, and what the database carries.
 	var got, ok = f.Index("GE3")
 	if !ok || got != 2 {
-		t.Errorf("Index(GE3) = %d,%v ; expected 2 : la numerotation continue ne saute pas "+
-			"les cages", got, ok)
+		t.Errorf("Index(GE3) = %d,%v; expected 2: continuous numbering does not skip "+
+			"the cages", got, ok)
 	}
 }
 
-// TestUnPortRenommeEstSIGNALE : la note qui empeche l'ecart entre deux ecrans.
+// TestARenamedPortIsFLAGGED: the note that prevents the gap between two
+// screens.
 //
-// Le nom de front panel ne suit PAS le renommage — c'est deliberate, `nm` est du texte libre
-// sans unicite et en faire une clef perdrait une intention au premier renommage. La
-// consequence est qu'un exploitant peut chercher « Uplink » dans une liste qui ne le
-// contient pas, et cette note est la seule chose qui l'explique.
-func TestUnPortRenommeEstSIGNALE(t *testing.T) {
-	// Deux ports, dont le second renomme. « 55706c696e6b » = « Uplink ».
+// The faceplate name does NOT follow a rename — deliberately, `nm` is free
+// text without uniqueness and making it a key would lose an intent at the
+// first rename. The consequence is that an operator may look for "Uplink" in a
+// list that does not contain it, and this note is the only thing that
+// explains it.
+func TestARenamedPortIsFLAGGED(t *testing.T) {
+	// Two ports, the second renamed. "55706c696e6b" = "Uplink".
 	var link, err = ParseObject(
 		"{prt:0x02,nm:['506f727431','55706c696e6b']}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
-	var f = facadeCuivre(2)
+	var f = facadeCopper(2)
 	var diffs = renamedPorts(link, f)
-	if !reflect.DeepEqual(diffs, []string{"Port2 est named « Uplink » sur the device"}) {
-		t.Fatalf("ecarts observed = %v ; seul le second port est renomme", diffs)
+	if !reflect.DeepEqual(diffs, []string{"Port2 is named \"Uplink\" on the device"}) {
+		t.Fatalf("observed gaps = %v; only the second port is renamed", diffs)
 	}
 	var note = renamedNote(link, f)
-	var mot string
-	for _, mot = range []string{"Uplink", "Port2", FieldPortName} {
-		if !strings.Contains(note, mot) {
-			t.Errorf("la note ne dit pas « %s » : %q", mot, note)
+	var word string
+	for _, word = range []string{"Uplink", "Port2", FieldPortName} {
+		if !strings.Contains(note, word) {
+			t.Errorf("the note does not say \"%s\": %q", word, note)
 		}
 	}
 
-	// Champ absent : rien a comparer, donc rien a signaler. Un firmware qui ne sert pas
-	// `nm` laisse la front panel nommer seule, ce qu'elle sait faire.
-	var sans *Page
-	sans, err = ParseObject("{prt:0x02}")
+	// Field missing: nothing to compare, hence nothing to flag. A firmware that
+	// does not serve `nm` lets the faceplate do the naming alone, which it can.
+	var without *Page
+	without, err = ParseObject("{prt:0x02}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
-	if note = renamedNote(sans, f); note != "" {
-		t.Errorf("note rendue sans champ « %s » : %q", FieldPortName, note)
+	if note = renamedNote(without, f); note != "" {
+		t.Errorf("note returned without a \"%s\" field: %q", FieldPortName, note)
 	}
 }
 
-// TestUnNomVideNEstPasUnRenommage : les cages d'un firmware qui ne les nomme pas.
+// TestAnEmptyNameIsNotARename: the cages of a firmware that does not name
+// them.
 //
-// Un `nm` vide n'est pas un port renomme « rien » : c'est un champ que the device n'a
-// pas rempli, et le signaler produirait une note sur chaque port de certains firmwares.
-func TestUnNomVideNEstPasUnRenommage(t *testing.T) {
+// An empty `nm` is not a port renamed "nothing": it is a field the device did
+// not fill in, and flagging it would produce a note on every port of some
+// firmwares.
+func TestAnEmptyNameIsNotARename(t *testing.T) {
 	var link, err = ParseObject("{prt:0x02,nm:['506f727431','']}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
-	var diffs = renamedPorts(link, facadeCuivre(2))
+	var diffs = renamedPorts(link, facadeCopper(2))
 	if diffs != nil {
-		t.Errorf("un nom vide a been pris pour un renommage : %v", diffs)
+		t.Errorf("an empty name was taken for a rename: %v", diffs)
 	}
 }
 
-// TestUneIntentionSousLAncienNomTrouveQuandMemeLEtatDuPort — le trap de la traduction,
-// et la raison d'be du nom canonique dans [PlanPorts].
+// TestAnIntentUnderTheOldNameStillFindsThePortState — the trap of the
+// translation, and the reason the canonical name exists in [PlanPorts].
 //
-// State LU est named par la front panel (« SFP2 »). Une intention enregistree avant ce lot,
-// elle, designe le same port par « GE26 ». [Facade.Index] les fait tomber sur le same
-// index — mais la decision de pose ne lit pas que l'index : elle cherche dans state LU
-// le VLAN natif ACTUEL du port et SI CE PORT PORTE UN LIEN.
+// The READ state is named by the faceplate ("SFP2"). An intent recorded before
+// this batch designates the same port as "GE26". [Facade.Index] makes them land
+// on the same index — but the write decision does not read only the index: it
+// looks up, in the READ state, the port's CURRENT native VLAN and WHETHER THE
+// PORT CARRIES A LINK.
 //
-// Chercher avec le nom du plan rendrait donc le port inconnu : natif 0, AUCUN LIEN. Et
-// « aucun lien » est tres exactement ce qui LEVE les garde-fous de ce connecteur. Une
-// intention heritee aurait ainsi desarme la protection du port qui porte la session, sur
-// la seule plateforme du parc qui n'a ni SSH, ni Telnet, ni serial port — i.e. que
-// le geste cense be le plus prudent serait devenu le plus dangereux.
-func TestUneIntentionSousLAncienNomTrouveQuandMemeLEtatDuPort(t *testing.T) {
-	var current, rows = planDeReference(t)
-	// SFP2 est le seul port de la capture qui porte un lien, et il porte l'administration
-	// en VLAN 99 untagged : le cas classique.
+// Looking it up with the plan's name would therefore make the port unknown:
+// native 0, NO LINK. And "no link" is exactly what LIFTS this connector's
+// guards. An inherited intent would thereby have disarmed the protection of
+// the port carrying the session, on the only platform in the fleet with
+// neither SSH, nor Telnet, nor a serial port — i.e. the gesture meant to be
+// the most cautious would have become the most dangerous.
+func TestAnIntentUnderTheOldNameStillFindsThePortState(t *testing.T) {
+	var current, rows = referencePlan(t)
+	// SFP2 is the only port of the capture carrying a link, and it carries
+	// administration in VLAN 99 untagged: the classic case.
 	current.Ports["SFP2"] = PortState{Mode: "access", PVID: 99}
-	var protege = map[int]string{99: "VLAN de management du plan du site"}
+	var protected = map[int]string{99: "management VLAN from the site plan"}
 
-	// L'ANCIEN NOM, tel qu'une intention enregistree avant ce lot le porte.
+	// The OLD NAME, as an intent recorded before this batch carries it.
 	var plan, err = PlanPorts(PortsInput{
-		Current: current, Table: rows, Facade: facadeCSS326(), Protected: protege,
+		Current: current, Table: rows, Facade: facadeCSS326(), Protected: protected,
 		Desired: map[string]PortState{"GE26": {Mode: "access", PVID: 100}},
 	})
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(plan.Changes) != 0 {
-		t.Fatalf("le port qui porte la session a recu %d write(s) alors que le plan "+
-			"le designait sous son ancien nom : %+v — state du port n'a pas been retrouve, "+
-			"donc le garde-fou ne s'est pas arme", len(plan.Changes), plan.Changes)
+		t.Fatalf("the port carrying the session received %d write(s) although the plan "+
+			"designated it by its old name: %+v — the port state was not found, "+
+			"so the guard did not arm", len(plan.Changes), plan.Changes)
 	}
 	if len(plan.Skipped) != 1 {
-		t.Fatalf("%d refus, expected 1 : %v", len(plan.Skipped), plan.Skipped)
+		t.Fatalf("%d refusal(s), expected 1: %v", len(plan.Skipped), plan.Skipped)
 	}
-	// Et le refus nomme la prise comme the device le fait : c'est ce nom-there que
-	// l'exploitant lit dans SwOS.
+	// And the refusal names the socket the way the device does: that is the
+	// name the operator reads in SwOS.
 	if !strings.Contains(plan.Skipped[0], "SFP2") {
-		t.Errorf("le refus doit nommer « SFP2 », le nom que porte the device : %q",
+		t.Errorf("the refusal must name \"SFP2\", the name the device carries: %q",
 			plan.Skipped[0])
 	}
 
-	// Controle : sous le nom de la front panel, la decision est la SAME. Les deux familles
-	// designent la same prise, donc elles doivent produire le same refus.
-	var parFacade PortsPlan
-	parFacade, err = PlanPorts(PortsInput{
-		Current: current, Table: rows, Facade: facadeCSS326(), Protected: protege,
+	// Check: under the faceplate name, the decision is the SAME. Both families
+	// designate the same socket, so they must produce the same refusal.
+	var byFacade PortsPlan
+	byFacade, err = PlanPorts(PortsInput{
+		Current: current, Table: rows, Facade: facadeCSS326(), Protected: protected,
 		Desired: map[string]PortState{"SFP2": {Mode: "access", PVID: 100}},
 	})
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
-	if !reflect.DeepEqual(parFacade, plan) {
-		t.Errorf("les deux familles ne decident pas pareil :\nGE26 → %+v\nSFP2 → %+v",
-			plan, parFacade)
+	if !reflect.DeepEqual(byFacade, plan) {
+		t.Errorf("the two families do not decide alike:\nGE26 → %+v\nSFP2 → %+v",
+			plan, byFacade)
 	}
 }

@@ -129,7 +129,7 @@ func TestExpandPrefixIPv6Narrow(t *testing.T) {
 }
 
 func TestExpandPrefixInvalid(t *testing.T) {
-	var _, err = ExpandPrefix("pas-une-plage")
+	var _, err = ExpandPrefix("not-a-range")
 	if err == nil {
 		t.Fatal("invalid prefix accepted")
 	}
@@ -180,7 +180,7 @@ func TestSearchResetProcedures(t *testing.T) {
 	if len(multi) != 1 || multi[0].Driver != "cisco-nxos" {
 		t.Fatalf("multi-word search: %+v", multi)
 	}
-	if len(SearchResetProcedures("marque-inexistante")) != 0 {
+	if len(SearchResetProcedures("nonexistent-brand")) != 0 {
 		t.Fatal("search with no results returned non-empty")
 	}
 	// Every procedure must say what it erases: without that, the UI lies.

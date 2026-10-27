@@ -70,13 +70,15 @@ var requiredPolicies = []string{"rest-api", "read", "write"}
 // exists before writing avoids creating an account that is already there and
 // believing a still-present account was deleted.
 //
-// Named ListAccounts and not `Accounts`, because the contract reserves that name
-// for a list of NAMES ([Client.Accounts]). What is kept here is what writes need
-// and the contract does not carry: the record `.id` — without which no `set` or
-// `remove` is possible —, the group, and the last-login date, which answers
-// 'has this account already been used?' before removing the one it replaces.
+// Named ListAccounts and not `Accounts`, because the contract owns that name
+// ([Client.Accounts]). What is kept here is what WRITES need and the contract
+// still does not carry: the record `.id` — without which no `set` or `remove` is
+// possible —, the comment, the disabled flag, and the last-login date, which
+// answers 'has this account already been used?' before removing the one it
+// replaces. The GROUP is no longer part of that list: since 2026-08-10 it
+// travels through the contract too, as [driver.Account.Role].
 //
-// VALIDATED LIVE against 10.99.0.54: returns one account, `admin`, in group `full`.
+// VALIDATED LIVE against 192.0.2.54: returns one account, `admin`, in group `full`.
 func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
 	var rows, err = c.List(ctx, "user")
 	if err != nil {
@@ -425,13 +427,15 @@ func (c *Client) SetIdentity(ctx context.Context, name string) error {
 
 // --- What the contract expects of an administration access ---
 
-// Accounts lists the NAMES of administration accounts present.
+// Accounts lists the administration accounts present, WITH the group each one
+// belongs to.
 //
-// The shape the contract asks for, and it is poorer than what the device says:
-// [Client.ListAccounts] returns full records, and that is what writes in this
-// file use. The poverty is on the caller's side — the API layer only needs to
-// know WHETHER a name exists, to choose between create and modify, and not to
-// remove an account that is not there.
+// THE GROUP IS THE PRIVILEGE ON THIS RANGE, and there is no number to go with
+// it: RouterOS ranks nothing from 0 to 15. So [driver.Account.Privilege] is
+// [driver.PrivilegeUnknown] for every account here — that is the platform being
+// honest, not a parse failing — the group name travels in
+// [driver.Account.Role], and the verdict a caller can actually use is
+// [groupAuthority]'s.
 //
 // Order is that of [Client.ListAccounts], so alphabetical: two runs must return
 // the same list, otherwise comparing two observations means nothing.
@@ -439,18 +443,62 @@ func (c *Client) SetIdentity(ctx context.Context, name string) error {
 // ONE READ, and it is what makes account writes safe: RouterOS distinguishes
 // 'create' from 'modify' and refuses one in place of the other. That is also
 // what makes the operation replayable — an interrupted then resumed set does not
-// stumble on a half-created account.
-func (c *Client) Accounts(ctx context.Context) ([]string, error) {
+// stumble on a half-created account. STILL ONE READ after the contract widened:
+// `/user` carries the group name in the same rows as the account names, so
+// nothing above costs an extra request.
+func (c *Client) Accounts(ctx context.Context) ([]driver.Account, error) {
 	var accounts, err = c.ListAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out = make([]string, 0, len(accounts))
+	var out = make([]driver.Account, 0, len(accounts))
 	var a Account
 	for _, a = range accounts {
-		out = append(out, a.Name)
+		out = append(out, contractAccount(a))
 	}
 	return out, nil
+}
+
+// contractAccount narrows a RouterOS record to what the contract carries. Pure,
+// so the mapping — and above all the [driver.PrivilegeUnknown] this platform
+// always reports — is replayable against the reference capture.
+func contractAccount(a Account) driver.Account {
+	return driver.Account{
+		Name: a.Name,
+		// NO NUMBER EXISTS HERE. Not "we did not look": RouterOS has no
+		// numeric privilege at all, and writing 0 would claim a level the
+		// platform cannot express.
+		Privilege: driver.PrivilegeUnknown,
+		Role:      a.Group,
+		Authority: groupAuthority(a.Group),
+		Source:    "/user",
+	}
+}
+
+// groupAuthority ranks a RouterOS group WITHOUT reading `/user/group`.
+//
+// The three BUILT-IN groups are the whole answer on a device nobody customised,
+// and their policies are captured under testdata/ (user_group.json): `full`
+// carries `policy`, which is what makes an account able to manage accounts —
+// i.e. a full administrator. `read` and `write` both deny it (`!policy`), so
+// neither is one, however much `write` sounds like it.
+//
+// ANY OTHER GROUP IS UNKNOWN, and deliberately so: an operator-defined group may
+// well carry `policy`, and the only way to find out is to read `/user/group` —
+// a SECOND request this enumeration does not make (cf. the contract's rule on
+// cheapness). Reporting such an account as limited would be a guess in the
+// dangerous direction: it would hide exactly the unmanaged administrator the
+// audit is looking for. [Client.Groups] and [GroupAllows] are there for a caller
+// that decides to pay for the certainty.
+func groupAuthority(group string) driver.Authority {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "full":
+		return driver.AuthorityFull
+	case "read", "write":
+		return driver.AuthorityLimited
+	default:
+		return driver.AuthorityUnknown
+	}
 }
 
 // SetSecret changes the password OF THE ACCOUNT THAT JUST LOGGED IN.
@@ -496,3 +544,8 @@ func (c *Client) SetSecret(ctx context.Context, oldSecret, newSecret string) err
 	}
 	return c.EnsureAccount(ctx, c.User, newSecret)
 }
+
+// Close: a no-op on this range. The access is an authenticated REST client
+// (cf. rest.go's Client), not a session the device counts against a limit —
+// there is nothing here for an SSH-based connector's Close() to free.
+func (c *Client) Close() {}

@@ -17,7 +17,7 @@ import (
 // Why REST and not the CLI, even though RouterOS has SSH and Telnet open
 // (observed: `/ip/service` serves `ssh` on 22 and `telnet` on 23, and the banner
 // is `SSH-2.0-ROSSSH`): the project's generic SSH probe FAILS on this device —
-// 'SSH session: timeout after 12s', seen on 10.99.0.54. RouterOS's shell is a
+// 'SSH session: timeout after 12s', seen on 192.0.2.54. RouterOS's shell is a
 // full-screen interactive terminal that redraws, paginates and waits for keypresses;
 // scraping it amounts to reimplementing a terminal. REST, on the other hand,
 // returns structured JSON and re-authenticates on every request. So this is not an
@@ -94,7 +94,7 @@ const restTimeout = 20 * time.Second
 // Open opens a REST client in CLEAR HTTP, and that is an observed choice, not
 // negligence.
 //
-// Observed on 10.99.0.54: port 443 is NOT open, and `/ip/service` explains why —
+// Observed on 192.0.2.54: port 443 is NOT open, and `/ip/service` explains why —
 // the `www-ssl` entry is `disabled: true` AND `invalid: true`, `certificate: none`.
 // RouterOS does not serve HTTPS until a certificate has been installed, and it
 // ships from the factory without one. Trying `https://` first would therefore not

@@ -110,7 +110,7 @@ func (s SNMPState) PushesLinkTraps() bool {
 
 // ReadSNMP reads the SNMP configuration. READ ONLY.
 //
-// VALIDATED LIVE against 10.99.0.54: returns SNMP enabled, an engine ID, a
+// VALIDATED LIVE against 192.0.2.54: returns SNMP enabled, an engine ID, a
 // default read-only community open to `::/0`, and traps limited to temperature
 // alerts with no destination.
 func (c *Client) ReadSNMP(ctx context.Context) (SNMPState, error) {

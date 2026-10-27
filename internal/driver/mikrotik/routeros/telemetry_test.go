@@ -12,7 +12,7 @@ import (
 // Telemetry translation, proven on REAL captures — and on ONE fixture that is not,
 // named as such.
 //
-// # The file `interface_ethernet_monitor.NON-RELEVE.json` carries its warning in its NAME
+// # The file `interface_ethernet_monitor.NOT-CAPTURED.json` carries its warning in its NAME
 //
 // All other testdata/ captures are real responses from the reference CRS326-24G-2S+,
 // observed 28 July 2026 through a proxy tunnel. This one is NOT: `/interface/ethernet/monitor`
@@ -70,7 +70,7 @@ func (e fakeErr) Error() string { return string(e) }
 // captureSource builds a source from directory captures.
 func captureSource(t *testing.T) *fakeSource {
 	t.Helper()
-	var monitor = fixture(t, "interface_ethernet_monitor.NON-RELEVE.json")
+	var monitor = fixture(t, "interface_ethernet_monitor.NOT-CAPTURED.json")
 	var out = &fakeSource{
 		menus: map[string][]Row{
 			"system/resource":    {fixtureOne(t, "system_resource.json")},

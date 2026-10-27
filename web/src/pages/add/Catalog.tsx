@@ -2,18 +2,23 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { sitePath } from "../../paths";
+import { deviceDetailPath } from "../../paths";
 import { useSite, useSiteId } from "../../useSite";
 import { get, post, type CatalogModel, type Device } from "../../api";
 import { useSiteRole } from "../../auth";
 import { ActionButton, ErrorMsg, Field, useToast } from "../../components";
 
 /**
- * Creation from the "Generic" model catalog.
+ * A VIRTUAL SWITCH, created from the "Generic" model catalog.
  *
  * No real device behind it: it's a template for mocking up a site (port
  * facade, VLANs, plan) ahead of the connectors' arrival. The other three
  * menu entries, meanwhile, address existing hardware.
+ *
+ * The screen used to be called "catalog model", which named its INPUT and
+ * not what it produces — nobody facing the menu could tell what it was for.
+ * The catalogue is still the catalogue (the model field picks from it, and
+ * says so); the page is named after the thing it puts in the site.
  */
 export default function Catalog() {
   const { t } = useTranslation();
@@ -51,7 +56,7 @@ export default function Catalog() {
     onSuccess: (d) => {
       qc.invalidateQueries({ queryKey: ["devices", siteId] });
       showToast(t("catalog.created", { name: d.name }));
-      navigate(sitePath(siteSlug, "equipment", d.name));
+      navigate(deviceDetailPath(siteSlug, d));
     },
   });
 

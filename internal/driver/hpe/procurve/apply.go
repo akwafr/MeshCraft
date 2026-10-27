@@ -13,20 +13,20 @@ package procurve
 // depending on revision.
 //
 // The order chosen is ADD THEN REMOVE, and only removing what the add did not
-// already take. On this platform assigning « untagged » moves the port out of its
+// already take. On this platform assigning "untagged" moves the port out of its
 // previous untagged VLAN by itself, so the removal is a reconciliation of what is
 // left over, not the mechanism. Doing it the other way round would open a window
 // where an uplink belongs to nothing.
 //
 // # Command forms are CAPTURED, from the device's own configuration
 //
-// « vlan N », « untagged <ports> », « tagged <ports> », « no untagged <ports> »,
-// « no tagged <ports> » and the compact range grammar all appear verbatim in the
+// "vlan N", "untagged <ports>", "tagged <ports>", "no untagged <ports>",
+// "no tagged <ports>" and the compact range grammar all appear verbatim in the
 // running-config of the reference unit (2610-48, R.11.121, 2026-08-02). On this
 // platform the configuration file IS the command language — what it prints back
 // is what it accepts — so these are captured forms rather than deduced ones.
 //
-// « write memory » is the persist step: this range applies to the running
+// "write memory" is the persist step: this range applies to the running
 // configuration immediately and loses it at reboot until saved
 // ([driver.CommitApplyThenSave]).
 
@@ -43,11 +43,21 @@ import (
 
 // ApplyPorts writes VLAN membership, then persists.
 //
-// THE UPLINK GUARD comes first and is not negotiable: this range has no second
-// path. Dropping the management VLAN off the port that carries it leaves the
-// serial console as the only way back, and on a switch in a rack that is a
-// journey. The management VLAN is therefore never removed from a port, and the
-// refusal is reported rather than worked around.
+// THE UPLINK GUARD, like every other connector's (cf. fs/s3400, ubiquiti/
+// edgeswitch, cisco/ios): dropping the management VLAN off the port that
+// carries it leaves the serial console as the only way back, and on a switch
+// in a rack that is a journey. Two things lift it, matching the rest of the
+// fleet exactly:
+//
+//   - LINK-GATED: a port with nothing plugged in cannot carry the session
+//     that would be cut, so an unlinked port is never blocked — refusing it
+//     anyway only stops provisioning a device before it is cabled.
+//   - plan.Force: an explicit operator gesture, never a default, for the
+//     case where the operator knows their topology better than meshcraft
+//     does (moving administration to a different uplink on purpose). Before
+//     this, the guard was unconditional and the product's own "force
+//     anyway" button did nothing on this platform — the one connector out
+//     of eight where it silently had no effect.
 func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (driver.ApplyResult, error) {
 	var out driver.ApplyResult
 	if c.cli == nil {
@@ -115,12 +125,13 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (driver.ApplyRes
 			continue
 		}
 		var now = current.Ports[name]
+		var linked = current.HasLink(name)
 
 		if want.PVID > 0 && want.PVID != now.PVID {
-			if now.PVID == mgmt && mgmt > 0 {
+			if mgmtGuardBlocks(now.PVID == mgmt, mgmt, linked, plan.Force) {
 				out.Skipped = append(out.Skipped, fmt.Sprintf(
-					"%s not modified: it is untagged in the MANAGEMENT VLAN %d, and this "+
-						"range has no second path — moving it would cut administration",
+					"%s not modified: it is untagged in the MANAGEMENT VLAN %d — moving it "+
+						"would cut administration on a range with no second path (force to override)",
 					name, mgmt))
 				continue
 			}
@@ -140,10 +151,10 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (driver.ApplyRes
 				if wantTag[t] {
 					continue
 				}
-				if t == mgmt && mgmt > 0 {
+				if mgmtGuardBlocks(t == mgmt, mgmt, linked, plan.Force) {
 					out.Skipped = append(out.Skipped, fmt.Sprintf(
 						"%s: management VLAN %d left tagged on this port — removing it is "+
-							"how this switch is lost", name, mgmt))
+							"how this switch is lost (force to override)", name, mgmt))
 					continue
 				}
 				delTagged[t] = append(delTagged[t], num)
@@ -209,13 +220,15 @@ func missingVLANs(have map[int]bool, plan PortPlan) []driver.VLAN {
 	var p driver.PortState
 	for _, p = range plan.Desired {
 		if p.PVID > 0 {
-			if _, seen := want[p.PVID]; !seen {
+			var _, seen = want[p.PVID]
+			if !seen {
 				want[p.PVID] = ""
 			}
 		}
 		var t int
 		for _, t = range p.Tagged {
-			if _, seen := want[t]; !seen {
+			var _, seen = want[t]
+			if !seen {
 				want[t] = ""
 			}
 		}
@@ -254,6 +267,23 @@ func sanitizeVlanName(s string) string {
 	return b.String()
 }
 
+// mgmtGuardBlocks reports whether the management-VLAN guardrail refuses this
+// membership change. Same shape as every other connector's version of this
+// guardrail (cf. fs/s3400, ubiquiti/edgeswitch, cisco/ios):
+//
+//   - losesMgmt says whether the write under consideration would drop the
+//     management VLAN's membership on this port (untagged move, or tagged
+//     removal — the two call sites decide which).
+//   - LINK-GATED: a port with no cable cannot carry the session that would
+//     be cut, so an unlinked port is never blocked — refusing it anyway
+//     only stops provisioning a device before it is cabled, exactly when
+//     adoption needs to write it.
+//   - force lifts the guardrail outright: the operator's explicit call,
+//     never a default.
+func mgmtGuardBlocks(losesMgmt bool, mgmt int, linked, force bool) bool {
+	return losesMgmt && mgmt > 0 && linked && !force
+}
+
 func containsInt(list []int, want int) bool {
 	var v int
 	for _, v = range list {
@@ -267,7 +297,7 @@ func containsInt(list []int, want int) bool {
 // runConfigBlock enters configuration mode, runs the commands, and always
 // leaves it.
 //
-// « exit » is sent unconditionally at the end, including after a failure: a
+// "exit" is sent unconditionally at the end, including after a failure: a
 // session abandoned inside a VLAN sub-mode makes the NEXT gesture run its first
 // command in a context it does not expect, and on this platform that context
 // silently accepts membership commands for the wrong VLAN.
@@ -289,7 +319,7 @@ func (c *Client) runConfigBlock(ctx context.Context, cmds []string) error {
 			break
 		}
 	}
-	// « exit » is sent even after a failure: a session left inside a VLAN sub-mode
+	// "exit" is sent even after a failure: a session left inside a VLAN sub-mode
 	// makes the NEXT gesture run its first command in a context it does not
 	// expect, and that context silently accepts membership for the wrong VLAN.
 	var _, exitErr = c.cli.run(ctx, "exit", cmdTimeout)

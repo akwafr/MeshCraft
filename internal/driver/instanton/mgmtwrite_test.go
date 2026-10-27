@@ -28,19 +28,19 @@ func TestMaskPrefixRoundTrip(t *testing.T) {
 }
 
 func TestSplitCIDR(t *testing.T) {
-	var host, mask = splitCIDR("10.99.200.199/16")
-	if host != "10.99.200.199" || mask != "255.255.0.0" {
+	var host, mask = splitCIDR("198.51.100.199/16")
+	if host != "198.51.100.199" || mask != "255.255.0.0" {
 		t.Fatalf("got %q %q", host, mask)
 	}
-	host, mask = splitCIDR("10.99.200.199")
-	if host != "10.99.200.199" || mask != "" {
+	host, mask = splitCIDR("198.51.100.199")
+	if host != "198.51.100.199" || mask != "" {
 		t.Fatalf("got %q %q", host, mask)
 	}
 }
 
 func TestFormatIOAddr(t *testing.T) {
-	if formatIOAddr("10.99.200.101", "255.255.0.0") != "10.99.200.101/16" {
-		t.Fatal(formatIOAddr("10.99.200.101", "255.255.0.0"))
+	if formatIOAddr("198.51.100.101", "255.255.0.0") != "198.51.100.101/16" {
+		t.Fatal(formatIOAddr("198.51.100.101", "255.255.0.0"))
 	}
 }
 
@@ -48,9 +48,9 @@ func TestDefaultRouteOf(t *testing.T) {
 	var xml = `<IPv4RouteList><Entry>
 <destinationIPv4Address>0.0.0.0</destinationIPv4Address>
 <destinationPrefixLength>0</destinationPrefixLength>
-<nextHopIPv4Address>10.99.0.1</nextHopIPv4Address>
+<nextHopIPv4Address>192.0.2.1</nextHopIPv4Address>
 </Entry></IPv4RouteList>`
-	if defaultRouteOf(xml) != "10.99.0.1" {
+	if defaultRouteOf(xml) != "192.0.2.1" {
 		t.Fatal(defaultRouteOf(xml))
 	}
 }

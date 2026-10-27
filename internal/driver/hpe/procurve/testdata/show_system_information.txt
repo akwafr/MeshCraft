@@ -1,0 +1,22 @@
+ Status and Counters - General System Information
+
+  System Name        : SW-PLAYER-79                                    
+  System Contact     : noc@example.org
+  System Location    : InTheKitchen
+
+  MAC Age Time (sec) : 300    
+
+  Time Zone          : 1    
+  Daylight Time Rule : Western-Europe            
+
+  Software revision  : R.11.121         Base MAC Addr      : 001ffe-007980
+  ROM Version        : R.10.06          Serial Number      : CN0EXAMPL2  
+
+  Up Time            : 9 hours          Memory   - Total   : 83,988,864  
+  CPU Util (%)       : 13                          Free    : 72,603,456  
+
+  IP Mgmt  - Pkts Rx : 51,941           Packet   - Total   : 3020        
+             Pkts Tx : 50,255           Buffers    Free    : 2894        
+                                                   Lowest  : 2733        
+                                                   Missed  : 0           
+

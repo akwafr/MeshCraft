@@ -13,6 +13,7 @@ import (
 	"meshcraft/internal/metricbuf"
 	"meshcraft/internal/model"
 	"meshcraft/internal/snmppoll"
+	"meshcraft/wire/agentv1"
 )
 
 // Reception of metrics pushed by proxies.
@@ -87,18 +88,16 @@ const worstBytesPerSample = 320
 // route says it accepts — and that is precisely what maxSamplesPerBatch bounds.
 const maxProxyMetricsBody = 8 << 20
 
-// batchGeste: the recovery to announce when the body was refused for size. It names the
+// batchRecovery: the recovery to announce when the body was refused for size. It names the
 // sender (the proxy) and its setting, because on this route there is no human to read
 // the message: it will end up in a log, and must be sufficient there.
-const batchGeste = " ; proxy batch too large, reduce maxPerFlush" +
+const batchRecovery = "; proxy batch too large, reduce maxPerFlush" +
 	" (this is not a content problem)"
 
 // proxyMetricsBatch is the body expected on /api/proxy/metrics.
-type proxyMetricsBatch struct {
-	ProxyID string             `json:"proxy_id"`
-	Secret  string             `json:"secret"`
-	Samples []metricbuf.Sample `json:"samples"`
-}
+// proxyMetricsBatch is the agent contract's metrics push (agentv1.MetricsRequest):
+// the credentialed envelope plus a batch of wire samples.
+type proxyMetricsBatch = agentv1.MetricsRequest
 
 // readProxyMetricsBatch reads and caps a batch, and responds itself on refusal.
 //
@@ -114,7 +113,7 @@ func readProxyMetricsBatch(w http.ResponseWriter, r *http.Request,
 	in *proxyMetricsBatch) bool {
 	var err = readJSON(w, r, in, maxProxyMetricsBody)
 	if err != nil {
-		failJSON(w, err, batchGeste)
+		failJSON(w, err, batchRecovery)
 		return false
 	}
 	if len(in.Samples) > maxSamplesPerBatch {
@@ -124,7 +123,7 @@ func readProxyMetricsBatch(w http.ResponseWriter, r *http.Request,
 		respondErr(w, http.StatusRequestEntityTooLarge,
 			"batch too large: "+strconv.Itoa(len(in.Samples))+" samples for a "+
 				"maximum of "+strconv.Itoa(maxSamplesPerBatch)+
-				" ; split it up, the proxy buffer knows how")
+				"; split it up, the proxy buffer knows how")
 		return false
 	}
 	return true
@@ -194,7 +193,7 @@ func (s *Server) handleProxyMetrics(w http.ResponseWriter, r *http.Request) {
 
 // scopeDrop: what a batch lost at the filter, in SAMPLES.
 //
-// Two counters and not one total, for the same reason as `watchBilan`: the two causes
+// Two counters and not one total, for the same reason as `watchTally`: the two causes
 // do not call for the same fix. "Out of scope" is a proxy speaking about a device not
 // entrusted to it — a fleet defect, or someone trying; "no label" is a sample SHAPE
 // defect, therefore a sender of another kind or version. One total would send diagnosis
@@ -341,7 +340,54 @@ func normalizePort(s string) string {
 //     bridge two different vocabularies, e.g. FS S3900's "Ethernet1/11" to the
 //     standard-model "GE11". Last because it is the only one that needs the driver
 //     registry; a connector that declares no translation simply never reaches it.
+//
+// THIS IS THE METRICS ENTRY POINT, and step 3 is the reason there are two: see
+// [facade.resolveNeighborPort] for the caller that must not have it.
 func (f facade) resolve(descr string) string {
+	return f.match(descr, true)
+}
+
+// resolveNeighborPort matches a FAR END's port identifier — `lldpRemPortId` or
+// `lldpRemPortDesc`, as reported by a neighbour about ITSELF — to a facade port.
+//
+// Same ladder as [facade.resolve] MINUS the prefix arithmetic, and the two
+// callers' inputs are why they cannot share one:
+//
+//   - `ifDescr` is OUR OWN agent's label for OUR OWN interface. When an Instant
+//     On serves a bare "1" there, the number IS this device's port number —
+//     that is what the platform means by it — and step 3 turning it into GE1 is
+//     a translation, not a guess;
+//   - `lldpRemPortId` is whatever the FAR platform decided to put in the TLV,
+//     and the standard lets it be anything: an interface name, a MAC, a
+//     locally-assigned string, an ifIndex. MEASURED on this fleet 2026-08-10,
+//     five dialects for the field and two rows carrying a bare number —
+//     "521" from a Juniper (its PortDesc says the port is really ge-0/0/9.0)
+//     and "50" / "51" from sw-labo-1930, in inventory but announcing itself
+//     by serial so it resolves to no device yet. Concatenated, "521" would
+//     have become GE521 and "50" GE50, judged by nothing but whether the
+//     facade happens to be that big.
+//
+// So on this path step 3 reintroduces exactly the rule this function's doc says
+// it REPLACED — "prefix + ifIndex arithmetic, which only worked on devices
+// whose ports are numbered 1..N in index order, a vendor coincidence and not a
+// protocol property". On the metrics path the label really is a port number; on
+// this one it need not be, and nothing in the row says which.
+//
+// WHAT IT COSTS, stated rather than hidden: a far end that only ever announces
+// an ifIndex now resolves to nothing, so its cables are drawn "seen from one
+// side" instead of end to end. That is the CHEAP error. The expensive one is the
+// other direction — [markRefutedObservations] is port-exact, so a confidently
+// wrong far port held by one fresher stranger can retire a cable that really
+// exists (cf. resolvePeerPort's own header). Under-assertion is fully covered
+// downstream; over-assertion is not.
+func (f facade) resolveNeighborPort(descr string) string {
+	return f.match(descr, false)
+}
+
+// match is the shared ladder. `prefixArithmetic` says whether this caller may
+// read a label as a bare port NUMBER of this facade — step 3, and the one part
+// of step 4 that amounts to the same thing.
+func (f facade) match(descr string, prefixArithmetic bool) string {
 	if descr == "" {
 		return ""
 	}
@@ -352,22 +398,50 @@ func (f facade) resolve(descr string) string {
 	if seen {
 		return name
 	}
-	if f.ports[f.prefix+descr] {
-		return f.prefix + descr
-	}
-	if name, seen = f.norm[normalizePort(f.prefix+descr)]; seen {
-		return name
+	if prefixArithmetic {
+		if f.ports[f.prefix+descr] {
+			return f.prefix + descr
+		}
+		if name, seen = f.norm[normalizePort(f.prefix+descr)]; seen {
+			return name
+		}
 	}
 	if f.namer != nil {
-		var std, ok = f.namer.StandardPortName(descr)
-		// The translation is only trusted when the facade actually carries the
-		// port it names: a connector answering for a stacking unit this device
-		// does not expose must not conjure an inventory port.
-		if ok && f.ports[std] {
-			return std
+		// A connector whose translation IS prefix arithmetic would otherwise let
+		// step 3 back in through step 4: hpe/procurve's StandardPortName turns a
+		// bare number into GE<n>, which is character for character what was just
+		// refused above. Narrowing one and not the other would have made the
+		// guarantee depend on which connector the far device happens to run.
+		//
+		// Only a DIGITS-ONLY label is held back — every fleet dialect the namer
+		// exists for carries letters or a slash ("Te1/0/2", "0/18",
+		// "Eth 1/26"), so nothing that resolves today stops resolving.
+		if prefixArithmetic || !allDigits(descr) {
+			var std, ok = f.namer.StandardPortName(descr)
+			// The translation is only trusted when the facade actually carries the
+			// port it names: a connector answering for a stacking unit this device
+			// does not expose must not conjure an inventory port.
+			if ok && f.ports[std] {
+				return std
+			}
 		}
 	}
 	return ""
+}
+
+// allDigits reports whether the label is a bare number and nothing else — the
+// shape that carries no evidence of being a port name.
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	var r rune
+	for _, r = range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // names returns facade port names, SORTED.
@@ -409,9 +483,9 @@ func facadeOf(d model.Device) facade {
 			out.namer = namer
 		}
 	}
-	// ambigus: normalized forms shared by several ports. They can only serve one purpose
+	// ambiguous: normalized forms shared by several ports. They can only serve one purpose
 	// — picking the wrong port.
-	var ambigus = map[string]bool{}
+	var ambiguous = map[string]bool{}
 	var add = func(name string) {
 		out.ports[name] = true
 		var key = normalizePort(name)
@@ -420,7 +494,7 @@ func facadeOf(d model.Device) facade {
 		}
 		var prev, seen = out.norm[key]
 		if seen && prev != name {
-			ambigus[key] = true
+			ambiguous[key] = true
 			return
 		}
 		out.norm[key] = name
@@ -462,10 +536,37 @@ func facadeOf(d model.Device) facade {
 		}
 	}
 	var key string
-	for key = range ambigus {
+	for key = range ambiguous {
 		delete(out.norm, key)
 	}
 	return out
+}
+
+// inventoryEligible says whether ONE sample may refresh the facade, from its
+// labels and from what collects its device. PURE, so the decision is testable
+// without the database, the tunnel and the metrics storage its caller needs.
+//
+//   - a sample carrying SNMP identity (`ifindex`/`iftype`) must say `iftype` =
+//     ethernet. An older proxy does not send `iftype`: its samples still feed
+//     metrics, but no longer modify the facade — deliberately closed-by-default,
+//     because the alternative is guessing, and picking the wrong port produces a
+//     credible false graph;
+//   - a sample with NEITHER label is a streaming collector's, and it may patch
+//     ONLY a device whose declared collector is gNMI. For two days
+//     core01.lab's faceplate showed every port unplugged while 26 links were
+//     up and its oper-status samples flowed: the old gate read "no iftype" as
+//     "old proxy" and dropped every one of them, so `link` was only ever written
+//     back when a device was SNMP-polled. The port-name gate that actually
+//     protects inventory is `facade.resolve` at the caller — a gNMI key it
+//     cannot match to the facade (Vlan99, Port-Channel11, Management1) is
+//     skipped, never invented — so "telemetry never creates a port" holds on
+//     this path exactly as on the SNMP one (cf. internal/metricbuf/names.go).
+func inventoryEligible(labels map[string]string, streamed bool) bool {
+	var snmpShaped = labels["iftype"] != "" || labels["ifindex"] != ""
+	if snmpShaped {
+		return labels["iftype"] == strconv.Itoa(snmppoll.IfTypeEthernet)
+	}
+	return streamed
 }
 
 // applyPortTelemetry reports measured port state into inventory.
@@ -483,9 +584,10 @@ func facadeOf(d model.Device) facade {
 // show arbitrary link state on any switch in the instance — a screen that LIES about a
 // cable, exactly what this path exists to prevent.
 //
-// Required authority is SNMP COLLECTION, not ping: these samples come from polling, and
-// only a device's declared collector polls it (cf. proxyscope.go). A proxy that pings the
-// device without being its collector has no way to measure its ports.
+// Required authority is COLLECTION, not ping: these samples come from the device's
+// declared collector — an SNMP poll or a gNMI subscription, the scope's `poll` set is
+// the union of both (cf. proxyscope.go) — and a proxy that merely pings the device has
+// no way to measure its ports.
 //
 // The decision is made ONCE per device per batch (cf. scopeBatch, which carries this
 // memoization and shares it with the metrics filter): a full batch counts twenty thousand
@@ -500,6 +602,10 @@ func (s *Server) applyPortTelemetry(ctx context.Context, proxyID string,
 	// Naming prefix comes from EACH device's facade: "GE1" here is not "Gi1" elsewhere,
 	// and a key matching no facade port would create a phantom port in inventory.
 	var facades = map[string]facade{}
+	// streamed: this device's declared collector is gNMI, whose samples carry
+	// neither `ifindex` nor `iftype` BY DESIGN (cf. internal/gnmipoll/translate.go).
+	// Memoized beside the facade because both come from the same device read.
+	var streamed = map[string]bool{}
 	var patches = map[string]map[string]map[string]any{}
 	var scope = s.scopeBatchFor(proxyID, authorityPoll)
 
@@ -507,14 +613,6 @@ func (s *Server) applyPortTelemetry(ctx context.Context, proxyID string,
 	for _, sm = range samples {
 		var deviceID = sm.Labels["device"]
 		if !scope.allows(deviceID) {
-			continue
-		}
-		// `iftype` is REQUIRED to touch inventory. An older proxy does not send it: its
-		// samples still feed metrics, but no longer modify the facade. That is
-		// deliberately closed-by-default — the alternative would be guessing, and picking
-		// the wrong port produces a credible false graph. The window is a few seconds;
-		// proxies follow the controller version.
-		if sm.Labels["iftype"] != strconv.Itoa(snmppoll.IfTypeEthernet) {
 			continue
 		}
 		var f, known = facades[deviceID]
@@ -526,6 +624,11 @@ func (s *Server) applyPortTelemetry(ctx context.Context, proxyID string,
 			}
 			f = facadeOf(d)
 			facades[deviceID] = f
+			streamed[deviceID] = collectKindOf(
+				driver.DriverNameFromExtra(d.Extra), d.Model) == "gnmi"
+		}
+		if !inventoryEligible(sm.Labels, streamed[deviceID]) {
+			continue
 		}
 		// The name comes from the interface LABEL, never from arithmetic on its index.
 		// Telemetry never CREATES a port either: a label we cannot match to the facade is

@@ -2,8 +2,10 @@ package tunnel
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,7 +115,7 @@ func TestSendEventsDeliversBacklogBeforeSnapshot(t *testing.T) {
 		close(events)
 	}()
 
-	var got = readEvents(t, controller, 4)
+	var got = readEvents(t, controller, 5)
 	// Stream close after the last event is not a failure: what is exercised here is
 	// order, not how the session ends.
 	var sendErr = <-done
@@ -130,6 +132,10 @@ func TestSendEventsDeliversBacklogBeforeSnapshot(t *testing.T) {
 		{EventDeviceDown, "A", false, "backlog 1"},
 		{EventDeviceUp, "A", false, "backlog 2"},
 		{EventDeviceUp, "A", true, "snapshot"},
+		// The end-of-burst marker sits between the snapshot and the live phase, and
+		// its position is the whole of its meaning: a controller that acts on it must
+		// already hold everything this proxy had to restate.
+		{EventResyncDone, "", true, "end of resync burst"},
 		{EventDeviceDown, "B", false, "live"},
 	}
 	var i int
@@ -147,6 +153,11 @@ func TestSendEventsDeliversBacklogBeforeSnapshot(t *testing.T) {
 //
 // Not every caller has state to re-announce, and nil must not panic on the product's
 // most sensitive path.
+//
+// The burst is still CLOSED, and that is the second half of this test. "I had nothing
+// to restate" and "I have finished restating" are the same fact for the controller;
+// staying silent here would leave it waiting on a proxy that has already said
+// everything it will ever say, which is the ambiguity EventResyncDone removes.
 func TestSendEventsWithoutSnapshot(t *testing.T) {
 	var proxy, controller = pairYamuxBoth(t)
 
@@ -157,12 +168,54 @@ func TestSendEventsWithoutSnapshot(t *testing.T) {
 		_ = SendEvents(proxy, events, nil)
 	}()
 
-	var got = readEvents(t, controller, 1)
+	var got = readEvents(t, controller, 2)
 	if got[0].Type != EventDeviceUp || got[0].DeviceID != "A" {
 		t.Errorf("got {%s %s}, expected {%s A}", got[0].Type, got[0].DeviceID,
 			EventDeviceUp)
 	}
 	if got[0].Resync {
 		t.Error("no snapshot requested: nothing should be marked as resync")
+	}
+	if got[1].Type != EventResyncDone {
+		t.Errorf("event 2 = %q, want %q: an empty burst is still a finished burst",
+			got[1].Type, EventResyncDone)
+	}
+}
+
+// The marker's WIRE FORM, both ways. It crosses between two binaries that are not
+// deployed together, so the JSON is the contract: a rename of the constant, or a
+// `Resync` that stopped being serialized, would be a silent protocol break — the
+// controller would simply never hear the end of a burst and would fall back to holding
+// nothing, which no other test in this package would notice.
+func TestResyncDoneEventSurvivesTheWire(t *testing.T) {
+	var sent = Event{
+		Type: EventResyncDone, TS: time.Now().UTC().Truncate(time.Second), Resync: true,
+	}
+	var data, err = json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marker not encodable: %v", err)
+	}
+	if !strings.Contains(string(data), `"type":"resync.done"`) {
+		t.Errorf("encoded = %s, want the type spelled resync.done on the wire", data)
+	}
+	if !strings.Contains(string(data), `"resync":true`) {
+		t.Errorf("encoded = %s, want the marker to travel as part of its burst", data)
+	}
+	var back Event
+	if err = json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("marker not decodable: %v", err)
+	}
+	if back.Type != EventResyncDone || !back.Resync {
+		t.Errorf("decoded = {%s resync=%v}, want {%s resync=true}",
+			back.Type, back.Resync, EventResyncDone)
+	}
+	if !back.TS.Equal(sent.TS) {
+		t.Errorf("decoded TS = %v, want %v", back.TS, sent.TS)
+	}
+	// No DeviceID, ever: it speaks about the proxy, which is what lets it skip the
+	// per-device scope check on the controller (cf. api.authorityFor).
+	if back.DeviceID != "" {
+		t.Errorf("decoded DeviceID = %q, want empty: this event names no device",
+			back.DeviceID)
 	}
 }

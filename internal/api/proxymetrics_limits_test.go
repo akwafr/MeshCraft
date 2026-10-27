@@ -21,7 +21,7 @@ import (
 //
 // It failed once: the route advertised 20,000 samples per batch but read its body
 // with a 1 MiB cap, i.e. ~5000 samples. The visible guard was unreachable, and
-// truncation responded instead with 400 « invalid JSON » — which the proxy treated
+// truncation responded instead with 400 "invalid JSON" — which the proxy treated
 // as a transient failure, replaying the same batch forever. A guard that announces a
 // limit it does not enforce is worse than no guard.
 //
@@ -50,7 +50,7 @@ const (
 )
 
 // pmDeviceID and pmProxyID are UUIDs, as in production: device ID length is paid on
-// EVERY sample, so the real shape must be measured, not a test « dev-1 ».
+// EVERY sample, so the real shape must be measured, not a test "dev-1".
 const (
 	pmDeviceID = "6f1c9a2e-4b7d-4c3a-9f88-2d0e5b71a3c4"
 	pmProxyID  = "b2f4d1c8-9e3a-4f52-8c11-7a6d0b4e2f39"
@@ -71,7 +71,7 @@ func pmShortPort(i int) string { return "GE" + strconv.Itoa(i) }
 // the variable that hit the wall: the controller does not bound this label length;
 // the operator chooses it.
 func pmLongPort(i int) string {
-	return "Salle serveurs - baie B12 - uplink " + strconv.Itoa(i)
+	return "Server room 01 - rack B12 - uplink " + strconv.Itoa(i)
 }
 
 func pmPDU(oid, idx string, t gosnmp.Asn1BER, v any) gosnmp.SnmpPDU {
@@ -188,10 +188,10 @@ func TestSNMPSampleWeight(t *testing.T) {
 	}
 	var shortWeight = len(pmBody(t, cShort)) / len(cShort)
 	var longWeight = len(pmBody(t, cLong)) / len(cLong)
-	t.Logf("sample weight, combined sets: %d B (« %s »), %d B (« %s »)",
+	t.Logf("sample weight, combined sets: %d B (\"%s\"), %d B (\"%s\")",
 		len(pmBody(t, short))/len(short), pmShortPort(12),
 		len(pmBody(t, long))/len(long), pmLongPort(12))
-	t.Logf("COUNTER weight, sizing case: %d B (« %s »), %d B (« %s »)",
+	t.Logf("COUNTER weight, sizing case: %d B (\"%s\"), %d B (\"%s\")",
 		shortWeight, pmShortPort(12), longWeight, pmLongPort(12))
 	t.Logf("a batch of %d samples therefore weighs %d KiB worst case, for a body cap "+
 		"of %d KiB (%d %%)",
@@ -224,7 +224,7 @@ func TestSNMPSampleWeight(t *testing.T) {
 // route claims to accept must reach the guard INTACT.
 //
 // With counters and long port names — the heaviest case, and the one that failed.
-// Before the fix, this ~4.8 MiB body was cut at 1 MiB and came back as « invalid JSON ».
+// Before the fix, this ~4.8 MiB body was cut at 1 MiB and came back as "invalid JSON".
 func TestAdvertisedSizeBatchPasses(t *testing.T) {
 	var body = pmBody(t,
 		pmBatch(pmCounterSamples(pmLongPort, 52), maxSamplesPerBatch))
@@ -290,7 +290,7 @@ func TestOversizedBatchRefusedByGuard(t *testing.T) {
 // TestOversizedBodySpeaksUp: even with a correct contract, a proxy of another version
 // will someday send an out-of-spec body. This case must SPEAK UP.
 //
-// Before this set it produced 400 « invalid JSON: unexpected EOF » — a message that
+// Before this set it produced 400 "invalid JSON: unexpected EOF" — a message that
 // sends you looking for a serialization bug that does not exist, while upload is down.
 func TestOversizedBodySpeaksUp(t *testing.T) {
 	// Enough to exceed 8 MiB for sure, with real samples.
@@ -333,11 +333,11 @@ func TestGenericDecodeStaysAt1MiB(t *testing.T) {
 		big[i] = 'x'
 	}
 	// Large but syntactically valid body: what is refused is its size.
-	var body = append([]byte(`{"nom":"`), append(big, []byte(`"}`)...)...)
+	var body = append([]byte(`{"name":"`), append(big, []byte(`"}`)...)...)
 
 	var rec = httptest.NewRecorder()
 	var in struct {
-		Nom string `json:"nom"`
+		Name string `json:"name"`
 	}
 	if decode(rec, pmPost(body), &in) {
 		t.Fatalf("body %d B accepted by decode: %d B cap no longer applies",

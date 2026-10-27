@@ -1,13 +1,19 @@
-// mkoci builds a multi-arch OCI layout for the proxy image, without docker
-// buildx: each static binary becomes a single-layer image (binary + CA
-// certs), all aggregated into a multi-platform index. The controller's
-// built-in registry then serves this layout as-is.
+// mkoci builds a multi-arch OCI layout from static binaries, without docker
+// buildx: each binary becomes a single-layer image (binary + CA certs), all
+// aggregated into a multi-platform index. The controller's built-in registry
+// then serves this layout as-is.
 //
 // Usage:
 //
 //	mkoci --out /out/oci --cacert /etc/ssl/certs/ca-certificates.crt \
 //	      --bin amd64=/out/meshcraft-proxy_linux_amd64 \
 //	      --bin arm64=... --bin arm/v7=...
+//
+// --name sets the binary's installed name and entrypoint (default
+// "meshcraft-proxy" — the proxy image the Dockerfile builds); --tag sets the
+// ref the index answers to (default "latest"). Together they let the same
+// tool package any static-binary agent image, which is why the registry it
+// feeds is multi-repository.
 package main
 
 import (
@@ -54,6 +60,8 @@ type descriptor struct {
 func main() {
 	var out = flag.String("out", "", "output directory for the OCI layout")
 	var cacert = flag.String("cacert", "", "ca-certificates.crt file to embed")
+	var name = flag.String("name", "meshcraft-proxy", "installed binary name and entrypoint")
+	var tag = flag.String("tag", "latest", "ref the index answers to")
 	var bins = binFlag{entries: map[string]string{}}
 	flag.Var(&bins, "bin", "arch[/variant]=path (repeatable)")
 	flag.Parse()
@@ -61,14 +69,14 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	var err = build(*out, *cacert, bins.entries)
+	var err = build(*out, *cacert, *name, *tag, bins.entries)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkoci:", err)
 		os.Exit(1)
 	}
 }
 
-func build(out, cacert string, bins map[string]string) error {
+func build(out, cacert, name, tag string, bins map[string]string) error {
 	var blobsDir = filepath.Join(out, "blobs", "sha256")
 	var err = os.MkdirAll(blobsDir, 0o755)
 	if err != nil {
@@ -87,7 +95,7 @@ func build(out, cacert string, bins map[string]string) error {
 	var platform string
 	var binPath string
 	for platform, binPath = range bins {
-		var desc, buildErr = buildPlatform(blobsDir, platform, binPath, caData)
+		var desc, buildErr = buildPlatform(blobsDir, platform, binPath, name, caData)
 		if buildErr != nil {
 			return fmt.Errorf("platform %s: %w", platform, buildErr)
 		}
@@ -98,7 +106,7 @@ func build(out, cacert string, bins map[string]string) error {
 		"schemaVersion": 2,
 		"mediaType":     mtIndex,
 		"manifests":     manifests,
-		"annotations":   map[string]string{"org.opencontainers.image.ref.name": "latest"},
+		"annotations":   map[string]string{"org.opencontainers.image.ref.name": tag},
 	}
 	var indexJSON, marshalErr = json.MarshalIndent(index, "", "  ")
 	if marshalErr != nil {
@@ -130,8 +138,9 @@ func build(out, cacert string, bins map[string]string) error {
 
 // buildPlatform produces the layer + config + manifest for one platform
 // and returns the manifest descriptor (with platform) for the index.
-func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descriptor, error) {
+func buildPlatform(blobsDir, platform, binPath, name string, caData []byte) (descriptor, error) {
 	var arch, variant, _ = strings.Cut(platform, "/")
+	var entrypoint = "/usr/local/bin/" + name
 
 	var binData, err = os.ReadFile(binPath)
 	if err != nil {
@@ -148,7 +157,7 @@ func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descripto
 		data []byte
 	}{
 		{"etc/ssl/certs/ca-certificates.crt", 0o644, caData},
-		{"usr/local/bin/meshcraft-proxy", 0o755, binData},
+		{strings.TrimPrefix(entrypoint, "/"), 0o755, binData},
 	}
 	var f struct {
 		name string
@@ -193,7 +202,7 @@ func buildPlatform(blobsDir, platform, binPath string, caData []byte) (descripto
 		"architecture": arch,
 		"os":           "linux",
 		"config": map[string]any{
-			"Entrypoint": []string{"/usr/local/bin/meshcraft-proxy"},
+			"Entrypoint": []string{entrypoint},
 			"Env":        []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
 		},
 		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{diffID}},

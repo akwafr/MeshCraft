@@ -6,7 +6,7 @@
 -- A newly enrolled instance proxy connected at 15:35:35 and, 3.7 seconds later,
 -- declared four devices of another site unreachable — every one of them alive and
 -- being polled successfully by their own collector at that very moment. The new
--- proxy sat on a different network (172.16.99.0/24), was handed the whole
+-- proxy sat on a different network (203.0.113.0/24), was handed the whole
 -- inventory because an instance proxy covers every site, pinged addresses that do
 -- not exist there, and missed three rounds. `applyDeviceState` wrote its verdict
 -- because nothing distinguished it from any other.

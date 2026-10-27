@@ -41,7 +41,10 @@ export type ActionKind =
   | "terminal"
   | "upload"
   | "refresh"
-  | "role";
+  | "role"
+  // "more" reveals rows a list is holding back. A chevron DOWN and not a
+  // plus: nothing is being created, the rest was already there.
+  | "more";
 
 type IconProps = { size?: number };
 
@@ -229,6 +232,12 @@ export function ActionIcon({ kind, size = 14 }: { kind: ActionKind; size?: numbe
           <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
           <path d="M3 22v-6h6" />
           <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+        </Svg>
+      );
+    case "more":
+      return (
+        <Svg size={size}>
+          <path d="M6 9l6 6 6-6" />
         </Svg>
       );
   }

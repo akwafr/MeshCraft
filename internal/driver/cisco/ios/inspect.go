@@ -50,6 +50,7 @@ func (c *Client) ReadFaceplate(ctx context.Context) ([]map[string]any, error) {
 	if err != nil && statusOut == "" {
 		return nil, fmt.Errorf("show interfaces status failed: %v", err)
 	}
+	c.learnPortStem(statusOut)
 	var groups = portGroupsOf(parseInterfacesStatus(statusOut))
 	if len(groups) == 0 {
 		return nil, fmt.Errorf("no ports parsed from \"show interfaces status\"")
@@ -81,6 +82,7 @@ func portGroupsOf(ports []statusPort) []map[string]any {
 	var start = -1
 	var prevNum = -1
 	var prefix = ""
+	var stem = ""
 	var speed = 0
 	var cage = false
 
@@ -100,8 +102,10 @@ func portGroupsOf(ports []statusPort) []map[string]any {
 			// `show power inline` answers this and is not read here.
 			"poe":   false,
 			"label": cageLabel(cage, speed),
-			// The name printed on the faceplate and typed at the CLI ("Gi1/0/11").
-			"silk": silkOf(prefix),
+			// The name printed on the faceplate and typed at the CLI ("Gi1/0/11"
+			// on a stackable, "Gi0/11" on a 3560 — the stem is the device's own,
+			// cf. silkOf).
+			"silk": silkOf(prefix, stem),
 		})
 	}
 
@@ -118,7 +122,7 @@ func portGroupsOf(ports []statusPort) []map[string]any {
 		}
 		flush(prevNum)
 		start, prevNum = p.Num, p.Num
-		prefix, speed, cage = p.StdPrefix, p.SpeedMbps, isCage
+		prefix, stem, speed, cage = p.StdPrefix, p.Stem, p.SpeedMbps, isCage
 	}
 	flush(prevNum)
 	return out

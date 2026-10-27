@@ -15,16 +15,22 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// handleProxyTunnel accepts an outbound WebSocket from has proxy and turns it into has
+// handleProxyTunnel accepts an outbound WebSocket from a proxy and turns it into has
 // multiplexed session in which the controller will open TCP connections.
 //
 // Authentication happens BEFORE the upgrade, with the same (proxy_id, secret)
-// pair as the heartbeat: no user session here, has proxy does not have one
-// (docs/03-Security/Proxy security).
+// pair as the heartbeat: no user session here, a proxy does not have one
+// (docs/en/03-Security/Proxy security.md).
 func (s *Server) handleProxyTunnel(w http.ResponseWriter, r *http.Request) {
 	var proxyID = r.Header.Get(tunnel.HeaderProxyID)
 	var secret = r.Header.Get(tunnel.HeaderSecret)
 	var version = r.Header.Get(tunnel.HeaderVersion)
+	// Capabilities are read ONCE, here, and travel with the session. An empty header
+	// is the normal case for every proxy older than the capability it would announce,
+	// and it is what makes this a compatible protocol change: the hub then reports
+	// that proxy's resync as ResyncUnsupported, and nothing in the controller ever
+	// waits on it (cf. tunnel.HeaderFeatures and api.holdReach).
+	var features = r.Header.Get(tunnel.HeaderFeatures)
 	if proxyID == "" || secret == "" {
 		respondErr(w, http.StatusUnauthorized, "proxy identity required")
 		return
@@ -65,24 +71,28 @@ func (s *Server) handleProxyTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var release = s.Tunnels.Register(proxyID, version, session)
+	var release = s.Tunnels.Register(proxyID, version, features, session)
 	defer release()
 
-	// A tunnel counts as has heartbeat: the proxy is seen and its version is known.
+	// A tunnel counts as a heartbeat: the proxy is seen and its version is known.
 	_ = s.Store.TouchProxy(r.Context(), proxyID, version, 0, "", "", nil)
 	var p, getErr = s.Store.GetProxy(r.Context(), proxyID)
 	var name = proxyID
 	if getErr == nil {
 		name = p.Name
 	}
-	slog.Info("tunnel established", "proxy_id", proxyID, "proxy", name, "version", version)
+	slog.Info("tunnel established", "proxy_id", proxyID, "proxy", name, "version", version,
+		// Logged because it changes how the controller treats this proxy's silence:
+		// diagnosing a hold that did or did not happen starts with knowing what the
+		// proxy claimed it could do.
+		"features", features)
 	s.emit(r, model.Event{
 		Type: "proxy.connected", Severity: model.SevInfo,
 		Message: "Tunnel established with proxy \"" + name + "\"", Actor: "proxy",
 	})
 
 	// As soon as the tunnel is up: listen for its events and tell it what to
-	// watch. Order hardly matters; the proxy tolerates has late config.
+	// watch. Order hardly matters; the proxy tolerates a late config.
 	go s.Tunnels.AcceptEvents(proxyID, s.handleProxyEvent)
 	go s.PushWatchTo(context.Background(), proxyID)
 

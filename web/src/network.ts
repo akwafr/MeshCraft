@@ -6,6 +6,12 @@
 // from SNMP counters, derived by the controller, and there is nothing left
 // to simulate here.
 import type { Device, PortGroup, PortIntent, Vlan } from "./api";
+import { ageMs } from "./ui/clock";
+// The elapsed-time ladder lives in its own import-free module so it can be
+// asserted by a bare node process (freshness.test.ts). Both labels below read
+// their thresholds from it rather than each keeping a copy: two ladders would
+// eventually describe the same instant two different ways.
+import { elapsedBucket } from "./freshness";
 import i18n from "./i18n";
 
 /**
@@ -60,6 +66,21 @@ export function expandPorts(dev: Device): PortRef[] {
 }
 
 /**
+ * Is this expanded port an SFP/SFP+ cage? The [PortRef] flavour of
+ * [isSFPPort] below, for callers that already hold the expanded list — same
+ * rule: read from the GROUP, not the port name alone (EdgeSwitch cages are
+ * named GE17/GE18, the media lives in the group's "SFP+" label), with the
+ * name-prefix check covering RouterOS's "sfp-sfpplus…" ports whose group
+ * carries no label.
+ */
+export function isSFPRef(pr: PortRef): boolean {
+  return (
+    pr.groupLabel.toUpperCase().includes("SFP") ||
+    pr.name.toLowerCase().startsWith("sfp")
+  );
+}
+
+/**
  * The port's effective native VLAN. A trunk that doesn't designate a native
  * one isn't a trunk without a native VLAN: the hardware places VLAN 1 there,
  * and that's what rereading the device will always report.
@@ -91,8 +112,8 @@ const INK_ON_COLOR = "#10131a";
  * background, separator border) is that of solid versus empty, which is the
  * distinction this whole spec uses for "the link is active".
  */
-const UNMANAGED_UP = "#64748b";
-const UNMANAGED_UP_BORDER = "#94a3b8";
+export const UNMANAGED_UP = "#64748b";
+export const UNMANAGED_UP_BORDER = "#94a3b8";
 
 function stripeGradient(colors: string[], seg: number): string {
   let cs = colors.slice(0, 4);
@@ -110,7 +131,7 @@ export interface PortVisual {
 }
 
 /**
- * Visual spec for a port cell (see docs "Rendu des ports"):
+ * Visual spec for a port cell (see docs/en/02-Frontend/Port rendering):
  * access + link = solid VLAN color · trunk = stripes of member VLANs ·
  * configured without a link = outline only · free = off.
  */
@@ -170,13 +191,54 @@ export function portVisual(
   if (opts.hoverVlan != null && !(p.mode !== "libre" && p.mode != null && serves(p, opts.hoverVlan)))
     opacity = 0.12;
   if (opts.off) opacity = Math.min(opacity, 0.35);
+  // A port SOMEONE SHUT reads at 25% — three-quarters transparent.
+  //
+  // It keeps its VLAN colour rather than being greyed out, and that is the
+  // point: the configuration is still there and still what will come back the
+  // moment the port is re-enabled, so painting it neutral would erase the very
+  // fact an operator needs while deciding whether to bring it up. Fading it says
+  // "this is configured and switched off", which no other state on the faceplate
+  // says.
+  //
+  // Only `disabled` — the administratively shut state. NOT `down` (enabled,
+  // nothing plugged in), NOT `unplugged`, and above all NOT `err-disabled`: the
+  // switch shut that one ITSELF, it is a fault, and it already draws the eye with
+  // a red frame and a blinking fill (cf. netui.tsx). Fading a fault would hide
+  // the one state on this faceplate that always deserves attention.
+  //
+  // `Math.min` so it composes with the two rules above instead of overriding
+  // them: on an unreachable device, or under a VLAN hover that excludes this
+  // port, the dimmer of the two wins.
+  if (p.link_state === "disabled") opacity = Math.min(opacity, 0.25);
   return { background, borderColor, ink, opacity, poeDot: linked && (p.poe_w ?? 0) > 0 };
 }
 
+/**
+ * Is this port an SFP/SFP+ cage, rather than a copper jack?
+ *
+ * Mirrors the backend's `portrules.mediaOf` (internal/portrules/portrules.go):
+ * checked on the GROUP's own `label`/`speed`, never on the port's name alone
+ * — some connectors name every socket the same prefix ("GE") and carry the
+ * media distinction only in the group (cf. `ubiquiti-edgeswitch`'s "SFP+"
+ * label + "10G" speed group, split from its copper group by
+ * `internal/driver/ubiquiti/edgeswitch/state.go`'s `portGroups`).
+ */
+export function isSFPPort(dev: Device, portName: string): boolean {
+  for (const g of dev.port_groups ?? ([] as PortGroup[])) {
+    const start = g.from ?? 1;
+    if (!portName.startsWith(g.prefix)) continue;
+    const n = Number(portName.slice(g.prefix.length));
+    if (!Number.isFinite(n) || n < start || n >= start + g.count) continue;
+    const hay = `${g.prefix} ${g.label ?? ""}`.toLowerCase();
+    return hay.includes("sfp");
+  }
+  return false;
+}
+
 export function portShortNum(name: string): string {
-  // Structured « unit/port » index (FS « ethernet 1/11 », Cisco « Gi1/0/1 »):
+  // Structured "unit/port" index (FS "ethernet 1/11", Cisco "Gi1/0/1"):
   // keep the slashed form — it is how the port is silkscreened on the faceplate,
-  // and flattening it to digits printed « ethernet 1/11 » as « 111 ».
+  // and flattening it to digits printed "ethernet 1/11" as "111".
   const slashed = name.match(/(\d+(?:\/\d+)+)\s*$/);
   if (slashed) return slashed[1];
   const digits = name.replace(/\D+/g, "");
@@ -211,14 +273,88 @@ export function statusLabel(status: string): string {
  * "for 2 h 14 min 3 s".
  */
 export function sinceLabel(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const min = Math.floor(ms / 60000);
-  if (min < 1) return i18n.t("status.justNow");
-  if (min < 60) return i18n.t("status.sinceMinutes", { count: min });
-  const h = Math.floor(min / 60);
-  if (h < 48) return i18n.t("status.sinceHours", { count: h });
-  return i18n.t("status.sinceDays", { count: Math.floor(h / 24) });
+  const e = elapsedBucket(ageMs(iso) ?? 0);
+  if (!e) return "";
+  if (e.unit === "now") return i18n.t("status.justNow");
+  if (e.unit === "min") return i18n.t("status.sinceMinutes", { count: e.count });
+  if (e.unit === "h") return i18n.t("status.sinceHours", { count: e.count });
+  return i18n.t("status.sinceDays", { count: e.count });
+}
+
+/**
+ * The same elapsed duration said the OTHER way round: "12 min ago", not
+ * "for 12 min".
+ *
+ * Two phrasings for one ladder, because the two facts they attach to are
+ * different in kind. A STATE has a duration — the device has been unreachable
+ * *for* two hours, and that duration is the thing worth knowing. An EVENT has
+ * an age — the configuration was read two hours *ago*, and it is the distance
+ * back to that instant that matters. Feeding an event date into `sinceLabel`
+ * produces "configuration read for 2 h", which reads as a two-hour-long read.
+ *
+ * English hides how far apart these are; the locales this product ships do not.
+ * Hence separate keys rather than one string reused in both places.
+ */
+export function agoLabel(iso: string): string {
+  const e = elapsedBucket(ageMs(iso) ?? 0);
+  if (!e) return "";
+  if (e.unit === "now") return i18n.t("status.justNow");
+  if (e.unit === "min") return i18n.t("status.agoMinutes", { count: e.count });
+  if (e.unit === "h") return i18n.t("status.agoHours", { count: e.count });
+  return i18n.t("status.agoDays", { count: e.count });
+}
+
+/**
+ * Has monitoring EVER spoken about this device?
+ *
+ * This is the predicate behind the `status.neverObserved` sentence
+ * [reachability] prints, extracted so that a count can ask the same question a
+ * label asks — the two must not be allowed to drift apart.
+ *
+ * The distinction it draws, and why a `status === …` test at the call site
+ * cannot draw it:
+ *
+ *	status "unknown" WITH a `status_at`    we looked, and right now no proxy
+ *	                                       able to watch this device is
+ *	                                       connected. The device may be
+ *	                                       perfectly healthy;
+ *	status "unknown" WITHOUT a `status_at` monitoring has never spoken about
+ *	                                       this device. Nothing is claimed,
+ *	                                       in either direction.
+ *
+ * Both carry the same `status`, so [statusColor] — which is handed the status
+ * alone — cannot tell them apart; only `status_at` can, and that is exactly
+ * the test [reachability] makes. An observed status with no date (`ok` from a
+ * row predating the column) is NOT this case: it is an observation whose
+ * duration we lost, not an observation we never made.
+ */
+export function neverObserved(dev: {
+  status: string;
+  status_at?: string;
+}): boolean {
+  return dev.status === "unknown" && !dev.status_at;
+}
+
+/**
+ * Can anyone see this device RIGHT NOW? — the other half of [neverObserved].
+ *
+ * `status === "unknown"` WITH a `status_at`: monitoring did speak about this
+ * device once, and at this instant no proxy able to watch it is connected. This
+ * is the state `--indeterminate` was minted for — meshcraft has lost the
+ * vantage point and the device may be perfectly healthy.
+ *
+ * The two predicates partition `unknown` and never overlap, which is what lets
+ * a count use them as buckets:
+ *
+ *	neverObserved  status "unknown", no date   grey, --text-dim
+ *	blindNow       status "unknown", a date    yellow, --indeterminate
+ *
+ * Named rather than written out at the call site for the same reason
+ * [neverObserved] is: the tile that counts these devices and the ink that
+ * paints them must ask one question, or they will eventually answer two.
+ */
+export function blindNow(dev: { status: string; status_at?: string }): boolean {
+  return dev.status === "unknown" && !!dev.status_at;
 }
 
 /**
@@ -253,10 +389,9 @@ export function reachability(dev: {
   if (!dev.status_at) {
     return {
       label,
-      detail:
-        dev.status === "unknown"
-          ? i18n.t("status.neverObserved")
-          : (dev.status_note ?? ""),
+      detail: neverObserved(dev)
+        ? i18n.t("status.neverObserved")
+        : (dev.status_note ?? ""),
     };
   }
   const parts = [sinceLabel(dev.status_at), dev.status_note].filter(
@@ -486,6 +621,42 @@ export function deviceRates(dev: Device) {
  * chart, which excludes the same ports from its series sum — the two must
  * tell the same story, otherwise the tile and the chart on the same screen
  * would contradict each other.
+ *
+ * # ONLINE MEANS VOUCHED FOR (decided 2026-08-08, extended the same day)
+ *
+ * `online` used to be "everything that is not `off`". The first ruling took out
+ * the devices monitoring has NEVER spoken about; the second took out the ones
+ * observed before that no connected proxy can watch right now. The principle
+ * behind both is one sentence: **a device meshcraft cannot currently vouch for
+ * must not inflate the headline number.** Three buckets, never overlapping:
+ *
+ *	online       we can see it, and it answers            --ok / --warn
+ *	blind        seen before, nobody can see it now       --indeterminate
+ *	unobserved   monitoring has never spoken about it     --text-dim
+ *
+ *	online + blind + unobserved + (status "off") = the fleet
+ *
+ * # WHY blind AND unobserved ARE TWO FIGURES AND NOT ONE
+ *
+ * They leave the numerator for the same reason, so one merged "unverifiable"
+ * count would serve the arithmetic. They are kept apart because the arithmetic
+ * is not the only consumer: the palette gives them DIFFERENT INKS (§2 of
+ * UI-GUIDE — yellow "we lost the vantage point" versus grey "we have never
+ * looked"), and a tile that must pick one of those cannot re-derive the split
+ * without reimplementing [neverObserved] at the call site — which is the exact
+ * drift that predicate was extracted to prevent. They also differ in what an
+ * operator does: a blind device points at the proxy, an unobserved one points
+ * at a device that was added and never watched.
+ *
+ * Both are RETURNED rather than merely subtracted, because a device that has
+ * left the numerator must not also leave the denominator: a fleet that shrinks
+ * when a device stops being verifiable hides it, which is the opposite of what
+ * the ink is for. Callers show the whole fleet as the total and use these two
+ * to say why the two ends do not meet.
+ *
+ * `off` is deliberately NOT one of them. "Down, and we know it" is a fact we
+ * observed; the sub-line that says "N offline" must count those alone, or the
+ * dashboard asserts outages nobody has seen.
  */
 export function siteRates(devices: Device[] | undefined) {
   let ports = 0,
@@ -494,13 +665,21 @@ export function siteRates(devices: Device[] | undefined) {
     tx = 0,
     poe = 0,
     poeBudget = 0,
-    online = 0;
+    online = 0,
+    blind = 0,
+    unobserved = 0;
   (devices ?? []).forEach((dev) => {
     const all = expandPorts(dev);
     ports += all.length;
     poeBudget += dev.poe_budget_w;
     if (dev.status === "off") return;
-    online++;
+    if (neverObserved(dev)) unobserved++;
+    else if (blindNow(dev)) blind++;
+    else online++;
+    // Its PORTS are still counted, deliberately: neither "never observed" nor
+    // "nobody can see it now" is about the ports — `status` is ping monitoring,
+    // and a device adopted with a read profile can carry links and counters
+    // meanwhile. Only the reachability claim is withheld.
     all.forEach((pr) => {
       const p = pr.p;
       if (!p.link) return;
@@ -511,7 +690,7 @@ export function siteRates(devices: Device[] | undefined) {
       poe += p.poe_w ?? 0;
     });
   });
-  return { ports, up, rx, tx, poe, poeBudget, online };
+  return { ports, up, rx, tx, poe, poeBudget, online, blind, unobserved };
 }
 
 /**
@@ -525,11 +704,15 @@ export function syncLabel(dev: {
   sync?: string;
   observed_at?: string;
   apply_stalled?: boolean;
-  last_apply?: { skipped?: string[]; error?: string };
+  last_apply?: { skipped?: string[]; not_applied?: { kind: string }[]; error?: string };
 }): string {
   if (deviceNeedsAck(dev)) {
     if (dev.last_apply?.error) return i18n.t("status.applyFailed");
-    if ((dev.last_apply?.skipped?.length ?? 0) > 0) return i18n.t("status.applySkipped");
+    if (
+      (dev.last_apply?.skipped?.length ?? 0) + (dev.last_apply?.not_applied?.length ?? 0) >
+      0
+    )
+      return i18n.t("status.applySkipped");
     if (dev.apply_stalled) return i18n.t("status.applyStalled");
   }
   switch (dev.sync) {
@@ -552,6 +735,7 @@ export type DeviceAckInput = {
   apply_stalled?: boolean;
   last_apply?: {
     skipped?: string[];
+    not_applied?: { kind: string }[];
     error?: string;
   };
 };
@@ -565,6 +749,15 @@ export type DeviceDotInput = DeviceAckInput & {
   sync?: string;
   /** An automatic apply is writing to the device RIGHT NOW (live provisioning). */
   applying?: boolean;
+  /**
+   * When monitoring last spoke about this device. ABSENT means it never has —
+   * and that is a different dot from `unknown` with a date (cf. [neverObserved]
+   * and the fall-through at the end of [deviceDot]). Optional so a caller that
+   * genuinely has no date is not forced to invent one; the effect of omitting it
+   * on a device that HAS been observed is a yellow dot instead of a grey one,
+   * i.e. the older, more alarming reading, never a falsely reassuring one.
+   */
+  status_at?: string;
 };
 
 /**
@@ -574,7 +767,11 @@ export type DeviceDotInput = DeviceAckInput & {
  */
 export function deviceNeedsAck(dev: DeviceAckInput): boolean {
   if (dev.last_apply?.error) return true;
-  if ((dev.last_apply?.skipped?.length ?? 0) > 0) return true;
+  if (
+    (dev.last_apply?.skipped?.length ?? 0) + (dev.last_apply?.not_applied?.length ?? 0) >
+    0
+  )
+    return true;
   if (dev.apply_stalled) return true;
   return false;
 }
@@ -617,7 +814,10 @@ export function deviceDot(dev: DeviceDotInput): {
       let suffix = i18n.t("status.ackDotSuffix");
       if (dev.last_apply?.error) {
         suffix = i18n.t("status.failedDotSuffix");
-      } else if ((dev.last_apply?.skipped?.length ?? 0) > 0) {
+      } else if (
+        (dev.last_apply?.skipped?.length ?? 0) + (dev.last_apply?.not_applied?.length ?? 0) >
+        0
+      ) {
         suffix = i18n.t("status.skippedDotSuffix");
       } else if (dev.apply_stalled) {
         suffix = i18n.t("status.stalledDotSuffix");
@@ -642,6 +842,19 @@ export function deviceDot(dev: DeviceDotInput): {
         title: base + " · " + i18n.t("status.driftDotSuffix"),
       };
     }
+  }
+  // NEVER OBSERVED IS GREY, not the yellow of `unknown` (decided 2026-08-08).
+  //
+  // The two share a status and only `status_at` separates them, so statusColor —
+  // handed the status alone — cannot make this call and its grey branch was
+  // unreachable for real devices. Here the whole device is in hand, so it can.
+  //
+  // Why it belongs at the FALL-THROUGH and not at the top: a device meshcraft
+  // has never seen can still have a write queued for it, and blue "pending" is
+  // the true thing to say about that. Grey answers "what do we know about its
+  // reachability" — nothing — which is the last question this function asks.
+  if (neverObserved(dev)) {
+    return { color: "var(--text-dim)", title: i18n.t("status.neverObserved") };
   }
   return { color: statusColor(dev.status), title: base };
 }
@@ -669,3 +882,30 @@ export function vlanPathPreview(
   }
   return sawLinkState ? "absent" : "unknown";
 }
+
+/* ======================================================================
+ * THE TRAFFIC RAMP — how much of this link is in use
+ * ======================================================================
+ *
+ * MOVED OUT, and re-exported here so no caller had to move with it.
+ *
+ * The ramp now lives in `./trafficRamp`, which imports NOTHING. That is the
+ * point: this file imports `./i18n`, and `topologyLinks.ts` cannot import a
+ * file that does (the framework-free node suite loads neither React nor
+ * i18n). So the topology kept a second capacity parser of its own, and the
+ * two readings of one number had already drifted — a bare "1000" was a
+ * terabit to a link half and a gigabit to a chart.
+ *
+ * `trafficRamp.ts` has the full account; ADR-0030 has the measurements and the
+ * reason the SVG gradient now SAMPLES `trafficColorAt` instead of being a
+ * second definition of the same ramp.
+ */
+export {
+  TRAFFIC_STOPS,
+  speedMbps,
+  trafficColor,
+  trafficColorAt,
+  trafficLevel,
+  trafficRampStops,
+  trafficRateAt,
+} from "./trafficRamp";

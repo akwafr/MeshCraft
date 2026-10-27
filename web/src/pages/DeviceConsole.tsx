@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useDismissable } from "../ui/dismiss";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -41,7 +42,7 @@ type ConsoleInfo = {
   transports?: string[];
   ssh: boolean;
   web: boolean;
-  /** The device's OWN administration URL, e.g. "https://10.99.0.38". */
+  /** The device's OWN administration URL, e.g. "https://192.0.2.38". */
   web_url?: string;
   web_auth?: "none" | "basic" | "digest" | "form";
   proxy_id?: string;
@@ -81,25 +82,16 @@ export default function DeviceConsole({
     staleTime: Infinity,
   });
 
-  // Escape closes, like every other overlay in the product. Registered on the
-  // window rather than the panel so it works while the terminal has focus —
-  // xterm swallows keystrokes on its own textarea.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape and the drag-safe backdrop go through the dismissal stack — the
+  // capture-phase listener wins over xterm's own textarea, which is why this
+  // works while the terminal has focus. The mousedown backdrop rule this
+  // panel pioneered is the stack's own rule now (UI-GUIDE §8.1).
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDismissable(true, onClose, { insideRef: panelRef });
 
   return (
-    <div className="modal-backdrop console-backdrop" onMouseDown={(e) => {
-      // Backdrop click closes, but only when it IS the backdrop: a drag that
-      // starts on a text selection inside the terminal and releases outside
-      // must not tear the session down.
-      if (e.target === e.currentTarget) onClose();
-    }}>
-      <div className="console-panel" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop console-backdrop">
+      <div className="console-panel" ref={panelRef}>
         <div className="console-head">
           <div>
             <div className="kicker">{t("console.title")}</div>
@@ -160,7 +152,19 @@ function SSHTerminal({ deviceId, onClose }: { deviceId: string; onClose: () => v
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
-    fit.fit();
+    // GUARDED like the ResizeObserver's fit below, and for the same reason —
+    // the panel can be measured as zero mid-layout, and xterm's FitAddon then
+    // reads dimensions off a renderer it has not built yet. Unguarded, that
+    // throw happens INSIDE this effect, so everything after it never runs: no
+    // WebSocket, no handlers, and — worst — no cleanup function, which is the
+    // one thing that closes the session. An abandoned vty is not cosmetic (a
+    // 2960 has sixteen), so the one call that can throw here must not be the
+    // one deciding whether teardown exists.
+    try {
+      fit.fit();
+    } catch {
+      /* the first measurement can be zero; the ResizeObserver refits */
+    }
 
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(

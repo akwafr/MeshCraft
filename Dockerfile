@@ -14,7 +14,11 @@ RUN npm run build
 FROM golang:1.24-alpine AS build
 RUN apk add --no-cache ca-certificates
 WORKDIR /src
+# wire/go.mod must be present before `go mod download`: the root go.mod
+# carries `replace meshcraft/wire => ./wire`, and a replace pointing at a
+# missing directory fails the download layer.
 COPY go.mod go.sum ./
+COPY wire/go.mod ./wire/
 RUN go mod download
 COPY . .
 # The Vite build replaces the embedded placeholder.
@@ -23,7 +27,7 @@ COPY --from=web /web/dist/ internal/api/webdist/
 # UTC build timestamp (YYYYMMDD.HHMMSS), passed by the Makefile. THIS is the
 # technical proxy version: monotonic, text-comparable, therefore usable to
 # decide on an upgrade. The product version (VERSION) only moves on releases.
-# See docs/fr/01-Architecture/Versionnage et mise à jour du proxy.
+# See docs/en/01-Architecture/Proxy versioning and updates.md.
 #
 # NO DEFAULT, AND THE BUILD FAILS WITHOUT IT. It used to default to "dev", and
 # that default cost a stuck proxy: a proxy stamped `dev` is lexicographically
@@ -55,6 +59,24 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -o /out/controller ./cmd/controller && \
     CGO_ENABLED=0 go build -trimpath -o /out/mkoci ./cmd/mkoci
 
+# MCP server (cmd/mcp): the Model Context Protocol front end an agent speaks to.
+#
+# It is a CLIENT of this API carrying one user's token, so it runs wherever the
+# agent runs — a workstation, a CI job — and NOT on the controller. It is built
+# here so that a change breaking it fails this build rather than being discovered
+# by whoever next tries to use it, and shipped in a directory of its own.
+#
+# Deliberately NOT in /out/artifacts: that directory is the proxy's download and
+# auto-upgrade surface, whose filenames are parsed to compare versions. A binary
+# with another name in there is an invitation to a misparse, and the failure mode
+# of a misparsed proxy version is a proxy that never upgrades again.
+RUN mkdir -p /out/mcp && \
+    for a in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath \
+        -ldflags="-s -w -X main.Version=$(cat VERSION)" \
+        -o /out/mcp/meshcraft-mcp_linux_$a ./cmd/mcp ; \
+    done
+
 # Multi-arch OCI image of the proxy (without buildx) for the integrated registry.
 RUN /out/mkoci --out /out/oci \
       --cacert /etc/ssl/certs/ca-certificates.crt \
@@ -69,6 +91,9 @@ RUN apk add --no-cache ca-certificates tzdata && \
 COPY --from=build /out/controller /usr/local/bin/controller
 COPY --from=build /out/artifacts /srv/meshcraft/artifacts
 COPY --from=build /out/oci /srv/meshcraft/oci
+# Carried, not run: no route serves this and the entrypoint never executes it.
+# `docker cp` it out to the machine where the agent runs.
+COPY --from=build /out/mcp /srv/meshcraft/mcp
 USER meshcraft
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \

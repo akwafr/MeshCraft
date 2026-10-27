@@ -1,0 +1,30 @@
+-- lldp_self.source: which collection path wrote this snapshot.
+--
+-- Two paths now write the LLDP neighbourhood, and they are not refuted the same
+-- way:
+--
+--   - "snmp": the proxy's periodic walk of the LLDP-MIB (cmd/proxy/lldp.go),
+--     unchanged — it is the PRIMARY path, it runs with nobody around;
+--   - "cli": the controller's read-state gesture, over the administration
+--     session already open (api.readLLDPNeighborhood) — the CATCH-UP path for
+--     platforms whose SNMP agent serves NOTHING under 1.0.8802 while the
+--     protocol runs on the wire. Measured on the FS S3400 (BDCOM-derived
+--     firmware): standard AND private trees empty, survey closed negatively on
+--     2026-08-05.
+--
+-- Without this column, the rule "a snapshot REPLACES the previous one"
+-- (store.ReplaceLLDP) would make the two paths destroy each other on exactly the
+-- devices the second exists to save: the poller comes back every thirty
+-- seconds, its walk returns zero LLDP rows on this firmware, and that zero would
+-- erase the CLI finding the operator just triggered. The arbitration lives in a
+-- pure function (api.snmpSnapshotOverrides): an SNMP snapshot WITHOUT LLDP
+-- content does not replace a "cli" snapshot; an SNMP snapshot WITH content
+-- takes over — the agent serves the MIB, the primary path is the right witness
+-- again.
+--
+-- A column on lldp_self only: the snapshot is the unit of replacement, the
+-- lldp_neighbors rows belong to the snapshot and have no origin of their own.
+--
+-- "snmp" by default, including for existing rows: everything written before this
+-- migration came from the poller, there was no other path.
+alter table lldp_self add column source text not null default 'snmp';

@@ -2,14 +2,13 @@ package driver
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // impose par le protocole Digest, cf. md5hex
+	"crypto/md5" //nolint:gosec // imposed by the Digest protocol, cf. md5hex
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	neturl "net/url"
@@ -17,75 +16,70 @@ import (
 	"time"
 )
 
-// Transport web des connecteurs : un client HTTP dont les connexions partent du
-// same endroit que tout le reste — directement, ou par le tunnel d'un proxy.
+// Web transport for connectors: an HTTP client whose connections leave from the
+// same place as everything else — directly, or through a proxy's tunnel.
 //
-// Le connecteur ne sait pas hence part la connexion : il receives un Dialer. C'est
-// ce qui permet au same code de piloter un device joignable localement et un
-// device derriere un [[Proxy]] (docs/01-Architecture/Vue d'ensemble).
+// The connector does not know where the connection leaves from: it receives a
+// Dialer. That is what lets the same code drive a device reachable locally and
+// a device behind a [[Proxy]] (docs/en/01-Architecture/Overview.md).
 
-// Dialer ouvre une connexion TCP. `nil` = connexions directes.
-type Dialer interface {
-	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-}
-
-// WebSession est une session HTTP vers l'interface web d'un device : cookies
-// conserves, certificat auto-signe accepted, redirections sous control.
+// WebSession is an HTTP session to a device's web interface: cookies kept,
+// self-signed certificate accepted, redirects under control.
 type WebSession struct {
 	BaseURL string
-	// MaxBody borne ce qu'on rapatrie. Nul = MaxBody. Les interfaces recentes
-	// servent des bundles JavaScript de plusieurs megaoctets : les tronquer perd
-	// justement la partie utile, qui est rarement au start.
+	// MaxBody caps what is fetched. Zero = MaxBody. Recent interfaces serve
+	// JavaScript bundles of several megabytes: truncating them loses precisely
+	// the useful part, which is rarely at the start.
 	MaxBody int
 	client  *http.Client
 	auth    Auth
 }
 
-// AuthMode : la way dont the device demande a be authentifie AU NIVEAU
-// HTTP — i.e. par un en-tete `Authorization`, et non par un formulaire de
-// connexion qui pose un cookie.
+// AuthMode: how the device asks to be authenticated AT THE HTTP LEVEL — i.e.
+// through an `Authorization` header, and not through a login form that sets a
+// cookie.
 //
-// La distinction n'est pas de forme : une UI a formulaire (l'Instant On) se
-// connecte UNE fois et la session vit dans le cookie ; une UI a en-tete (SwOS,
-// l'API REST de RouterOS) n'a pas de session du tout et doit re-present  ses
-// identifiants a CHAQUE request. Un connecteur qui confond les deux ouvre une
-// session par lecture, ou croit be connecte alors qu'il ne l'est plus.
+// The distinction is not cosmetic: a form-based UI (the Instant On) logs in
+// ONCE and the session lives in the cookie; a header-based UI (SwOS, the
+// RouterOS REST API) has no session at all and must present its credentials
+// again on EVERY request. A connector that confuses the two opens a session
+// per read, or believes it is logged in when it no longer is.
 type AuthMode string
 
 const (
-	// AuthNone : rien a present .
+	// AuthNone: nothing to present.
 	AuthNone AuthMode = ""
-	// AuthBasic : `Authorization: Basic`. C'est ce que sert l'API REST de
-	// RouterOS.
+	// AuthBasic: `Authorization: Basic`. That is what the RouterOS REST API
+	// serves.
 	AuthBasic AuthMode = "basic"
-	// AuthDigest : `Authorization: Digest` (RFC 7616, MD5/qop=auth). C'est ce que
-	// sert SwOS, et la raison pour laquelle cette mecanique existe ici : sans
-	// elle, ses pages de data repondent 401 et the device passe pour muet.
+	// AuthDigest: `Authorization: Digest` (RFC 7616, MD5/qop=auth). That is what
+	// SwOS serves, and the reason this machinery exists here: without it, its
+	// data pages answer 401 and the device passes for mute.
 	AuthDigest AuthMode = "digest"
-	// AuthAuto : laisser the device dire lequel des deux il veut, dans son
-	// `WWW-Authenticate`. A preferer quand on explore une interface inconnue —
-	// supposer le schema, c'est confondre « mauvais mot de passe » et « mauvaise
-	// method ».
+	// AuthAuto: let the device say which of the two it wants, in its
+	// `WWW-Authenticate`. Preferred when exploring an unknown interface —
+	// assuming the scheme means confusing "wrong password" with "wrong
+	// method".
 	AuthAuto AuthMode = "auto"
 )
 
-// Auth porte les identifiants presented au niveau HTTP.
+// Auth carries the credentials presented at the HTTP level.
 type Auth struct {
 	Mode     AuthMode
 	Username string
 	Password string
 }
 
-// SetAuth arme l'authentification HTTP de la session. Les identifiants ne sont
-// used qu'en response a un 401 : une interface qui n'en demande pas ne les
-// voit jamais passer.
+// SetAuth arms the session's HTTP authentication. The credentials are only
+// used in response to a 401: an interface that does not ask for them never
+// sees them go by.
 func (s *WebSession) SetAuth(mode AuthMode, username, password string) {
 	s.auth = Auth{Mode: mode, Username: username, Password: password}
 }
 
-// NewWebSession construit la session. `insecure` est vrai en pratique pour tout
-// device network : ils present  un certificat auto-signe, c'est la norme et
-// non une anomalie — la confidentialite du lien est assuree par le tunnel.
+// NewWebSession builds the session. `insecure` is true in practice for every
+// network device: they present a self-signed certificate, which is the norm
+// and not an anomaly — the link's confidentiality is ensured by the tunnel.
 func NewWebSession(base string, d Dialer, timeout time.Duration) *WebSession {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
@@ -93,8 +87,8 @@ func NewWebSession(base string, d Dialer, timeout time.Duration) *WebSession {
 	var jar, _ = cookiejar.New(nil)
 	var transport = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		// Un device qui n'accepte que 5 sessions au total ne doit pas voir
-		// le connecteur en ouvrir des dizaines : une seule connexion reused.
+		// A device that accepts only 5 sessions in total must not see the
+		// connector open dozens of them: a single connection, reused.
 		MaxIdleConns:        2,
 		MaxConnsPerHost:     2,
 		IdleConnTimeout:     30 * time.Second,
@@ -109,8 +103,8 @@ func NewWebSession(base string, d Dialer, timeout time.Duration) *WebSession {
 			Timeout:   timeout,
 			Jar:       jar,
 			Transport: transport,
-			// Les redirections sont suivies, mais bornees : une UI d'device
-			// qui boucle ne doit pas boucler chez nous.
+			// Redirects are followed, but bounded: a device UI that loops
+			// must not make us loop.
 			CheckRedirect: func(r *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
 					return http.ErrUseLastResponse
@@ -121,60 +115,58 @@ func NewWebSession(base string, d Dialer, timeout time.Duration) *WebSession {
 	}
 }
 
-// Response est ce qu'un connecteur voit d'une request.
+// Response is what a connector sees of a request.
 type Response struct {
 	Status  int                 `json:"status"`
 	URL     string              `json:"url"`
 	Headers map[string][]string `json:"headers"`
 	Body    string              `json:"body"`
-	// Truncated dit que le corps a been coupe : une response tronquee ne doit
-	// jamais passer pour complete.
+	// Truncated says the body was cut: a truncated response must never pass
+	// for a complete one.
 	Truncated bool `json:"truncated"`
-	// Binary : le corps n'est pas du texte exploitable (image, archive).
+	// Binary: the body is not usable text (image, archive).
 	Binary bool `json:"binary"`
 }
 
-// MaxBody borne ce qu'on rapatrie d'une page d'device.
+// MaxBody caps what is fetched from a device page.
 //
-// 2 Mio et non 512 Kio : le bundle d'un Instant On 1930 depasse le demi-megaoctet,
-// et la troncature coupait precisely la fin — celle qui porte les fonctions
-// utiles. Une borne qui ampute en silence la partie qu'on cherche ne protege de
-// rien : elle fait conclure a une absence.
+// 2 MiB and not 512 KiB: an Instant On 1930's bundle exceeds half a megabyte,
+// and truncation cut precisely the end — the part that carries the useful
+// functions. A cap that silently amputates the part being looked for protects
+// against nothing: it leads to concluding something is absent.
 const MaxBody = 2 << 20
 
-// Get lit une URL (absolue, ou relative a BaseURL). Lecture seule : rien n'est
-// modifie sur the device, ce qui permet d'explorer une interface inconnue sans
-// risque.
+// Get reads a URL (absolute, or relative to BaseURL). Read-only: nothing is
+// modified on the device, which makes exploring an unknown interface
+// risk-free.
 func (s *WebSession) Get(ctx context.Context, path string) (*Response, error) {
 	return s.do(ctx, http.MethodGet, path, "", nil)
 }
 
-// PostForm envoie un formulaire. Reserve aux connecteurs : c'est une write.
+// PostForm sends a form. Reserved for connectors: it is a write.
 func (s *WebSession) PostForm(ctx context.Context, path, body string) (*Response, error) {
 	return s.do(ctx, http.MethodPost, path, body,
 		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
 }
 
-// PostText envoie un corps en `text/plain`. Reserve aux connecteurs : c'est une
-// write.
+// PostText sends a `text/plain` body. Reserved for connectors: it is a write.
 //
-// Le type de contenu n'est pas un detail cosmetique sur les interfaces
-// embarquees : c'est SwOS qui a impose cette variante, son interface annoncant
-// `text/plain` pour toutes ses ecritures. Les octets du corps sont exactement
-// ceux de `PostForm` — aucun de ces deux appels ne reencode quoi que ce soit —
-// mais un firmware qui n'a jamais vu qu'un seul type de contenu est en droit de
-// refuser l'autre, et les refus de cette gamme sont MUETS : un 200 sans effet.
-// Mieux vaut donc envoyer ce que the device attend que decouvrir sur le terrain
-// qu'une pose s'est declared reussie sans rien changer.
+// The content type is not a cosmetic detail on embedded interfaces: SwOS is
+// what imposed this variant, its interface announcing `text/plain` for all of
+// its writes. The body bytes are exactly those of `PostForm` — neither call
+// re-encodes anything — but a firmware that has only ever seen one content
+// type is entitled to refuse the other, and this range's refusals are SILENT:
+// a 200 with no effect. Better, then, to send what the device expects than to
+// discover in the field that a write declared itself successful without
+// changing anything.
 func (s *WebSession) PostText(ctx context.Context, path, body string) (*Response, error) {
 	return s.do(ctx, http.MethodPost, path, body,
 		map[string]string{"Content-Type": "text/plain"})
 }
 
-// PostAJAX envoie un corps tel quel avec les en-tetes qu'un `$.ajax` de jQuery
-// produit : type de contenu formulaire, et `X-Requested-With`. Beaucoup d'UI
-// embarquees n'acceptent leurs propres ecritures que sous cette forme — c'est
-// la seule qu'elles ont jamais vue.
+// PostAJAX sends a body as-is with the headers a jQuery `$.ajax` produces:
+// form content type, and `X-Requested-With`. Many embedded UIs accept their own
+// writes only in this form — it is the only one they have ever seen.
 func (s *WebSession) PostAJAX(ctx context.Context, path, body string) (*Response, error) {
 	return s.do(ctx, http.MethodPost, path, body, map[string]string{
 		"Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
@@ -183,13 +175,13 @@ func (s *WebSession) PostAJAX(ctx context.Context, path, body string) (*Response
 	})
 }
 
-// Put envoie un corps JSON en PUT. Reserve aux connecteurs : c'est une write.
+// Put sends a JSON body as a PUT. Reserved for connectors: it is a write.
 func (s *WebSession) Put(ctx context.Context, path, body string) (*Response, error) {
 	return s.do(ctx, http.MethodPut, path, body,
 		map[string]string{"Content-Type": "application/json"})
 }
 
-// PostJSON envoie un corps JSON. Reserve aux connecteurs : c'est une write.
+// PostJSON sends a JSON body. Reserved for connectors: it is a write.
 func (s *WebSession) PostJSON(ctx context.Context, path, body string) (*Response, error) {
 	return s.do(ctx, http.MethodPost, path, body,
 		map[string]string{"Content-Type": "application/json"})
@@ -208,10 +200,10 @@ func (s *WebSession) do(ctx context.Context, method, path, body string,
 	if doErr != nil {
 		return nil, doErr
 	}
-	// 401 : the device dit COMMENT il veut be authentifie. On ne le devine
-	// pas, on le lit — puis on rejoue la same request une fois, et une seule. Un
-	// mot de passe refused doit rester un refus, pas une boucle de tentatives qui
-	// finirait par verrouiller le compte.
+	// 401: the device says HOW it wants to be authenticated. We do not guess
+	// it, we read it — then replay the same request once, and only once. A
+	// refused password must stay a refusal, not a loop of attempts that would
+	// end up locking the account.
 	if resp.StatusCode == http.StatusUnauthorized && s.auth.Mode != AuthNone {
 		var challenge = resp.Header.Get("WWW-Authenticate")
 		resp.Body.Close() //nolint:errcheck
@@ -252,8 +244,8 @@ func (s *WebSession) do(ctx context.Context, method, path, body string,
 	return out, nil
 }
 
-// send emet une request et rend la response brute, corps NON lu : c'est do qui
-// decide de le lire ou de rejouer la request authentifiee.
+// send issues a request and returns the raw response, body NOT read: do is what
+// decides to read it or to replay the request authenticated.
 func (s *WebSession) send(ctx context.Context, method, url, body string,
 	headers map[string]string, credential string) (*http.Response, error) {
 	var reader io.Reader
@@ -264,8 +256,8 @@ func (s *WebSession) send(ctx context.Context, method, url, body string,
 	if err != nil {
 		return nil, err
 	}
-	// Un User-Agent honnete : l'administrateur qui lit les journaux de son
-	// device doit pouvoir identifier ce qui l'interroge.
+	// An honest User-Agent: the administrator reading their device's logs
+	// must be able to identify what is querying it.
 	req.Header.Set("User-Agent", "meshcraft")
 	req.Header.Set("Accept", "*/*")
 	var k, v string
@@ -278,13 +270,13 @@ func (s *WebSession) send(ctx context.Context, method, url, body string,
 	return s.client.Do(req)
 }
 
-// authorization construit l'en-tete `Authorization` reclame par le challenge.
+// authorization builds the `Authorization` header the challenge asks for.
 //
-// Le schema vient de the device, pas de nous : `auto` le lit dans le
-// challenge, et un mode explicite n'est retenu que s'il correspond a ce qui est
-// propose. Presenter du Basic a qui demande du Digest donne un second 401, qu'on
-// lirait comme un mot de passe faux — l'erreur la plus couteuse a diagnostiquer
-// sur un device dont on n'a pas la console.
+// The scheme comes from the device, not from us: `auto` reads it in the
+// challenge, and an explicit mode is kept only if it matches what is offered.
+// Presenting Basic to something that asks for Digest yields a second 401,
+// which would read as a wrong password — the costliest error to diagnose on a
+// device whose console we do not have.
 func (s *WebSession) authorization(method, url, challenge string) (string, error) {
 	var scheme = strings.ToLower(strings.Fields(strings.TrimSpace(challenge) + " ")[0])
 	switch {
@@ -294,22 +286,22 @@ func (s *WebSession) authorization(method, url, challenge string) (string, error
 		return "Basic " + base64.StdEncoding.EncodeToString(
 			[]byte(s.auth.Username+":"+s.auth.Password)), nil
 	case challenge == "" && s.auth.Mode == AuthBasic:
-		// Pas de challenge lisible mais du Basic requested explicitement : c'est le
-		// seul schema qu'on puisse present  sans rien savoir de the device.
+		// No readable challenge but Basic explicitly requested: it is the only
+		// scheme that can be presented without knowing anything about the device.
 		return "Basic " + base64.StdEncoding.EncodeToString(
 			[]byte(s.auth.Username+":"+s.auth.Password)), nil
 	}
-	return "", fmt.Errorf("authentification HTTP %q demandee par the device, "+
-		"non managed par ce connecteur (challenge : %q)", scheme, challenge)
+	return "", fmt.Errorf("HTTP authentication %q requested by the device, "+
+		"not handled by this connector (challenge: %q)", scheme, challenge)
 }
 
-// digestCredential calcule la response Digest MD5 avec qop=auth (RFC 7616 §3.4),
-// la seule variante que servent les interfaces embarquees rencontrees.
+// digestCredential computes the MD5 Digest response with qop=auth (RFC 7616
+// §3.4), the only variant the embedded interfaces met so far serve.
 //
-// `cnonce` est tire au hasard a chaque appel et `nc` reste a 1 : on ne reutilise
-// jamais un nonce d'une request a l'autre. C'est ce qui rend chaque request
-// independante — un connecteur qui incrementerait un compteur partage serait
-// faux from qu'il lit deux pages en parallele.
+// `cnonce` is drawn at random on every call and `nc` stays at 1: a nonce is
+// never reused from one request to the next. That is what makes every request
+// independent — a connector that incremented a shared counter would be wrong
+// as soon as it read two pages in parallel.
 func (s *WebSession) digestCredential(method, url, challenge string) (string, error) {
 	return DigestAuthorization(method, url, challenge, s.auth.Username, s.auth.Password)
 }
@@ -327,14 +319,14 @@ func DigestAuthorization(method, url, challenge, username, password string) (str
 	var p = parseChallenge(challenge)
 	var realm, nonce = p["realm"], p["nonce"]
 	if nonce == "" {
-		return "", fmt.Errorf("challenge Digest sans nonce : %q", challenge)
+		return "", fmt.Errorf("Digest challenge without a nonce: %q", challenge)
 	}
 	var algorithm = strings.ToUpper(p["algorithm"])
 	if algorithm != "" && algorithm != "MD5" {
-		return "", fmt.Errorf("Digest %s non managed (seul MD5 l'est)", algorithm)
+		return "", fmt.Errorf("Digest %s not handled (only MD5 is)", algorithm)
 	}
-	// L'URI du digest est le chemin, pas l'URL absolue : c'est ce que
-	// the device a vu passer sur sa ligne de request.
+	// The digest URI is the path, not the absolute URL: that is what the
+	// device saw go by on its request line.
 	var uri = url
 	var parsed, parseErr = neturl.Parse(url)
 	if parseErr == nil {
@@ -370,9 +362,9 @@ func DigestAuthorization(method, url, challenge, username, password string) (str
 		response = md5hex(ha1 + ":" + nonce + ":00000001:" + cnonce + ":auth:" + ha2)
 		parts = append(parts, "qop=auth", "nc=00000001", `cnonce="`+cnonce+`"`)
 	} else {
-		// Digest « historique », sans qop : kept parce que des firmwares anciens
-		// n'annoncent rien d'autre, et qu'un refus ici renverrait l'exploitant a
-		// une interface qui, elle, fonctionne dans son navigateur.
+		// "Legacy" Digest, without qop: kept because old firmwares announce
+		// nothing else, and a refusal here would send the operator back to an
+		// interface that, for its part, works in their browser.
 		response = md5hex(ha1 + ":" + nonce + ":" + ha2)
 	}
 	parts = append(parts, `response="`+response+`"`)
@@ -382,9 +374,9 @@ func DigestAuthorization(method, url, challenge, username, password string) (str
 	return "Digest " + strings.Join(parts, ", "), nil
 }
 
-// parseChallenge decoupe un `WWW-Authenticate` en paires key/valeur, guillemets
-// retires. Tolerant par necessity : les firmwares embarques ponctuent leur
-// challenge chacun a leur way.
+// parseChallenge splits a `WWW-Authenticate` into key/value pairs, quotes
+// removed. Tolerant out of necessity: embedded firmwares each punctuate their
+// challenge their own way.
 func parseChallenge(challenge string) map[string]string {
 	var out = map[string]string{}
 	var body = strings.TrimSpace(challenge)
@@ -406,15 +398,15 @@ func parseChallenge(challenge string) map[string]string {
 	return out
 }
 
-// md5hex : MD5 impose par le protocole Digest, et employed nulle part ailleurs
-// dans meshcraft. Ce n'est pas un choix de security — c'est le seul digest que
-// ces interfaces acceptent, et le lien lui-same est protege par le tunnel.
+// md5hex: MD5 imposed by the Digest protocol, and used nowhere else in
+// meshcraft. It is not a security choice — it is the only digest these
+// interfaces accept, and the link itself is protected by the tunnel.
 func md5hex(s string) string {
 	var sum = md5.Sum([]byte(s)) //nolint:gosec
 	return hex.EncodeToString(sum[:])
 }
 
-// looksTextual : un octet nul dans les premiers kilo-octets suffit a conclure.
+// looksTextual: a NUL byte in the first kilobytes is enough to conclude.
 func looksTextual(b []byte) bool {
 	var limit = len(b)
 	if limit > 2048 {

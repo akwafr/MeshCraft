@@ -13,8 +13,8 @@ import (
 //
 // The paths are the ones the proxy already uses (cf. cmd/proxy): state lives
 // in /var/lib/meshcraft, and that's also where an automatic update's binary
-// will be placed (cf. docs/01-Architecture/Versionnage et mise à jour du
-// proxy).
+// will be placed (see docs/en/01-Architecture/Proxy versioning and
+// updates.md).
 const (
 	unitName  = "meshcraft-proxy.service"
 	binPath   = "/usr/local/bin/meshcraft-proxy"

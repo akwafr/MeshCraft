@@ -1,6 +1,6 @@
-// Package distrib distribue le proxy : binaires multi-arch telechargeables,
-// image docker multi-arch servie par un registre OCI integrated en lecture seule,
-// et generation du docker-compose pointant vers le controleur.
+// Package distrib distributes the proxy: downloadable multi-arch binaries, a
+// multi-arch docker image served by a built-in read-only OCI registry, and
+// generation of the docker-compose file pointing at the controller.
 package distrib
 
 import (
@@ -22,7 +22,7 @@ type Service struct {
 	Cfg config.Config
 
 	mu     sync.Mutex
-	hashes map[string]hashEntry // cache sha256 par (nom, mtime)
+	hashes map[string]hashEntry // sha256 cache per (name, mtime)
 }
 
 type hashEntry struct {
@@ -43,7 +43,7 @@ type Artifact struct {
 	URL    string `json:"url"`
 }
 
-// ListArtifacts inventorie les binaires present dans ArtifactsDir.
+// ListArtifacts lists the binaries present in ArtifactsDir.
 func (s *Service) ListArtifacts() ([]Artifact, error) {
 	var entries, err = os.ReadDir(s.Cfg.ArtifactsDir)
 	if err != nil {
@@ -105,16 +105,16 @@ func (s *Service) fileSHA256(name string, mtime time.Time) (string, error) {
 	return sum, nil
 }
 
-// ServeArtifact sert un binaire (nom valide : pas de traversee de chemin).
+// ServeArtifact serves a binary (valid name: no path traversal).
 func (s *Service) ServeArtifact(w http.ResponseWriter, r *http.Request, name string) {
 	if name != filepath.Base(name) || !strings.HasPrefix(name, "meshcraft-proxy_") {
-		http.Error(w, "artefact inconnu", http.StatusNotFound)
+		http.Error(w, "unknown artifact", http.StatusNotFound)
 		return
 	}
 	var path = filepath.Join(s.Cfg.ArtifactsDir, name)
 	var _, err = os.Stat(path)
 	if err != nil {
-		http.Error(w, "artefact inconnu", http.StatusNotFound)
+		http.Error(w, "unknown artifact", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)

@@ -27,10 +27,10 @@ const (
 	// InstantOn_1930_3.4.0.0, 2026-08-02), read back as:
 	//
 	//	<MSTP type="section">
-	//	  <regionName>88:25:10:17:61:a7</regionName>
+	//	  <regionName>02:00:5e:10:61:a7</regionName>
 	//	  <revisionNo>0</revisionNo>
 	//	  <maxHops>20</maxHops>
-	//	  <ISTMasterString>32768-88:25:10:17:61:a7</ISTMasterString>
+	//	  <ISTMasterString>32768-02:00:5e:10:61:a7</ISTMasterString>
 	//	  <InstanceList><InstanceEntry></InstanceEntry></InstanceList>
 	//	</MSTP>
 	//
@@ -98,6 +98,18 @@ func (a *Admin) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState,
 		var mstBody, mstErr = a.RawSection(ctx, sectionMSTP)
 		if mstErr == nil {
 			out.Region = parseIonRegion(mstBody)
+		}
+		// The instance→VLAN map does NOT live in the MSTP section (its
+		// InstanceEntry is always served empty): it reads from
+		// MSTPInstanceList, one Entry per instance with a range-compressed
+		// VLANList — observed live on a JL685A, cf. stp_mst.go.
+		var instances, instErr = a.readMSTInstances(ctx)
+		if instErr == nil && len(instances) > 0 {
+			out.Region.InstanceVLANs = map[int][]int{}
+			var id int
+			for id = range instances {
+				out.Region.InstanceVLANs[id] = instances[id].VLANs
+			}
 		}
 	}
 
@@ -432,17 +444,11 @@ func normalizePortState(s string) string {
 	return ""
 }
 
-// parseIonRegion reads the MST region out of the `MSTP` section.
-//
-// The instance map is NOT filled in, and that is a statement rather than a gap:
-// the field shape of `InstanceEntry` has not been observed. Every 1930 surveyed
-// so far serves an EMPTY `<InstanceEntry></InstanceEntry>`, which names the
-// element and reveals nothing about what belongs inside it. Guessing the children
-// would produce this platform's signature failure — statusCode 0, no change, no
-// message — and a region that silently disagrees on the digest is worse than one
-// openly missing, because the first still looks configured.
-//
-// Name and revision ARE read, and they are two thirds of what decides membership.
+// parseIonRegion reads the MST region NAME and REVISION out of the `MSTP`
+// section — and only those two: this section's `InstanceEntry` is served
+// empty on every unit surveyed and is neither the read nor the write shape of
+// the instance map. The map itself lives in `MSTPInstanceList` (filled in by
+// the caller via readMSTInstances, cf. stp_mst.go).
 func parseIonRegion(body string) driver.MSTRegion {
 	var section = sectionOf(body, "MSTP")
 	if section == "" {

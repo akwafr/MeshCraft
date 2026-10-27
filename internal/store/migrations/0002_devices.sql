@@ -1,5 +1,5 @@
--- Plan du site (zones du synoptique, dimensions) : jsonb libre versionné
--- par le format site-config.
+-- Site plan (synoptic zones, dimensions): free-form jsonb versioned by the
+-- site-config format.
 alter table sites add column plan jsonb not null default '{}'::jsonb;
 
 create table devices (
@@ -18,10 +18,10 @@ create table devices (
     pos_y        double precision not null default 0,
     -- Catalogue physique : [{prefix, count, poe, speed, label}]
     port_groups  jsonb not null default '[]'::jsonb,
-    -- Intent + dernier état observé par port :
+    -- Intent + last observed state per port:
     -- {"ether1": {label, mode, pvid, tagged, poe, link, poe_w, rx_mbps, tx_mbps}}
     ports        jsonb not null default '{}'::jsonb,
-    -- Métadonnées libres (uptime, version logicielle…)
+    -- Free-form metadata (uptime, software version…)
     extra        jsonb not null default '{}'::jsonb,
     unique (site_id, name)
 );

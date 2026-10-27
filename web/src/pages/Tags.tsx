@@ -6,7 +6,6 @@ import { del, get, post, put } from "../api";
 import { useSiteRole } from "../auth";
 import {
   ActionButton,
-  DeleteButton,
   ErrorMsg,
   Field,
   HelpTip,
@@ -14,10 +13,11 @@ import {
   Switch,
   useToast,
 } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 
 /**
  * Site tags and automatic tagging.
- * See docs/01-Architecture/Tags and identifier scope.
+ * See docs/en/01-Architecture/Tags and credential scope.
  *
  * A tag isn't decorative: an administration credential can target it, and a
  * tagged device then changes its expected password. The screen says so
@@ -184,7 +184,7 @@ export default function TagsPage() {
                 <th>{t("tagsPage.criteriaCol")}</th>
                 <th>{t("tagsPage.priorityCol")}</th>
                 <th>{t("common.stateCol")}</th>
-                {canEdit && <th />}
+                {canEdit && <th className="col-actions" />}
               </tr>
             </thead>
             <tbody>
@@ -204,13 +204,15 @@ export default function TagsPage() {
                   <td>{r.priority}</td>
                   <td>{r.enabled ? t("common.active") : <span className="note">{t("common.disabled")}</span>}</td>
                   {canEdit && (
-                    <td style={{ textAlign: "right" }}>
-                      <span className="row" style={{ justifyContent: "flex-end", gap: 6 }}>
-                        <ActionButton kind="edit" className="ghost" onClick={() => setEditing(r)}>
-                          {t("common.edit")}
-                        </ActionButton>
-                        <DeleteButton onConfirm={() => remove.mutate(r)} />
-                      </span>
+                    <td className="col-actions">
+                      <div className="icon-actions">
+                        <IconAction
+                          kind="edit"
+                          label={t("common.edit") as string}
+                          onClick={() => setEditing(r)}
+                        />
+                        <IconDeleteButton onConfirm={() => remove.mutate(r)} />
+                      </div>
                     </td>
                   )}
                 </tr>

@@ -2,7 +2,7 @@
 // network configuration for a site in a single JSON, exportable and importable.
 // This is the pivot data model on the IT side — vendor-independent: future
 // connectors will translate this model to each platform (cf.
-// docs/01-Architecture/Modele de donnees standard).
+// docs/en/01-Architecture/Standard data model.md).
 //
 // Format rules:
 //   - version carried by the meshcraft_site_config field (integer);
@@ -24,7 +24,7 @@ type File struct {
 	PortProfiles   []Profile `json:"port_profiles"`
 	DeviceProfiles []Profile `json:"device_profiles"`
 	// SwitchProfiles : rules that produce port configuration
-	// (cf. docs/01-Architecture/Profils de switchs). Their rules may reference a
+	// (cf. docs/en/01-Architecture/Switch profiles.md). Their rules may reference a
 	// port profile; the reference is translated to NAME on export by
 	// RemapSwitchRules, like every other reference in the format.
 	//
@@ -101,6 +101,73 @@ const (
 	RefByName = "port_profile"
 )
 
+// Reference keys for the port profile a PORT follows (`devices.ports[name]`).
+const (
+	// PortRefByID is what the database stores on a port intent.
+	PortRefByID = "profile_id"
+	// PortRefByName is what the exchange file carries.
+	PortRefByName = "profile"
+)
+
+// RemapPortFollows translates the follow-link on each port of a device:
+// `profile_id` (a uuid, instance-specific) becomes `profile` (a name,
+// portable) on export, and the reverse on import. Same raw-JSON discipline as
+// RemapSwitchRules, for the same reason: a port object carries fields this
+// version does not know (telemetry, future annotations), and a struct round
+// trip would silently strip them.
+//
+// One rule is deliberately the OPPOSITE of RemapSwitchRules: a reference
+// `lookup` cannot translate is DROPPED, not left in place. A faulty rule
+// reference is flagged on screen and blocks applying that profile — leaving
+// it is how it gets fixed. A dangling `profile_id` on a port has no such
+// screen: the panel reads it as "this port followed a group that was later
+// DELETED", which on a freshly imported site is simply false — the honest
+// state there is "manual". Both keys are cleared before translating, so a
+// stale id from an older export can never survive an import either.
+func RemapPortFollows(ports json.RawMessage, from, to string,
+	lookup map[string]string) json.RawMessage {
+	if len(ports) == 0 {
+		return ports
+	}
+	var root map[string]any
+	if json.Unmarshal(ports, &root) != nil {
+		return ports
+	}
+	var changed bool
+	var name string
+	for name = range root {
+		var port, isObject = root[name].(map[string]any)
+		if !isObject {
+			continue
+		}
+		var _, hasFrom = port[from]
+		var _, hasTo = port[to]
+		if !hasFrom && !hasTo {
+			continue
+		}
+		// `ref` is the string value of the source key; a null or non-string
+		// value is noise from an older writer and is cleared like the rest.
+		var ref, isString = port[from].(string)
+		delete(port, from)
+		delete(port, to)
+		if isString && ref != "" {
+			var mapped, known = lookup[ref]
+			if known {
+				port[to] = mapped
+			}
+		}
+		changed = true
+	}
+	if !changed {
+		return ports
+	}
+	var out, err = json.Marshal(root)
+	if err != nil {
+		return ports
+	}
+	return out
+}
+
 type Site struct {
 	Name string `json:"name"`
 	// Synoptic plan: {width, height, zones:[{x,y,w,h,label}]}
@@ -140,6 +207,8 @@ type Device struct {
 	PortGroups json.RawMessage `json:"port_groups,omitempty"`
 	// Ports by canonical name. Each port:
 	// {label, mode: access|trunk|libre, pvid, tagged: [ids]|"all", poe,
+	//  profile: name of the port profile the port follows (translated from
+	//  `profile_id` by RemapPortFollows, like every reference in the format),
 	//  link, poe_w, rx_mbps, tx_mbps} — last 4 = last observed state.
 	Ports json.RawMessage `json:"ports,omitempty"`
 	Extra json.RawMessage `json:"extra,omitempty"`

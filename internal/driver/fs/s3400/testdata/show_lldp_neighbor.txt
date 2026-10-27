@@ -1,0 +1,11 @@
+show lldp neighbor
+Capability Codes:
+       (R)Router,(B)Bridge,(C)DOCSIS Cable Device,(T)Telephone
+       (W)WLAN Access Point, (P)Repeater,(S)Station,(O)Other
+
+Device-ID       Local-Intf      Hldtme       Port-ID      Capability
+c950.6d5f.1f73  TGi0/1          93           0/18         
+                TGi0/2          102          Eth 1/25     R B 
+
+Total entries displayed: 2
+Switch#

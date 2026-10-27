@@ -149,7 +149,23 @@ func withMonitoringGaps(views []deviceView) []deviceMonitoringView {
 // forbid unknown fields, so a client that keeps sending them is not broken — they
 // simply go nowhere. The struct now states what is editable, which a present but
 // inert field would not (lesson of `AdminAccount.PasswordMax`, cf.
-// docs/01-Architecture/Connecteurs).
+// docs/en/01-Architecture/Connectors.md).
+//
+// # Why this input remembers WHICH KEYS ARRIVED
+//
+// The update route is a PATCH and used to behave like a PUT: every field was
+// assigned from the decoded body, so a key the client never wrote landed in the
+// database as Go's zero value. `{"name":"lab-crs326-rn"}` — a rename, nothing else —
+// therefore blanked `mgmt_ip`, `model`, `vendor`, `location`, `poe_budget_w`,
+// `pos_x` and `pos_y` in one call. Measured on 2026-08-10: within two minutes the
+// controller emitted `snmp.apply_failed` ("this device has no known management
+// address") then `device.unreachable`, and the switch fell out of supervision.
+// Name, address, model and vendor were re-typed by hand; THE PLAN POSITION WAS LOST
+// FOR GOOD, nothing snapshots it.
+//
+// Distinguishing "absent" from "zero" is the whole fix, and it must not be bought by
+// making a deliberate erasure impossible: clearing a location or a PoE budget is an
+// ordinary gesture and stays expressible, as `""` and `0`.
 type deviceInput struct {
 	GroupID    *string         `json:"group_id"`
 	Name       string          `json:"name"`
@@ -162,6 +178,108 @@ type deviceInput struct {
 	PosY       float64         `json:"pos_y"`
 	PortGroups json.RawMessage `json:"port_groups"`
 	Ports      json.RawMessage `json:"ports"`
+
+	// sent: the JSON keys the body ACTUALLY carried, collected by UnmarshalJSON.
+	// nil for a value built in Go rather than decoded — which is why `has` is the
+	// only reader, and why nothing but mergeDeviceInput consults it.
+	sent map[string]bool
+}
+
+// UnmarshalJSON decodes the body twice: once into the fields, once into a bare set
+// of keys.
+//
+// # Why not pointer fields
+//
+// `*string` / `*int` / `*float64` is the usual shape for an optional JSON field, and
+// it does separate absent from zero — but it CONFLATES absent with an explicit
+// `null`, and `group_id` is exactly a field whose null means something: it is how a
+// device leaves its group, and it is what both site screens send today for an
+// ungrouped device (web/src/pages/Plan.tsx, SwitchDetail.tsx). Pointers would have
+// turned "detach this device from its group" into a silent no-op — the same class of
+// bug as the one being fixed, moved one field over. A key set answers the question
+// the merge actually asks ("did the client write this key?") and answers it the same
+// way for every field, whatever its Go type.
+//
+// The double pass costs one extra parse of a body capped at maxBody, on a route an
+// operator triggers by hand.
+func (in *deviceInput) UnmarshalJSON(b []byte) error {
+	// A defined type built from deviceInput carries its fields and tags but NOT its
+	// method set: decoding into `raw` is the ordinary struct decode, not a recursive
+	// call back into this function.
+	type raw deviceInput
+	var fields raw
+	var err = json.Unmarshal(b, &fields)
+	if err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	err = json.Unmarshal(b, &keys)
+	if err != nil {
+		return err
+	}
+	*in = deviceInput(fields)
+	in.sent = make(map[string]bool, len(keys))
+	var k string
+	for k = range keys {
+		in.sent[k] = true
+	}
+	return nil
+}
+
+// has reports whether the body carried this JSON key — including when it carried it
+// as `null`, empty or zero.
+func (in deviceInput) has(field string) bool { return in.sent[field] }
+
+// mergeDeviceInput applies to a STORED device only the fields the client sent.
+//
+// Pure, and lifted out of handleUpdateDevice for that reason: the handler starts with
+// deviceForWrite, hence with PostgreSQL, and this package tests without a database
+// (cf. dhcpsnoop_apply_test.go's header). The decision that cost a device its
+// supervision is this one, so it is the one that has to be reachable by a test.
+//
+// Every field is guarded by its own key, never by "is the value empty": that
+// equivalence is what erased a management address, and it would also forbid the
+// legitimate erasures — a location one removes, a PoE budget one resets to 0.
+func mergeDeviceInput(d model.Device, in deviceInput) model.Device {
+	if in.has("group_id") {
+		d.GroupID = in.GroupID
+	}
+	if in.has("name") {
+		d.Name = in.Name
+	}
+	if in.has("model") {
+		d.Model = in.Model
+	}
+	if in.has("vendor") {
+		d.Vendor = in.Vendor
+	}
+	if in.has("location") {
+		d.Location = in.Location
+	}
+	if in.has("mgmt_ip") {
+		d.MgmtIP = in.MgmtIP
+	}
+	if in.has("poe_budget_w") {
+		d.PoEBudgetW = in.PoEBudgetW
+	}
+	if in.has("pos_x") {
+		d.PosX = in.PosX
+	}
+	if in.has("pos_y") {
+		d.PosY = in.PosY
+	}
+	// PortGroups keeps the byte test it already had, which was ALREADY a presence
+	// test and is left untouched for that reason: `json.RawMessage` is nil when the
+	// key is absent and holds the literal bytes otherwise, so `[]` — a faceplate
+	// deliberately emptied — has length 2 and does replace, exactly as before. Only
+	// the key never written leaves the stored faceplate alone.
+	if len(in.PortGroups) > 0 {
+		d.PortGroups = in.PortGroups
+	}
+	// `Ports`, `Extra`, `Observed`, and the whole status family are absent on
+	// purpose: UpdateDevice does not write them, and intent on ports has its own
+	// routes (handleSetDevicePort/s).
+	return d
 }
 
 func (s *Server) handleCreateDevice(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +359,7 @@ func portSummary(port json.RawMessage) string {
 		parts = append(parts, "PoE")
 	}
 	if p.Label != "" {
-		parts = append(parts, "« "+p.Label+" »")
+		parts = append(parts, "\""+p.Label+"\"")
 	}
 	return strings.Join(parts, " · ")
 }
@@ -290,23 +408,30 @@ func (s *Server) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
+	// The empty-name refusal survives, narrowed to what it was actually defending
+	// against: a client that WRITES `"name": ""`. A body that never mentions the name
+	// is not a nameless device, it is a request about something else — the position on
+	// the plan, a PoE budget — and refusing it would be the PUT reflex again, this
+	// time in the guard.
+	if in.has("name") && in.Name == "" {
 		respondErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	// Snapshot BEFORE merge: `d` is modified in place just below, and the
-	// before/after comparison decides whether we must talk to the device again.
+	// Snapshot BEFORE merge: `d` is modified just below, and the before/after
+	// comparison decides whether we must talk to the device again. Fields the body
+	// did not carry come out of the merge identical, so those comparisons now stay
+	// silent for a rename — which is the point: they used to fire on a management
+	// address the client had never mentioned.
 	var snmpBefore = snmpProvisionInputs(d)
 	var mgmtIPBefore = d.MgmtIP
-	d.GroupID, d.Name, d.Model, d.Vendor = in.GroupID, in.Name, in.Model, in.Vendor
-	d.Location, d.MgmtIP = in.Location, in.MgmtIP
-	d.PoEBudgetW, d.PosX, d.PosY = in.PoEBudgetW, in.PosX, in.PosY
+	var nameBefore = d.Name
+	// MERGE, not overwrite. What is absent from the body keeps its stored value; see
+	// mergeDeviceInput and deviceInput's header for the incident that separates the
+	// two.
+	d = mergeDeviceInput(d, in)
 	// `d.Status` / `d.StatusNote` / `d.StatusAt` are untouched: they come from
 	// deviceForWrite's read and leave unchanged, because UpdateDevice no longer
 	// writes them at all. Reachability is not editable.
-	if len(in.PortGroups) > 0 {
-		d.PortGroups = in.PortGroups
-	}
 	var updated, err = s.Store.UpdateDevice(r.Context(), d)
 	if err != nil {
 		fail(w, err)
@@ -337,7 +462,7 @@ func (s *Server) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
 		// device stayed red until an unrelated tunnel reconnection happened to
 		// rebuild the instruction.
 		//
-		// Observed on s3900lab, 2026-08-02: address moved 10.99.0.2 → 10.99.0.71, SNMP
+		// Observed on s3900lab, 2026-08-02: address moved 192.0.2.2 → 192.0.2.71, SNMP
 		// provisioning followed the device to the new address and succeeded, while
 		// ICMP watch stayed on the old one and the switch showed offline throughout.
 		s.pushWatchForDevice(updated)
@@ -360,6 +485,26 @@ func (s *Server) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
 	// adoption, the two moments a device appears.
 	if snmpProvisionInputs(updated) != snmpBefore {
 		s.provisionSNMP(r.Context(), updated)
+	}
+	// A RENAME IS A PUSH. meshcraft owns the device's own system name (cf.
+	// internal/driver/hostname.go and hostnameheal.go), so the name the operator
+	// just typed has to reach the equipment — otherwise the console banner, the
+	// LLDP system-name TLV and every syslog line keep answering with the old one,
+	// and the fleet stays illegible exactly where somebody just improved it.
+	//
+	// AFTER the store write, and it never fails the rename: hostnameAfterRename
+	// pushes in the background on its own context, and the healer catches up if the
+	// device is unreachable right now. Renaming a switch that is powered off must
+	// answer 200 — the rename genuinely happened.
+	//
+	// NOT in the snmpProvisionInputs comparison above, deliberately: that aggregate
+	// exists to say "nothing here reaches hardware", and the name was its
+	// headline example ("Renaming a device or changing its location — metadata that
+	// never leaves the database"). Half of that sentence stopped being true today,
+	// and folding the name into that struct would re-push the SNMP identity on every
+	// rename — five seconds on real hardware, for nothing.
+	if updated.Name != nameBefore {
+		s.hostnameAfterRename(r, updated)
 	}
 	respond(w, http.StatusOK, updated)
 }
@@ -531,7 +676,7 @@ func (s *Server) handleMoveDevice(w http.ResponseWriter, r *http.Request) {
 // The trap this block exists to make unreachable: attachment gives NO coverage.
 // Attaching a device to a proxy that does not cover its site does not move
 // collection to it, it stops collection entirely — no SNMP polling, no trap
-// recipient — without any request failing (store.TestRattachementNeDonnePasLaCouverture).
+// recipient — without any request failing (store.TestAttachmentDoesNotGrantCoverage).
 // Three mechanisms cover this, and none replaces the others:
 //
 //  1. the screen offers only covering proxies (handleListCollectorProxies);
@@ -587,7 +732,7 @@ func judgeCollector(covering []model.Proxy, proxyID string) (collectorVerdict, m
 //     ROUTING has an address outside the plan subnet: without a declared collector,
 //     meshcraft cannot request it, bounds the agent to the plan subnet only, and the
 //     device goes silent FOR IT. Observed on a CRS326: conforming community, active agent,
-//     mute walk — the proxy polled from 10.42.0.67 an agent accepting only 10.99.0.0/16;
+//     mute walk — the proxy polled from 10.42.0.67 an agent accepting only 192.0.2.0/24;
 //  2. TRAP DESTINATION, which is one address not a list: "several proxies" does not
 //     translate to an address (cf. trapdest.go);
 //  3. no duplicate collection: two covering proxies report the same port transitions twice
@@ -711,8 +856,8 @@ func notCoveringMessage(deviceName, proxyName string) string {
 	if proxyName != "" {
 		who = "proxy \"" + proxyName + "\""
 	}
-	return "Attachment refused: " + who + " does not cover the site of « " + deviceName +
-		"». Attachment gives no coverage: the device would not be " +
+	return "Attachment refused: " + who + " does not cover the site of \"" + deviceName +
+		"\". Attachment gives no coverage: the device would not be " +
 		"collected by this proxy, and would no longer be collected by anybody — no more " +
 		"SNMP polling and no recipient for its traps, while it would still be pinged. " +
 		"Add this site to the proxy coverage, or " +
@@ -728,7 +873,7 @@ func collectorLabel(name string) string {
 	if name == "" {
 		return "none (coverage-based collection)"
 	}
-	return "« " + name + " »"
+	return "\"" + name + "\""
 }
 
 // collectorChangeMessage carries OLD and NEW collector in plain text.
@@ -738,7 +883,7 @@ func collectorLabel(name string) string {
 // checked on a Tuesday. Identifiers would not suffice — a deleted proxy no longer
 // resolves, only its name stays readable.
 func collectorChangeMessage(deviceName, before, after string) string {
-	return "Collector of « " + deviceName + " »: " +
+	return "Collector of \"" + deviceName + "\": " +
 		collectorLabel(before) + " → " + collectorLabel(after)
 }
 

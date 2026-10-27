@@ -9,12 +9,25 @@ import (
 
 // InsertEvent appends a row to the event log (append-only).
 func (s *Store) InsertEvent(ctx context.Context, ev model.Event) error {
-	var _, err = s.pool.Exec(ctx,
-		`insert into events (site_id, device_id, port_name, type, severity, message, actor, payload)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)`,
-		ev.SiteID, ev.DeviceID, ev.PortName, ev.Type, ev.Severity, ev.Message, ev.Actor,
-		jsonOr(ev.Payload, `{}`))
+	var _, err = s.InsertEventID(ctx, ev)
 	return err
+}
+
+// InsertEventID appends a row and returns its id.
+//
+// The id is what alerting anchors on: `notify_deliveries.event_id` is a foreign
+// key to this row, so a notification is always traceable back to the journal
+// line that caused it (ADR-0024, rule 1). A caller that does not need the id
+// uses InsertEvent above and reads exactly as it did before.
+func (s *Store) InsertEventID(ctx context.Context, ev model.Event) (int64, error) {
+	var id int64
+	var err = s.pool.QueryRow(ctx,
+		`insert into events (site_id, device_id, port_name, type, severity, message, actor, payload)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)
+		 returning id`,
+		ev.SiteID, ev.DeviceID, ev.PortName, ev.Type, ev.Severity, ev.Message, ev.Actor,
+		jsonOr(ev.Payload, `{}`)).Scan(&id)
+	return id, err
 }
 
 type EventFilter struct {

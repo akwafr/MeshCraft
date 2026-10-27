@@ -11,7 +11,7 @@ import (
 )
 
 // What is tested here is the admin provisioning part that decides whether to
-// CREATE has secret. Getting it wrong is invisible on screen: has site ends up with
+// CREATE a secret. Getting it wrong is invisible on screen: a site ends up with
 // three credentials for one constraint, each pushed to part of the fleet, and
 // nobody knows which opens what.
 //
@@ -26,10 +26,10 @@ var swosLikeAdmin = driver.AdminAccount{
 	Custom: false, FixedName: "admin", PasswordMin: 0, PasswordMax: 15,
 }
 
-// TestSourcePwPolicyDistincte: has technical tag source must be neither manual —
+// TestPwPolicySourceIsDistinct: a technical tag source must be neither manual —
 // that would lie about origin and expose it to hand editing — nor rule:, or has
 // rule replay would remove it.
-func TestSourcePwPolicyDistincte(t *testing.T) {
+func TestPwPolicySourceIsDistinct(t *testing.T) {
 	if pwPolicyTagSource == tagging.SourceManual || tagging.FromRule(pwPolicyTagSource) {
 		t.Fatalf("source %q must differ from manual and rules",
 			pwPolicyTagSource)
@@ -42,14 +42,14 @@ func TestSourcePwPolicyDistincte(t *testing.T) {
 	}
 }
 
-// TestEtiquettePwPolicySurvitAuRejeuDesRegles is THE test of this batch.
+// TestPwPolicyTagSurvivesRuleReplay is THE test of this batch.
 //
-// POST /api/sites/{id}/tag-rules/apply must never remove has password-policy
+// POST /api/sites/{id}/tag-rules/apply must never remove a password-policy
 // technical tag. If it did, the credential targeting it would apply to nothing:
 // the device would fall back to the site secret, which its connector rejects
-// before send — meaning has rule replay would disconnect the only deployable
-// password for has whole product line. Nobody would connect the two actions.
-func TestEtiquettePwPolicySurvitAuRejeuDesRegles(t *testing.T) {
+// before send — meaning a rule replay would disconnect the only deployable
+// password for a whole product line. Nobody would connect the two actions.
+func TestPwPolicyTagSurvivesRuleReplay(t *testing.T) {
 	var pol = pwpolicy.For(swosLikeAdmin)
 	var tag, tagErr = pol.Tag()
 	if tagErr != nil {
@@ -59,11 +59,11 @@ func TestEtiquettePwPolicySurvitAuRejeuDesRegles(t *testing.T) {
 	var current = []tagging.Tag{
 		{Tag: tag, Source: pwPolicyTagSource},
 		{Tag: "snmpv3-sha-des", Source: snmpTagSource},
-		{Tag: "regie", Source: "rule:11111111-2222-3333-4444-555555555555"},
+		{Tag: "ops", Source: "rule:11111111-2222-3333-4444-555555555555"},
 	}
 	// Disabled rule: replay must remove only what IT placed, nothing else.
 	var rules = []tagging.Rule{{
-		ID: "11111111-2222-3333-4444-555555555555", Tag: "regie",
+		ID: "11111111-2222-3333-4444-555555555555", Tag: "ops",
 		Match: tagging.Match{Vendor: "mikrotik"}, Enabled: false,
 	}}
 	var got = tagging.Evaluate(tagging.Device{Vendor: "MikroTik"}, current, rules)
@@ -78,18 +78,18 @@ func TestEtiquettePwPolicySurvitAuRejeuDesRegles(t *testing.T) {
 			t.Fatal("SNMPv3 technical tag removed by rule replay")
 		}
 	}
-	if len(got.Remove) != 1 || got.Remove[0].Tag != "regie" {
+	if len(got.Remove) != 1 || got.Remove[0].Tag != "ops" {
 		t.Errorf("only disabled rule tag should be removed: %+v", got.Remove)
 	}
 }
 
-// TestIdempotenceDeLaCreationAutomatique: replaying on an already-fit device
+// TestAutomaticCreationIsIdempotent: replaying on an already-fit device
 // must CREATE nothing.
 //
-// Without that guarantee, every credentials/apply would rotate has whole product
-// line's secret — and the fleet would lose access one device at has time, since
+// Without that guarantee, every credentials/apply would rotate a whole product
+// line's secret — and the fleet would lose access one device at a time, since
 // only the last provisioned device would carry the latest secret.
-func TestIdempotenceDeLaCreationAutomatique(t *testing.T) {
+func TestAutomaticCreationIsIdempotent(t *testing.T) {
 	var pol = pwpolicy.For(swosLikeAdmin)
 	var canonical, _ = pol.Tag()
 
@@ -113,13 +113,13 @@ func TestIdempotenceDeLaCreationAutomatique(t *testing.T) {
 	}
 }
 
-// TestSecretCompatibleDejaPresentEstEmploye: compatibility is judged on BOUNDS,
+// TestCompatibleSecretAlreadyPresentIsUsed: compatibility is judged on BOUNDS,
 // not name.
 //
-// A site that already has pwpolicy-len12 perfectly covers has line capped at 15:
-// its secret fits. Demanding the canonical name would create has second secret for
+// A site that already has pwpolicy-len12 perfectly covers a line capped at 15:
+// its secret fits. Demanding the canonical name would create a second secret for
 // an already-covered constraint — then rotate, reveal, and watch both.
-func TestSecretCompatibleDejaPresentEstEmploye(t *testing.T) {
+func TestCompatibleSecretAlreadyPresentIsUsed(t *testing.T) {
 	var pol = pwpolicy.For(swosLikeAdmin)
 	var canonical, _ = pol.Tag()
 	if canonical != "pwpolicy-len15" {
@@ -149,20 +149,20 @@ func TestSecretCompatibleDejaPresentEstEmploye(t *testing.T) {
 	}
 }
 
-// TestJamaisLIdentifiantDUneEtiquetteDExploitation: meshcraft does not file has
-// device under regie on its own initiative.
+// TestNeverAnOperationsTagCredential: meshcraft does not file a
+// device under ops on its own initiative.
 //
 // The secret might fit, which would be worse than useless: meshcraft would
 // decide operator filing for them, and they could delete that credential — which
-// nothing forbids — without knowing has CSS326 depended on it.
-func TestJamaisLIdentifiantDUneEtiquetteDExploitation(t *testing.T) {
+// nothing forbids — without knowing a CSS326 depended on it.
+func TestNeverAnOperationsTagCredential(t *testing.T) {
 	var pol = pwpolicy.For(swosLikeAdmin)
 	var canonical, _ = pol.Tag()
 	var have = []pwPolicyOffer{
 		// Compatible (12 chars), but filed under an ops tag.
-		{Cred: model.SiteCredential{ID: "regie", Kind: credKindAdmin, Tag: "regie"},
+		{Cred: model.SiteCredential{ID: "ops", Kind: credKindAdmin, Tag: "ops"},
 			Secret: "Abcdefgh1234"},
-		// Compatible, but filed under has GROUP: same reason.
+		// Compatible, but filed under a GROUP: same reason.
 		{Cred: model.SiteCredential{ID: "group", Kind: credKindAdmin,
 			GroupName: "mikrotik"}, Secret: "Abcdefgh1234"},
 		// Compatible, but not an admin password.
@@ -178,10 +178,10 @@ func TestJamaisLIdentifiantDUneEtiquetteDExploitation(t *testing.T) {
 	}
 }
 
-// TestPickRefuseUnSecretHorsBornes: has technical credential whose secret does not
-// fit THIS platform's policy is not reused. Born from has line more constrained
-// than another: pwpolicy-len15 does not serve has device capped at 12.
-func TestPickRefuseUnSecretHorsBornes(t *testing.T) {
+// TestPickRefusesAnOutOfBoundsSecret: a technical credential whose secret does not
+// fit THIS platform's policy is not reused. Born from a line more constrained
+// than another: pwpolicy-len15 does not serve a device capped at 12.
+func TestPickRefusesAnOutOfBoundsSecret(t *testing.T) {
 	var pol = pwpolicy.For(driver.AdminAccount{PasswordMax: 12})
 	var canonical, _ = pol.Tag()
 	var have = []pwPolicyOffer{
@@ -195,14 +195,14 @@ func TestPickRefuseUnSecretHorsBornes(t *testing.T) {
 	}
 }
 
-// TestEspaceDeNomsRefuseALaSaisie: three operator gestures.
+// TestNamespaceRefusedOnInput: three operator gestures.
 //
 // pwpolicy.IsTechnicalTag is the sole judge, and three paths consult it: create
 // and update via checkCredScope in handleUpsertSiteCredential, delete directly in
 // handleDeleteSiteCredential — on scope RE-READ FROM DATABASE, not what the
 // request claims. This test covers the judge and message uniqueness; refusal
 // applies to all three.
-func TestEspaceDeNomsRefuseALaSaisie(t *testing.T) {
+func TestNamespaceRefusedOnInput(t *testing.T) {
 	// Both paths must return the SAME refusal. Two wordings of one reasoning
 	// eventually diverge, and the operator would read different explanations for
 	// the same block depending on which button they clicked.
@@ -220,7 +220,7 @@ func TestEspaceDeNomsRefuseALaSaisie(t *testing.T) {
 	}
 
 	var refuses = []string{
-		"pwpolicy-len15", "pwpolicy-len015", "PWPOLICY-LEN15", "pwpolicy-machin",
+		"pwpolicy-len15", "pwpolicy-len015", "PWPOLICY-LEN15", "pwpolicy-whatever",
 		"pwpolicy-",
 	}
 	var tag string
@@ -246,7 +246,7 @@ func TestEspaceDeNomsRefuseALaSaisie(t *testing.T) {
 	}
 
 	// Existing tags untouched: ops tag, group, and site scope remain valid for admin password.
-	var allowed = []string{"regie", "scene 8 ports", ""}
+	var allowed = []string{"ops", "scene 8 ports", ""}
 	for _, tag = range allowed {
 		var got, err = checkCredScope(credKindAdmin, "", tag)
 		if err != nil {

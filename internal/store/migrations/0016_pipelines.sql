@@ -1,28 +1,27 @@
--- Pipelines : rendre visible ce qui est en cours, et surtout ce qui coince.
--- Voir docs/01-Architecture/Monitoring unifié et pipelines §5.
+-- Pipelines: make visible what is in progress, and above all what is stuck.
+-- See docs/en/01-Architecture/Unified monitoring and pipelines.md §5.
 --
--- Jusqu'ici, une pose qui échouait laissait un événement et rien d'autre : il
--- fallait deviner. Un déploiement de configuration, une pose d'identifiant, une
--- campagne de supervision prennent du temps, échouent partiellement et restent
--- coincés — c'est la règle, pas l'exception, sur un parc réel.
+-- Until now, a push that failed left an event and nothing else: one had to
+-- guess. A configuration deployment, a credential push, a monitoring campaign
+-- take time, fail partially and get stuck — that is the rule, not the
+-- exception, on a real fleet.
 create table if not exists pipelines (
     id         uuid primary key default gen_random_uuid(),
     site_id    uuid not null references sites(id) on delete cascade,
     -- kind : config | credential | monitoring | import
     kind       text not null,
-    -- device_id nul = campagne de parc, qui n'appartient à aucun équipement.
+    -- null device_id = a fleet campaign, which belongs to no device.
     device_id  uuid references devices(id) on delete cascade,
     -- state : pending | running | blocked | done | failed
     --
-    -- `blocked` n'est PAS un échec : un équipement éteint, un proxy déconnecté,
-    -- une fenêtre de maintenance fermée. Le pipeline attend, et dit quoi. Les
-    -- confondre pousse à relancer ce qui n'a pas besoin de l'être.
+    -- `blocked` is NOT a failure: a device switched off, a disconnected proxy, a
+    -- closed maintenance window. The pipeline waits, and says for what. Confusing
+    -- them pushes people to relaunch what does not need it.
     state      text not null default 'pending',
-    -- label : ce que le pipeline fait, en français, pour une liste lisible.
+    -- label: what the pipeline does, in plain words, for a readable list.
     label      text not null default '',
-    -- blocked_reason est une PHRASE, pas un code. « En attente : le proxy
-    -- `proxy-festival` est déconnecté depuis 4 min » se lit ; ERR_PROXY_DOWN se
-    -- cherche.
+    -- blocked_reason is a SENTENCE, not a code. "Waiting: proxy `proxy-festival`
+    -- has been disconnected for 4 min" reads; ERR_PROXY_DOWN has to be looked up.
     blocked_reason text not null default '',
     created_at timestamptz not null default now(),
     started_at timestamptz,
@@ -31,7 +30,7 @@ create table if not exists pipelines (
 );
 
 create index if not exists pipelines_site_idx on pipelines (site_id, created_at desc);
--- Les états qui appellent une action se cherchent en premier.
+-- States that call for an action are looked up first.
 create index if not exists pipelines_state_idx on pipelines (state, created_at desc);
 
 create table if not exists pipeline_steps (
@@ -41,12 +40,12 @@ create table if not exists pipeline_steps (
     name        text not null,
     -- state : done | failed | skipped
     --
-    -- `skipped` existe parce qu'un garde-fou qui refuse d'agir n'est ni une
-    -- réussite ni un échec : c'est une décision, et elle doit se lire comme telle.
+    -- `skipped` exists because a guardrail that refuses to act is neither a success
+    -- nor a failure: it is a decision, and it must read as one.
     state       text not null default 'done',
-    -- detail : ce que l'équipement a RÉELLEMENT répondu. Sur une gamme où une
-    -- erreur se paie d'un déplacement, savoir après coup ce qui a été envoyé est
-    -- la seule façon de comprendre sans retourner sur site.
+    -- detail: what the device ACTUALLY answered. On a product line where a mistake
+    -- costs a trip, knowing afterwards what was sent is the only way to understand
+    -- without going back on site.
     detail      text not null default '',
     created_at  timestamptz not null default now()
 );

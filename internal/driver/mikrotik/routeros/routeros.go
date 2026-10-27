@@ -38,6 +38,9 @@ func (d *Driver) Info() driver.Info {
 		Name:   "mikrotik-routeros",
 		Vendor: "MikroTik",
 		Family: "RouterOS",
+		// The REST API answers 401 on ALL its resources, including the one
+		// that carries the model: nothing is identifiable without a credential.
+		IdentifyNeedsCredentials: true,
 		// The REST API (`/rest/...`, Basic authentication) is the reference
 		// transport: structured JSON, where the CLI would require parsing output
 		// formatted for a human — and the project's generic SSH probe fails on
@@ -51,7 +54,7 @@ func (d *Driver) Info() driver.Info {
 // RouterOS names itself in its SSH banner (`SSH-2.0-ROSSSH`), in its web page
 // title (`RouterOS`), and in sysDescr.
 //
-// The first two are OBSERVED on 10.99.0.54: the controller probe returns
+// The first two are OBSERVED on 192.0.2.54: the controller probe returns
 // `"http_title":"RouterOS"` and `"ssh_banner":"SSH-2.0-ROSSSH"`. The title is
 // served WITHOUT authentication, on the login page — so this is recognition that
 // requires no credentials.
@@ -301,7 +304,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// showed the contradiction; a comment never would have.
 		"JumboFrames": true,
 		// OBSERVED — `/ip/route` carries a real static route:
-		// `{"dst-address":"0.0.0.0/0","gateway":"10.99.0.1","static":"true"}`. This
+		// `{"dst-address":"0.0.0.0/0","gateway":"192.0.2.1","static":"true"}`. This
 		// is not an empty menu, it is routing in service.
 		"StaticRouting": true,
 		// OBSERVED — `/system/ntp/client` present: `{"enabled":"false",
@@ -490,7 +493,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// Same starting situation — RouterOS imposes no fixed limit, routing is
 		// bounded by memory — but the conclusion differs because StaticRouting is
 		// declared TRUE and OBSERVED in service (`/ip/route` carries a default static
-		// route to 10.99.0.1). Keeping 0 would refuse every route on a device that
+		// route to 192.0.2.1). Keeping 0 would refuse every route on a device that
 		// carries one before our eyes: that would contradict the feature just above.
 		//
 		// 1000 is therefore an OPERATIONAL prudence bound, not a device limit: beyond
@@ -549,7 +552,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		Mgmt: driver.MgmtCapabilities{
 			// OBSERVED, and in the most direct way possible: administration of this
 			// device arrives on a non-trivial TAGGED VLAN. `/ip/address` carries
-			// `10.99.0.54/24` on interface `vlan99`, `/interface/vlan` returns
+			// `192.0.2.54/24` on interface `vlan99`, `/interface/vlan` returns
 			// `{"name":"vlan99","vlan-id":"99","interface":"bridge"}`, and
 			// `/interface/bridge/vlan` places VLAN 99 in `"tagged":
 			// "bridge,sfp-sfpplus2"`. All reads of this connector took this path: the
@@ -962,7 +965,7 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				// for `if_state`: a channel does not lend its floor to another, and it does not
 				// lend its metric either.
 				//
-				// OBSERVED on 29 July 2026 on `lab-crs326` (10.99.0.54, RouterOS 7.21beta3),
+				// OBSERVED on 29 July 2026 on `lab-crs326` (192.0.2.54, RouterOS 7.21beta3),
 				// by read-only walk through the proxy:
 				//
 				//	lldpLocChassisId    'B8:69:F4:5B:A0:D2' — TEXT, not bytes
@@ -972,7 +975,7 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				//	lldpRemPortDesc     ABSENT — column 8 walk empty
 				//
 				// Two facts from this observation decide how to read this MIB, and they are
-				// written in detail in docs/01-Architecture/Voisinage LLDP.md: chassis-id is
+				// written in detail in docs/en/01-Architecture/LLDP neighbours.md: chassis-id is
 				// served as TEXT here and as raw bytes by the 1930 for the same chassis, and
 				// `lldpLocPortTable` contains only interfaces where LLDP runs — two out of
 				// twenty-nine. 'No neighbor on ether3' is therefore not 'nothing is plugged
@@ -986,12 +989,22 @@ func monitoringFor(face designation) driver.MonitoringCapabilities {
 				Kind:        "snmp",
 				Metrics:     []string{"lldp"},
 				MinInterval: 30 * time.Second,
-				Note: "MEASURED channel (walk on 29/07/2026 on 10.99.0.54), unlike the three other " +
+				Note: "MEASURED channel (walk on 29/07/2026 on 192.0.2.54), unlike the three other " +
 					"SNMP channels of this connector. `lldpRemPortDesc` is ABSENT from this agent: the " +
 					"remote port is read only in `lldpRemPortId`. And `lldpLocPortTable` lists only " +
 					"interfaces where LLDP runs — two out of the twenty-nine declared by `ifTable` — so " +
 					"absence of a neighbor on a port says nothing about what is plugged into it. Cadence " +
 					"imposed by the device (`discover-interval` 30 s).",
+			},
+			{
+				Kind:        "snmp",
+				Metrics:     []string{"fdb"},
+				MinInterval: 30 * time.Second,
+				Note: "MEASURED (walks 2026-08-13 on the CRS305 and CRS326): Q-BRIDGE-MIB " +
+					"dot1qTpFdbPort serves the learned table WITH its VLAN arc (101 and 23 rows " +
+					"respectively), and dot1dBasePortIfIndex maps bridge ports onto ifIndex. The " +
+					"flat dot1d table also answers but says less; the collector prefers Q-BRIDGE " +
+					"on its own.",
 			},
 		},
 		// OBSERVED — `/snmp` carries `trap-target`, `trap-version` (`"1"`),

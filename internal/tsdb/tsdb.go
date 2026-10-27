@@ -5,7 +5,7 @@
 // unreachable from outside, like the database — a proxy is by nature on a
 // network we do not control.
 //
-// See docs/fr/01-Architecture/Monitoring (unified monitoring and pipelines) §3.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md §3.
 package tsdb
 
 import (

@@ -92,14 +92,16 @@ func (c *Client) ReadSpanningTree(ctx context.Context) (driver.SpanningTreeState
 		case sp.Role != "" && sp.Role != driver.STPRoleDisabled:
 			sp.State = driver.STPStateDiscarding
 		}
-		if rpc := parseHexOrDec(p.Get("root-path-cost")); rpc > 0 {
+		var rpc = parseHexOrDec(p.Get("root-path-cost"))
+		if rpc > 0 {
 			sp.RootPathCost = rpc
 		}
 		out.Ports = append(out.Ports, sp)
 
 		// Root identity from a root-port's designated bridge, or local when we are root.
 		if sp.Role == driver.STPRoleRoot {
-			if id := p.Get("designated-bridge-id"); id != "" {
+			var id = p.Get("designated-bridge-id")
+			if id != "" {
 				out.RootBridgeID = normalizeROSBridgeID(id)
 			}
 			if out.RootPathCost == 0 && sp.RootPathCost > 0 {
@@ -169,7 +171,7 @@ func parseHexOrDec(s string) int {
 }
 
 func normalizeROSBridgeID(id string) string {
-	// "0x8000.88:25:10:17:61:A7" → "8000.88:25:…"
+	// "0x8000.02:00:5e:10:61:A7" → "8000.88:25:…"
 	id = strings.TrimSpace(id)
 	id = strings.TrimPrefix(strings.ToLower(id), "0x")
 	return id
@@ -177,7 +179,8 @@ func normalizeROSBridgeID(id string) string {
 
 func bareBridgeMAC(id string) string {
 	var s = strings.ToLower(id)
-	if i := strings.LastIndexByte(s, '.'); i >= 0 {
+	var i = strings.LastIndexByte(s, '.')
+	if i >= 0 {
 		s = s[i+1:]
 	}
 	return strings.ReplaceAll(s, ":", "")

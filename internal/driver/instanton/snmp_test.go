@@ -11,7 +11,7 @@ import (
 
 // Test device for SNMP configuration.
 //
-// Returning « code 0 » is not enough: the connector RE-READS everything it
+// Returning "code 0" is not enough: the connector RE-READS everything it
 // writes, because on this product line a `statusCode 0` with no effect is a
 // known case. The fake device must therefore carry STATE and evolve it; otherwise
 // tests would only verify request shape — everything except what was costly.
@@ -39,7 +39,7 @@ type fakeSNMP struct {
 	v2c []TrapReceiver
 	v3  []TrapReceiver
 	// trapsEnbl / v1v2Enabled: emission switches, raw codes. Empty
-	// simulates firmware that does not render the field — not the same as « 2 ».
+	// simulates firmware that does not render the field — not the same as "2".
 	trapsEnbl   string
 	v1v2Enabled string
 	// refuse: the `statusCode` the device returns for writes. That is how
@@ -55,7 +55,7 @@ type fakeSNMP struct {
 
 func newFakeSNMP() *fakeSNMP {
 	return &fakeSNMP{
-		engineID:    "8000000b038825101761a7",
+		engineID:    "8000000b0302005e1061a7",
 		communities: map[string]string{},
 		groups:      map[string]string{},
 		users:       map[string][3]string{},
@@ -295,7 +295,7 @@ func wantIdentity() SNMPIdentity {
 // is THE fact this file contributes: a wrong code yields a user that exists
 // and never authenticates.
 func TestAuthAlgCode(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		alg      string
 		expected string
 		refuse   bool
@@ -311,8 +311,8 @@ func TestAuthAlgCode(t *testing.T) {
 		{"", "", true},
 		{"kangaroo", "", true},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got, err = authAlgCode(c.alg)
 		if c.refuse {
 			if err == nil {
@@ -326,10 +326,10 @@ func TestAuthAlgCode(t *testing.T) {
 	}
 }
 
-// TestPrivAlgCode: the enumeration trap is real — « none » is 0 for
+// TestPrivAlgCode: the enumeration trap is real — "none" is 0 for
 // authentication but 1 for privacy.
 func TestPrivAlgCode(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		alg      string
 		expected string
 		refuse   bool
@@ -340,8 +340,8 @@ func TestPrivAlgCode(t *testing.T) {
 		{"none", privCodeNone, false},
 		{"aes128", "", true},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got, err = privAlgCode(c.alg)
 		if c.refuse {
 			if err == nil {
@@ -354,12 +354,12 @@ func TestPrivAlgCode(t *testing.T) {
 		}
 	}
 	if privCodeNone == authCodeNone {
-		t.Error("« none » is not the same code for authentication and privacy: " +
+		t.Error("\"none\" is not the same code for authentication and privacy: " +
 			"confusing them would send a value outside the enumeration")
 	}
 }
 
-// TestApplySNMPRequestShape locks the « wcd » framework conventions applied to
+// TestApplySNMPRequestShape locks the "wcd" framework conventions applied to
 // SNMP sections: without the section list in the URL, or with the action as an
 // element rather than an attribute, the device answers 200 and does nothing.
 func TestApplySNMPRequestShape(t *testing.T) {
@@ -418,7 +418,7 @@ func TestApplySNMPRequestShape(t *testing.T) {
 		"<authenticationMethod>2</authenticationMethod>",
 		"<privacyMethod>2</privacyMethod>",
 		"<engineIDType>1</engineIDType>",
-		"<engineID>8000000b038825101761a7</engineID>",
+		"<engineID>8000000b0302005e1061a7</engineID>",
 	}
 	var s string
 	for _, s = range expected {
@@ -484,7 +484,7 @@ func TestApplySNMPDetectsWriteWithoutEffect(t *testing.T) {
 // is namable. A half-state where SNMP is open with no identity on it is worse
 // than no SNMP at all.
 func TestApplySNMPRejectsImpossibleAlgorithm(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name string
 		want SNMPIdentity
 	}{
@@ -502,8 +502,8 @@ func TestApplySNMPRejectsImpossibleAlgorithm(t *testing.T) {
 		{"community with space", SNMPIdentity{Community: "with space"}},
 		{"nothing to set", SNMPIdentity{}},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var srv = newSNMPSwitch(t, &seen, newFakeSNMP())
@@ -718,7 +718,7 @@ func TestSectionOfDoesNotMixSections(t *testing.T) {
 //
 // What these tests can prove, and what they cannot: writing receivers is a
 // RECONSTRUCTION deduced from the device bundle and never executed on hardware
-// (docs/01-Architecture/Connecteurs.md). A replayed device therefore cannot say
+// (docs/en/01-Architecture/Connectors.md). A replayed device therefore cannot say
 // the shape is correct — it only says what it was taught. What it does verify,
 // and what is worth it, is that the connector produces EXACTLY the observed
 // shape, never announces success without a reread, and that each known failure
@@ -727,11 +727,11 @@ func TestSectionOfDoesNotMixSections(t *testing.T) {
 // wantTrapV2c / wantTrapV3: the two reference receivers. Same collector address
 // in both cases — that is the proxy.
 func wantTrapV2c() TrapDestination {
-	return TrapDestination{Address: "10.99.200.9", Community: "mctrap"}
+	return TrapDestination{Address: "198.51.100.9", Community: "mctrap"}
 }
 
 func wantTrapV3() TrapDestination {
-	return TrapDestination{Address: "10.99.200.9", User: "mcpoll"}
+	return TrapDestination{Address: "198.51.100.9", User: "mcpoll"}
 }
 
 // fakeTrapReady makes a device ready to accept a receiver: SNMP enabled, and —
@@ -792,7 +792,7 @@ func TestApplyTrapReceiverBodyV2c(t *testing.T) {
 	var expected = `<?xml version='1.0' encoding='utf-8'?><DeviceConfiguration>` +
 		`<SNMPTrap action="set">` +
 		`<SNMPTrapReceiverList><SNMPTrapReceiverEntry>` +
-		`<receiverIPAddress>10.99.200.9</receiverIPAddress>` +
+		`<receiverIPAddress>198.51.100.9</receiverIPAddress>` +
 		`<UDPPortNo>162</UDPPortNo>` +
 		`<notificationType>1</notificationType>` +
 		`<timeout></timeout><retries></retries>` +
@@ -825,7 +825,7 @@ func TestApplyTrapReceiverBodyV2c(t *testing.T) {
 }
 
 // TestApplyTrapReceiverBodyV3: the other table, the other shape. There is no
-// « SNMPTrapV3 » section — it is `NotificationReceiverList`, without a prefix.
+// "SNMPTrapV3" section — it is `NotificationReceiverList`, without a prefix.
 func TestApplyTrapReceiverBodyV3(t *testing.T) {
 	var seen []captured
 	var f = fakeTrapReady()
@@ -846,7 +846,7 @@ func TestApplyTrapReceiverBodyV3(t *testing.T) {
 	var expected = `<?xml version='1.0' encoding='utf-8'?><DeviceConfiguration>` +
 		`<NotificationReceiverList action="set">` +
 		`<Receiver>` +
-		`<receiverIPAddress>10.99.200.9</receiverIPAddress>` +
+		`<receiverIPAddress>198.51.100.9</receiverIPAddress>` +
 		`<UDPPortNo>162</UDPPortNo>` +
 		`<notificationType>1</notificationType>` +
 		`<timeout></timeout><retries></retries>` +
@@ -864,7 +864,7 @@ func TestApplyTrapReceiverBodyV3(t *testing.T) {
 		t.Errorf("a v3 receiver carries no community: %s", c.body)
 	}
 	if strings.Contains(strings.Join(bodies(writes(seen)), "\n"), "SNMPTrapV3") {
-		t.Error("there is no « SNMPTrapV3 » section on this product line")
+		t.Error("there is no \"SNMPTrapV3\" section on this product line")
 	}
 	if len(f.v3) != 1 || f.v3[0].SecurityType != securityLevelAuthPriv {
 		t.Errorf("final device state: %+v", f.v3)
@@ -921,7 +921,7 @@ func TestApplyTrapReceiverConfigurablePort(t *testing.T) {
 func TestApplyTrapReceiverIdempotent(t *testing.T) {
 	var seen []captured
 	var f = fakeTrapReady()
-	f.v2c = []TrapReceiver{trapPresent("10.99.200.9")}
+	f.v2c = []TrapReceiver{trapPresent("198.51.100.9")}
 	var srv = newSNMPSwitch(t, &seen, f)
 
 	var res, err = adminOn(srv).ApplyTrapReceiver(context.Background(), wantTrapV2c())
@@ -944,38 +944,38 @@ func TestApplyTrapReceiverIdempotent(t *testing.T) {
 // means a write. The three divergences tested each cut telemetry differently,
 // and none show up on screen.
 func TestApplyTrapReceiverRewritesDivergentReceiver(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name    string
 		present TrapReceiver
 	}{
 		// A v1 receiver: the form default, and the collector will get nothing
 		// usable from it.
 		{"declared as SNMPv1", func() TrapReceiver {
-			var r = trapPresent("10.99.200.9")
+			var r = trapPresent("198.51.100.9")
 			r.SNMPVersion = snmpVersionV1
 			return r
 		}()},
 		// An Inform expects an acknowledgement the proxy does not send.
 		{"declared as Inform", func() TrapReceiver {
-			var r = trapPresent("10.99.200.9")
+			var r = trapPresent("198.51.100.9")
 			r.NotifyType = notifyTypeInform
 			return r
 		}()},
 		// An OID filter drops traps SILENTLY, including link traps.
 		{"with an attached filter", func() TrapReceiver {
-			var r = trapPresent("10.99.200.9")
+			var r = trapPresent("198.51.100.9")
 			r.Filter, r.FilterName = filterAttached, "seulement-poe"
 			return r
 		}()},
 		// Port: traps would leave for somewhere nobody listens.
 		{"on another port", func() TrapReceiver {
-			var r = trapPresent("10.99.200.9")
+			var r = trapPresent("198.51.100.9")
 			r.Port = "1620"
 			return r
 		}()},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var f = fakeTrapReady()
@@ -1000,20 +1000,20 @@ func TestApplyTrapReceiverRewritesDivergentReceiver(t *testing.T) {
 
 // TestApplyTrapReceiverDetectsWriteWithoutEffect is THE test of this batch.
 //
-// On this product line, `statusCode 0` does not mean « done »: it is a confirmed
+// On this product line, `statusCode 0` does not mean "done": it is a confirmed
 // failure mode. And here the write is a reconstruction never executed — success
 // announced without reread would therefore be monitoring announced on a mute
 // device, discovered only at the first undetected outage.
 func TestApplyTrapReceiverDetectsWriteWithoutEffect(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name string
 		want TrapDestination
 	}{
 		{"v2c", wantTrapV2c()},
 		{"v3", wantTrapV3()},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var f = fakeTrapReady()
@@ -1049,7 +1049,7 @@ func TestApplyTrapReceiverDetectsWriteWithoutEffect(t *testing.T) {
 // add, and nothing on the client declares it. The error must therefore carry
 // the measurement, not merely fail.
 func TestApplyTrapReceiverFullTable(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name   string
 		refuse string
 		deaf   bool
@@ -1061,14 +1061,14 @@ func TestApplyTrapReceiverFullTable(t *testing.T) {
 		// matters — otherwise the ceiling would stay invisible.
 		{"silent refusal", "", true, true},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var f = fakeTrapReady()
 			// Two receivers already present at other addresses: the table works,
 			// so the write gesture is not at fault.
-			f.v2c = []TrapReceiver{trapPresent("10.99.200.7"), trapPresent("10.99.200.8")}
+			f.v2c = []TrapReceiver{trapPresent("198.51.100.7"), trapPresent("198.51.100.8")}
 			f.refuse, f.deaf = c.refuse, c.deaf
 			var srv = newSNMPSwitch(t, &seen, f)
 
@@ -1152,7 +1152,7 @@ func TestApplyTrapReceiverReplacesDivergentV3User(t *testing.T) {
 	var seen []captured
 	var f = fakeTrapReady()
 	f.v3 = []TrapReceiver{{
-		Address: "10.99.200.9", Port: "162", NotifyType: notifyTypeTrap,
+		Address: "198.51.100.9", Port: "162", NotifyType: notifyTypeTrap,
 		User: "ancien", SecurityType: securityLevelAuthPriv, Filter: filterNone,
 	}}
 	var srv = newSNMPSwitch(t, &seen, f)
@@ -1186,7 +1186,7 @@ func TestApplyTrapReceiverReplacesDivergentV3User(t *testing.T) {
 	// no entry and deletion would succeed without deleting anything.
 	var del = writes(seen)[delAt]
 	var expectedKey = []string{
-		"<receiverIPAddress>10.99.200.9</receiverIPAddress>",
+		"<receiverIPAddress>198.51.100.9</receiverIPAddress>",
 		"<notificationType>1</notificationType>",
 		"<userName>ancien</userName>",
 		"<securityType>3</securityType>",
@@ -1210,8 +1210,8 @@ func TestApplyTrapReceiverDetectsDuplicate(t *testing.T) {
 	var seen []captured
 	var f = fakeTrapReady()
 	f.duplicate = true
-	var present = trapPresent("10.99.200.9")
-	present.Community = "autre" // divergent, so a rewrite is needed
+	var present = trapPresent("198.51.100.9")
+	present.Community = "other" // divergent, so a rewrite is needed
 	f.v2c = []TrapReceiver{present}
 	var srv = newSNMPSwitch(t, &seen, f)
 
@@ -1249,7 +1249,7 @@ func TestApplyTrapReceiverDetectsSNMPVersion1(t *testing.T) {
 // namable. A half-valid receiver is worse than no receiver — it suggests a
 // channel in service.
 func TestApplyTrapReceiverRejectsBeforeWrite(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name string
 		want TrapDestination
 	}{
@@ -1259,20 +1259,20 @@ func TestApplyTrapReceiverRejectsBeforeWrite(t *testing.T) {
 		{"loopback", TrapDestination{Address: "127.0.0.1", Community: "mctrap"}},
 		{"multicast", TrapDestination{Address: "224.0.0.1", Community: "mctrap"}},
 		{"port out of range", TrapDestination{
-			Address: "10.99.200.9", Community: "mctrap", Port: 70000}},
+			Address: "198.51.100.9", Community: "mctrap", Port: 70000}},
 		// Neither: there is nothing to declare.
-		{"no identity", TrapDestination{Address: "10.99.200.9"}},
+		{"no identity", TrapDestination{Address: "198.51.100.9"}},
 		// Both: tables are distinct, and the device would emit every event
 		// twice toward the same collector.
 		{"both identities", TrapDestination{
-			Address: "10.99.200.9", Community: "mctrap", User: "mcpoll"}},
-		{"community too long", TrapDestination{Address: "10.99.200.9",
+			Address: "198.51.100.9", Community: "mctrap", User: "mcpoll"}},
+		{"community too long", TrapDestination{Address: "198.51.100.9",
 			Community: strings.Repeat("x", communityMaxLen+1)}},
 		{"user with space", TrapDestination{
-			Address: "10.99.200.9", User: "with space"}},
+			Address: "198.51.100.9", User: "with space"}},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var srv = newSNMPSwitch(t, &seen, fakeTrapReady())
@@ -1295,7 +1295,7 @@ func TestApplyTrapReceiverRejectsBeforeWrite(t *testing.T) {
 // does not set them: a field no UI path writes is a field whose write acceptance
 // is unknown.
 func TestApplyTrapReceiverRejectsMuteEquipment(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name    string
 		prepare func(*fakeSNMP)
 		want    TrapDestination
@@ -1308,8 +1308,8 @@ func TestApplyTrapReceiverRejectsMuteEquipment(t *testing.T) {
 		{"v1/v2c table disabled", func(f *fakeSNMP) { f.v1v2Enabled = snmpDisabledCode },
 			wantTrapV2c(), "enabled"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var f = fakeTrapReady()
@@ -1331,8 +1331,8 @@ func TestApplyTrapReceiverRejectsMuteEquipment(t *testing.T) {
 	}
 }
 
-// TestApplyTrapReceiverMissingSwitchIsNotRefusal: « field absent » and
-// « field set to 2 » are not the same. Refusing on absence would cut the trap
+// TestApplyTrapReceiverMissingSwitchIsNotRefusal: "field absent" and
+// "field set to 2" are not the same. Refusing on absence would cut the trap
 // channel on any firmware that does not render the field, when nothing was
 // observed — so the caveat goes in the result, not in a refusal.
 func TestApplyTrapReceiverMissingSwitchIsNotRefusal(t *testing.T) {
@@ -1397,9 +1397,9 @@ func TestApplyTrapReceiverSavesToFlash(t *testing.T) {
 func TestReadTrapReceiversReadsBothTablesInOneRequest(t *testing.T) {
 	var seen []captured
 	var f = fakeTrapReady()
-	f.v2c = []TrapReceiver{trapPresent("10.99.200.7")}
+	f.v2c = []TrapReceiver{trapPresent("198.51.100.7")}
 	f.v3 = []TrapReceiver{{
-		Address: "10.99.200.8", Port: "1620", NotifyType: notifyTypeInform,
+		Address: "198.51.100.8", Port: "1620", NotifyType: notifyTypeInform,
 		User: "collecteur", SecurityType: securityLevelAuthNoPriv,
 		Filter: filterAttached, FilterName: "seulement-poe",
 	}}

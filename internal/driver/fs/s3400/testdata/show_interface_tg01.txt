@@ -1,0 +1,41 @@
+show interface tg0/1
+TGigaEthernet0/1 is up, line protocol is up
+  protocolstatus upTimes 4, downTimes 3, last transition 2000-1-1 2:23:51
+  Ifindex is 177, unique port number is 49
+  Hardware is 10Giga-FX-SFP, address is 649d.9922.7bc6 (bia 649d.9922.7bc6)
+  MTU 1500 bytes, BW 10000000 kbit, DLY 10 usec
+  Encapsulation ARPA
+  Full-duplex,  10000Mb/s,  Flow-Control Off
+Transceiver Info:
+    SFP,LC,1330nm,10000BASE-FX,LOS:no
+    SM 20KM
+    DDM:YES,Vend:FS,PN:SFP-10G-BX
+    SerialNum:G2210006755,Date:2022-02-28
+DDM info:
+    TX power:-2.08 dBm, RX power:-1.85 dBm
+    SFP temperature:46.00 C,supply voltage :3.26V,Bias Current.:35.61mA
+
+  DDM Thresholds:        Low-Alarm    Low-Warning   High-Warning  High-Alarm
+  TX power(dBm):           -10.00        -8.50         0.50         2.00
+  RX power(dBm):           -16.50       -14.50         0.50         2.50
+  SFP temperature(C):         -43          -40           85           88
+  Supply voltage(v):         2.97         3.13         3.46         3.63
+  Bias Current(mA):         10.00        15.00        85.00        90.00
+  5 minutes input rate 7938 bits/sec, 2 packets/sec
+  5 minutes output rate 92098 bits/sec, 178 packets/sec
+  Real time input rate 0%, 5555 bits/sec, 1 packets/sec
+  Real time output rate 0%, 2077 bits/sec, 2 packets/sec
+     Received 162719 packets, 62272153 bytes
+     967 broadcasts, 1853 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 CRC, 0 undersize, 0 oversize
+     0 fragment, 0 jabber
+     1800 Pkts64, 107143 Pkts65, 7779 Pkts128
+     237 Pkts256, 25381 Pkts512, 13403 Pkts1024
+     Transmitted 16035091 packets, 1050188383 bytes
+     15828453 broadcasts, 46438 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 collision
+     15877480 Pkts64, 119107 Pkts65, 21847 Pkts128
+     3913 Pkts256, 661 Pkts512, 12050 Pkts1024
+Switch#

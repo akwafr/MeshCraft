@@ -2,7 +2,7 @@
  * Save-flow checks for the FS S3900 soft reset (lab OpCode 1.7.0):
  *   node --experimental-strip-types src/pages/add/fsS3900SoftReset.test.ts
  *
- * « copy running-config startup-config » prompts for a startup FILE NAME —
+ * "copy running-config startup-config" prompts for a startup FILE NAME —
  * not y/n. The script must answer it, then wait for the flash Success line.
  */
 import assert from "node:assert/strict";

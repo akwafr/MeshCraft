@@ -1,0 +1,226 @@
+{
+  "$comment": "GENERATED from meshcraft/wire/agentv1 by tools/mdpschema — do not edit; the Go types are the source of truth.",
+  "components": {
+    "schemas": {
+      "EnrollRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "token"
+        ],
+        "type": "object"
+      },
+      "EnrollResponse": {
+        "properties": {
+          "controller_url": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "proxy_id": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "controller_url",
+          "proxy_id",
+          "secret",
+          "status"
+        ],
+        "type": "object"
+      },
+      "HeartbeatRequest": {
+        "properties": {
+          "arch": {
+            "type": "string"
+          },
+          "ifaces": {},
+          "os": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "integer"
+          },
+          "proxy_id": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "upgrade": {
+            "$ref": "#/components/schemas/UpgradeReport"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "arch",
+          "os",
+          "protocol",
+          "proxy_id",
+          "secret",
+          "version"
+        ],
+        "type": "object"
+      },
+      "HeartbeatResponse": {
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "migrate": {
+            "$ref": "#/components/schemas/MigrateOrder"
+          },
+          "status": {
+            "type": "string"
+          },
+          "upgrade": {
+            "$ref": "#/components/schemas/UpgradeOffer"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "MetricsRequest": {
+        "properties": {
+          "proxy_id": {
+            "type": "string"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/Sample"
+            },
+            "type": "array"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "proxy_id",
+          "samples",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "MigrateOrder": {
+        "properties": {
+          "controller_url": {
+            "type": "string"
+          },
+          "enroll_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "controller_url",
+          "enroll_token"
+        ],
+        "type": "object"
+      },
+      "MigratedRequest": {
+        "properties": {
+          "new_controller": {
+            "type": "string"
+          },
+          "proxy_id": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_controller",
+          "proxy_id",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "Sample": {
+        "properties": {
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "ts",
+          "value"
+        ],
+        "type": "object"
+      },
+      "UpgradeOffer": {
+        "properties": {
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "size",
+          "url",
+          "version"
+        ],
+        "type": "object"
+      },
+      "UpgradeReport": {
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "version"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}

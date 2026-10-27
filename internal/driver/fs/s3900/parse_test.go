@@ -4,7 +4,11 @@ package s3900
 // session (OpCode 1.7.0). A firmware that changes the format breaks here, and
 // that is intended: the post-upgrade dialect is a different command set.
 
-import "testing"
+import (
+	"testing"
+
+	"meshcraft/internal/driver"
+)
 
 const labBrief = `Interface Type         Admin  Link-Status  Negotiation  Speed/Duplex   Group
 ------------------------------------------------------------------------- -----
@@ -47,7 +51,7 @@ interface vlan 1
  ip add dhcp
 !
 interface vlan 99
- ip add 10.99.0.240 255.255.0.0
+ ip add 192.0.2.240 255.255.0.0
 !
 interface craft
  ip add 192.168.1.1 255.255.255.0
@@ -55,7 +59,7 @@ interface craft
 dns name-server 10.100.0.1
 dns domain-lookup
 !
-ip route 0.0.0.0 0.0.0.0 10.99.0.1
+ip route 0.0.0.0 0.0.0.0 192.0.2.1
 !
 ip ssh server enable
 !
@@ -163,7 +167,7 @@ func TestCLIPortNameRoundTrip(t *testing.T) {
 }
 
 func TestParseRunningConfig(t *testing.T) {
-	var rc = parseRunningConfig(labRun)
+	var rc = parseRunningConfig(labRun, "")
 	if rc.Hostname != "test-fs-s3900" {
 		t.Errorf("hostname=%q", rc.Hostname)
 	}
@@ -191,10 +195,10 @@ func TestParseRunningConfig(t *testing.T) {
 	if rc.MgmtVLAN != 99 {
 		t.Errorf("mgmt vlan=%d", rc.MgmtVLAN)
 	}
-	if rc.Mgmt.Mode != "static" || rc.Mgmt.Address != "10.99.0.240/16" {
+	if rc.Mgmt.Mode != "static" || rc.Mgmt.Address != "192.0.2.240/16" {
 		t.Errorf("mgmt=%+v", rc.Mgmt)
 	}
-	if rc.Mgmt.Gateway != "10.99.0.1" {
+	if rc.Mgmt.Gateway != "192.0.2.1" {
 		t.Errorf("gateway=%q", rc.Mgmt.Gateway)
 	}
 	if len(rc.Mgmt.DNS) != 1 || rc.Mgmt.DNS[0] != "10.100.0.1" {
@@ -203,6 +207,49 @@ func TestParseRunningConfig(t *testing.T) {
 
 	if rc.Communities["public"] != "ro" || rc.Communities["private"] != "rw" {
 		t.Errorf("communities=%v", rc.Communities)
+	}
+}
+
+// TestAccountsMergeTheTwoLinesThisPlatformWritesPerAccount.
+//
+// The lab capture (OpCode 1.7.0, pinned in labRun) spreads ONE account over TWO
+// "username" lines — which is also the shape EnsureAccount writes:
+//
+//	username admin privilege 15
+//	username admin password 7 aabbccddeeff00112233445566778899
+//
+// An enumeration that kept the first row per name and moved on would report
+// `admin` as having no stated privilege while the configuration states it
+// plainly one line away. They are merged, and the read stays the single
+// "show run" it always was.
+func TestAccountsMergeTheTwoLinesThisPlatformWritesPerAccount(t *testing.T) {
+	var got = parseRunAccounts(labRun)
+	if len(got) != 1 {
+		t.Fatalf("two lines are ONE account: %+v", got)
+	}
+	if got[0].Name != "admin" || got[0].Privilege != 15 ||
+		got[0].Authority != driver.AuthorityFull {
+		t.Errorf("account = %+v, want admin at privilege 15", got[0])
+	}
+	// The merge must work in the order the device prints, and in the other one:
+	// a firmware that emitted the password line first must not lose the rank.
+	var swapped = parseRunAccounts("username bob password 7 aabb\nusername bob privilege 15\n")
+	if len(swapped) != 1 || swapped[0].Privilege != 15 {
+		t.Errorf("swapped = %+v — the row that states the rank wins whichever "+
+			"order it arrives in", swapped)
+	}
+}
+
+// An account the configuration never ranks reads UNKNOWN — not 0, which is a
+// real level on this CLI, and not the documented default either.
+func TestAccountWithoutAPrivilegeLineReadsUnknown(t *testing.T) {
+	var got = parseRunAccounts("username lecteur password 7 aabbcc\n")
+	if len(got) != 1 {
+		t.Fatalf("accounts = %+v", got)
+	}
+	if got[0].Privilege != driver.PrivilegeUnknown ||
+		got[0].Authority != driver.AuthorityUnknown {
+		t.Errorf("%+v: no \"privilege\" line anywhere, so NOT STATED", got[0])
 	}
 }
 

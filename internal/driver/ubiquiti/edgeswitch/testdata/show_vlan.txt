@@ -1,0 +1,6 @@
+show vlan
+
+VLAN ID VLAN Name                        VLAN Type
+------- -------------------------------- -------------------
+1       default                          Default
+99      LAN99_Management                 Static

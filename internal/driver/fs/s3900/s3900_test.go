@@ -3,12 +3,12 @@ package s3900
 import "testing"
 
 func TestMgmtPushCmdsLabSession(t *testing.T) {
-	var cmds = MgmtPushCmds(MgmtOpts{
+	var cmds, _ = MgmtPushCmds(MgmtOpts{
 		VlanID:         99,
 		VlanName:       "LAN99_Management",
-		IP:             "10.99.0.240",
+		IP:             "192.0.2.240",
 		PrefixLen:      16,
-		Gateway:        "10.99.0.1",
+		Gateway:        "192.0.2.1",
 		Username:       "mcadmin",
 		Password:       "Mc8e03481e067aZz9",
 		EnablePassword: "Mc8e03481e067aZz9",
@@ -23,9 +23,9 @@ func TestMgmtPushCmdsLabSession(t *testing.T) {
 		"vlan 99 name LAN99_Management media ethernet",
 		"exit",
 		"interface vlan 99",
-		"ip add 10.99.0.240/16",
+		"ip add 192.0.2.240/16",
 		"exit",
-		"ip route 0.0.0.0 0.0.0.0 10.99.0.1",
+		"ip route 0.0.0.0 0.0.0.0 192.0.2.1",
 		"ip http server",
 		"ip ssh server enable",
 		"interface Eth 1/25-28",
@@ -40,7 +40,7 @@ func TestMgmtPushCmdsLabSession(t *testing.T) {
 		"enable password 0 Mc8e03481e067aZz9",
 		"end",
 		"copy running-config startup-config",
-		// Answer to « Startup configuration file name: » (lab OpCode 1.7.0) —
+		// Answer to "Startup configuration file name:" (lab OpCode 1.7.0) —
 		// explicit so a default never points the save at Factory_Default_Config.cfg.
 		"startup1.cfg",
 	}

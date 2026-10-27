@@ -10,7 +10,7 @@ import (
 
 // LLDP neighborhood in the database: two tables, no derivation.
 //
-// See migration 0028 for the schema and docs/01-Architecture/Voisinage LLDP.md for
+// See migration 0028 for the schema and docs/en/01-Architecture/LLDP neighbours.md for
 // the survey. This file only writes OBSERVATIONS and draws no conclusions: matching
 // a neighbor to a fleet device and deriving a link are pure functions in the `api`
 // package, where they are testable without a database.
@@ -53,16 +53,22 @@ func (s *Store) ReplaceLLDP(ctx context.Context, self model.LLDPSelf,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Source defaults to the historical path: everything written before the
+	// CLI gesture existed came from the poller, and a caller that does not
+	// say otherwise still does.
+	if self.Source == "" {
+		self.Source = "snmp"
+	}
 	if _, err = tx.Exec(ctx,
 		`insert into lldp_self (device_id, site_id, chassis_id, sys_name, port_ids,
-		                        served, seen_at)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, now())
+		                        served, source, seen_at)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, now())
 		 on conflict (device_id) do update set
 		     site_id = excluded.site_id, chassis_id = excluded.chassis_id,
 		     sys_name = excluded.sys_name, port_ids = excluded.port_ids,
-		     served = excluded.served, seen_at = now()`,
+		     served = excluded.served, source = excluded.source, seen_at = now()`,
 		self.DeviceID, self.SiteID, self.ChassisID, self.SysName, self.PortIDs,
-		self.Served); err != nil {
+		self.Served, self.Source); err != nil {
 		return err
 	}
 
@@ -176,7 +182,7 @@ func (s *Store) ListLLDPNeighbors(ctx context.Context,
 func (s *Store) ListLLDPSelf(ctx context.Context, siteID string) ([]model.LLDPSelf, error) {
 	var rows, err = s.pool.Query(ctx,
 		`select device_id::text, site_id::text, chassis_id, sys_name, port_ids,
-		        served, seen_at
+		        served, source, seen_at
 		 from lldp_self where site_id = $1::uuid order by device_id`, siteID)
 	if err != nil {
 		return nil, err
@@ -186,10 +192,28 @@ func (s *Store) ListLLDPSelf(ctx context.Context, siteID string) ([]model.LLDPSe
 	for rows.Next() {
 		var one model.LLDPSelf
 		if err = rows.Scan(&one.DeviceID, &one.SiteID, &one.ChassisID, &one.SysName,
-			&one.PortIDs, &one.Served, &one.SeenAt); err != nil {
+			&one.PortIDs, &one.Served, &one.Source, &one.SeenAt); err != nil {
 			return nil, err
 		}
 		out = append(out, one)
 	}
 	return out, rows.Err()
+}
+
+// GetLLDPSelf returns ONE device's announced-identity row.
+//
+// Exists for the arbitration between the two write paths (cf. migration
+// 0037): before storing an SNMP snapshot, `handleProxyLLDP` must know whether
+// the row it would replace was written by the CLI gesture. The DECISION does
+// not live here — it is a pure function (`api.snmpSnapshotOverrides`), same
+// split as ReplaceLLDP's own header prescribes.
+func (s *Store) GetLLDPSelf(ctx context.Context, deviceID string) (model.LLDPSelf, error) {
+	var one model.LLDPSelf
+	var err = s.pool.QueryRow(ctx,
+		`select device_id::text, site_id::text, chassis_id, sys_name, port_ids,
+		        served, source, seen_at
+		 from lldp_self where device_id = $1::uuid`, deviceID).
+		Scan(&one.DeviceID, &one.SiteID, &one.ChassisID, &one.SysName,
+			&one.PortIDs, &one.Served, &one.Source, &one.SeenAt)
+	return one, notFound(err)
 }

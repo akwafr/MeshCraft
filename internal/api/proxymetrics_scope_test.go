@@ -57,36 +57,36 @@ func pmDevices(samples []metricbuf.Sample) []string {
 
 func TestMetricsEntrustedBatchPassesIntact(t *testing.T) {
 	var s = serverWithScope(t, "px-a", twoSites())
-	var lot = []metricbuf.Sample{
+	var batch = []metricbuf.Sample{
 		pmSample("sw-a1", "GE1", 12),
 		pmSample("sw-a1", "GE2", 34),
 		pmSample("sw-a1", "GE3", 56),
 	}
-	var kept, drop = s.scopedSamples("px-a", lot)
+	var kept, drop = s.scopedSamples("px-a", batch)
 
 	if drop.total() != 0 {
 		t.Fatalf("a fully entrusted batch loses nothing: %d dropped (%d out of scope, "+
 			"%d unlabelled)", drop.total(), drop.refused, drop.unlabelled)
 	}
-	if len(kept) != len(lot) {
+	if len(kept) != len(batch) {
 		t.Fatalf("%d samples of %d: curves for a fleet in service stop",
-			len(kept), len(lot))
+			len(kept), len(batch))
 	}
-	if &kept[0] != &lot[0] {
+	if &kept[0] != &batch[0] {
 		t.Error("batch was copied though nothing was dropped: useless allocation on hot path")
 	}
 }
 
 func TestMetricsMixedBatchKeepsAllowedDropsRest(t *testing.T) {
 	var s = serverWithScope(t, "px-a", twoSites())
-	var lot = []metricbuf.Sample{
+	var batch = []metricbuf.Sample{
 		pmSample("sw-a1", "GE1", 1),
 		pmSample("sw-b1", "GE1", 2),
 		pmSample("sw-a1", "GE2", 3),
 		pmSample("sw-a2", "GE1", 4),
 		pmSample("sw-a1", "GE3", 5),
 	}
-	var kept, drop = s.scopedSamples("px-a", lot)
+	var kept, drop = s.scopedSamples("px-a", batch)
 
 	if strings.Join(pmDevices(kept), ",") != "sw-a1,sw-a1,sw-a1" {
 		t.Fatalf("only collected device samples must pass, in order: %v", pmDevices(kept))
@@ -99,21 +99,21 @@ func TestMetricsMixedBatchKeepsAllowedDropsRest(t *testing.T) {
 		t.Errorf("drops = %d out of scope and %d unlabelled, expected 2 and 0",
 			drop.refused, drop.unlabelled)
 	}
-	if len(lot) != 5 || lot[1].Labels["device"] != "sw-b1" {
-		t.Errorf("input batch modified in place: %v", pmDevices(lot))
+	if len(batch) != 5 || batch[1].Labels["device"] != "sw-b1" {
+		t.Errorf("input batch modified in place: %v", pmDevices(batch))
 	}
 }
 
 func TestMetricsUnlabelledSampleDropped(t *testing.T) {
 	var s = serverWithScope(t, "px-a", twoSites())
-	var lot = []metricbuf.Sample{
+	var batch = []metricbuf.Sample{
 		pmSample("sw-a1", "GE1", 1),
 		{Name: "meshcraft_if_in_octets_total",
 			Labels: map[string]string{"device": "", "port": "GE9"}, Value: 999},
 		{Name: "meshcraft_if_in_octets_total", Value: 999},
 		pmSample("sw-a1", "GE2", 2),
 	}
-	var kept, drop = s.scopedSamples("px-a", lot)
+	var kept, drop = s.scopedSamples("px-a", batch)
 
 	if len(kept) != 2 {
 		t.Fatalf("%d samples kept, expected the 2 labelled: %v",
@@ -136,8 +136,8 @@ func TestMetricsUnlabelledSampleDropped(t *testing.T) {
 
 func TestMetricsProxyWithoutInstructionWritesNothing(t *testing.T) {
 	var s = &Server{proxyScopes: newProxyScopes()}
-	var lot = []metricbuf.Sample{pmSample("sw-a1", "GE1", 1), pmSample("sw-a1", "GE2", 2)}
-	var kept, drop = s.scopedSamples("px-jamais-vu", lot)
+	var batch = []metricbuf.Sample{pmSample("sw-a1", "GE1", 1), pmSample("sw-a1", "GE2", 2)}
+	var kept, drop = s.scopedSamples("px-never-seen", batch)
 	if len(kept) != 0 || drop.refused != 2 {
 		t.Fatalf("proxy with no pushed instruction writes nothing: %d kept, %d refused",
 			len(kept), drop.refused)
@@ -155,16 +155,16 @@ func TestMetricsMissingScopeRefusesAll(t *testing.T) {
 
 func TestMetricsOneDecisionPerDevice(t *testing.T) {
 	var s = serverWithScope(t, "px-a", twoSites())
-	var lot = make([]metricbuf.Sample, 0, 3000)
+	var batch = make([]metricbuf.Sample, 0, 3000)
 	var i int
 	for i = 0; i < 3000; i++ {
 		var id = "sw-b1"
 		if i%2 == 1 {
 			id = "sw-a2"
 		}
-		lot = append(lot, pmSample(id, "GE1", float64(i)))
+		batch = append(batch, pmSample(id, "GE1", float64(i)))
 	}
-	var kept, drop = s.scopedSamples("px-a", lot)
+	var kept, drop = s.scopedSamples("px-a", batch)
 	if len(kept) != 0 || drop.refused != 3000 {
 		t.Fatalf("%d kept and %d refused: sample drop count must be exact for response",
 			len(kept), drop.refused)

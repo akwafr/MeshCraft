@@ -19,7 +19,7 @@ import (
 // twenty-one real captures exercise them — but the API layer had no path to talk
 // to it: it hard-coded `instanton.OpenAdmin`. The result is not hypothetical, it
 // is confirmed: adopting the CRS326 triggered an SNMP apply over the Instant On
-// protocol toward it, `https://10.99.0.54/`, connection refused because that
+// protocol toward it, `https://192.0.2.54/`, connection refused because that
 // device does not listen on 443. Nothing was written because TCP failed; the
 // gesture itself had still been sent.
 //
@@ -300,6 +300,12 @@ func (c *Client) authProbe(ctx context.Context) (int, error) {
 // Declaring intents whose code never ran would promise the same thing twice. The
 // detail of what the platform WOULD do, menu by menu, is in capabilities.go.
 func (d *Driver) WritesExtra(name string) bool { return WritesExtra(name) }
+
+// Supports: the optional gestures of this platform, computed from the method
+// sets and never listed by hand — see driver.GesturesOf.
+func (d *Driver) Supports() []driver.Gesture {
+	return driver.GesturesOf(d, (*Client)(nil))
+}
 
 // --- Administration access ---
 

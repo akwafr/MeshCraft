@@ -49,6 +49,17 @@ func bridgeSTPFields(plan driver.SpanningTreePlan) (fields map[string]string, sk
 //   - /interface/bridge/port `edge`, `path-cost`
 func (c *Client) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreePlan) (driver.ApplyResult, error) {
 	var out driver.ApplyResult
+	// SuperRoot is not carried here: RouterOS takes a bridge `priority` and has no
+	// "root super" equivalent, and writing 0 on the operator's behalf would make
+	// this bridge the root of the whole L2 domain — a topology change the checkbox
+	// was designed to make on an Arista, not here. Said rather than dropped, per
+	// driver.SpanningTreePlan.SuperRoot.
+	if plan.SuperRoot {
+		out.Skipped = append(out.Skipped,
+			"SUPER ROOT not applied: this connector does not implement it. RouterOS "+
+				"expresses the same idea as a bridge priority of 0 and has no dedicated "+
+				"keyword; set the priority explicitly if this bridge must be root")
+	}
 	var bridges, err = c.List(ctx, "interface/bridge")
 	if err != nil {
 		return out, fmt.Errorf("list interface/bridge: %w", err)

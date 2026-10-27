@@ -18,7 +18,7 @@ func countPerAccount(t *testing.T, names []string, operator string, gens []genSe
 }
 
 // TestCandidatesRespectPerAccountCap: "two tries per account, immediate stop
-// beyond" (docs/03-Security/Service identity and rotation §5).
+// beyond" (docs/en/03-Security/Service identity and rotation.md §5).
 //
 // The cap protects against account lockout. On a range without SSH or serial
 // port, a locked account is fixed by moving on: that is the spec rule that is
@@ -98,8 +98,8 @@ func TestAccountNamesOrderedAndDeduped(t *testing.T) {
 // from four guessed candidates while the one observed pair was never tried.
 func TestDiscoveryOriginPairSurvivesTheBudget(t *testing.T) {
 	var gens = []genSecret{
-		{Why: "discovery credential that opened the device (« akwa »)",
-			Secret: "AkwaSecret1", Username: "admin"},
+		{Why: "discovery credential that opened the device (\"lab\")",
+			Secret: "LabSecret1", Username: "admin"},
 		{Why: "generation stepped back: device may not be updated yet", Secret: "gen2"},
 		{Why: "generation stepped back: device may not be updated yet", Secret: "gen1"},
 	}
@@ -108,7 +108,7 @@ func TestDiscoveryOriginPairSurvivesTheBudget(t *testing.T) {
 	if len(c) < 2 {
 		t.Fatalf("candidates=%v", c)
 	}
-	if c[0].Username != "admin" || c[0].Secret != "AkwaSecret1" {
+	if c[0].Username != "admin" || c[0].Secret != "LabSecret1" {
 		t.Fatalf("the observed pair must be tried FIRST, got %+v", c[0])
 	}
 	// Factory reserve still holds: last candidate is admin with empty secret.

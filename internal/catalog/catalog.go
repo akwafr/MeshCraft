@@ -4,7 +4,7 @@
 // templates for mocking a site and validating the data model — NOT for
 // driving real equipment. When connectors arrive, this catalog will be
 // fed by the driver registry (a model catalog per platform, cf.
-// docs/01-Architecture/Connectors).
+// docs/en/01-Architecture/Connectors.md).
 package catalog
 
 import "encoding/json"

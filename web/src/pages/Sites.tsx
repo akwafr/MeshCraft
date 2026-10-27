@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { viewerDate } from "../ui/clock";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { sitePath } from "../paths";
 import { del, get, patch, post, type Site } from "../api";
 import { useAuth } from "../auth";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal } from "../components";
+import { ActionButton, ErrorMsg, Field, Modal } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 
 export default function Sites() {
   const { t, i18n } = useTranslation();
@@ -14,6 +16,13 @@ export default function Sites() {
   const [editing, setEditing] = useState<Site | "new" | null>(null);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  // The site's local DNS domain. It used to be a constant compiled into the
+  // Cisco connector ("meshcraft.local") and pushed onto every switch of every
+  // site — and it is not an internal detail: the device carries it in its own
+  // FQDN afterwards, which the lab's LLDP neighbours show verbatim
+  // ("CiscoLabFirst1.meshcraft.local"). A site that already has a domain was
+  // getting equipment announcing one that resolves nowhere.
+  const [domain, setDomain] = useState("");
 
   const { data: sites, error } = useQuery({
     queryKey: ["sites"],
@@ -29,6 +38,12 @@ export default function Sites() {
         : patch<Site>(`/api/sites/${(editing as Site).id}`, {
             name,
             slug: slug.trim() || undefined,
+            // ALWAYS SENT, including empty. The API reads this field as a
+            // pointer so it carries three states — absent leaves the domain
+            // alone, a value sets it, "" means "this site has no domain" — and
+            // omitting it on a rename would make the last state unreachable
+            // from this form.
+            local_domain: domain.trim(),
           }),
     onSuccess: () => {
       invalidate();
@@ -45,6 +60,7 @@ export default function Sites() {
     setEditing(s);
     setName(s === "new" ? "" : s.name);
     setSlug(s === "new" ? "" : s.slug);
+    setDomain(s === "new" ? "" : (s.local_domain ?? ""));
     save.reset();
   };
 
@@ -72,7 +88,7 @@ export default function Sites() {
                 <th>{t("common.name")}</th>
                 <th>{t("sites.slugCol")}</th>
                 <th>{t("sites.createdOn")}</th>
-                <th style={{ width: 220 }}></th>
+                <th className="col-actions"></th>
               </tr>
             </thead>
             <tbody>
@@ -83,15 +99,19 @@ export default function Sites() {
                   </td>
                   <td className="mono note">{s.slug}</td>
                   <td className="note">
-                    {new Date(s.created_at).toLocaleDateString(i18n.language)}
+                    {(viewerDate(s.created_at) ?? new Date(s.created_at)).toLocaleDateString(i18n.language)}
                   </td>
-                  <td style={{ textAlign: "right" }}>
-                    <ActionButton kind="rename" className="ghost" onClick={() => open(s)}>
-                      {t("common.rename")}
-                    </ActionButton>
-                    {user?.is_global_admin && (
-                      <DeleteButton onConfirm={() => remove.mutate(s.id)} />
-                    )}
+                  <td className="col-actions">
+                    <div className="icon-actions">
+                      <IconAction
+                        kind="rename"
+                        label={t("common.rename") as string}
+                        onClick={() => open(s)}
+                      />
+                      {user?.is_global_admin && (
+                        <IconDeleteButton onConfirm={() => remove.mutate(s.id)} />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -118,6 +138,19 @@ export default function Sites() {
                 value={slug}
                 onChange={(e) => setSlug(e.target.value.toLowerCase())}
                 placeholder={t("sites.slugPlaceholder") as string}
+              />
+            </Field>
+          )}
+          {editing !== "new" && (
+            <Field
+              label={t("sites.domainLabel") as string}
+              help={<p>{t("sites.domainHelp")}</p>}
+            >
+              <input
+                className="mono"
+                value={domain}
+                onChange={(e) => setDomain(e.target.value.toLowerCase())}
+                placeholder={t("sites.domainPlaceholder") as string}
               />
             </Field>
           )}

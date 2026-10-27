@@ -1,13 +1,13 @@
 // Package debuglog keeps the latest log lines of the APPLICATION in memory
 // and streams them live.
 //
-// Not to be confused with the [[Journal d'evenements]] (event log), which
+// Not to be confused with the [[Event log]], which
 // speaks to the operator about the FLEET. Here we're talking to meshcraft
 // itself about its own diagnostics: "instanton connector: HTTP 200 with no
 // state code" doesn't matter to the administrator of a site, but it's the
 // one thing that matters when trying to figure out why a deployment fails.
 //
-// See docs/01-Architecture/Monitoring unifie et pipelines §6.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md §6.
 //
 // IN MEMORY, never in the database. A debug log that gets written to the
 // database adds load at the exact moment when something is going wrong —

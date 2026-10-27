@@ -10,80 +10,80 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// Identification d'un switch SwOS — et la bonne surprise de cette plateforme.
+// Identifying a SwOS switch — and this platform's good surprise.
 //
-// SwOS livre la REFERENCE EXACTE DU MODEL sans aucun identifiant. Son challenge
-// d'authentification HTTP porte le model dans son `realm` :
+// SwOS hands out the EXACT MODEL REFERENCE without any credentials. Its HTTP
+// authentication challenge carries the model in its `realm`:
 //
-//	$ GET /sys.b (sans identifiants)
+//	$ GET /sys.b (without credentials)
 //	HTTP/1.1 401 Unauthorized
 //	WWW-Authenticate: Digest realm="CSS326-24G-2S+", qop="auth",
 //	                  nonce="84aaad9d", stale=FALSE
 //
-// Verifie sur 10.99.0.36. C'est de l'or pour la discovery : le model precise — donc
-// les capabilities, donc la geometry de la front panel — s'obtient AVANT d'avoir le
-// moindre secret, ce qu'aucune autre plateforme du projet n'offre. There where le
-// connecteur Instant On doit fouiller les champs caches de sa page de connexion pour
-// esperer un `sysDescr`, ici il suffit de frapper a la porte.
+// Verified on 192.0.2.36. It is gold for discovery: the precise model — hence
+// the capabilities, hence the faceplate geometry — is obtained BEFORE having
+// the slightest secret, which no other platform in the project offers. Where
+// the Instant On connector has to dig through the hidden fields of its login
+// page in the hope of a `sysDescr`, here knocking on the door is enough.
 //
-// Ce que le realm ne donne PAS, et qui exige donc de s'authentifier : le number de
-// serial, la version du firmware, le nom systeme, l'adresse MAC et la geometry
-// reelle. Tout cela vit dans /sys.b et /link.b, sous Digest.
+// What the realm does NOT give, and which therefore requires authenticating:
+// the serial number, the firmware version, the system name, the MAC address
+// and the real geometry. All of that lives in /sys.b and /link.b, behind
+// Digest.
 //
-// La distinction est structurelle dans Identity.Source : l'interface ne doit pas
-// present  au same rang ce qui a been obtenu a la porte et ce qui a been lu a
-// l'interieur.
+// The distinction is structural in Identity.Source: the UI must not present
+// on the same footing what was obtained at the door and what was read inside.
 
-// Identity est ce qu'on sait d'un switch SwOS.
+// Identity is what is known about a SwOS switch.
 type Identity struct {
-	// Model est la reference constructeur exacte (« CSS326-24G-2S+ »).
+	// Model is the exact vendor reference ("CSS326-24G-2S+").
 	Model string `json:"model"`
-	// Family est la sous-gamme (« CSS », « CRS »), utile pour les differences de
-	// capabilities qui se jouent a ce niveau.
+	// Family is the sub-range ("CSS", "CRS"), useful for the capability
+	// differences that play out at that level.
 	Family   string `json:"family"`
 	Serial   string `json:"serial,omitempty"`
 	MAC      string `json:"mac,omitempty"`
 	Firmware string `json:"firmware,omitempty"`
-	// Build est l'horodatage de compilation du firmware, tel que l'interface de
-	// the device l'affiche a cote de la version.
+	// Build is the firmware's build timestamp, as the device's UI displays it
+	// next to the version.
 	Build string `json:"build,omitempty"`
-	// Hostname est le champ « Identity » de the device.
+	// Hostname is the device's "Identity" field.
 	Hostname string `json:"hostname,omitempty"`
-	// Revision et BoardName : souvent vides sur les CSS, renseignes sur d'autres
-	// cartes. Rendus tels quels rather que devines.
+	// Revision and BoardName: often empty on CSS, filled in on other boards.
+	// Returned as is rather than guessed.
 	Revision  string `json:"revision,omitempty"`
 	BoardName string `json:"board_name,omitempty"`
-	// Facade : ce qui permet de dessiner the device sans catalogue.
+	// Faceplate: what lets the device be drawn without a catalogue.
 	CopperPorts int `json:"copper_ports"`
 	SFPPorts    int `json:"sfp_ports"`
-	// SFPFirst est l'index (base 0) de la first cage SFP. Sur tous les modeles
-	// rencontres les cages sont en fin de front panel, mais SwOS a un champ pour le dire
-	// et il vaut mieux le lire que le supposer.
+	// SFPFirst is the (0-based) index of the first SFP cage. On every model
+	// met so far the cages are at the end of the faceplate, but SwOS has a
+	// field to say so and it is better to read it than to assume it.
 	SFPFirst int  `json:"sfp_first"`
 	SFPPlus  bool `json:"sfp_plus"`
 	PoE      bool `json:"poe"`
-	// MgmtIP / MgmtVLAN : l'adressage d'administration TEL QUE THE DEVICE LE
-	// PORTE. Sert au pre-vol d'une bascule : c'est la seule source qui dise par where
-	// passe la session en cours.
+	// MgmtIP / MgmtVLAN: the administration addressing AS THE DEVICE CARRIES
+	// IT. Used for a cutover's pre-flight: it is the only source that says
+	// where the current session goes through.
 	MgmtIP   string `json:"mgmt_ip,omitempty"`
 	MgmtVLAN int    `json:"mgmt_vlan,omitempty"`
-	// Source dit hence vient l'information. `digest_realm` = obtenu SANS
-	// authentification ; `sys.b` = lu sous authentification.
+	// Source says where the information comes from. `digest_realm` = obtained
+	// WITHOUT authentication; `sys.b` = read under authentication.
 	Source string `json:"source"`
 }
 
-// reRealm extrait le realm d'un challenge `WWW-Authenticate`.
+// reRealm extracts the realm of a `WWW-Authenticate` challenge.
 var reRealm = regexp.MustCompile(`(?i)realm="([^"]+)"`)
 
-// header retrouve un en-tete dans une response du transport partage.
+// header finds a header in a response of the shared transport.
 //
-// `driver.Response.Headers` est une carte NUE (`map[string][]string`), pas un
-// `http.Header` : elle n'a pas de `Get`, et surtout elle porte les keys dans la
-// casse que le SERVEUR a envoyee. Un access direct par `"WWW-Authenticate"`
-// fonctionnerait tant que le firmware capitalise ainsi, et rendrait une string vide
-// le jour where l'un capitalise autrement — i.e. ferait conclure « ce n'est pas
-// un SwOS » sur un device qui en est un. La comparaison est donc insensible a la
-// casse, comme HTTP l'impose.
+// `driver.Response.Headers` is a BARE map (`map[string][]string`), not an
+// `http.Header`: it has no `Get`, and above all it carries the keys in the
+// case the SERVER sent. Direct access by `"WWW-Authenticate"` would work as
+// long as the firmware capitalises that way, and would return an empty string
+// the day one capitalises otherwise — i.e. would conclude "this is not a
+// SwOS" on a device that is one. The comparison is therefore
+// case-insensitive, as HTTP requires.
 func header(headers map[string][]string, name string) string {
 	var k string
 	var v []string
@@ -95,23 +95,24 @@ func header(headers map[string][]string, name string) string {
 	return ""
 }
 
-// hdrAuthenticate est l'en-tete qui porte le challenge — et, sur SwOS, le model.
+// hdrAuthenticate is the header that carries the challenge — and, on SwOS,
+// the model.
 const hdrAuthenticate = "WWW-Authenticate"
 
-// reModel reconnait une reference de carte MikroTik commutee : la sous-gamme, puis
-// tout ce qui suit jusqu'au bout du realm.
+// reModel recognises a MikroTik switching board reference: the sub-range,
+// then everything that follows to the end of the realm.
 //
-// Volontairement ancree sur les DEUX sous-gammes que SwOS anime, CSS et CRS, et pas
-// sur « n'importe quoi qui ressemble a un model » : accrocher trop large ferait
-// passer pour un SwOS un device qui n'en est pas, et les capabilities qui en
-// decoulent decident de ce qu'on written.
+// Deliberately anchored on the TWO sub-ranges SwOS runs on, CSS and CRS, and
+// not on "anything that looks like a model": matching too broadly would pass
+// a device that is not a SwOS off as one, and the capabilities that follow
+// decide what gets written.
 var reModel = regexp.MustCompile(`^(CSS|CRS)[0-9A-Za-z+\-]*$`)
 
-// ModelFromRealm extrait le model du realm d'un challenge Digest.
+// ModelFromRealm extracts the model from the realm of a Digest challenge.
 //
-// Rend `ok=false` rather qu'une string vide quand le realm ne ressemble pas a une
-// reference MikroTik : un realm inattendu veut dire qu'on ne parle pas a un SwOS, et
-// il vaut mieux le dire que de ranger the device de force dans cette gamme.
+// Returns `ok=false` rather than an empty string when the realm does not look
+// like a MikroTik reference: an unexpected realm means we are not talking to a
+// SwOS, and it is better to say so than to force the device into this range.
 func ModelFromRealm(challenge string) (string, bool) {
 	var m = reRealm.FindStringSubmatch(challenge)
 	if m == nil {
@@ -124,7 +125,7 @@ func ModelFromRealm(challenge string) (string, bool) {
 	return realm, true
 }
 
-// FamilyOf rend la sous-gamme d'un model (« CSS326-24G-2S+ » → « CSS »).
+// FamilyOf returns the sub-range of a model ("CSS326-24G-2S+" → "CSS").
 func FamilyOf(model string) string {
 	var up = strings.ToUpper(model)
 	switch {
@@ -136,17 +137,18 @@ func FamilyOf(model string) string {
 	return ""
 }
 
-// Inspect identifie the device a l'adresse data.
+// Inspect identifies the device at the given address.
 //
-// Deux temps, et l'ordre compte : d'abord le realm, SANS identifiant, ce qui rend le
-// model same si le secret est faux ou inconnu ; ensuite /sys.b et /link.b sous
-// Digest, pour tout le reste. Une identification partielle est rendue avec son
-// erreur rather que perdue — savoir « c'est un CSS326-24G-2S+ dont on n'a pas le mot
-// de passe » vaut infiniment mieux que « failure ».
+// Two steps, and the order matters: first the realm, WITHOUT credentials,
+// which returns the model even if the secret is wrong or unknown; then
+// /sys.b and /link.b behind Digest, for everything else. A partial
+// identification is returned with its error rather than lost — knowing "it is
+// a CSS326-24G-2S+ whose password we do not have" is infinitely better than
+// "failure".
 func Inspect(ctx context.Context, host, user, secret string, d driver.Dialer) (Identity, error) {
 	var out Identity
 
-	// 1. Le realm, a la porte.
+	// 1. The realm, at the door.
 	var model, err = realmModel(ctx, host, d)
 	if err != nil {
 		return out, err
@@ -154,88 +156,91 @@ func Inspect(ctx context.Context, host, user, secret string, d driver.Dialer) (I
 	out.Model, out.Family, out.Source = model, FamilyOf(model), "digest_realm"
 	out.PoE = ModelHasPoE(model)
 
-	// 2. Le reste, a l'interieur. Identity partielle est rendue AVEC l'erreur : le
-	//    model est acquis, et le perdre parce que la suite a echoue serait perdre la
-	//    seule chose que cette plateforme donne gratuitement.
+	// 2. The rest, inside. The partial identity is returned WITH the error:
+	//    the model is acquired, and losing it because the rest failed would be
+	//    losing the only thing this platform gives for free.
 	var admin = OpenAdmin(host, user, secret, d)
 	err = admin.fillIdentity(ctx, &out)
 	if err != nil {
-		return out, fmt.Errorf("model identifie (%s) mais %w", model, err)
+		return out, fmt.Errorf("model identified (%s) but %w", model, err)
 	}
 	return out, nil
 }
 
-// realmModel frappe a la porte et rend le model que le challenge Digest annonce.
+// realmModel knocks on the door and returns the model the Digest challenge
+// announces.
 //
-// SANS AUCUN IDENTIFIANT, et c'est tout l'interet : la session n'a pas
-// d'authentification armee, donc le 401 n'est pas rejoue et son en-tete est
-// exactement ce qu'on vient chercher. Cette lecture-there costs UNE request HTTP, pas
-// deux — il n'y a pas de request authentifiee derriere.
+// WITHOUT ANY CREDENTIALS, and that is the whole point: the session has no
+// authentication armed, so the 401 is not replayed and its header is exactly
+// what we came for. This read costs ONE HTTP request, not two — there is no
+// authenticated request behind it.
 //
-// Verifie a nouveau en direct sur l'reference device a travers le tunnel :
+// Verified again live on the reference device through the tunnel:
 // `WWW-Authenticate: Digest realm="CSS326-24G-2S+", qop="auth", nonce="4753ad9d",
-// stale=FALSE`, servi avec le 401 lui-same, et rendu a l'identique quand le secret
-// presented est faux.
+// stale=FALSE`, served with the 401 itself, and returned identically when the
+// secret presented is wrong.
 func realmModel(ctx context.Context, host string, d driver.Dialer) (string, error) {
 	var anon = driver.NewWebSession("http://"+host, d, 0)
 	var resp, err = anon.Get(ctx, PageSys)
 	if err != nil {
-		return "", fmt.Errorf("aucune response de %s sur le port 80 : %w", host, err)
+		return "", fmt.Errorf("no response from %s on port 80: %w", host, err)
 	}
 	var challenge = header(resp.Headers, hdrAuthenticate)
 	var model, ok = ModelFromRealm(challenge)
 	if !ok {
-		return "", fmt.Errorf("the device a %s ne present pas un challenge SwOS "+
-			"(HTTP %d, %s : %q) — ce n'est pas un switch SwOS, ou son firmware ne "+
-			"s'annonce pas ainsi", host, resp.Status, hdrAuthenticate, challenge)
+		return "", fmt.Errorf("the device at %s does not present a SwOS challenge "+
+			"(HTTP %d, %s: %q) — it is not a SwOS switch, or its firmware does not "+
+			"announce itself that way", host, resp.Status, hdrAuthenticate, challenge)
 	}
 	return model, nil
 }
 
-// fillIdentity complete une identity avec ce qui exige de s'authentifier.
+// fillIdentity completes an identity with what requires authenticating.
 //
-// Sur un Admin rather que sur des parameters d'hote, pour deux raisons : les erreurs
-// entrent au TRANSCRIPT de cet access, et le refus d'identifiants remonte a l'appelant
-// sous la forme d'errCredentialsRefused — ce qui permet a Driver.Identify de savoir
-// s'il doit essayer le candidat suivant ou s'stop.
+// On an Admin rather than on host parameters, for two reasons: errors go into
+// this access's TRANSCRIPT, and a credentials refusal comes back to the caller
+// as errCredentialsRefused — which lets Driver.Identify know whether to try
+// the next candidate or stop.
 //
-// Identity est completee EN PLACE et progressivement : quand /link.b fails after
-// un /sys.b reussi, la serial et le firmware sont already there, et l'appelant les rend avec
-// son erreur. Une identification partielle vaut infiniment mieux qu'un failure.
+// The identity is completed IN PLACE and progressively: when /link.b fails
+// after a successful /sys.b, the serial and the firmware are already there,
+// and the caller returns them with its error. A partial identification is
+// infinitely better than a failure.
 func (a *Admin) fillIdentity(ctx context.Context, id *Identity) error {
 	var sys, sysErr = a.Get(ctx, PageSys)
 	if sysErr != nil {
-		return fmt.Errorf("%s illisible : %w", PageSys, sysErr)
+		return fmt.Errorf("%s unreadable: %w", PageSys, sysErr)
 	}
 	fillFromSys(id, sys)
 
 	var link, linkErr = a.Get(ctx, PageLink)
 	if linkErr != nil {
-		return fmt.Errorf("%s illisible, la front panel reste inconnue : %w", PageLink, linkErr)
+		return fmt.Errorf("%s unreadable, the faceplate remains unknown: %w", PageLink, linkErr)
 	}
 	return fillFromLink(id, link)
 }
 
-// Contract traduit ce qu'on a observed en identity que le contrat porte.
+// Contract translates what was observed into the identity the contract
+// carries.
 //
-// UNE TRADUCTION ET NON UN ALIAS, et le contrat le demande explicitement : « Les
-// champs propres a une plateforme n'ont pas leur place ici […] Les connecteurs gardent
-// leur propre type identity, plus riche, et remplissent celui-ci pour la couche
-// API. » Le sens de la circulation est celui-there : le contrat porte ce que l'APPELANT
-// consomme.
+// A TRANSLATION AND NOT AN ALIAS, and the contract asks for it explicitly:
+// "Platform-specific fields do not belong here […] Connectors keep their own,
+// richer identity type, and fill this one in for the API layer." The
+// direction of flow is that one: the contract carries what the CALLER
+// consumes.
 //
-// CE QUE CETTE CONVERSION LAISSE DERRIERE ELLE, dit ici pour que personne ne le
-// cherche : `Revision` et `BoardName` (vides sur les CSS, renseignes sur d'autres
-// cartes), `SFPFirst` (l'index de la first cage — l'information survit dans
-// PortGroups, dont le second groupe demarre there), `MgmtIP` et `MgmtVLAN` (l'adressage
-// d'administration tel que the device le porte, que le contrat expose autrement :
-// [driver.State.MgmtVLAN], rendu par ReadState). Tout cela reste lisible par
-// [Inspect], que la discovery appelle.
+// WHAT THIS CONVERSION LEAVES BEHIND, said here so nobody goes looking for
+// it: `Revision` and `BoardName` (empty on CSS, filled in on other boards),
+// `SFPFirst` (the index of the first cage — the information survives in
+// PortGroups, whose second group starts there), `MgmtIP` and `MgmtVLAN` (the
+// administration addressing as the device carries it, which the contract
+// exposes otherwise: [driver.State.MgmtVLAN], returned by ReadState). All of
+// it remains readable through [Inspect], which discovery calls.
 //
-// `ModelCode` reste VIDE, et c'est exact : MikroTik n'a pas de reference catalogue
-// distincte du label du produit — « CSS326-24G-2S+ » EST la reference. Y recopier le
-// model donnerait deux champs identiques, dont l'un ferait croire a une seconde
-// source.
+// `ModelCode` stays EMPTY, and that is correct: MikroTik has no catalogue
+// reference distinct from the product label — "CSS326-24G-2S+" IS the
+// reference. Copying the model there would give two identical fields, one of
+// which would suggest a second source.
 func (id Identity) Contract() driver.Identity {
 	return driver.Identity{
 		Model:       id.Model,
@@ -254,17 +259,17 @@ func (id Identity) Contract() driver.Identity {
 	}
 }
 
-// fillFromSys complete identity depuis /sys.b. Fonction pure, donc verifiable sur
-// une real capture.
+// fillFromSys completes the identity from /sys.b. A pure function, hence
+// verifiable on a real capture.
 //
-// Chaque champ est facultatif par construction : un firmware plus ancien peut
-// n'en pas servir un, et ce qui manque reste VIDE. Aucun champ n'est deduit d'un
-// autre — un serial number invented a partir du nom systeme, comme le fait le
-// connecteur Instant On faute de mieux, n'aurait ici aucun fondement.
+// Every field is optional by construction: an older firmware may not serve
+// one, and what is missing stays EMPTY. No field is inferred from another — a
+// serial number invented from the system name, as the Instant On connector
+// does for lack of anything better, would have no basis here.
 func fillFromSys(id *Identity, sys *Page) {
-	// Le model de /sys.b confirme celui du realm. Il ne le remplace que s'il est
-	// present, le realm etant la source la plus sure — c'est le firmware qui le
-	// compose, pas un champ modifiable.
+	// The /sys.b model confirms the realm's. It replaces it only if present,
+	// the realm being the safest source — the firmware composes it, it is not
+	// an editable field.
 	var brd, ok = sys.Text(FieldBoard)
 	if ok && brd != "" {
 		id.Model = brd
@@ -272,12 +277,12 @@ func fillFromSys(id *Identity, sys *Page) {
 		id.PoE = ModelHasPoE(brd)
 		id.Source = "sys.b"
 	}
-	// Les champs texte, dans l'ordre where the device les sert. La table rather qu'une
-	// suite de blocs : elle rend visible d'un coup ce qui est lu et ce qui ne l'est
-	// pas, et le champ absent laisse la destination VIDE sans que personne n'ait a y
-	// penser.
-	var textes = []struct {
-		champ string
+	// The text fields, in the order the device serves them. A table rather
+	// than a series of blocks: it shows at a glance what is read and what is
+	// not, and a missing field leaves its destination EMPTY without anyone
+	// having to think about it.
+	var texts = []struct {
+		field string
 		dest  *string
 	}{
 		{FieldSerial, &id.Serial},
@@ -287,11 +292,11 @@ func fillFromSys(id *Identity, sys *Page) {
 		{FieldIdentity, &id.Hostname},
 	}
 	var tf struct {
-		champ string
+		field string
 		dest  *string
 	}
-	for _, tf = range textes {
-		var v, has = sys.Text(tf.champ)
+	for _, tf = range texts {
+		var v, has = sys.Text(tf.field)
 		if has {
 			*tf.dest = v
 		}
@@ -302,7 +307,7 @@ func fillFromSys(id *Identity, sys *Page) {
 		id.Build = strconv.FormatUint(uint64(build), 10)
 	}
 
-	// La MAC est servie sans separateur : `'b869f45f14a8'`.
+	// The MAC is served without a separator: `'b869f45f14a8'`.
 	var raw, hasMAC = sys.Value(FieldMAC)
 	if hasMAC && raw.Kind == KindStr {
 		var mac, macOK = DecodeMAC(raw.Raw)
@@ -311,8 +316,8 @@ func fillFromSys(id *Identity, sys *Page) {
 		}
 	}
 
-	// L'adresse EN COURS (`cip`) rather que l'adresse configuree (`ip`) : en DHCP
-	// les deux different, et c'est par la first que la session passe.
+	// The CURRENT address (`cip`) rather than the configured one (`ip`): on
+	// DHCP the two differ, and the session goes through the former.
 	var cip, hasCIP = sys.Num(FieldCurrentIP)
 	if hasCIP && cip != 0 {
 		id.MgmtIP = DecodeIPv4(cip)
@@ -323,53 +328,55 @@ func fillFromSys(id *Identity, sys *Page) {
 	}
 }
 
-// fillFromLink complete la front panel depuis /link.b.
+// fillFromLink completes the faceplate from /link.b.
 func fillFromLink(id *Identity, link *Page) error {
 	var ports, sfp, first, err = geometryOf(link)
 	if err != nil {
 		return err
 	}
 	id.CopperPorts, id.SFPPorts, id.SFPFirst = ports-sfp, sfp, first
-	// SFP ou SFP+ : la reference le dit (« 2S+ » = deux cages 10 gigabits), et le
-	// rate negocie le confirme quand un transceiver est insere. On se fie a la
-	// reference, seule a repondre same cages vides.
+	// SFP or SFP+: the reference says so ("2S+" = two 10-gigabit cages), and
+	// the negotiated rate confirms it when a transceiver is inserted. We rely
+	// on the reference, the only one that answers even with empty cages.
 	id.SFPPlus = sfp > 0 && strings.Contains(id.Model, "S+")
 	return nil
 }
 
-// reModelPoE reconnait une reference a alimentation par le cable.
+// reModelPoE recognises a reference with power over the cable.
 //
-// La convention de nommage de MikroTik marque le PoE par un `P` there where les modeles
-// sans PoE portent un `G` : « CRS328-24P-4S+ » contre « CSS326-24G-2S+ ». Le motif
-// est donc un nombre de ports suivi de `P`, et rien d'autre — accrocher sur un `P`
-// isole ferait passer « CSS326-24G-2S+ » pour du PoE au premier `+`.
+// MikroTik's naming convention marks PoE with a `P` where models without PoE
+// carry a `G`: "CRS328-24P-4S+" versus "CSS326-24G-2S+". The pattern is
+// therefore a port count followed by `P`, and nothing else — matching an
+// isolated `P` would pass "CSS326-24G-2S+" off as PoE at the first `+`.
 //
-// Vaut ce que vaut une convention de nommage, i.e. moins qu'un observed :
-// c'est pourquoi le PoE de Features n'est pas declared par ce seul motif quand la
-// geometry de the device, elle, est lisible (cf. le commentaire de Features).
+// It is worth what a naming convention is worth, i.e. less than an
+// observation: that is why the PoE in Features is not declared by this
+// pattern alone when the device's geometry is readable (cf. the comment on
+// Features).
 var reModelPoE = regexp.MustCompile(`(?i)[0-9]+P(-|$)|PoE`)
 
-// ModelHasPoE dit si la reference annonce du PoE.
+// ModelHasPoE says whether the reference announces PoE.
 func ModelHasPoE(model string) bool { return reModelPoE.MatchString(model) }
 
-// PortGroups traduit la front panel en groupes de ports du model standard.
+// PortGroups translates the faceplate into port groups of the standard model.
 //
-// DEUX FAMILLES, ET CE SONT CELLES DE THE DEVICE : « Port1 »… « Port24 » pour le
-// cuivre, « SFP1 » et « SFP2 » pour les cages, chacune repartant de 1. C'est ce que
-// /link.b sert dans `nm`, c'est ce que l'interface du switch affiche, et c'est donc ce
-// que l'exploitant lit sur les deux ecrans qu'il compare.
+// TWO FAMILIES, AND THEY ARE THE DEVICE'S: "Port1"… "Port24" for copper,
+// "SFP1" and "SFP2" for the cages, each starting again at 1. That is what
+// /link.b serves in `nm`, it is what the switch's UI displays, and it is
+// therefore what the operator reads on the two screens they compare.
 //
-// La numerotation CONTINUE cages comprises — « GE25 » pour la first cage, empruntee
-// a la gamme Instant On — was ce que ce connecteur ecrivait. Ces groupes-ci sont ce
-// que l'interface web DEPLIE pour enumerate les prises (`expandPorts`), donc changer le
-// prefix ici est ce qui fait que the UI nomme les ports comme the device. Les noms
-// de l'ancienne famille restent ACCEPTED en ingress par [Facade.Index] : les intentions
-// already enregistrees continuent d'atterrir sur le bon port.
+// CONTINUOUS numbering including cages — "GE25" for the first cage, borrowed
+// from the Instant On range — was what this connector used to write. These
+// groups are what the web UI EXPANDS to enumerate the sockets
+// (`expandPorts`), so changing the prefix here is what makes the UI name the
+// ports like the device does. The old family's names remain ACCEPTED on input
+// by [Facade.Index]: intents already recorded keep landing on the right port.
 //
-// Le connecteur RouterOS voisin fait exactement cela depuis sa first livraison, et
-// pour la same raison — ses deux groupes sont `ether` a partir de 1 et `sfp-sfpplus` a
-// partir de 1. Deux gammes du same constructeur named comme elles se nomment vaut
-// mieux que deux gammes numerotees pareil et differemment de leur firmware.
+// The neighbouring RouterOS connector has done exactly this since its first
+// delivery, and for the same reason — its two groups are `ether` from 1 and
+// `sfp-sfpplus` from 1. Two ranges from the same vendor named as they name
+// themselves are better than two ranges numbered alike and differently from
+// their firmware.
 func (id Identity) PortGroups() []map[string]any {
 	var out = []map[string]any{}
 	if id.CopperPorts > 0 {
@@ -387,10 +394,10 @@ func (id Identity) PortGroups() []map[string]any {
 		if id.SFPPlus {
 			speed, name = "10G", "SFP+"
 		}
-		// `from` vaut 1 et non `SFPFirst + 1` : les cages ont leur PROPRE compteur, et
-		// c'est ce qui distingue cette front panel de l'ancienne. Le label, lui, garde le
-		// « + » quand la reference le porte — c'est aussi ce qui fait classer la prise en
-		// SFP+ par internal/portrules.
+		// `from` is 1 and not `SFPFirst + 1`: the cages have their OWN counter,
+		// and that is what distinguishes this faceplate from the old one. The
+		// label keeps the "+" when the reference carries it — that is also what
+		// makes internal/portrules classify the socket as SFP+.
 		out = append(out, map[string]any{
 			"prefix": SFPPortPrefix, "count": id.SFPPorts, "from": 1,
 			"speed": speed, "poe": false, "label": name,

@@ -78,9 +78,13 @@ func writes(seen []captured) []captured {
 	return out
 }
 
-// adminOn builds an already « logged in » session: only write is tested.
+// adminOn builds an already "logged in" session: only write is tested.
+//
+// `host` is filled in because the deletion refusals name the device they
+// refused on, and a message reading "refusing to delete … on" would be the
+// one line an operator needs and cannot use.
 func adminOn(srv *httptest.Server) *Admin {
-	var a = &Admin{web: driver.NewWebSession(srv.URL, nil, 0)}
+	var a = &Admin{web: driver.NewWebSession(srv.URL, nil, 0), host: srv.Listener.Addr().String()}
 	a.page = srv.URL + "/cs12345678/hpe/config/login.htm"
 	return a
 }
@@ -111,9 +115,9 @@ func fakeLogin(t *testing.T, bon string) *httptest.Server {
 	return srv
 }
 
-// TestLoginMemoriseLeCandidatAccepte: the secret that opened the device is RETURNED
+// TestLoginRemembersTheAcceptedCandidate: the secret that opened the device is RETURNED
 // by the session, not reconstructed by the caller.
-func TestLoginMemoriseLeCandidatAccepte(t *testing.T) {
+func TestLoginRemembersTheAcceptedCandidate(t *testing.T) {
 	const bon = "MotDePasse2"
 	var srv = fakeLogin(t, bon)
 
@@ -135,8 +139,8 @@ func TestLoginMemoriseLeCandidatAccepte(t *testing.T) {
 	}
 }
 
-// TestLoginRefuseNeMemoriseRien: without session, there is no current secret.
-func TestLoginRefuseNeMemoriseRien(t *testing.T) {
+// TestRefusedLoginRemembersNothing: without session, there is no current secret.
+func TestRefusedLoginRemembersNothing(t *testing.T) {
 	var srv = fakeLogin(t, "MotDePasse2")
 
 	var a = &Admin{web: driver.NewWebSession(srv.URL, nil, 0)}
@@ -151,7 +155,7 @@ func TestLoginRefuseNeMemoriseRien(t *testing.T) {
 	}
 }
 
-// TestSetPasswordRequestShape locks the three « wcd » framework conventions without
+// TestSetPasswordRequestShape locks the three "wcd" framework conventions without
 // which the device accepts the request WITHOUT DOING ANYTHING.
 func TestSetPasswordRequestShape(t *testing.T) {
 	var seen []captured
@@ -247,9 +251,84 @@ func TestSetPasswordRejectsEmptyStatus(t *testing.T) {
 	}
 }
 
+// serveBody answers every GET with one fixed body: the account section as this
+// firmware has been seen rendering it, or a mangled version of it.
+func serveBody(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	var srv = httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAccountsCarriesTheAccessLevel — what the widened contract gets out of
+// THIS range's single GET.
+//
+// `<accessLevel>` sits beside `<userName>` in the section this read already
+// fetches (15 is read/write here, cf. accessLevelRW), and the connector used to
+// drop it: a level-1 account and the administrator came back as the same
+// string. No extra request is made for it, and the test checks that too.
+func TestAccountsCarriesTheAccessLevel(t *testing.T) {
+	var seen []captured
+	var srv = newFakeSwitch(t, &seen, "admin", "mcadmin")
+
+	var got, err = adminOn(srv).Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "admin" || got[1].Name != "mcadmin" {
+		t.Fatalf("accounts = %+v", got)
+	}
+	var i int
+	for i = range got {
+		if got[i].Privilege != 15 || got[i].Authority != driver.AuthorityFull {
+			t.Errorf("%+v: the section states accessLevel 15 and it must travel", got[i])
+		}
+		if got[i].Source != sectionAdminUsers {
+			t.Errorf("%+v: the source names the section it was read from", got[i])
+		}
+	}
+	if len(seen) != 1 {
+		t.Errorf("%d requests — enumerating accounts must stay ONE GET; this range "+
+			"grants five sessions and pays for every extra round trip", len(seen))
+	}
+}
+
+// TestAccountsWithoutAccessLevelReadsUnknown.
+//
+// This firmware answers with a MIX of XML and fragments depending on the
+// sections asked for, so an entry can arrive without its level. That must read
+// as "not stated", never as level 0 — 0 would look like a deliberately
+// unprivileged account and hide whatever the entry really is.
+func TestAccountsWithoutAccessLevelReadsUnknown(t *testing.T) {
+	var srv = serveBody(t, `<?xml version="1.0" encoding="UTF-8"?><ResponseData>`+
+		`<DeviceConfiguration><AdminUserSetting type="section"><AdminUserList>`+
+		`<AdminUserEntry><userName>admin</userName></AdminUserEntry>`+
+		`<AdminUserEntry><userName>lecteur</userName><accessLevel>1</accessLevel></AdminUserEntry>`+
+		`</AdminUserList></AdminUserSetting></DeviceConfiguration></ResponseData>`)
+
+	var got, err = adminOn(srv).Accounts(context.Background())
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("an entry without its level is STILL an account: %+v", got)
+	}
+	if got[0].Privilege != driver.PrivilegeUnknown ||
+		got[0].Authority != driver.AuthorityUnknown {
+		t.Errorf("%+v: a missing accessLevel is \"not stated\", not level 0", got[0])
+	}
+	// And the level of the NEXT entry must not leak backwards into it.
+	if got[1].Privilege != 1 || got[1].Authority != driver.AuthorityLimited {
+		t.Errorf("%+v: accessLevel 1 is a real, limited level on this range", got[1])
+	}
+}
+
 // TestEnsureAccountCreatesThenUpdates: device distinguishes `add` from `set`.
 func TestEnsureAccountCreatesThenUpdates(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name     string
 		presents []string
 		action   string
@@ -257,8 +336,8 @@ func TestEnsureAccountCreatesThenUpdates(t *testing.T) {
 		{"missing account", []string{"admin"}, `action="add"`},
 		{"account already there", []string{"admin", "mcadmin"}, `action="set"`},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var seen []captured
 			var srv = newFakeSwitch(t, &seen, c.presents...)
@@ -311,6 +390,11 @@ func TestDeleteAccount(t *testing.T) {
 }
 
 // TestDeleteAccountRefusesSelf: deleting current session account is refused.
+//
+// This refusal is FREE and must stay in front of the read: nothing at all is
+// sent, not even the enumeration the last-account guard needs, because a session
+// cannot outlive the account it was opened under whatever the rest of the device
+// carries.
 func TestDeleteAccountRefusesSelf(t *testing.T) {
 	var seen []captured
 	var srv = newFakeSwitch(t, &seen, "admin")
@@ -321,7 +405,147 @@ func TestDeleteAccountRefusesSelf(t *testing.T) {
 	if err == nil {
 		t.Fatal("deleting own account must be refused")
 	}
+	if !strings.Contains(err.Error(), "current session") {
+		t.Errorf("the refusal must name its reason: %v", err)
+	}
+	if len(seen) != 0 {
+		t.Errorf("this refusal costs nothing: not one request may be sent, got %+v", seen)
+	}
+}
+
+// --- the last-account guard ------------------------------------------------
+//
+// A deletion on this range is the gesture with NO cheap repair anywhere in the
+// tree: no SSH, no Telnet, no serial port. A 1930 left without an account is
+// recovered with the factory-reset button, on site, at the cost of its
+// configuration. Until 2026-08-12 the only refusal here compared the target
+// against the CURRENT SESSION's name, and TODO.md wrongly listed `admin.go:605`
+// — the `Accounts` call inside `EnsureAccount` — as a guard, so the gap hid
+// behind a citation. These tests pin the three refusals, the limit of the
+// second, and the platform difference that made the third necessary.
+
+// TestDeleteRefusesTheLastAccount: whoever is asking, the last enumerated
+// account does not go.
+//
+// The session runs as an account the section does not name — the only shape in
+// which the last-account refusal can fire ahead of the current-session one.
+func TestDeleteRefusesTheLastAccount(t *testing.T) {
+	var seen []captured
+	var srv = newFakeSwitch(t, &seen, "admin")
+	var a = adminOn(srv)
+	a.User = "mcadmin"
+
+	var err = a.DeleteAccount(context.Background(), "ADMIN")
+	if err == nil {
+		t.Fatal("the last enumerated account must not be deletable: this range has no " +
+			"SSH, no Telnet and no serial port, and the repair is a site visit")
+	}
+	if !strings.Contains(err.Error(), "only administration account") {
+		t.Errorf("the refusal must say what it refused: %v", err)
+	}
+	if !strings.Contains(err.Error(), sectionAdminUsers) {
+		t.Errorf("the refusal must name the source it counted from: %v", err)
+	}
 	if len(writes(seen)) != 0 {
-		t.Errorf("nothing must be sent to device: %+v", seen)
+		t.Fatalf("a refused deletion must cost the device NOTHING: %+v", writes(seen))
+	}
+}
+
+// TestDeleteRefusesWhenTheAccountsCannotBeRead: a read that fails REFUSES here,
+// where `arista/eos` and `cisco/ios` proceed. Their comments justify failing
+// open in one word — the console still works — and this range has no console at
+// all, so the justification does not transfer.
+func TestDeleteRefusesWhenTheAccountsCannotBeRead(t *testing.T) {
+	var seen []captured
+	var srv = newFakeSwitch(t, &seen, "admin", "mcadmin")
+	var a = adminOn(srv)
+	a.User = "mcadmin"
+	// The device stops answering between login and deletion — the transport
+	// error [Admin.Accounts] does surface, as opposed to the silent one below.
+	srv.Close()
+
+	var err = a.DeleteAccount(context.Background(), "admin")
+	if err == nil {
+		t.Fatal("an unreadable account list must not open the guard: recovery from an " +
+			"account-less 1930 is a site visit")
+	}
+	if !strings.Contains(err.Error(), "could not be read") {
+		t.Errorf("the refusal must say the guard could not be evaluated: %v", err)
+	}
+	if len(writes(seen)) != 0 {
+		t.Fatalf("nothing may be written on a refusal: %+v", writes(seen))
+	}
+}
+
+// TestDeleteRefusesAnEmptyAccountRead — THE PLATFORM DIFFERENCE, and the reason
+// this port is not a copy of the EdgeSwitch one.
+//
+// There the list comes from a CLI and a failed read fails LOUDLY. Here it is a
+// `wcd` GET: `driver.WebSession.Get` does not treat a non-200 as an error, and
+// this firmware answers a section it does not recognise with HTTP 200 and
+// `statusCode = -1` — which parses to zero accounts and NO error. So "could not
+// read" and "has no accounts" are INDISTINGUISHABLE at the parse, and the
+// empty case has to refuse on its own.
+//
+// It is sound for a reason peculiar to a session-based read: this session is
+// open, so the device holds at least the account it was opened under. Zero
+// accounts contradicts that, and the contradiction is the evidence.
+func TestDeleteRefusesAnEmptyAccountRead(t *testing.T) {
+	var seen []captured
+	var srv = httptest.NewTLSServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			var raw, _ = io.ReadAll(r.Body)
+			seen = append(seen, captured{method: r.Method, path: r.URL.Path, body: string(raw)})
+			// What this range answers for a section it does not recognise —
+			// the `UpdatePassword` finding, HTTP 200 and no entry at all.
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ResponseData>` +
+				`<ActionStatus><statusCode>-1</statusCode></ActionStatus></ResponseData>`))
+		}))
+	t.Cleanup(srv.Close)
+	var a = adminOn(srv)
+	a.User = "mcadmin"
+
+	var err = a.DeleteAccount(context.Background(), "admin")
+	if err == nil {
+		t.Fatal("a section naming no account did not answer with the account list: an " +
+			"empty read here is an unreadable one, not an empty device")
+	}
+	if !strings.Contains(err.Error(), "named no account") {
+		t.Errorf("the refusal must say the read told it nothing: %v", err)
+	}
+	if len(writes(seen)) != 0 {
+		t.Fatalf("nothing may be written on a refusal: %+v", writes(seen))
+	}
+}
+
+// TestDeleteAllowsAnAccountThatIsNotTheLast: the other half. A deletion that
+// leaves something behind still goes through, and the success line says what the
+// guard did NOT check.
+//
+// IT PINS WHAT IS NOT PROMISED. The connector counts what the device
+// enumerates; whether meshcraft holds a secret that opens any survivor is a
+// question about the vault, and a connector has no vault. If this test is ever
+// changed to expect a refusal, the check it wants belongs in `internal/api`.
+func TestDeleteAllowsAnAccountThatIsNotTheLast(t *testing.T) {
+	var seen []captured
+	var srv = newFakeSwitch(t, &seen, "admin", "mcadmin")
+	var a = adminOn(srv)
+	a.User = "mcadmin"
+
+	var err = a.DeleteAccount(context.Background(), "admin")
+	if err != nil {
+		t.Fatalf("one account survives this deletion, it must proceed: %v", err)
+	}
+	if len(writes(seen)) != 1 {
+		t.Fatalf("expected exactly one write: %+v", writes(seen))
+	}
+	// The guard costs ONE GET on the already-open session, the same read
+	// EnsureAccount already pays for. This range grants five sessions.
+	if len(seen) != 2 {
+		t.Errorf("expected one read then one write, got %d requests: %+v", len(seen), seen)
+	}
+	var told = a.Steps[len(a.Steps)-1]
+	if !strings.Contains(told.What, "NOT a promise") {
+		t.Errorf("the success line must refuse to imply a way back in: %q", told.What)
 	}
 }

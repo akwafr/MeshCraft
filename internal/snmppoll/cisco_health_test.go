@@ -67,14 +67,17 @@ func TestCiscoHealthUsesDeviceScales(t *testing.T) {
 // metric published twice with the same labels and timestamp.
 func TestCiscoHealthYieldsToHostResources(t *testing.T) {
 	var out = ciscoHealthSamples("dev", ciscoTables(), time.Now(), true, true)
-	if _, ok := find(out, metricbuf.MetricCPULoad); ok {
+	var _, ok = find(out, metricbuf.MetricCPULoad)
+	if ok {
 		t.Error("cpu published although HOST-RESOURCES already did")
 	}
-	if _, ok := find(out, metricbuf.MetricMemoryFree); ok {
+	_, ok = find(out, metricbuf.MetricMemoryFree)
+	if ok {
 		t.Error("memory published although HOST-RESOURCES already did")
 	}
 	// Temperature has no HOST-RESOURCES equivalent — it must still come through.
-	if _, ok := find(out, metricbuf.MetricTemperature); !ok {
+	_, ok = find(out, metricbuf.MetricTemperature)
+	if !ok {
 		t.Error("temperature was suppressed; it has no standard-MIB equivalent")
 	}
 }

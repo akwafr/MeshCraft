@@ -86,7 +86,7 @@ func (a *Admin) step(ok bool, what string, detail ...string) {
 // OpenAdmin opens a session to a SwOS switch.
 //
 // PLAIN HTTP, and that's not an oversight: SwOS only listens on port 80.
-// Confirmed on 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17) — not 443, not 22, not 23. The
+// Confirmed on 192.0.2.36 (CSS326-24G-2S+, SwOS 2.17) — not 443, not 22, not 23. The
 // confidentiality of the link therefore rests entirely on the proxy tunnel, and an
 // HTTPS attempt would simply fail without revealing anything.
 //

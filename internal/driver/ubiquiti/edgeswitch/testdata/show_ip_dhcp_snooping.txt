@@ -1,0 +1,9 @@
+show ip dhcp snooping
+
+DHCP snooping is Disabled
+DHCP snooping source MAC verification is enabled
+DHCP snooping is enabled on the following VLANs:
+
+
+ Interface    Trusted     Log Invalid Pkts
+-----------  ----------   ----------------

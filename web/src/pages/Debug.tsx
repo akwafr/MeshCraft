@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { viewerDate } from "../ui/clock";
 import { useTranslation } from "react-i18next";
 import { get } from "../api";
 import { ErrorMsg, HelpTip } from "../components";
+import SerialServerPanel from "./SerialServer";
 
 /**
  * Debug zone: the live log of the APPLICATION.
- * See docs/01-Architecture/Unified Monitoring and pipelines §6.
+ * See docs/en/01-Architecture/Unified monitoring and pipelines §6.
  *
  * Not to be confused with the event log, which speaks to the operator about
  * the fleet. Here meshcraft speaks to whoever is diagnosing it. Reserved to
@@ -72,6 +74,10 @@ export default function DebugPage() {
 
   return (
     <>
+      {/* Shared serial lines live here rather than on the Add wizard: this is
+          the diagnostics screen, and attaching to somebody else's console is a
+          diagnostic act — not a step in adding a device. */}
+      <SerialServerPanel />
       <div className="toolbar">
         <h1>
           Debug
@@ -109,7 +115,7 @@ export default function DebugPage() {
           {lines.map((l) => (
             <div key={l.seq} className="debug-line">
               <span className="debug-ts">
-                {new Date(l.ts).toLocaleTimeString(i18n.language)}
+                {(viewerDate(l.ts) ?? new Date(l.ts)).toLocaleTimeString(i18n.language)}
               </span>
               <span style={{ color: COLOR[l.level] ?? "var(--text-dim)" }}>
                 {l.level}

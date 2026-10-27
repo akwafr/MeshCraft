@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestRingBorneLaMemoire(t *testing.T) {
+func TestRingBoundsMemory(t *testing.T) {
 	var r = NewRing(3)
 	var i int
 	for i = 1; i <= 10; i++ {
@@ -23,7 +23,7 @@ func TestRingBorneLaMemoire(t *testing.T) {
 	}
 }
 
-func TestSnapshotFiltreParNiveau(t *testing.T) {
+func TestSnapshotFiltersByLevel(t *testing.T) {
 	var r = NewRing(10)
 	r.Add(Line{TS: time.Now(), Level: "INFO", Msg: "a"})
 	r.Add(Line{TS: time.Now(), Level: "ERROR", Msg: "b"})
@@ -33,11 +33,11 @@ func TestSnapshotFiltreParNiveau(t *testing.T) {
 	}
 }
 
-// TestHandlerMasqueLesSecrets: this stream is viewed in a browser. A password
+// TestHandlerMasksSecrets: this stream is viewed in a browser. A password
 // that transits through it is a leaked password, and the filtering is based
 // on the attribute NAME — looking for a secret in a value would require
 // knowing what it looks like, which is false by construction.
-func TestHandlerMasqueLesSecrets(t *testing.T) {
+func TestHandlerMasksSecrets(t *testing.T) {
 	var r = NewRing(10)
 	var h = NewHandler(slog.NewJSONHandler(discard{}, nil), r)
 	var log = slog.New(h)
@@ -60,10 +60,10 @@ func TestHandlerMasqueLesSecrets(t *testing.T) {
 	}
 }
 
-// TestHandlerNeDetournePasLeFlux: logs must keep going to standard
+// TestHandlerDoesNotDivertTheStream: logs must keep going to standard
 // output. A debug layer that captured the stream would lose the container's
 // logs at the exact moment they're needed most.
-func TestHandlerNeDetournePasLeFlux(t *testing.T) {
+func TestHandlerDoesNotDivertTheStream(t *testing.T) {
 	var out = &capture{}
 	var r = NewRing(10)
 	slog.New(NewHandler(slog.NewJSONHandler(out, nil), r)).Warn("warning")
@@ -75,9 +75,9 @@ func TestHandlerNeDetournePasLeFlux(t *testing.T) {
 	}
 }
 
-// TestSubscribeEstBorne: each stream holds a channel and an HTTP goroutine.
+// TestSubscribeIsBounded: each stream holds a channel and an HTTP goroutine.
 // A forgotten browser tab must not cost resources forever.
-func TestSubscribeEstBorne(t *testing.T) {
+func TestSubscribeIsBounded(t *testing.T) {
 	var r = NewRing(10)
 	r.maxSubs = 2
 	var _, stop1, ok1 = r.Subscribe()
@@ -98,10 +98,10 @@ func TestSubscribeEstBorne(t *testing.T) {
 	stop4()
 }
 
-// TestAddNeBloquePasSurAbonneLent: a browser on a poor link must never
+// TestAddDoesNotBlockOnASlowSubscriber: a browser on a poor link must never
 // slow down the code that's logging. It loses lines, which is the right
 // tradeoff for debugging.
-func TestAddNeBloquePasSurAbonneLent(t *testing.T) {
+func TestAddDoesNotBlockOnASlowSubscriber(t *testing.T) {
 	var r = NewRing(10)
 	var _, stop, _ = r.Subscribe()
 	defer stop()

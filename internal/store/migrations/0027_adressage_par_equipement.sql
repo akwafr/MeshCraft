@@ -1,91 +1,89 @@
--- Le mode d'adressage de management, PAR ÉQUIPEMENT.
+-- The management addressing mode, PER DEVICE.
 --
--- Ce que le schéma savait déjà dire, et ce qu'il ne savait pas. `site_mgmt_plan.source`
--- (migration 0009) porte l'origine de l'adresse pour tout un SITE : « dhcp_external »
--- ou « meshcraft ». C'est une décision de site, et elle est juste à ce niveau — le
--- réseau de management d'un site a bien un régime dominant. Mais elle ne laissait
--- aucune place à l'équipement qui n'y est pas, et il en existe : sur l'installation de
--- référence, les DEUX CSS326 sont en adresse STATIQUE, dans le bon sous-réseau de
--- management, sur un site dont le plan dit « DHCP externe ».
+-- What the schema could already say, and what it could not. `site_mgmt_plan.source`
+-- (migration 0009) carries the address origin for a whole SITE: "dhcp_external"
+-- or "meshcraft". It is a site decision, and it is right at that level — a site's
+-- management network does have a dominant regime. But it left no room for the
+-- device that does not follow it, and such devices exist: on the reference
+-- installation, BOTH CSS326 are on a STATIC address, in the right management
+-- subnet, on a site whose plan says "external DHCP".
 --
--- Ce que produisait ce trou : rien de visible, et c'est le problème. Ces équipements
--- sont parfaitement conformes au plan — leur adresse est dans le sous-réseau, ils
--- répondent — et pourtant meshcraft ne pouvait ni dire par quel moyen ils l'avaient
--- obtenue, ni afficher les trois champs qu'un exploitant veut voir sur une
--- configuration statique (adresse, passerelle, DNS), ni enregistrer la décision de
--- l'y laisser. Un équipement statique et un équipement en bail DHCP se présentaient
--- identiquement, alors que ce qui se passe le jour où le serveur DHCP change n'a rien
--- de commun entre les deux.
+-- What this hole produced: nothing visible, and that is the problem. These
+-- devices are perfectly conformant with the plan — their address is in the
+-- subnet, they answer — and yet meshcraft could neither say how they had
+-- obtained it, nor display the three fields an operator wants to see on a
+-- static configuration (address, gateway, DNS), nor record the decision to leave
+-- it there. A static device and a device on a DHCP lease looked identical,
+-- whereas what happens the day the DHCP server changes has nothing in common
+-- between the two.
 --
--- # « inherit » est le défaut, et il veut dire GARDER CE QUE L'ÉQUIPEMENT A
+-- # "inherit" is the default, and it means KEEP WHAT THE DEVICE HAS
 --
--- Trois valeurs : `inherit`, `dhcp`, `static`. Le défaut est `inherit`, et il applique
--- la règle 3 du modèle de données standard — « absent = non géré ». Un équipement en
--- `inherit` ne se voit RIEN imposer : s'il est en statique, il reste en statique, et
--- c'est très exactement la demande (« si un équipement est adopté dans le bon LAN de
--- management mais en IP statique au lieu de DHCP, alors garder la configuration
--- statique »). Le mode EFFECTIF se résout donc à la lecture, en trois temps : ce que
--- l'équipement déclare porter d'abord, l'origine du plan du site ensuite, le défaut
--- prudent enfin (cf. api.effectiveAddrMode).
+-- Three values: `inherit`, `dhcp`, `static`. The default is `inherit`, and it
+-- applies rule 3 of the standard data model — "absent = unmanaged". A device on
+-- `inherit` has NOTHING imposed on it: if it is static, it stays static, and that
+-- is exactly the request ("if a device is adopted in the right management LAN but
+-- with a static IP instead of DHCP, then keep the static configuration"). The
+-- EFFECTIVE mode is therefore resolved on read, in three steps: what the device
+-- declares it carries first, the site plan's origin next, the cautious default
+-- last (see api.effectiveAddrMode).
 --
--- La conséquence de forme est ce qui rend cette migration sans risque : tout le parc
--- existant part en `inherit`, donc rien ne change de comportement, et aucune ligne
--- n'a besoin d'être réécrite. Le jour où un exploitant veut basculer un équipement en
--- DHCP, c'est un geste EXPLICITE qui pose `dhcp` — pas une déduction du plan de site.
+-- The consequence for the shape is what makes this migration risk-free: the whole
+-- existing fleet starts on `inherit`, so no behaviour changes, and no row needs to
+-- be rewritten. The day an operator wants to switch a device to DHCP, it is an
+-- EXPLICIT gesture that sets `dhcp` — not a deduction from the site plan.
 --
--- # Pourquoi trois colonnes de statique et non un jsonb
+-- # Why three static columns and not a jsonb
 --
--- `mgmt_static_ip`, `mgmt_static_gw`, `mgmt_static_dns` sont les trois champs que
--- l'écran affiche et que l'exploitant saisit. Les ranger dans un jsonb les rendrait
--- inatteignables par une requête (« quels équipements pointent vers cette
--- passerelle ? » est la question qu'on se posera le jour où la passerelle change) et
--- surtout impossibles à contraindre. Le jsonb, lui, est réservé à ce que l'ÉQUIPEMENT
--- déclare (`mgmt_addr_observed`) : là, la forme dépend de la plateforme et ne doit pas
--- être figée par une colonne.
+-- `mgmt_static_ip`, `mgmt_static_gw`, `mgmt_static_dns` are the three fields the
+-- screen shows and the operator types. Storing them in a jsonb would make them
+-- unreachable by a query ("which devices point at this gateway?" is the question
+-- one will ask the day the gateway changes) and above all impossible to
+-- constrain. The jsonb is reserved for what the DEVICE declares
+-- (`mgmt_addr_observed`): there, the shape depends on the platform and must not
+-- be frozen by a column.
 --
--- En `text` et non en `inet`/`cidr`, pour la raison déjà écrite dans 0009 : ces champs
--- sont saisis dans un formulaire, et un type PostgreSQL strict transformerait une
--- faute de frappe en erreur de base illisible là où le contrôleur sait dire « la
--- passerelle 10.0.0.1 n'appartient pas au sous-réseau 10.99.0.0/24 ». La validation
--- vit dans `validateDeviceAddressing`, en un seul endroit, et elle est plus bavarde
--- qu'une contrainte.
+-- As `text` and not `inet`/`cidr`, for the reason already written in 0009: these
+-- fields are typed in a form, and a strict PostgreSQL type would turn a typo into
+-- an unreadable database error where the controller can say "gateway 10.0.0.1
+-- does not belong to subnet 192.0.2.0/24". Validation lives in
+-- `validateDeviceAddressing`, in a single place, and it is more talkative than a
+-- constraint.
 --
--- # Ce que ces colonnes ne sont PAS
+-- # What these columns are NOT
 --
--- Ce n'est pas `devices.mgmt_ip`, qui reste l'adresse OBSERVÉE — celle à laquelle
--- meshcraft joint l'équipement, écrite par la relocalisation et par la découverte.
--- L'intention et le constat gardent deux colonnes distinctes, comme partout ailleurs
--- dans ce schéma (`ports` contre `observed`, `trap_dest_addr` contre `trap_seen_at`) :
--- quand les deux divergent, c'est une dérive à AFFICHER, pas une valeur à corriger en
--- silence.
+-- It is not `devices.mgmt_ip`, which remains the OBSERVED address — the one at
+-- which meshcraft reaches the device, written by relocation and by discovery.
+-- Intent and finding keep two distinct columns, as everywhere else in this schema
+-- (`ports` versus `observed`, `trap_dest_addr` versus `trap_seen_at`): when the two
+-- diverge, it is a drift to DISPLAY, not a value to correct silently.
 --
--- Ce n'est pas non plus `devices.mgmt_mode` (keep | site_plan), toujours absent et
--- toujours en cible : celui-là dira si l'équipement entre dans le plan du site, ce qui
--- est une question de VLAN et de sous-réseau. Le mode d'adressage, lui, dit comment
--- l'adresse est obtenue DANS ce sous-réseau. Les deux axes sont indépendants — on peut
--- être dans le plan en statique, ou hors plan en DHCP.
+-- Nor is it `devices.mgmt_mode` (keep | site_plan), still absent and still a
+-- target: that one will say whether the device enters the site plan, which is a
+-- question of VLAN and subnet. The addressing mode says how the address is
+-- obtained WITHIN that subnet. The two axes are independent — one can be in the
+-- plan with a static address, or outside the plan on DHCP.
 
 alter table devices
-    -- inherit : meshcraft n'impose rien et conserve ce que l'équipement porte.
+    -- inherit: meshcraft imposes nothing and keeps what the device carries.
     add column mgmt_addr_mode  text        not null default 'inherit',
     add column mgmt_static_ip  text        not null default '',
     add column mgmt_static_gw  text        not null default '',
     add column mgmt_static_dns text[]      not null default '{}',
-    -- QUI a décidé, et QUAND. Une intention d'adressage est le genre de décision
-    -- qu'on relit six mois plus tard en se demandant si elle est encore voulue ;
-    -- sans auteur ni date, elle passe pour une valeur d'usine.
+    -- WHO decided, and WHEN. An addressing intent is the kind of decision one re-reads
+    -- six months later wondering whether it is still wanted; without an author or a
+    -- date, it passes for a factory value.
     add column mgmt_addr_by    uuid references users(id) on delete set null,
     add column mgmt_addr_at    timestamptz,
-    -- Ce que l'ÉQUIPEMENT déclare porter, tel que le connecteur l'a lu. NULL = jamais
-    -- relu, et c'est une information : on ne prétend pas connaître le mode d'un
-    -- équipement qu'on n'a pas interrogé.
+    -- What the DEVICE declares it carries, as the connector read it. NULL = never
+    -- read back, and that is information: we do not pretend to know the mode of a
+    -- device we have not queried.
     add column mgmt_addr_observed    jsonb,
     add column mgmt_addr_observed_at timestamptz;
 
--- La contrainte est dans la BASE et pas seulement dans le code, parce que cette
--- colonne décide de ce qu'un futur chemin d'écriture posera sur un équipement. Une
--- valeur inconnue qui y arriverait par un chemin oublié — un import de site-config,
--- une reprise de sauvegarde — se traduirait en « mode non reconnu » au moment de la
--- pose, c'est-à-dire au pire moment.
+-- The constraint is in the DATABASE and not only in the code, because this column
+-- decides what a future write path will set on a device. An unknown value arriving
+-- there through a forgotten path — a site-config import, a backup restore — would
+-- turn into "unrecognised mode" at the time of the push, i.e. at the worst moment.
 alter table devices add constraint devices_mgmt_addr_mode_check
     check (mgmt_addr_mode in ('inherit', 'dhcp', 'static'));

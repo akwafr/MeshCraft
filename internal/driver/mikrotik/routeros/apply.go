@@ -12,7 +12,7 @@ import (
 
 // Writing port VLAN membership.
 //
-// This is the 'Apply' step of the pipeline (docs/01-Architecture/Reconciliation §4 and
+// This is the 'Apply' step of the pipeline (docs/en/01-Architecture/Reconciliation.md §4 and
 // §5), and the most dangerous file in this connector.
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐

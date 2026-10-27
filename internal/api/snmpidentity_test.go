@@ -12,7 +12,7 @@ import (
 
 // What is tested here is the SNMP provisioning part that decides credential SCOPE.
 // Wrong scope is invisible on screen: the fleet looks provisioned, and devices
-// refuses — or worse, two crypto families share has key neither can derive.
+// refuses — or worse, two crypto families share a key neither can derive.
 //
 // Everything is pure: no database, no network. The write path only chains these
 // decisions.
@@ -26,10 +26,10 @@ func snmpCaps(versions, auth, priv []string) driver.Capabilities {
 
 const testSite = "11111111-1111-1111-1111-111111111111"
 
-// TestPorteeDesIdentifiantsSNMP: v3 targets has TAG, v2c targets the SITE.
-// Central rule of section 1 — has v3 identity is has key derived from an algorithm
-// pair; has community is plain text.
-func TestPorteeDesIdentifiantsSNMP(t *testing.T) {
+// TestSNMPCredentialScope: v3 targets a TAG, v2c targets the SITE.
+// Central rule of section 1 — a v3 identity is a key derived from an algorithm
+// pair; a community is plain text.
+func TestSNMPCredentialScope(t *testing.T) {
 	var v3 = snmpprov.For(snmpCaps([]string{"v2c", "v3"},
 		[]string{"sha256"}, []string{"aes128"}), snmpprov.DefaultPolicy())
 	var c, ok = snmpCredentialFor(testSite, v3)
@@ -55,10 +55,10 @@ func TestPorteeDesIdentifiantsSNMP(t *testing.T) {
 	}
 }
 
-// TestSecretV3JamaisPartageEntreDeuxCouples: two devices with different
+// TestV3SecretNeverSharedBetweenTwoPairs: two devices with different
 // algorithms cannot share the same v3 identity. Two distinct plans must therefore
 // target two distinct credentials, and one must never substitute for the other.
-func TestSecretV3JamaisPartageEntreDeuxCouples(t *testing.T) {
+func TestV3SecretNeverSharedBetweenTwoPairs(t *testing.T) {
 	var modern = snmpprov.For(snmpCaps([]string{"v3"},
 		[]string{"sha256"}, []string{"aes128"}), snmpprov.DefaultPolicy())
 	var legacy = snmpprov.For(snmpCaps([]string{"v3"},
@@ -84,9 +84,9 @@ func TestSecretV3JamaisPartageEntreDeuxCouples(t *testing.T) {
 	}
 }
 
-// TestIdempotence: passing again on has qualified device must generate nothing.
-// Without that guarantee, every adoption would rotate the v3 secret for has whole
-// family — and the fleet would lose monitoring one device at has time.
+// TestIdempotence: passing again on a qualified device must generate nothing.
+// Without that guarantee, every adoption would rotate the v3 secret for a whole
+// family — and the fleet would lose monitoring one device at a time.
 func TestIdempotence(t *testing.T) {
 	var plan = snmpprov.For(snmpCaps([]string{"v3"},
 		[]string{"sha"}, []string{"des"}), snmpprov.DefaultPolicy())
@@ -104,10 +104,10 @@ func TestIdempotence(t *testing.T) {
 	}
 }
 
-// TestCommunauteV2cEnLectureSeule: meshcraft NEVER pushes has write community.
+// TestV2cCommunityReadOnly: meshcraft NEVER pushes a write community.
 // The vault must say so, because that is where an operator reads what the row
 // is for (section 2).
-func TestCommunauteV2cEnLectureSeule(t *testing.T) {
+func TestV2cCommunityReadOnly(t *testing.T) {
 	var plan = snmpprov.For(snmpCaps([]string{"v2c"}, nil, nil), snmpprov.DefaultPolicy())
 	var c, _ = snmpCredentialFor(testSite, plan)
 
@@ -121,10 +121,10 @@ func TestCommunauteV2cEnLectureSeule(t *testing.T) {
 	}
 }
 
-// TestEcartAuPlancherEnregistre: 1930 only knows SHA-1 and DES. We monitor it —
+// TestGapToTheFloorIsRecorded: 1930 only knows SHA-1 and DES. We monitor it —
 // withholding monitoring hardens nothing — but the vault records the gap (section 3.2).
-// A non-conformant secret read later as ordinary would be has lie by omission.
-func TestEcartAuPlancherEnregistre(t *testing.T) {
+// A non-conformant secret read later as ordinary would be a lie by omission.
+func TestGapToTheFloorIsRecorded(t *testing.T) {
 	var plan = snmpprov.For(snmpCaps([]string{"v3"},
 		[]string{"md5", "sha"}, []string{"des"}), snmpprov.DefaultPolicy())
 	if plan.Conform {
@@ -143,10 +143,10 @@ func TestEcartAuPlancherEnregistre(t *testing.T) {
 	}
 }
 
-// TestRienAEngendrerSansPlanExploitable: has device we failed to qualify gets
-// NOTHING. Safe default is abstention: generating has secret for has silent device
+// TestNothingToGenerateWithoutAUsablePlan: a device we failed to qualify gets
+// NOTHING. Safe default is abstention: generating a secret for a silent device
 // would make it look monitored.
-func TestRienAEngendrerSansPlanExploitable(t *testing.T) {
+func TestNothingToGenerateWithoutAUsablePlan(t *testing.T) {
 	var cas = []struct {
 		name string
 		plan snmpprov.Plan
@@ -156,9 +156,9 @@ func TestRienAEngendrerSansPlanExploitable(t *testing.T) {
 		{"v3 plan without tag",
 			snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3}},
 		{"ops tag mistaken for instruction",
-			snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3, Tag: "regie"}},
+			snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3, Tag: "ops"}},
 		{"reserved prefix but unknown pair",
-			snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3, Tag: "snmpv3-kangourou-aes128"}},
+			snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3, Tag: "snmpv3-kangaroo-aes128"}},
 	}
 	var c = cas[0]
 	for _, c = range cas {
@@ -175,12 +175,12 @@ func TestRienAEngendrerSansPlanExploitable(t *testing.T) {
 	}
 }
 
-// TestEtiquetteTechniqueSurvitAuxRegles: source vigilance point.
+// TestTechnicalTagSurvivesRules: source vigilance point.
 //
 // Tag rule re-evaluation must NEVER remove the technical tag: that would take
 // the device's v3 credential with it, therefore its monitoring, and nobody would
 // connect the two.
-func TestEtiquetteTechniqueSurvitAuxRegles(t *testing.T) {
+func TestTechnicalTagSurvivesRules(t *testing.T) {
 	if snmpTagSource == tagging.SourceManual || tagging.FromRule(snmpTagSource) {
 		t.Fatalf("source %q must differ from manual and rules", snmpTagSource)
 	}
@@ -191,11 +191,11 @@ func TestEtiquetteTechniqueSurvitAuxRegles(t *testing.T) {
 
 	var current = []tagging.Tag{
 		{Tag: tag, Source: snmpTagSource},
-		{Tag: "regie", Source: "rule:11111111-2222-3333-4444-555555555555"},
+		{Tag: "ops", Source: "rule:11111111-2222-3333-4444-555555555555"},
 	}
 	// Disabled rule: re-evaluation must remove only what IT placed, nothing else.
 	var rules = []tagging.Rule{{
-		ID: "11111111-2222-3333-4444-555555555555", Tag: "regie",
+		ID: "11111111-2222-3333-4444-555555555555", Tag: "ops",
 		Match: tagging.Match{Vendor: "hpe"}, Enabled: false,
 	}}
 	var got = tagging.Evaluate(tagging.Device{Vendor: "HPE Networking"}, current, rules)
@@ -206,14 +206,14 @@ func TestEtiquetteTechniqueSurvitAuxRegles(t *testing.T) {
 			t.Fatalf("technical tag %q removed by re-evaluation", tag)
 		}
 	}
-	if len(got.Remove) != 1 || got.Remove[0].Tag != "regie" {
+	if len(got.Remove) != 1 || got.Remove[0].Tag != "ops" {
 		t.Errorf("only disabled rule tag should be removed: %+v", got.Remove)
 	}
 }
 
-// TestPorteeLisible: SNMP credential scope reads plainly in the log and preview.
+// TestReadableScope: SNMP credential scope reads plainly in the log and preview.
 // "generated credential" without saying FOR WHOM cannot be verified.
-func TestPorteeLisible(t *testing.T) {
+func TestReadableScope(t *testing.T) {
 	var v3 = model.SiteCredential{Kind: snmpprov.KindV3, Tag: "snmpv3-sha-des"}
 	if !strings.Contains(snmpScopeLabel(v3), "snmpv3-sha-des") {
 		t.Errorf("v3 scope must name the tag: %q", snmpScopeLabel(v3))

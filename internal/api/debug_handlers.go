@@ -9,7 +9,7 @@ import (
 )
 
 // Debug zone: the live APPLICATION log.
-// See docs/01-Architecture/Unified monitoring and pipelines section 6.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md section 6.
 //
 // Reserved for `global-admin`. Internal errors describe product structure — which
 // connectors exist, which endpoints fail, how sessions are managed. That is not

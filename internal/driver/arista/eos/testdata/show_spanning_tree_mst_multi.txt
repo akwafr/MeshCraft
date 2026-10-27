@@ -1,0 +1,49 @@
+MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    16384
+             Address     d401.c3ab.32f4
+             Cost        6000 (Ext) 0 (Int)
+             Port        48 (Ethernet48)
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     2899.3a9d.b765
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et34             designated forwarding 2000      128.34   P2p Boundary                  
+Et35             designated forwarding 2000      128.35   P2p Boundary                  
+Et37             designated forwarding 2000      128.37   P2p Boundary                  
+Et48             root       forwarding 2000      128.48   P2p Boundary                  
+
+MST1
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    32769
+             Address     2899.3a9d.b765
+             This bridge is the root
+
+  Bridge ID  Priority    32769  (priority 32768 sys-id-ext 1)
+             Address     2899.3a9d.b765
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et34             designated forwarding 2000      128.34   P2p Boundary                  
+Et35             designated forwarding 2000      128.35   P2p Boundary                  
+Et37             designated forwarding 2000      128.37   P2p Boundary                  
+Et48             master     forwarding 2000      128.48   P2p Boundary                  
+
+MST2
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    32770
+             Address     2899.3a9d.b765
+             This bridge is the root
+
+  Bridge ID  Priority    32770  (priority 32768 sys-id-ext 2)
+             Address     2899.3a9d.b765
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+

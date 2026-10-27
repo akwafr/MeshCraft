@@ -22,9 +22,9 @@ func deviceForCadence() model.Device {
 // the connector floor BOUNDS it from below. It lives in a pure function, which
 // is precisely why it is tested here rather than by graph observation.
 
-func TestEffectiveIntervalPolitiqueBorneeParLePlancher(t *testing.T) {
+func TestEffectiveIntervalPolicyBoundedByTheFloor(t *testing.T) {
 	type cas struct {
-		nom           string
+		name          string
 		wanted, floor time.Duration
 		kept          time.Duration
 		raised        bool
@@ -32,41 +32,41 @@ func TestEffectiveIntervalPolitiqueBorneeParLePlancher(t *testing.T) {
 	var cases = []cas{{
 		// The case that justifies the second return: operator asked for 5 s, the
 		// platform only supports 30. We give 30, and they must learn it.
-		nom:    "floor slower than wanted cadence: clamp",
+		name:   "floor slower than wanted cadence: clamp",
 		wanted: 5 * time.Second, floor: 30 * time.Second,
 		kept: 30 * time.Second, raised: true,
 	}, {
 		// The defect this batch fixes. Before, a 5 s floor BECAME the cadence:
 		// "never more often than 5 s" was read as "every 5 s".
-		nom:    "floor faster: wanted cadence is kept",
+		name:   "floor faster: wanted cadence is kept",
 		wanted: 30 * time.Second, floor: 5 * time.Second,
 		kept: 30 * time.Second,
 	}, {
-		nom:    "floor equals wanted cadence: nothing to clamp",
+		name:   "floor equals wanted cadence: nothing to clamp",
 		wanted: 5 * time.Second, floor: 5 * time.Second,
 		kept: 5 * time.Second,
 	}, {
 		// Unknown connector: ignore what the platform can handle. The safe default
 		// is SLOW, not absent — and it is announced as a clamp, otherwise an entire
 		// fleet would poll every minute with nobody knowing why.
-		nom:    "unknown floor: fall back to safe default, and say so",
+		name:   "unknown floor: fall back to safe default, and say so",
 		wanted: 5 * time.Second, floor: 0,
 		kept: unknownFloorInterval, raised: true,
 	}, {
-		nom:    "negative floor counts as unknown",
+		name:   "negative floor counts as unknown",
 		wanted: 5 * time.Second, floor: -time.Second,
 		kept: unknownFloorInterval, raised: true,
 	}, {
 		// The safe default is a FLOOR, not a target: a policy already slower than
 		// it is not sped up to match.
-		nom:    "unknown floor but wanted cadence already slower",
+		name:   "unknown floor but wanted cadence already slower",
 		wanted: 5 * time.Minute, floor: 0,
 		kept: 5 * time.Minute,
 	}}
 
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
+		t.Run(k.name, func(t *testing.T) {
 			var kept, raised = effectiveInterval(k.wanted, k.floor)
 			if kept != k.kept {
 				t.Errorf("kept cadence %v expected, got %v", k.kept, kept)
@@ -78,13 +78,13 @@ func TestEffectiveIntervalPolitiqueBorneeParLePlancher(t *testing.T) {
 	}
 }
 
-// TestPolitiqueDeCadenceSurUn1930 crosses policy and connector, because that
+// TestCadencePolicyOnA1930 crosses policy and connector, because that
 // crossing is what ships — each alone can be correct while the result is not.
 //
 // This is also the test that breaks if someone merges the 1930 channels again:
 // counters would fall back to 30 s and the operator would lose fine grain with
 // no policy line changing.
-func TestPolitiqueDeCadenceSurUn1930(t *testing.T) {
+func TestCadencePolicyOnA1930(t *testing.T) {
 	var name = (&instanton.Driver1930{}).Info().Name
 	var drv, known = driver.Get(name)
 	if !known {
@@ -116,11 +116,11 @@ func TestPolitiqueDeCadenceSurUn1930(t *testing.T) {
 	}
 }
 
-// TestIntervalForConnecteurInconnu: the path snmpWatchesFor actually takes when
+// TestIntervalForUnknownConnector: the path snmpWatchesFor actually takes when
 // `driver.Get` does not know the device. Verify it separately from the pure
 // function, because that is where we decide whether to consult a floor or fall
 // back to the safe default.
-func TestIntervalForConnecteurInconnu(t *testing.T) {
+func TestIntervalForUnknownConnector(t *testing.T) {
 	var got = intervalFor(deviceForCadence(), driver.MonitoringCapabilities{}, false,
 		snmppoll.MetricIfCounters, wantedCountersInterval)
 	if got != unknownFloorInterval {

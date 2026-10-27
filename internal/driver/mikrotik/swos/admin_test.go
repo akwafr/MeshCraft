@@ -12,7 +12,7 @@ import (
 // specific — and its failure too costly, this model having no serial port — to
 // settle for checking the code against itself.
 
-// TestCondenseDeMotDePasse: the algorithm, verified through a SECOND path.
+// TestPasswordDigest: the algorithm, verified through a SECOND path.
 //
 // The expected values are not the ones this code produces: they were
 // computed by a LITERAL reimplementation in Python of the `sa` and `ra`
@@ -27,8 +27,8 @@ import (
 //     have no key;
 //   - the SIXTY-FOUR stream bytes applied over thirty-two, i.e. two passes.
 //     Stopping at 32 produces a plausible-looking digest that the device rejects.
-func TestCondenseDeMotDePasse(t *testing.T) {
-	var cas = []struct {
+func TestPasswordDigest(t *testing.T) {
+	var cases = []struct {
 		nouveau, ancien, expected string
 	}{
 		{
@@ -55,8 +55,8 @@ func TestCondenseDeMotDePasse(t *testing.T) {
 			"07e8c5bbc5786ddd0452b367ebfb4c7953b5db5c0c1aedbf727f36d0c6cc7d7b",
 		},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got, err = PasswordBlob(c.nouveau, c.ancien)
 		if err != nil {
 			t.Errorf("PasswordBlob(%q, %q): %v", c.nouveau, c.ancien, err)
@@ -73,12 +73,12 @@ func TestCondenseDeMotDePasse(t *testing.T) {
 	}
 }
 
-// TestMotDePasseRefuseAvantEnvoi: refuse here, not on the device.
+// TestPasswordRefusedBeforeSending: refuse here, not on the device.
 //
 // Both constraints are observed in the device's interface, and both cost a
 // trip if ignored: this model has no serial port, and an
 // applied secret that isn't the one intended is not recoverable.
-func TestMotDePasseRefuseAvantEnvoi(t *testing.T) {
+func TestPasswordRefusedBeforeSending(t *testing.T) {
 	// More than 15 characters: the interface refuses ("New password is too long").
 	var _, err = PasswordBlob("0123456789abcdef", "")
 	if err == nil {
@@ -118,18 +118,18 @@ func TestMotDePasseRefuseAvantEnvoi(t *testing.T) {
 	}
 }
 
-// TestCompteFixeSurSwOS: there is nothing to name, and that's a fact.
+// TestFixedAccountOnSwOS: there is nothing to name, and that's a fact.
 //
 // SwOS has no notion of an account: the password-change form
 // carries only three fields, the page that receives it only one key, and the
 // ENTIRE configuration backup of the device carries no username (verified in
-// TestSauvegardeReelle).
+// TestRealBackup).
 //
 // Consequence for meshcraft: the fleet's unified name can NOT be applied here, and
 // it's EffectiveUsername that must resolve it. Checking this here avoids a
 // provisioning run storing in the database an account name that doesn't exist on
 // any device.
-func TestCompteFixeSurSwOS(t *testing.T) {
+func TestFixedAccountOnSwOS(t *testing.T) {
 	var admin = (&Driver{}).Capabilities("CSS326-24G-2S+").Admin
 	if admin.Custom {
 		t.Error("SwOS cannot create a named account")

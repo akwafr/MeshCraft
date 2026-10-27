@@ -24,7 +24,7 @@ import (
 //
 // Major trap on this platform: an unknown path does not return 404. It returns
 // the full web UI as HTTP 200, `text/html`. Verified on
-// 10.99.0.36 (CSS326-24G-2S+, SwOS 2.17): /vlans.b, /poe.b, /igmp.b, /dhcp.b,
+// 192.0.2.36 (CSS326-24G-2S+, SwOS 2.17): /vlans.b, /poe.b, /igmp.b, /dhcp.b,
 // /cfg.b, /mact.b, /leds.b, /fan.b all eight respond with the 44,807-byte
 // UI. Inferring page existence from HTTP 200 is therefore wrong;
 // the parser decides, by rejecting anything that is not a SwOS page.
@@ -42,7 +42,7 @@ const (
 	PageVLAN = "/vlan.b"
 	// PageHost: static host table (configured).
 	PageHost = "/host.b"
-	// PageDynHost: learned host table. Read-only (the « ! » in the name marks
+	// PageDynHost: learned host table. Read-only (the "!" in the name marks
 	// pages the UI never writes).
 	PageDynHost = "/!dhost.b"
 	// PageSFP: optical diagnostic for SFP cages (SFF-8472).
@@ -72,7 +72,7 @@ const (
 //
 // Observed, and worth knowing before exploring this platform: these paths ignore
 // GET. A `GET /reset` and a `GET /reboot` both return HTTP 200 with an empty
-// body and do nothing — verified on 10.99.0.36, whose uptime kept increasing
+// body and do nothing — verified on 192.0.2.36, whose uptime kept increasing
 // (149,281 s then 149,801 s) and whose VLAN table was unchanged immediately
 // after. That is what makes read-only exploration actually safe on this
 // platform, and not something we should have to discover by trying it.
@@ -88,7 +88,7 @@ const (
 
 // Writable field set for each page, and why this list exists.
 //
-// The device UI does not send deltas: its « Apply All » button rebuilds the
+// The device UI does not send deltas: its "Apply All" button rebuilds the
 // entire page object from all modifiable fields (`Sa` in its JavaScript, which
 // walks the definitions and skips those marked read-only), then POSTs it as-is.
 // Writing on SwOS is therefore necessarily read-modify-rewrite, and a truncated
@@ -118,13 +118,34 @@ var writableFields = map[string][]string{
 		FieldIdentity, "wdt", "dsc", "pdsc", "ivl",
 		FieldAllowFrom, FieldAllowMask, FieldAllowVLAN, FieldAllowPorts,
 		"mgmt", "prio", "cost", "frmc", "poe", "igmp", "igmq", "igfl", "igve",
-		FieldIP, "dtrp", "ainf", FieldAddrMode,
+		FieldIP, FieldDHCPTrusted, FieldDHCPOption82, FieldAddrMode,
+	},
+	// /link.b — order and keys from testdata/backup.swb, same source and same
+	// rule as /sys.b above.
+	//
+	// THE LIST IS SHORTER THAN THE LIVE PAGE, and that gap is the whole reason
+	// this entry exists rather than a hand-written one. The page the device
+	// SERVES carries thirty-odd keys (`lnk`, `dpx`, `spd`, `hop`, `len`, `flt`,
+	// `pair`…): those are telemetry — the observed link, the observed rate, the
+	// cable diagnostic — and the device does not expect them back. What it
+	// STORES is these eleven, and nothing else.
+	//
+	// Note what rides along with `en` on every port-admin write: `nm` (the port
+	// names), `an` (autonegotiation), `dpxc`/`fctc`/`fctr` (duplex and flow
+	// control), `spdc` (the forced rate). Every one of them is echoed back with
+	// the value that was just read, which is what read-modify-rewrite means
+	// here — and it is also why a write must be REFUSED when any of them is
+	// missing from the read: posting without `nm` would rename twenty-six ports
+	// to nothing while shutting one.
+	PageLink: {
+		FieldEnabled, "blkp", "an", "dpxc", "fctc", "fctr",
+		"spdc", "cm", "qtyp", FieldPortName, "sfpr",
 	},
 }
 
 // WritableFields returns the writable field set for a page, and whether it is
 // known. A page whose set is unknown must not be written: the rule
-// « an unknown capability is assumed absent » applied to writing.
+// "an unknown capability is assumed absent" applied to writing.
 func WritableFields(page string) ([]string, bool) {
 	var f, ok = writableFields[page]
 	if !ok {
@@ -166,11 +187,11 @@ var vlanRowFields = []string{
 // Identity and firmware. All read-only except where noted.
 const (
 	// FieldBoard: model reference, hex-encoded string
-	// (`'4353533332362d3234472d32532b'` = « CSS326-24G-2S+ »).
+	// (`'4353533332362d3234472d32532b'` = "CSS326-24G-2S+").
 	FieldBoard = "brd"
 	// FieldSerial: serial number.
 	FieldSerial = "sid"
-	// FieldVersion: SwOS version (`'322e3137'` = « 2.17 »).
+	// FieldVersion: SwOS version (`'322e3137'` = "2.17").
 	FieldVersion = "ver"
 	// FieldBuild: firmware build timestamp, Unix seconds.
 	FieldBuild = "bld"
@@ -178,7 +199,7 @@ const (
 	FieldRevision = "rev"
 	// FieldMarket: board marketing name, often empty.
 	FieldMarket = "mrkt"
-	// FieldIdentity: system name, writable (« Identity » in the UI).
+	// FieldIdentity: system name, writable ("Identity" in the UI).
 	FieldIdentity = "id"
 	// FieldMAC: device MAC address, 12 hex digits without separator and
 	// without byte swap (`'b869f45f14a8'` = b8:69:f4:5f:14:a8).
@@ -187,7 +208,7 @@ const (
 	// (`scale:100` in the UI).
 	FieldUptime = "upt"
 	// FieldTemp: temperature in whole degrees Celsius, no scale factor.
-	// Read 0x44 then 0x45 (68 then 69 °C) minutes apart on 10.99.0.36: a live
+	// Read 0x44 then 0x45 (68 then 69 °C) minutes apart on 192.0.2.36: a live
 	// sensor.
 	FieldTemp = "temp"
 )
@@ -201,17 +222,17 @@ const (
 	// FieldCurrentIP: address in use, read-only. Differs from `ip` when the
 	// device uses DHCP.
 	FieldCurrentIP = "cip"
-	// FieldAddrMode: addressing mode — 0 « DHCP with fallback », 1 « static »,
-	// 2 « DHCP only » (the three UI selector options, in that order).
+	// FieldAddrMode: addressing mode — 0 "DHCP with fallback", 1 "static",
+	// 2 "DHCP only" (the three UI selector options, in that order).
 	FieldAddrMode = "iptp"
-	// FieldAllowVLAN: « Allow From VLAN » — VLAN from which administration is
+	// FieldAllowVLAN: "Allow From VLAN" — VLAN from which administration is
 	// accepted. 0 = all. This is the device management VLAN.
 	FieldAllowVLAN = "avln"
-	// FieldAllowFrom / FieldAllowMask: « Allow From » — subnet allowed to
+	// FieldAllowFrom / FieldAllowMask: "Allow From" — subnet allowed to
 	// administer. 0/0 = all.
 	FieldAllowFrom = "alla"
 	FieldAllowMask = "allm"
-	// FieldAllowPorts: « Allow From Ports » — port mask for administration.
+	// FieldAllowPorts: "Allow From Ports" — port mask for administration.
 	FieldAllowPorts = "allp"
 )
 
@@ -246,15 +267,42 @@ const (
 	FieldDuplex = "dpx"
 	// FieldSpeed: negotiated rate, one index per port in SpeedLabels.
 	//
-	// Meaningful only on a linked port. On 10.99.0.36, the 25 unlinked ports
+	// Meaningful only on a linked port. On 192.0.2.36, the 25 unlinked ports
 	// carry index 7 — outside the label table — and the only linked port
 	// (index 25, SFP2 cage) carries 3, i.e. 10G, confirmed by the inserted
 	// transceiver (`SFP-10G-BX`). Reporting a rate for an off port would
 	// invent a value.
 	FieldSpeed = "spd"
 	// FieldPortName: each port name, hex-encoded string. Default
-	// « Port1 »… « Port24 », « SFP1 », « SFP2 ».
+	// "Port1"… "Port24", "SFP1", "SFP2".
 	FieldPortName = "nm"
+	// FieldDHCPTrusted: mask of ports TRUSTED for DHCP snooping, in the
+	// "DHCP & PPPoE Snooping" group of /sys.b.
+	//
+	// A MASK, exactly like FieldEnabled — and that is the whole shape of the
+	// feature on this platform. There is no global on/off statement and no
+	// per-VLAN dimension anywhere in SwOS: the set of trusted ports IS the
+	// configuration, and a port's absence from the mask is what makes it
+	// untrusted. The enumeration that establishes this is exhaustive, not a
+	// failed search — testdata/backup.swb lists every field /sys.b stores
+	// (cf. mgmtaddr.go, which leans on the same source to prove SwOS has no
+	// gateway field at all).
+	//
+	// The consequence for driver.DHCPSnoopPlan: `VLANs` cannot be honoured
+	// here, and a connector must SAY so in DHCPSnoopState.Notes rather than
+	// return an empty VLAN list a caller could read as "snooping covers
+	// nothing". Those are two different facts.
+	FieldDHCPTrusted = "dtrp"
+	// FieldDHCPOption82: insertion of the DHCP information option (option 82).
+	//
+	// ADJACENT TO SNOOPING, NOT PART OF IT, and the distinction is worth
+	// keeping: this rides on the same UI group, but it rewrites relayed
+	// requests rather than filtering server replies. SwOS does not route and
+	// therefore does not relay (cf. the "DHCPRelay: false" capability in
+	// swos.go) — so this option is carried in the writable set because a
+	// read-modify-rewrite of /sys.b must echo it back untouched, and for no
+	// other reason. Nothing in this codebase sets it.
+	FieldDHCPOption82 = "ainf"
 )
 
 // SpeedLabels maps FieldSpeed indices. Order matches the UI table:
@@ -262,7 +310,7 @@ const (
 // assuming sorted order yields a wrong rate.
 var SpeedLabels = []string{"10M", "100M", "1G", "10G", "5G", "2.5G", "40G"}
 
-// SpeedLabel maps a rate index. An out-of-table index is not « 10M »:
+// SpeedLabel maps a rate index. An out-of-table index is not "10M":
 // it means absent, and is reported as such.
 func SpeedLabel(i uint32) (string, bool) {
 	if i >= uint32(len(SpeedLabels)) {
@@ -274,15 +322,15 @@ func SpeedLabel(i uint32) (string, bool) {
 // --- /fwd.b fields: per-port VLAN ---
 
 const (
-	// FieldVLANMode: per-port VLAN mode — 0 « disabled », 1 « optional »,
-	// 2 « enabled », 3 « strict ».
+	// FieldVLANMode: per-port VLAN mode — 0 "disabled", 1 "optional",
+	// 2 "enabled", 3 "strict".
 	FieldVLANMode = "vlan"
-	// FieldVLANReceive: what the port accepts on ingress — 0 « any »,
-	// 1 « only tagged », 2 « only untagged ».
+	// FieldVLANReceive: what the port accepts on ingress — 0 "any",
+	// 1 "only tagged", 2 "only untagged".
 	FieldVLANReceive = "vlni"
-	// FieldDefaultVLAN: « Default VLAN ID » for the port, i.e. its PVID.
+	// FieldDefaultVLAN: "Default VLAN ID" for the port, i.e. its PVID.
 	FieldDefaultVLAN = "dvid"
-	// FieldForceVLAN: mask of ports in « Force VLAN ID » mode.
+	// FieldForceVLAN: mask of ports in "Force VLAN ID" mode.
 	FieldForceVLAN = "fvid"
 )
 
@@ -344,7 +392,7 @@ const (
 	FieldSFPPart   = "pnr"
 	FieldSFPSerial = "ser"
 	// FieldSFPTemp: transceiver temperature in °C. Value 0xffffff80
-	// (-128 two's complement) is the UI « no module » sentinel
+	// (-128 two's complement) is the UI "no module" sentinel
 	// (`u:-128`), not a temperature.
 	FieldSFPTemp = "tmp"
 	// FieldSFPVcc: supply voltage; divide by 1,000 for volts
@@ -402,18 +450,18 @@ func Counter64(low, high uint32) uint64 {
 // DecodeIPv4 converts a SwOS address to dotted notation.
 //
 // Byte order is little-endian: the first octet in dotted notation is the
-// least significant byte. `0x2400630a` reads as 10.99.0.36, not 36.0.99.10.
+// least significant byte. `0x240200c0` reads as 192.0.2.36, not 36.2.0.192.
 //
 // This is not inferred from an observed value; it is the device code. Its
 // decoder (`L.C`) does `for(d=0;4>d;++d){ b += a&255; a>>=8 }`, and its
 // encoder (`L.B`) does the inverse, `e = e>>8&0xFFFFFF | f<<24` on bytes
-// taken in read order — replaying that encoder on 10.99.0.36 yields
-// 0x2400630A. Both directions agree, and the decoded address is the one
+// taken in read order — replaying that encoder on 192.0.2.36 yields
+// 0x240200C0. Both directions agree, and the decoded address is the one
 // the device actually responds on.
 //
 // This is exactly the kind of detail that displays a wrong address, then
-// writes a wrong address: reversing it would POST 36.0.99.10 to a device
-// believed to be at 10.99.0.36, and you would have to move physically.
+// writes a wrong address: reversing it would POST 36.2.0.192 to a device
+// believed to be at 192.0.2.36, and you would have to move physically.
 func DecodeIPv4(v uint32) string {
 	return fmt.Sprintf("%d.%d.%d.%d", v&0xff, v>>8&0xff, v>>16&0xff, v>>24&0xff)
 }

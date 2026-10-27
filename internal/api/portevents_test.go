@@ -79,7 +79,7 @@ func TestPortTransitionSimple(t *testing.T) {
 // Without ifIndex there is no key: port name cannot be fallback, because it
 // collides. We prefer correlating nothing to correlating two different ports
 // together.
-func TestPortTransitionSansIdentifiant(t *testing.T) {
+func TestPortTransitionWithoutIdentifier(t *testing.T) {
 	var pf = newPortFlaps()
 	if pf.observe(portTransition{DeviceID: "d1", PortName: "42"}, t0) != nil {
 		t.Error("event without ifIndex is not correlatable")
@@ -134,8 +134,8 @@ func TestPortFlappingMonte(t *testing.T) {
 
 // Flapping that settles on up: port is repaired. Log must say so, and it can only
 // say so on a clock — flap end is absence of events, never an event.
-func TestPortFlappingSeCalmeEnUp(t *testing.T) {
-	var pf, at = flappingSur12(t)
+func TestPortFlappingSettlesUp(t *testing.T) {
+	var pf, at = flappingOn12(t)
 
 	// Nothing closes before flapCalm of silence: otherwise a port flapping slower
 	// than we observe would be declared calm between seen transitions, then flapping
@@ -144,7 +144,7 @@ func TestPortFlappingSeCalmeEnUp(t *testing.T) {
 		t.Fatal("flapping closes after calm, not before")
 	}
 
-	// Last retained transition was up (cf. flappingSur12).
+	// Last retained transition was up (cf. flappingOn12).
 	var closed = pf.sweep(at.Add(flapCalm))
 	if kinds(closed) != portLogFlapEnd {
 		t.Fatalf("calm must close flapping: %q", kinds(closed))
@@ -168,7 +168,7 @@ func TestPortFlappingSeCalmeEnUp(t *testing.T) {
 
 // Opposite case, and most important for an operator: port stopped flapping because
 // the link is dead for good. Confusing the two would pass a failure for a repair.
-func TestPortFlappingSeCalmeEnDown(t *testing.T) {
+func TestPortFlappingSettlesDown(t *testing.T) {
 	var pf = newPortFlaps()
 	var at = t0
 	var i int
@@ -190,8 +190,8 @@ func TestPortFlappingSeCalmeEnDown(t *testing.T) {
 // Flap end can also be observed on an event when sweep has not run yet. It must
 // then be written BEFORE the transition that woke it, otherwise the log would
 // announce flap exit after the next flap started.
-func TestPortFlappingClosParUnEvenementTardif(t *testing.T) {
-	var pf, at = flappingSur12(t)
+func TestPortFlappingClosedByALateEvent(t *testing.T) {
+	var pf, at = flappingOn12(t)
 
 	var decisions = pf.observe(tick(false, "p1"), at.Add(flapCalm+time.Minute))
 	if kinds(decisions) != portLogFlapEnd+","+portLogTransition {
@@ -213,7 +213,7 @@ func TestPortDedoublonnageInterProxys(t *testing.T) {
 		t.Fatalf("first observation is the event: %q", kinds(first))
 	}
 	// Second proxy sees same drop four seconds later.
-	if pf.observe(tick(false, "proxy-akwalan"), t0.Add(4*time.Second)) != nil {
+	if pf.observe(tick(false, "proxy-lab"), t0.Add(4*time.Second)) != nil {
 		t.Fatal("same drop seen by second proxy is not a second event")
 	}
 
@@ -238,10 +238,10 @@ func TestPortDedoublonnageInterProxys(t *testing.T) {
 // Beyond dupWindow, same observation is no longer echo: proxy rediscovering fleet
 // state after reconnect, or truly new transition we missed. Keep it — a miss is
 // worse than a duplicate.
-func TestPortDedoublonnageHorsFenetre(t *testing.T) {
+func TestPortDeduplicationOutsideTheWindow(t *testing.T) {
 	var pf = newPortFlaps()
 	pf.observe(tick(false, "Local"), t0)
-	var late = pf.observe(tick(false, "proxy-akwalan"), t0.Add(dupWindow))
+	var late = pf.observe(tick(false, "proxy-lab"), t0.Add(dupWindow))
 	if kinds(late) != portLogTransition {
 		t.Fatalf("outside window, no longer echo: %q", kinds(late))
 	}
@@ -269,8 +269,8 @@ func TestPortFlapsPurge(t *testing.T) {
 
 // Purge must never swallow a flap exit. Edge case: sweep missed its turn —
 // controller suspended, machine overloaded: key crosses calm AND forget horizon at once.
-func TestPortFlapsPurgeNAvalePasLaSortie(t *testing.T) {
-	var pf, at = flappingSur12(t)
+func TestPortFlapsPurgeDoesNotSwallowTheExit(t *testing.T) {
+	var pf, at = flappingOn12(t)
 
 	// While still flapping and calm not reached, key is untouchable.
 	if len(pf.sweep(at.Add(time.Second))) != 0 || len(pf.states) != 1 {
@@ -297,7 +297,7 @@ func TestPortFlapsPurgeNAvalePasLaSortie(t *testing.T) {
 
 // Hard bound: proxy reporting aberrant ifIndexes (VLAN interfaces, aggregates — a
 // 1930 exposes them up to 100000) must not inflate controller memory.
-func TestPortFlapsBorneMemoire(t *testing.T) {
+func TestPortFlapsBoundsMemory(t *testing.T) {
 	var pf = newPortFlaps()
 	var i int
 	for i = 0; i < maxPortKeys+500; i++ {
@@ -317,7 +317,7 @@ func TestPortFlapsBorneMemoire(t *testing.T) {
 // Fallback for impossible case: bound reached by keys that are ALL flapping, so
 // none can be sacrificed. Return transition as-is — noisy but true — instead of
 // letting memory grow.
-func TestPortFlapsSatureeNeCroitPas(t *testing.T) {
+func TestPortFlapsSaturatedDoesNotGrow(t *testing.T) {
 	var pf = newPortFlaps()
 	var i int
 	for i = 0; i < maxPortKeys; i++ {
@@ -376,7 +376,7 @@ func TestPortFlapsConcurrence(t *testing.T) {
 // three cases the filter must distinguish.
 func portDevice() model.Device {
 	return model.Device{
-		ID: "d1", SiteID: "s1", Name: "SW-Accueil",
+		ID: "d1", SiteID: "s1", Name: "SW-Reception",
 		PortGroups: []byte(`[{"prefix":"GE","from":1,"count":52}]`),
 		Ports: []byte(`{
 			"GE12": {"mode": "access", "vlan": 10},
@@ -388,7 +388,7 @@ func portDevice() model.Device {
 // Message must read for an operator: device, port as they call it, and what
 // happened. Port as they call it is the FACADE name — Instant On ifDescr is a bare
 // number that means nothing on screen.
-func TestPortEventLibelleDeFacade(t *testing.T) {
+func TestPortEventFacadeLabel(t *testing.T) {
 	var ev = portEventOf(portDevice(), portDecision{
 		Kind: portLogTransition, DeviceID: "d1", IfIndex: 12, PortName: "12",
 		At: t0,
@@ -399,7 +399,7 @@ func TestPortEventLibelleDeFacade(t *testing.T) {
 	if ev.PortName != "GE12" {
 		t.Errorf("resolved port must attach event to jack: %q", ev.PortName)
 	}
-	if !strings.Contains(ev.Message, "SW-Accueil") || !strings.Contains(ev.Message, "GE12") {
+	if !strings.Contains(ev.Message, "SW-Reception") || !strings.Contains(ev.Message, "GE12") {
 		t.Errorf("unreadable message for operator: %q", ev.Message)
 	}
 	if strings.Contains(ev.Message, "ifIndex") {
@@ -409,7 +409,7 @@ func TestPortEventLibelleDeFacade(t *testing.T) {
 
 // Unreadable front panel: cannot resolve, SAY SO. SNMP label alone would lie — it
 // collides — and index alone would be unreadable.
-func TestPortEventLibelleNonResolu(t *testing.T) {
+func TestPortEventUnresolvedLabel(t *testing.T) {
 	var ev = portEventOf(model.Device{ID: "d1", SiteID: "s1", Name: "SW-Cave"},
 		portDecision{Kind: portLogTransition, DeviceID: "d1", IfIndex: 42,
 			PortName: "42", Up: true, At: t0})
@@ -425,7 +425,7 @@ func TestPortEventLibelleNonResolu(t *testing.T) {
 }
 
 // With no label at all, index remains: austere event beats silent event on the port.
-func TestPortEventSansLibelle(t *testing.T) {
+func TestPortEventWithoutLabel(t *testing.T) {
 	var ev = portEventOf(portDevice(), portDecision{
 		Kind: portLogTransition, DeviceID: "d1", IfIndex: 7, At: t0,
 	})
@@ -435,7 +435,7 @@ func TestPortEventSansLibelle(t *testing.T) {
 }
 
 // Severities are the real trade-off: port.flapping must surface, not transitions it replaces.
-func TestPortEventSeverites(t *testing.T) {
+func TestPortEventSeverities(t *testing.T) {
 	var d = portDevice()
 
 	var flap = portEventOf(d, portDecision{
@@ -483,7 +483,7 @@ func TestPortEventSeverites(t *testing.T) {
 
 // Unknown kind produces NOTHING rather than empty log line: event without type
 // cannot be filtered or read.
-func TestPortEventNatureInconnue(t *testing.T) {
+func TestPortEventUnknownNature(t *testing.T) {
 	if portEventOf(portDevice(), portDecision{Kind: "?", IfIndex: 12,
 		PortName: "12"}).Type != "" {
 		t.Error("unknown kind must log nothing")
@@ -516,7 +516,7 @@ func TestPortEventPortLibreIgnore(t *testing.T) {
 // RESOLVED port absent from devices.ports is free too: front panel answered, and says
 // meshcraft has nothing to do there. Do not confuse with front panel failing to answer
 // (next test).
-func TestPortEventPortSansModeIgnore(t *testing.T) {
+func TestPortEventPortWithoutModeIgnored(t *testing.T) {
 	var ev = portEventOf(portDevice(), portDecision{
 		Kind: portLogTransition, DeviceID: "d1", IfIndex: 14, PortName: "14", At: t0,
 	})
@@ -528,7 +528,7 @@ func TestPortEventPortSansModeIgnore(t *testing.T) {
 
 // Managed port passes. Mirror of previous two: filter that cuts everything is as
 // wrong as no filter.
-func TestPortEventPortGereJournalise(t *testing.T) {
+func TestPortEventManagedPortLogged(t *testing.T) {
 	var ev = portEventOf(portDevice(), portDecision{
 		Kind: portLogTransition, DeviceID: "d1", IfIndex: 12, PortName: "12", At: t0,
 	})
@@ -540,7 +540,7 @@ func TestPortEventPortGereJournalise(t *testing.T) {
 // RESOLVED front panel but free port: flapping stays silent too. Filter applies to all
 // kinds — free port flapping is a laptop waking, not a dying transceiver, and
 // aggregating it as SevWarning would warn on the most routine network gesture.
-func TestPortEventBattementSurPortLibreIgnore(t *testing.T) {
+func TestPortEventFlapOnUnmanagedPortIgnored(t *testing.T) {
 	var d = portDevice()
 	var kind string
 	for _, kind = range []string{portLogFlapStart, portLogFlapEnd} {
@@ -563,7 +563,7 @@ func TestPortEventBattementSurPortLibreIgnore(t *testing.T) {
 // we cannot read it. Default silence would mute the channel on every device whose
 // front panel is not yet read — precisely those we know least. Unknown port going down
 // is information; free port coming up is not.
-func TestPortEventFacadeNonResolueJournaliseeQuandMeme(t *testing.T) {
+func TestPortEventUnresolvedFacadeLoggedAnyway(t *testing.T) {
 	// Device has front panel and modes: RESOLUTION fails, not missing inventory.
 	// ifIndex 100000 is aggregate interface on 1930, label matching no front-panel port.
 	var ev = portEventOf(portDevice(), portDecision{
@@ -644,7 +644,7 @@ func TestPortLinksChanged(t *testing.T) {
 // Correlation instant is what the CONTROLLER passes, and appears unchanged in
 // state and decision. Positive half of lock: without it, correlation dating
 // everything to internal time.Now() would pass following tests while proving nothing.
-func TestPortCorrelationDateeParLHorlogeFournie(t *testing.T) {
+func TestPortCorrelationDatedByTheSuppliedClock(t *testing.T) {
 	var pf = newPortFlaps()
 	// Deliberately distant date: nothing correlation retains may resemble test machine time.
 	var when = t0.Add(-72 * time.Hour)
@@ -671,8 +671,8 @@ func TestPortCorrelationDateeParLHorlogeFournie(t *testing.T) {
 // filled from an event attracts that event's date — literally what happened,
 // At: ev.TS. Warning how would not have stopped it; ABSENCE of field would.
 // This test fails on first attempt to restore it — same reasoning as
-// TestConfirmTrapPathNAccepteAucuneHorloge on store side.
-func TestPortTransitionNePorteAucuneHorloge(t *testing.T) {
+// TestConfirmTrapPathAcceptsNoClock on store side.
+func TestPortTransitionCarriesNoClock(t *testing.T) {
 	var tr = reflect.TypeOf(portTransition{})
 	var clock = reflect.TypeOf(time.Time{})
 	var i int
@@ -695,7 +695,7 @@ func TestPortTransitionNePorteAucuneHorloge(t *testing.T) {
 // now would be a place network date could slip in unnoticed — syntax analysis
 // cannot follow it. Test files excluded: that is where injected clocks live, and
 // injected test clock is not proxy clock.
-func TestCorrelationNeRecoitQueLHorlogeDuControleur(t *testing.T) {
+func TestCorrelationOnlyReceivesTheControllerClock(t *testing.T) {
 	var entries, err = os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("unreadable package: %v", err)
@@ -746,9 +746,9 @@ func TestCorrelationNeRecoitQueLHorlogeDuControleur(t *testing.T) {
 	}
 }
 
-// flappingSur12 brings port 12 of "d1" into flapping state, LAST retained
+// flappingOn12 brings port 12 of "d1" into flapping state, LAST retained
 // transition being up. Returns timestamp of that last one.
-func flappingSur12(t *testing.T) (*portFlaps, time.Time) {
+func flappingOn12(t *testing.T) (*portFlaps, time.Time) {
 	t.Helper()
 	var pf = newPortFlaps()
 	var at = t0

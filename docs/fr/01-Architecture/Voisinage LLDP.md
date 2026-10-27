@@ -24,15 +24,15 @@ stockage, les liens dérivés et leur affichage.
 ## 1. Le relevé, avant le code
 
 Trois équipements du parc de référence, walkés en **lecture seule** à travers
-`proxy-akwalan` (`POST /api/devices/{id}/snmp-walk`), le **29 juillet 2026**. La
+`proxy-lab` (`POST /api/devices/{id}/snmp-walk`), le **29 juillet 2026**. La
 LLDP-MIB est sous `1.0.8802` — une MIB de l'**IEEE** adoptée telle quelle, pas une branche
 entreprise.
 
 | | `lab-crs326` (RouterOS 7.21beta3) | `lab-css326` (SwOS 2.17) | `sw-labo-1930` (InstantOn 3.4.0.0) |
 |---|---|---|---|
 | `1.0.8802` sert quelque chose | **oui** | **NON — zéro ligne, sans erreur** | **oui** |
-| `lldpLocChassisId` | `B8:69:F4:5B:A0:D2` — **en texte** | — | six octets bruts → `0x8825101761a7` |
-| `lldpLocSysName` | `lan-r4` | — | `CN2AKPH86J` (son numéro de série) |
+| `lldpLocChassisId` | `B8:69:F4:5B:A0:D2` — **en texte** | — | six octets bruts → `0x02005e1061a7` |
+| `lldpLocSysName` | `lan-r4` | — | `CN0EXAMPL1` (son numéro de série) |
 | `lldpLocPortTable` | **2 entrées** (sur 29 interfaces) | — | **52 entrées** |
 | `lldpLocPortIdSubtype` | `interfaceName(5)` partout | — | `5` sauf **ports 50 et 52 : `macAddress(3)`** |
 | `lldpRemChassisId` (col. 5) | oui, **en texte** | — | oui, **octets bruts** |
@@ -135,7 +135,7 @@ C'est le relevé qui tranche, et il tranche dans des sens **opposés** :
 | | `lldpLocPortIdSubtype` | `lldpLocPortId` | `lldpLocPortDesc` | ce qu'il faut prendre |
 |---|---|---|---|---|
 | CRS326, port 26 | `interfaceName(5)` | `sfp-sfpplus2` | `bridge/sfp-sfpplus2` | **le portId** |
-| 1930, port 50 | `macAddress(3)` | `0x8825101761d9` | `50` | **le portDesc** |
+| 1930, port 50 | `macAddress(3)` | `0x02005e1061d9` | `50` | **le portDesc** |
 
 Prendre `portDesc` partout casserait le MikroTik : `bridge/sfp-sfpplus2` n'est pas un port
 de sa façade — c'est le nom d'une **appartenance de pont** — et `resolve` l'écarterait, à
@@ -149,8 +149,8 @@ Le fait le plus surprenant du relevé, et sans lui le seul lien bilatéral du pa
 présenterait comme unilatéral :
 
 ```
-le 1930 DÉCLARE     lldpLocChassisId       = 0x8825101761a7
-le CRS326 a RELEVÉ  lldpRemChassisId       = 88:25:10:17:61:D9     ← ce n'est pas a7 !
+le 1930 DÉCLARE     lldpLocChassisId       = 0x02005e1061a7
+le CRS326 a RELEVÉ  lldpRemChassisId       = 02:00:5e:10:61:D9     ← ce n'est pas a7 !
                     …et « …61:d9 » est le lldpLocPortId du port 50 du 1930.
 ```
 
@@ -173,7 +173,7 @@ Relevé sur `lab-crs326`, port local 26 (`sfp-sfpplus2`) :
 |---|---|---|---|
 | 8 | `04:F4:1C:1D:74:5F` | `bridge/sfp-sfpplus1` | `RB5009UG` |
 | 9 | `D4:01:C3:AB:32:F6` | `bridge/sfp-sfpplus2` | `CRS305` |
-| 11 | `88:25:10:17:61:D9` | `50` | `CN2AKPH86J` (le 1930) |
+| 11 | `02:00:5e:10:61:D9` | `50` | `CN0EXAMPL1` (le 1930) |
 
 **Un voisin LLDP n'est donc pas une preuve de câble direct.** L'explication est
 **déduite** — elle n'a pas été mesurée sur le chemin — mais elle est la seule cohérente
@@ -385,7 +385,7 @@ de silence qui fait perdre une heure.
 
 > [!important] C'est le nom ANNONCÉ qui est comparé, jamais le nom meshcraft
 > Le relevé est sans ambiguïté : `lab-crs326` s'annonce **`lan-r4`**, et `sw-labo-1930`
-> s'annonce par son numéro de série **`CN2AKPH86J`**. Comparer au nom meshcraft n'aurait
+> s'annonce par son numéro de série **`CN0EXAMPL1`**. Comparer au nom meshcraft n'aurait
 > rapproché **aucun** équipement du parc de référence.
 
 Deux refus, tous deux dans le sens de la prudence :
@@ -439,6 +439,66 @@ Rien dans cette fonction ne compare une date à `time.Now()` : la fraîcheur est
 l'écran**, avec l'horloge de celui qui regarde, parce que c'est la seule qui rende « vu il
 y a 3 minutes » vrai pour lui.
 
+### 5.1 Le constat qu'un constat plus frais réfute
+
+`api.markRefutedObservations`, pure, entre la reconnaissance et la dérivation.
+
+**Ce qui fait oublier un constat, aujourd'hui, c'est une seule chose** : un cliché frais du
+**même** équipement. Il n'y a **aucun** vieillissement, aucun TTL, aucune purge —
+`store.ReplaceLLDP` supprime les lignes de l'équipement qui parle, et rien d'autre (§3.3).
+Deux situations ordinaires figent donc des lignes en place : un équipement que le proxy
+n'atteint plus — `cmd/proxy/lldp.go` ne pousse **rien** plutôt qu'un cliché vide, exprès,
+pour ne pas effacer un voisinage qu'on a seulement échoué à lire — et un équipement en
+`source='cli'`, le FS S3400, dont les lignes ne se rafraîchissent qu'au read-state.
+Rebranchez un câble de ce côté-là : l'autre côté, lui, est interrogé toutes les trente
+secondes et annonce le **nouveau** voisin, pendant que le côté figé continue de clamer
+l'ancien. `deriveLLDPLinks` dessinait les deux, et le plus vieux des deux est un câble qui
+n'existe plus.
+
+**La règle** : un constat meurt quand l'extrémité qu'il clame est occupée par **quelqu'un
+d'autre**, d'après l'équipement **propriétaire de ce port**, dans un constat **strictement
+plus frais**. Un port physique porte un câble : si A/p1 dit maintenant faire face à C/p2,
+alors le « je fais face à A/p1 » figé de B parle d'un port qui répond à un autre, et c'est
+B qui est en retard. Le constat réfuté **reste listé** — l'équipement l'a réellement
+rapporté, et le panneau Ports doit continuer à le montrer — il ne produit simplement plus
+d'arête.
+
+**Quatre refus, et ce que chacun évite** :
+
+| Refus | Ce qu'il évite |
+|---|---|
+| le **silence** ne réfute jamais | une extrémité distante sans aucune ligne ne prouve rien : SwOS ne voit personne et le S3400 n'a pas une seule ligne (§1.1, §4). Traiter le silence en réfutation effacerait **tous** les liens vus d'un seul côté, c'est-à-dire le cas ordinaire |
+| un **voisin distant non reconnu** ne réfute jamais | la ligne qui occupe ce port distant peut **être** le clamant sous une écriture de châssis qu'on n'a pas su rapprocher — le 1930 qui annonce le MAC de son port (§1.6) prouve que cette forme existe |
+| un **port distant non résolu** ne réfute jamais | `resolvePeerPort` rend `""` souvent et par construction (§4.1) ; comparer à la granularité du port n'a alors aucun sens |
+| un témoin **d'âge égal ou plus ancien** ne réfute jamais | deux côtés interrogés dans le même cycle qui se contredisent sont un domaine de diffusion (§1.7) ou une vraie ambiguïté : trancher serait tirer au sort |
+
+Ce dernier refus est aussi la réponse honnête à « quel côté fait autorité ? » : **la
+fraîcheur**, et **à égalité personne** — les deux constats restent tracés, chacun d'un
+seul côté.
+
+**La fonction reste sans horloge**, et la propriété énoncée juste au-dessus tient : elle
+compare deux **lignes entre elles**, jamais une ligne à `time.Now()`. Les deux `last_seen`
+sont posés par le `now()` du serveur PostgreSQL — tout passe par `store.ReplaceLLDP`, voie
+SNMP comme voie CLI — donc une seule horloge, et la dérive du proxy (mesurée à 11 s) n'entre
+jamais dans l'arbitrage. Un futur chemin de collecte qui porterait un horodatage client
+casserait cet arbitrage en silence : c'est écrit dans le commentaire de la fonction.
+
+Un voisin qui **disparaît** n'a besoin de rien de tout ça — le cliché suivant de son
+observateur ne le contient plus, et la suppression bornée de `ReplaceLLDP` l'enlève. Seul un
+voisin qui **change** crée une contradiction qui survit à une frontière de cliché, parce
+qu'elle ne vit pas sur les lignes remplacées : elle vit sur celles de l'**autre**
+équipement. Et les liaisons **saisies** ne sont pas concernées : `device_links` est une
+autre table (§3.1), écrite par le seul exploitant, et rien ici ne la lit — une intention
+survit au débranchement du câble, c'est même tout l'intérêt de l'avoir saisie.
+
+**Documenté, non capturé** : aucun rebranchement n'a été fait sur le lab pour regarder la
+carte se redessiner. Le mécanisme est déduit des deux chemins de code cités et du rapport
+de l'exploitant. Le **temps de convergence** réel dépend en outre du holdtime LLDP de chaque
+plateforme — combien de temps un voisin retiré continue d'apparaître dans `lldpRemTable` —
+qui n'est mesuré nulle part sur ce parc. Pendant cette fenêtre le port liste légitimement
+deux voisins et la règle de domaine de diffusion (§1.7) supprime déjà l'arête : la carte ne
+montre alors **rien** plutôt que l'ancien lien.
+
 ## 6. Ce que l'écran montre
 
 - **Survol d'une case de port** (page Équipements) : nom système du voisin, port distant,
@@ -478,6 +538,7 @@ redessiner exactement la même image.
 | Deux tables distinctes de `device_links`, cliché qui remplace, `first_seen` préservé | **livré** — migration 0028 |
 | Reconnaissance d'un voisin : trois voies, jeton ambigu neutralisé | **livré**, pur et testé |
 | Liens dérivés, réciprocité exacte, lien unilatéral tracé | **livré**, pur et testé |
+| **Invalidation d'un lien appris quand le voisin change de côté** | **livré**, pur et testé — §5.1, `markRefutedObservations`. La règle (« occupé par un autre, dans un constat strictement plus frais, d'après l'équipement propriétaire du port ») est **déduite** des deux chemins qui figent des lignes : le proxy ne pousse rien pour un équipement injoignable, `ReplaceLLDP` ne supprime que celles du cliché. **Aucun rebranchement n'a été capturé sur le lab**, et le holdtime LLDP du parc reste non mesuré : c'est lui qui fixe le temps de convergence |
 | Survol d'un port, marqueur de silence, weathermap, panneau de diagnostic | **livré** |
 | **Adoption d'un voisin fantôme d'un clic** | **NON FAIT.** [[Weathermap]] la prévoit (nœud grisé → clic → adoption). Le lien est listé avec son châssis et son `sysDescr`, ce qui donne de quoi le créer à la main, mais il n'y a aucun geste d'adoption |
 | **Colonne « Voisin » de la page Ports alimentée par LLDP** | **FAIT**, et l'arbitrage laissé ouvert a été tranché dans l'autre sens le 30 juillet 2026 : c'est là que l'exploitant cherche « qu'est-ce qu'il y a en face ? », et un tiret sur un switch qui parle 802.1AB envoyait chercher une collecte en panne. Le **constat gagne**, la **saisie est le repli** — elle couvre ce que LLDP ne voit pas (SwOS, voisin muet, LLDP éteint sur un port) — et la cellule **dit toujours laquelle des deux elle montre** (`· LLDP` ou `· saisi`). Plusieurs voisins sur un port : le premier, un `+n`, et l'infobulle complète. Ce qui reste non fait est la CONFRONTATION des deux, ligne suivante |

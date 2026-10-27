@@ -3,7 +3,7 @@
 // The proxy collects continuously; the tunnel to the controller may drop. Without
 // a buffer, monitoring loses exactly the minutes of an outage — that is, it lies
 // at the most interesting moment. See
-// docs/01-Architecture/Monitoring unifie et pipelines section 2.
+// docs/en/01-Architecture/Unified monitoring and pipelines.md section 2.
 //
 // IN MEMORY, and that is a deliberate choice. Writing every sample to disk would,
 // on a proxy producing hundreds per second, cost more than it saves: a lost metric
@@ -15,16 +15,14 @@ package metricbuf
 
 import (
 	"sync"
-	"time"
+
+	"meshcraft/wire/metrics"
 )
 
-// Sample is a measurement point in the format VictoriaMetrics ingests.
-type Sample struct {
-	Name   string            `json:"name"`
-	Labels map[string]string `json:"labels,omitempty"`
-	Value  float64           `json:"value"`
-	TS     time.Time         `json:"ts"`
-}
+// Sample is a measurement point in the format VictoriaMetrics ingests — the
+// wire type, aliased: producers on both sides of the driver boundary emit the
+// same shape.
+type Sample = metrics.Sample
 
 // Stats reports what the buffer has experienced. `Dropped` is the value that
 // matters: monitoring that drops points without saying so is monitoring that lies.

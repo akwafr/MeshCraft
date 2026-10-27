@@ -5,61 +5,63 @@ import (
 	"fmt"
 )
 
-// L'agent SNMP de SwOS : ce que la plateforme expose actually, et ce qu'elle
-// n'expose pas.
+// The SwOS SNMP agent: what the platform actually exposes, and what it does
+// not.
 //
-// /snmp.b tient en quatre champs, et c'est TOUT ce que SwOS a de SNMP :
+// /snmp.b fits in four fields, and that is ALL the SNMP SwOS has:
 //
-//	{en:0x01, com:'<community, hex>', ci:'<contact>', loc:'<localisation>'}
+//	{en:0x01, com:'<community, hex>', ci:'<contact>', loc:'<location>'}
 //
-// Ce que cette page ESTABLISHES, et qui est solide :
+// What this page ESTABLISHES, and which is solid:
 //
-//   - un agent existe et il est actif sur l'reference device ;
-//   - il n'a QU'UNE community, 64 octets au plus (`ga:64` dans l'interface) ;
-//   - il n'y a AUCUN SNMPv3 sur cette plateforme. Pas d'utilisateur, pas
-//     d'algorithme d'authentification, pas de chiffrement — aucun champ, dans aucun
-//     onglet, ni dans la sauvegarde de configuration complete de the device. Ce
-//     n'est pas une page masquee comme sur la gamme Instant On : l'interface web
-//     entire d'un SwOS tient en un fichier, et elle ne connait pas v3 ;
-//   - il n'y a AUCUN destinataire de trap, donc rien a pousser.
+//   - an agent exists and it is enabled on the reference device;
+//   - it has ONLY ONE community, at most 64 bytes (`ga:64` in the UI);
+//   - there is NO SNMPv3 on this platform. No user, no authentication
+//     algorithm, no encryption — no field, in any tab, nor in the device's
+//     complete configuration backup. It is not a hidden page as on the
+//     Instant On range: the entire web UI of a SwOS fits in one file, and it
+//     does not know v3;
+//   - there is NO trap receiver, hence nothing to push.
 //
-// Ce que cette page n'establishes PAS, et n'etablira jamais : a quelle version du
-// protocole l'agent repond. Il n'y a pas de selecteur de version, et une community
-// ne dit pas si l'agent sert du v1, du v2c, ou les deux. Cette page a donc longtemps
-// justified un `SNMPVersions` VIDE — non par prudence de principe, mais parce que ces
-// listes decident du secret actually pousse et enregistre en base, et qu'un
-// identifiant present en base et nulle part ailleurs est pire qu'un identifiant
-// absent : the UI le montre.
+// What this page does NOT establish, and never will: which protocol version
+// the agent answers. There is no version selector, and a community does not
+// say whether the agent serves v1, v2c or both. This page therefore long
+// justified an EMPTY `SNMPVersions` — not out of caution on principle, but
+// because those lists decide the secret actually pushed and recorded in the
+// database, and a credential present in the database and nowhere else is
+// worse than an absent one: the UI shows it.
 //
-// La response n'est pas venue de la page, elle est venue du network. Le walk du
-// 29 juillet 2026 sur 10.99.0.36 a obtenu `sysName.0` = `lan-m6` (le champ `id` de
-// /sys.b) et `ifNumber.0` = 26 (le `prt:0x1a` de /link.b) : un agent qui repondrait
-// pour un autre hardware ne rendrait ni ce nom-there ni ce compte de ports-there.
-// `Capabilities().SNMPVersions` vaut now `["v2c"]` (cf. swos.go). v1 n'est pas
-// annonce — probable, jamais vu repondre — et v3 reste l'absence established ci-dessus.
+// The answer did not come from the page, it came from the network. The walk
+// of 29 July 2026 on 192.0.2.36 obtained `sysName.0` = `lan-m6` (the `id` field
+// of /sys.b) and `ifNumber.0` = 26 (the `prt:0x1a` of /link.b): an agent
+// answering for other hardware would return neither that name nor that port
+// count. `Capabilities().SNMPVersions` is now `["v2c"]` (cf. swos.go). v1 is not
+// advertised — probable, never seen answering — and v3 remains the absence
+// established above.
 //
-// Le code de LECTURE et d'WRITE de la community est ici, verified sur la capture
-// reelle de la page. Il avait been written avant d'avoir un emploi, sur l'argument qu'un
-// jour la version se leverait d'une ligne ; ce jour est passe, et l'emploi existe.
-// Ce qui n'est pas affirme ici : qu'une write ait been exercee sur le hardware de
-// reference. Elle ne l'a pas been.
+// The code that READS and WRITES the community is here, verified on the
+// page's real capture. It had been written before it had a use, on the
+// argument that one day the version list would gain a line; that day has
+// passed, and the use exists. What is not claimed here: that a write has been
+// exercised on the reference hardware. It has not.
 
-// SNMPConfig est ce que the device porte comme configuration SNMP.
+// SNMPConfig is what the device carries as SNMP configuration.
 type SNMPConfig struct {
-	// Enabled : l'agent repond-il.
+	// Enabled: does the agent answer.
 	Enabled bool `json:"enabled"`
-	// Community : la community, UNE seule. En lecture comme en write — SwOS ne
-	// distingue pas lecture et write, il n'y a qu'une string.
+	// Community: the community, ONLY ONE. For reading as for writing — SwOS
+	// does not distinguish read from write, there is only one string.
 	Community string `json:"community"`
 	Contact   string `json:"contact,omitempty"`
 	Location  string `json:"location,omitempty"`
 }
 
-// maxSNMPTextLen borne les champs texte de /snmp.b : 64 octets, la borne que
-// l'interface de the device s'impose (`ga:64`). Elle REFUSE au-dela, sans message.
+// maxSNMPTextLen bounds the text fields of /snmp.b: 64 bytes, the bound the
+// device's UI imposes on itself (`ga:64`). It REFUSES beyond that, without a
+// message.
 const maxSNMPTextLen = 64
 
-// ReadSNMP lit la configuration SNMP. LECTURE SEULE.
+// ReadSNMP reads the SNMP configuration. READ ONLY.
 func (a *Admin) ReadSNMP(ctx context.Context) (SNMPConfig, error) {
 	var out SNMPConfig
 	var page, err = a.Get(ctx, PageSNMP)
@@ -69,52 +71,52 @@ func (a *Admin) ReadSNMP(ctx context.Context) (SNMPConfig, error) {
 	return snmpFrom(page)
 }
 
-// snmpFrom traduit la page. Fonction pure, donc verifiable sur une capture.
+// snmpFrom translates the page. A pure function, hence verifiable on a
+// capture.
 //
-// Un champ absent n'est pas une string vide : /snmp.b n'ayant que quatre champs, en
-// manquer un veut dire qu'on ne lit pas la page qu'on croit — et une write qui
-// suivrait renverrait une community vide, coupant la supervision en silence.
+// A missing field is not an empty string: /snmp.b having only four fields,
+// missing one means we are not reading the page we think — and a write that
+// followed would send back an empty community, silently cutting monitoring.
 func snmpFrom(page *Page) (SNMPConfig, error) {
 	var out SNMPConfig
 	var en, ok = page.Num(FieldSNMPEnabled)
 	if !ok {
-		return out, fmt.Errorf("/snmp.b ne porte pas le champ « %s »", FieldSNMPEnabled)
+		return out, fmt.Errorf("/snmp.b does not carry the \"%s\" field", FieldSNMPEnabled)
 	}
 	out.Enabled = en != 0
 
 	out.Community, ok = page.Text(FieldSNMPCommunity)
 	if !ok {
-		return out, fmt.Errorf("/snmp.b ne porte pas le champ « %s »", FieldSNMPCommunity)
+		return out, fmt.Errorf("/snmp.b does not carry the \"%s\" field", FieldSNMPCommunity)
 	}
-	// Contact et localisation sont bien present sur le firmware de reference, mais
-	// ils ne portent aucune consequence : leur absence ne justifie pas de refuser la
-	// lecture.
+	// Contact and location are present on the reference firmware, but they
+	// carry no consequence: their absence does not justify refusing the read.
 	out.Contact, _ = page.Text(FieldSNMPContact)
 	out.Location, _ = page.Text(FieldSNMPLocation)
 	return out, nil
 }
 
-// SetCommunity pose la community SNMP.
+// SetCommunity sets the SNMP community.
 //
-// NON VERIFIED SUR HARDWARE : aucune write n'a pu be menee depuis l'hote de
-// developpement (cf. l'encadre de apply.go). Le corps produit est verified sur la
-// real capture de la page.
+// NOT VERIFIED ON HARDWARE: no write could be carried out from the
+// development host (cf. the box in apply.go). The produced body is verified on
+// the page's real capture.
 //
-// LIRE-MODIFIER-REWRITE, comme toute write sur cette plateforme : la page part
-// avec ses quatre champs, contact et localisation compris. Ne renvoyer que la
-// community laisserait the device libre d'effacer les deux autres.
+// READ-MODIFY-REWRITE, like every write on this platform: the page goes out
+// with its four fields, contact and location included. Sending back only the
+// community would leave the device free to erase the other two.
 //
-// L'agent est enabled au passage. Poser une community sur un agent off donnerait
-// une supervision configuree et muette, ce qui est le pire des deux mondes : rien ne
-// repond, et rien ne dit pourquoi.
+// The agent is enabled in passing. Setting a community on an agent that is
+// off would give configured and mute monitoring, which is the worst of both
+// worlds: nothing answers, and nothing says why.
 func (a *Admin) SetCommunity(ctx context.Context, community string) error {
 	if community == "" {
-		return fmt.Errorf("community vide refused : elle rendrait l'agent SNMP " +
-			"inutilisable sans le desactiver, donc muet sans que rien ne le dise")
+		return fmt.Errorf("empty community refused: it would make the SNMP agent " +
+			"unusable without disabling it, hence mute with nothing saying so")
 	}
 	if len(community) > maxSNMPTextLen {
-		return fmt.Errorf("community de %d octets : the device en accepte %d au plus, "+
-			"et refuse au-dela sans message", len(community), maxSNMPTextLen)
+		return fmt.Errorf("community of %d bytes: the device accepts at most %d, "+
+			"and refuses beyond that without a message", len(community), maxSNMPTextLen)
 	}
 	var page, err = a.Get(ctx, PageSNMP)
 	if err != nil {
@@ -125,21 +127,21 @@ func (a *Admin) SetCommunity(ctx context.Context, community string) error {
 
 	var fields, ok = WritableFields(PageSNMP)
 	if !ok {
-		return fmt.Errorf("jeu de champs inscriptible de %s inconnu : write refused",
+		return fmt.Errorf("writable field set of %s unknown: write refused",
 			PageSNMP)
 	}
 	var body *Page
 	var missing []string
 	body, missing = page.Only(fields)
 	if len(missing) > 0 {
-		var e = fmt.Errorf("/snmp.b : ce firmware ne sert pas les champs %v attendus par "+
-			"le connecteur — write refused, renvoyer la page sans eux laisserait "+
-			"the device les effacer", missing)
-		a.step(false, "jeu de champs de /snmp.b inattendu", e.Error())
+		var e = fmt.Errorf("/snmp.b: this firmware does not serve the fields %v expected by "+
+			"the connector — write refused, sending back the page without them would let "+
+			"the device erase them", missing)
+		a.step(false, "unexpected /snmp.b field set", e.Error())
 		return e
 	}
-	// La community ne part PAS dans le transcript : c'est un secret, et un
-	// transcript est fait pour be lu et conserve.
+	// The community does NOT go into the transcript: it is a secret, and a
+	// transcript is made to be read and kept.
 	return a.postRawSecret(ctx, PageSNMP, body.Encode(),
-		"community SNMP applied et agent enabled")
+		"SNMP community applied and agent enabled")
 }

@@ -209,6 +209,11 @@ func TestScopeAuthorityTable(t *testing.T) {
 		{tunnel.EventPortUp, authorityPoll, true},
 		{tunnel.EventPortDown, authorityPoll, true},
 		{tunnel.EventTrapSeen, authorityPoll, true},
+		// gNMI subscription health. The SAME authority, because `poll` is
+		// cfg.SNMP UNION cfg.GNMI: the set answers "is this proxy the declared
+		// collector?", which does not depend on the protocol it collects with.
+		{tunnel.EventGNMIFailing, authorityPoll, true},
+		{tunnel.EventGNMIRecovered, authorityPoll, true},
 		// Sweep: no DeviceID, no state write, a prefix declared on the proxy itself.
 		// Nothing to protect, and gating it would refuse by sweep.
 		{tunnel.EventHostSeen, authorityPing, false},

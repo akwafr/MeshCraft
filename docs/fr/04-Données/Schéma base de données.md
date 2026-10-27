@@ -937,8 +937,8 @@ Quatre écarts, tous motivés par le relevé sur matériel ([[Voisinage LLDP]] �
 4. **`lldp_self` n'était pas prévue, et elle est indispensable.** Elle porte ce qu'un
    équipement **annonce** (par opposition à ce qu'il voit), et sa colonne `port_ids` existe
    pour un fait qui ne se devine pas : le 1930 du parc déclare
-   `lldpLocChassisId = 0x8825101761a7` mais **émet**, par son port 50, des trames dont le
-   chassis-id est `0x8825101761d9` — la MAC de ce port. Sans cette liste, le seul lien
+   `lldpLocChassisId = 0x02005e1061a7` mais **émet**, par son port 50, des trames dont le
+   chassis-id est `0x02005e1061d9` — la MAC de ce port. Sans cette liste, le seul lien
    bilatéral du parc de référence se présenterait comme vu d'un seul côté. Sa colonne
    `served` porte l'autre distinction que rien d'autre ne pouvait dire : « cet équipement ne
    publie pas la LLDP-MIB » (walk de `1.0.8802` **vide**, mesuré sur SwOS) n'est pas « zéro

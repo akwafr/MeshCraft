@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { viewerDate } from "../ui/clock";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSite, useSiteId } from "../useSite";
@@ -7,7 +8,7 @@ import { ActionButton, ErrorMsg, Modal } from "../components";
 
 /**
  * Pipelines: what meshcraft does on the fleet, and above all what's stuck.
- * See docs/01-Architecture/Unified Monitoring and pipelines §5.
+ * See docs/en/01-Architecture/Unified monitoring and pipelines §5.
  *
  * The screen answers ONE question — "what's blocked, and why?" — and it must
  * answer it without scrolling. That's why states calling for action rise to
@@ -121,7 +122,7 @@ export default function PipelinesPage() {
                     </td>
                     <td>{p.device_name || <span className="note">{t("pipelines.fleet")}</span>}</td>
                     <td className="note" style={{ whiteSpace: "nowrap" }}>
-                      {new Date(p.created_at).toLocaleString(i18n.language)}
+                      {(viewerDate(p.created_at) ?? new Date(p.created_at)).toLocaleString(i18n.language)}
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <ActionButton kind="play" className="ghost" onClick={() => setOpen(p.id)}>

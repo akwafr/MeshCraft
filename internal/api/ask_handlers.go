@@ -34,7 +34,7 @@ import (
 // client's network.
 //
 // What this route does NOT expose, and why: AskSourceAddr. The Hub method
-// can ask it, but « which address does this proxy use to reach this device? »
+// can ask it, but "which address does this proxy use to reach this device?"
 // is not diagnostic information for an operator — it is internal data the
 // product will use to derive a trap destination.
 //
@@ -42,7 +42,7 @@ import (
 //
 //  1. the OID is validated here (normalizeOID) — a free-form field bound for
 //     a production device deserves validation, global-admin or not;
-//  2. the proxy is CHOSEN here (chooseAskProxy), and « nobody can query it »
+//  2. the proxy is CHOSEN here (chooseAskProxy), and "nobody can query it"
 //     is an answer, not silence;
 //  3. the community comes from the VAULT (askCommunityFor), never from the
 //     request.
@@ -66,9 +66,9 @@ const (
 // Pure, and that is the rule for the batch: this decision must be exercised
 // without a database, proxy, or device (ask_handlers_test.go).
 //
-// NUMERIC only. Accepting « ifDescr » or « 1.3.6.1.2.1.2.2.1.* » would require
+// NUMERIC only. Accepting "ifDescr" or "1.3.6.1.2.1.2.2.1.*" would require
 // embedding a MIB compiler in the controller; refusing them WITH a reason is
-// better than forwarding them so the proxy answers « invalid OID » from the
+// better than forwarding them so the proxy answers "invalid OID" from the
 // other end of the WAN. A leading dot is tolerated because most vendor docs
 // write OIDs that way, and it is stripped: what goes on the wire must have
 // a single form.
@@ -76,15 +76,15 @@ func normalizeOID(raw string) (string, error) {
 	var oid = strings.TrimSpace(raw)
 	if oid == "" {
 		return "", errors.New("oid required: the root to walk, in NUMERIC form — " +
-			"« 1.3.6.1.2.1.2.2 » for ifTable, for example")
+			"\"1.3.6.1.2.1.2.2\" for ifTable, for example")
 	}
 	oid = strings.TrimPrefix(oid, ".")
 	var arcs = strings.Split(oid, ".")
 	if len(arcs) < 2 {
 		// An OID has at least two arcs: that is true of its ASN.1 encoding, and a
-		// lone « 1 » would ask a switch to dump its entire MIB.
+		// lone "1" would ask a switch to dump its entire MIB.
 		return "", fmt.Errorf("oid %q: at least two arcs expected "+
-			"(« 1.3.6.1… »); a single-arc OID does not exist", raw)
+			"(\"1.3.6.1…\"); a single-arc OID does not exist", raw)
 	}
 	if len(arcs) > maxOIDArcs {
 		return "", fmt.Errorf("oid %q: %d arcs, beyond the %d an SNMP "+
@@ -98,22 +98,22 @@ func normalizeOID(raw string) (string, error) {
 				"trailing dot)", raw)
 		}
 		if len(arc) > 1 && arc[0] == '0' {
-			// « 1.3.06 » is not « 1.3.6 » for everyone: refuse rather than choose
+			// "1.3.06" is not "1.3.6" for everyone: refuse rather than choose
 			// on the author's behalf.
-			return "", fmt.Errorf("oid %q: arc « %s » starts with a zero, "+
+			return "", fmt.Errorf("oid %q: arc \"%s\" starts with a zero, "+
 				"write it without", raw, arc)
 		}
 		var j int
 		for j = range arc {
 			if arc[j] < '0' || arc[j] > '9' {
-				return "", fmt.Errorf("oid %q: « %s » is not numeric. This path "+
+				return "", fmt.Errorf("oid %q: \"%s\" is not numeric. This path "+
 					"interprets no MIB name and no wildcard: give the OID in digits, "+
 					"as vendor documentation does", raw, arc)
 			}
 		}
 		var _, convErr = strconv.ParseUint(arc, 10, 32)
 		if convErr != nil {
-			return "", fmt.Errorf("oid %q: arc « %s » exceeds %s, the maximum "+
+			return "", fmt.Errorf("oid %q: arc \"%s\" exceeds %s, the maximum "+
 				"SNMP sub-identifier", raw, arc, maxOIDArc)
 		}
 	}
@@ -122,7 +122,7 @@ func normalizeOID(raw string) (string, error) {
 	// pasted into the OID field, the most likely typo on this screen.
 	if arcs[0] != "0" && arcs[0] != "1" && arcs[0] != "2" {
 		return "", fmt.Errorf("oid %q: the first arc must be 0, 1, or 2 — device "+
-			"OIDs all start with 1 (« 1.3.6.1… »). Did you enter an IP address in "+
+			"OIDs all start with 1 (\"1.3.6.1…\"). Did you enter an IP address in "+
 			"the OID field?", raw)
 	}
 	return oid, nil
@@ -144,7 +144,7 @@ const (
 	// so nobody can query it.
 	askProxyNoCoverage
 	// askProxyNotCovering: a collector is declared but no longer covers the site.
-	// This is the « collected by nobody » case the device page already signals
+	// This is the "collected by nobody" case the device page already signals
 	// (cf. devices_handlers.go, § Attachment).
 	askProxyNotCovering
 )
@@ -167,7 +167,7 @@ const (
 // (the device is collected by nobody) behind a diagnosis that works.
 //
 // `connected` breaks ties among covering proxies when there are several:
-// querying a proxy without a tunnel would yield « no tunnel established » when
+// querying a proxy without a tunnel would yield "no tunnel established" when
 // another would have answered. Nil = unknown, take the first — ProxiesCoveringSite
 // order (instance proxies first) is already stable, so the choice is reproducible.
 func chooseAskProxy(covering []model.Proxy, attached string,
@@ -192,8 +192,8 @@ func chooseAskProxy(covering []model.Proxy, attached string,
 		}
 	}
 	// No established tunnel among covering proxies: still return a proxy so the
-	// failure names the ONE that should have been up rather than a generic « no
-	// proxy » that sends people looking for missing coverage.
+	// failure names the ONE that should have been up rather than a generic "no
+	// proxy" that sends people looking for missing coverage.
 	return askProxyCovering, covering[0]
 }
 
@@ -201,22 +201,22 @@ func chooseAskProxy(covering []model.Proxy, attached string,
 //
 // The two refusals look alike and are not repaired the same way — widen a
 // proxy's coverage, or detach the device — hence two sentences rather than a
-// generic « no proxy available » that would fit both without helping either.
+// generic "no proxy available" that would fit both without helping either.
 func noAskProxyMessage(verdict askProxyVerdict, deviceName, collectorName string) string {
 	if verdict == askProxyNotCovering {
 		var who = "its declared collector"
 		if collectorName != "" {
-			who = "its declared collector (« " + collectorName + " »)"
+			who = "its declared collector (\"" + collectorName + "\")"
 		}
-		return "Question impossible: " + who + " does not cover the site of « " +
-			deviceName + " ». This device is therefore collected by nobody — neither " +
+		return "Question impossible: " + who + " does not cover the site of \"" +
+			deviceName + "\". This device is therefore collected by nobody — neither " +
 			"polled in SNMP nor a trap recipient — and meshcraft will not ask from " +
 			"another proxy: the answer would come from another point in the network " +
 			"and hide the problem. Add this site to the proxy's coverage, or detach " +
 			"the device to return it to coverage-by-site regime."
 	}
-	return "Question impossible: no proxy covers the site of « " + deviceName +
-		" ». SNMP is UDP; the tunnel relays only TCP: only a proxy deployed in " +
+	return "Question impossible: no proxy covers the site of \"" + deviceName +
+		"\". SNMP is UDP; the tunnel relays only TCP: only a proxy deployed in " +
 		"this network can query this device. Deploy one, or extend an existing " +
 		"proxy's coverage to this site."
 }
@@ -259,36 +259,37 @@ func judgeAskSNMP(deviceName string, plan snmpprov.Plan,
 		if why == "" {
 			why = "no SNMP version is known for this device."
 		}
-		return askSNMPUnsupervised, "Walk impossible on « " + deviceName + " »: " +
+		return askSNMPUnsupervised, "Walk impossible on \"" + deviceName + "\": " +
 			why + " A walk targets an SNMP agent; meshcraft does not know whether " +
 			"this device has one."
 	}
-	if plan.Kind == snmpprov.KindV3 {
-		// Refuse rather than try: presenting a community to an agent that has none
-		// would produce a timeout — a diagnosis that accuses the device of being
-		// mute when it is perfectly right to stay silent.
-		return askSNMPv3Only, "Walk impossible on « " + deviceName + " »: this " +
-			"device is supervised in SNMPv3, and this diagnostic path speaks only " +
-			"v2c (like the proxy collector, cf. internal/snmppoll). There is no " +
-			"community to present — querying anyway would only yield a timeout. The " +
-			"v3 question will come with service-identity transport."
+	if plan.Kind == snmpprov.KindV3 && plan.Priv != "" {
+		// authNoPriv walks are served now (the collector speaks it, and this path
+		// inherits its conventions); a plan WITH privacy is still refused rather
+		// than half-spoken — presenting authNoPriv to an authPriv user yields a
+		// USM error the operator would read as a mute device.
+		return askSNMPv3Only, "Walk impossible on \"" + deviceName + "\": this " +
+			"device's SNMPv3 plan requires privacy, which neither the collector " +
+			"nor this diagnostic path speaks yet. Only authNoPriv plans (the " +
+			"S3400 family) are walkable in v3 today."
 	}
-	if plan.Kind != snmpprov.KindV2c {
-		return askSNMPUnsupervised, "Walk impossible on « " + deviceName +
-			" »: this device's SNMP plan designates no credential kind queryable " +
-			"through this path (« " + plan.Kind + " »)."
+	if plan.Kind != snmpprov.KindV2c && plan.Kind != snmpprov.KindV3 {
+		return askSNMPUnsupervised, "Walk impossible on \"" + deviceName +
+			"\": this device's SNMP plan designates no credential kind queryable " +
+			"through this path (\"" + plan.Kind + "\")."
 	}
 	if credentialID == "" {
-		return askSNMPNoCredential, "Walk impossible on « " + deviceName + " »: " +
-			"no SNMPv2c community exists in the vault for its site. The community " +
-			"comes from the vault and never from the request — generate the device's " +
-			"SNMP identity (snmp-apply) or enter the community in site credentials, " +
+		return askSNMPNoCredential, "Walk impossible on \"" + deviceName + "\": " +
+			"no SNMP secret exists in the vault for its site. The secret comes " +
+			"from the vault and never from the request — generate the device's " +
+			"SNMP identity (snmp-apply) or enter it in site credentials, " +
 			"then ask again."
 	}
 	return askSNMPReady, ""
 }
 
-// askCommunityFor resolves a device's v2c community.
+// askSNMPIdentityFor resolves what one walk presents: a device's v2c
+// community, or its v3 authNoPriv USM identity.
 //
 // Same pattern as snmpWatchesFor, identically: SNMP plan, vault credential ID,
 // decryption. The secret is passed BY OPERATION to the question sent to the
@@ -299,32 +300,47 @@ func judgeAskSNMP(deviceName string, plan snmpprov.Plan,
 // Three returns because three kinds: the community, the readable REFUSAL (a
 // normal operations situation, returned as 422 with its reason), and the
 // technical error (returned via `fail`, the package's only translation table).
-func (s *Server) askCommunityFor(ctx context.Context, d model.Device) (string, string, error) {
+func (s *Server) askSNMPIdentityFor(ctx context.Context,
+	d model.Device) (askSNMPIdentity, string, error) {
 	if s.Secrets == nil {
-		return "", "Walk impossible: this instance's vault is unavailable, " +
-			"yet the SNMP community can come only from it.", nil
+		return askSNMPIdentity{}, "Walk impossible: this instance's vault is " +
+			"unavailable, yet the SNMP secret can come only from it.", nil
 	}
 	var st, err = s.snmpPlanFor(ctx, d)
 	if err != nil {
-		return "", "", err
+		return askSNMPIdentity{}, "", err
 	}
 	var verdict, refusal = judgeAskSNMP(d.Name, st.Plan, st.CredentialID)
 	if verdict != askSNMPReady {
-		return "", refusal, nil
+		return askSNMPIdentity{}, refusal, nil
 	}
-	// Second phrase deliberately ignored: we reach here only for v2c, where the
-	// community IS the secret and there is never a second one.
-	var _, enc, _, revErr = s.Store.RevealSiteCredential(ctx, st.CredentialID)
+	// Second phrase deliberately ignored on both plans — for v2c the community
+	// IS the secret; for v3 authNoPriv the second passphrase has nowhere to go
+	// (snmpapply.go owns that argument).
+	var cred, enc, _, revErr = s.Store.RevealSiteCredential(ctx, st.CredentialID)
 	if revErr != nil {
-		return "", "", revErr
+		return askSNMPIdentity{}, "", revErr
 	}
-	var community string
-	if community, err = s.Secrets.Open(enc); err != nil || community == "" {
-		return "", "Walk impossible on « " + d.Name + " »: the site's SNMPv2c " +
-			"community is in the vault but unreadable (encryption key changed?). " +
+	var clear string
+	if clear, err = s.Secrets.Open(enc); err != nil || clear == "" {
+		return askSNMPIdentity{}, "Walk impossible on \"" + d.Name + "\": the site's SNMP " +
+			"secret is in the vault but unreadable (encryption key changed?). " +
 			"This is the same cause that deprives this device of SNMP collection.", nil
 	}
-	return community, "", nil
+	if st.Plan.Kind == snmpprov.KindV3 {
+		return askSNMPIdentity{V3User: cred.Username, V3AuthAlg: st.Plan.Auth,
+			V3AuthSecret: clear}, "", nil
+	}
+	return askSNMPIdentity{Community: clear}, "", nil
+}
+
+// askSNMPIdentity is what one diagnostic walk presents: a community, or a USM
+// identity — never both, never stored, passed per operation.
+type askSNMPIdentity struct {
+	Community    string
+	V3User       string
+	V3AuthAlg    string
+	V3AuthSecret string
 }
 
 // --- Translating question failures ---
@@ -332,8 +348,8 @@ func (s *Server) askCommunityFor(ctx context.Context, d model.Device) (string, s
 // askFailure translates a question failure into an HTTP response.
 //
 // Pure, and tested: four failures repaired by four different gestures must
-// produce four different responses. Conflating them — as a single 502 « the
-// question failed » would — sends the operator to check the device when they
+// produce four different responses. Conflating them — as a single 502 "the
+// question failed" would — sends the operator to check the device when they
 // should restart a proxy, or the reverse.
 //
 // Sorting uses `tunnel` sentinels, not message text: string-based sorting does
@@ -404,7 +420,7 @@ func (s *Server) handleDeviceSNMPWalk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.MgmtIP == "" {
-		respondErr(w, http.StatusUnprocessableEntity, "« "+d.Name+" » has no "+
+		respondErr(w, http.StatusUnprocessableEntity, "\""+d.Name+"\" has no "+
 			"management address: there is nothing to query.")
 		return
 	}
@@ -427,7 +443,7 @@ func (s *Server) handleDeviceSNMPWalk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var community, refusal, credErr = s.askCommunityFor(r.Context(), d)
+	var ident, refusal, credErr = s.askSNMPIdentityFor(r.Context(), d)
 	if credErr != nil {
 		fail(w, credErr)
 		return
@@ -445,7 +461,8 @@ func (s *Server) handleDeviceSNMPWalk(w http.ResponseWriter, r *http.Request) {
 	// (tunnel.ClampAskWait), and a second budget here would be two places to read
 	// the same rule.
 	var reply, askErr = s.Tunnels.Ask(r.Context(), target.ID, tunnel.AskRequest{
-		Ask: tunnel.AskSNMPWalk, IP: d.MgmtIP, Community: community,
+		Ask: tunnel.AskSNMPWalk, IP: d.MgmtIP, Community: ident.Community,
+		V3User: ident.V3User, V3AuthAlg: ident.V3AuthAlg, V3AuthSecret: ident.V3AuthSecret,
 		Port: in.Port, OID: oid, MaxRows: rows, TimeoutMS: in.TimeoutMS,
 	})
 	if askErr != nil {
@@ -457,8 +474,8 @@ func (s *Server) handleDeviceSNMPWalk(w http.ResponseWriter, r *http.Request) {
 	// production device, and there must be a trace of who asked. SevInfo — nothing
 	// changed on the device.
 	s.emitDeviceEvent(r, d, "device.snmp_walk", model.SevInfo,
-		"SNMP walk of "+oid+" on « "+d.Name+" » via proxy « "+target.Name+
-			" »: "+itoa(len(reply.Rows))+" values")
+		"SNMP walk of "+oid+" on \""+d.Name+"\" via proxy \""+target.Name+
+			"\": "+itoa(len(reply.Rows))+" values")
 	respond(w, http.StatusOK, map[string]any{
 		"oid": oid, "ip": d.MgmtIP,
 		"proxy_id": target.ID, "proxy_name": target.Name,

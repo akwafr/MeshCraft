@@ -14,18 +14,18 @@ import (
 // says 'external DHCP'. Same finding as on both CSS326 units, by a completely
 // different read path.
 
-// TestMgmtAddrReel: /ip/address as the device served it.
+// TestMgmtAddrReal: /ip/address as the device served it.
 //
 // What this test locks beyond mode: address CHOICE. The capture carries TWO active
 // addresses, including factory address `192.168.88.1/24` marked `comment: defconf`.
 // Retaining that one would show the wrong management network, exactly the error
 // [foldMgmt] exists to avoid — hence the delegation, which this test proves by result.
-func TestMgmtAddrReel(t *testing.T) {
+func TestMgmtAddrReal(t *testing.T) {
 	var got = MgmtAddrOf(fixture(t, "ip_address.json"), nil, nil)
 
-	if got.Address != "10.99.0.54/24" {
+	if got.Address != "192.0.2.54/24" {
 		t.Errorf("address = %q, expected %q — factory address "+
-			"192.168.88.1/24 (comment defconf) must NEVER win", got.Address, "10.99.0.54/24")
+			"192.168.88.1/24 (comment defconf) must NEVER win", got.Address, "192.0.2.54/24")
 	}
 	if got.Interface != "vlan99" {
 		t.Errorf("interface = %q, expected %q", got.Interface, "vlan99")
@@ -37,14 +37,14 @@ func TestMgmtAddrReel(t *testing.T) {
 	}
 }
 
-// TestMgmtAddrDynamique: an address obtained by lease is rendered as DHCP.
+// TestMgmtAddrDynamic: an address obtained by lease is rendered as DHCP.
 //
 // `dynamic` IS the field that answers the question: RouterOS marks addresses created by
 // its DHCP client this way. Without it, there would be no way to distinguish a entered
 // address from a leased one, and meshcraft would be reduced to believing the site plan.
-func TestMgmtAddrDynamique(t *testing.T) {
+func TestMgmtAddrDynamic(t *testing.T) {
 	var addrs = []Row{{
-		"address": "10.99.0.54/24", "interface": "vlan99",
+		"address": "192.0.2.54/24", "interface": "vlan99",
 		"actual-interface": "vlan99", "dynamic": "true",
 		"disabled": "false", "invalid": "false",
 	}}
@@ -54,7 +54,7 @@ func TestMgmtAddrDynamique(t *testing.T) {
 	}
 }
 
-// TestMgmtAddrPasserelleEtDNS: ACTIVE default route and both resolver lists.
+// TestMgmtAddrGatewayAndDNS: ACTIVE default route and both resolver lists.
 //
 // Three traps in one test, each with its reason:
 //
@@ -65,37 +65,37 @@ func TestMgmtAddrDynamique(t *testing.T) {
 //   - resolvers pushed by DHCP live in `dynamic-servers`, separately from those an
 //     administrator entered. Reading only one would show 'no DNS' on a device that
 //     resolves perfectly.
-func TestMgmtAddrPasserelleEtDNS(t *testing.T) {
+func TestMgmtAddrGatewayAndDNS(t *testing.T) {
 	var addrs = []Row{{
-		"address": "10.99.0.54/24", "actual-interface": "vlan99",
+		"address": "192.0.2.54/24", "actual-interface": "vlan99",
 		"dynamic": "false", "disabled": "false", "invalid": "false",
 	}}
 	var routes = []Row{
-		{"dst-address": "10.50.0.0/24", "gateway": "10.99.0.254", "inactive": "false"},
-		{"dst-address": "0.0.0.0/0", "gateway": "10.99.0.9", "inactive": "true"},
-		{"dst-address": "0.0.0.0/0", "gateway": "10.99.0.1", "inactive": "false"},
+		{"dst-address": "10.50.0.0/24", "gateway": "192.0.2.254", "inactive": "false"},
+		{"dst-address": "0.0.0.0/0", "gateway": "192.0.2.9", "inactive": "true"},
+		{"dst-address": "0.0.0.0/0", "gateway": "192.0.2.1", "inactive": "false"},
 	}
-	var dns = []Row{{"servers": "10.99.0.1", "dynamic-servers": "1.1.1.1,10.99.0.1"}}
+	var dns = []Row{{"servers": "192.0.2.1", "dynamic-servers": "1.1.1.1,192.0.2.1"}}
 
 	var got = MgmtAddrOf(addrs, routes, dns)
-	if got.Gateway != "10.99.0.1" {
+	if got.Gateway != "192.0.2.1" {
 		t.Errorf("gateway = %q, expected %q: ACTIVE default route, "+
-			"not backup route or specific route", got.Gateway, "10.99.0.1")
+			"not backup route or specific route", got.Gateway, "192.0.2.1")
 	}
-	if len(got.DNS) != 2 || got.DNS[0] != "10.99.0.1" || got.DNS[1] != "1.1.1.1" {
-		t.Errorf("DNS = %v, expected [10.99.0.1 1.1.1.1] — both lists merged, "+
+	if len(got.DNS) != 2 || got.DNS[0] != "192.0.2.1" || got.DNS[1] != "1.1.1.1" {
+		t.Errorf("DNS = %v, expected [192.0.2.1 1.1.1.1] — both lists merged, "+
 			"deduplicated", got.DNS)
 	}
 }
 
-// TestMgmtAddrSansPasserelle: no default route is a NORMAL state.
+// TestMgmtAddrWithoutGateway: no default route is a NORMAL state.
 //
 // A switch administered from its own subnet needs no gateway — that is even the case for
 // all CSS326 units in the same fleet, which carry none at all. Returning anything other
 // than empty would show an anomaly on a perfectly valid configuration.
-func TestMgmtAddrSansPasserelle(t *testing.T) {
+func TestMgmtAddrWithoutGateway(t *testing.T) {
 	var addrs = []Row{{
-		"address": "10.99.0.54/24", "actual-interface": "vlan99",
+		"address": "192.0.2.54/24", "actual-interface": "vlan99",
 		"dynamic": "false", "disabled": "false", "invalid": "false",
 	}}
 	var got = MgmtAddrOf(addrs, []Row{}, []Row{})
@@ -107,10 +107,10 @@ func TestMgmtAddrSansPasserelle(t *testing.T) {
 	}
 }
 
-// TestMgmtAddrAucuneAdresse: no active address is not filled in, it is stated.
-func TestMgmtAddrAucuneAdresse(t *testing.T) {
+// TestMgmtAddrNoAddress: no active address is not filled in, it is stated.
+func TestMgmtAddrNoAddress(t *testing.T) {
 	var addrs = []Row{{
-		"address": "10.99.0.54/24", "disabled": "true", "invalid": "false",
+		"address": "192.0.2.54/24", "disabled": "true", "invalid": "false",
 	}}
 	var got = MgmtAddrOf(addrs, nil, nil)
 	if got.Address != "" || got.Mode != "" {

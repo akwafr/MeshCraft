@@ -1,0 +1,436 @@
+{
+  "_readme": [
+    "THE SHARED HOSTNAME-NORMALIZER VECTOR TABLE — read by BOTH suites.",
+    "",
+    "Consumers, and there must never be fewer than two:",
+    "  - Go: internal/driver/hostname_vectors_test.go, over driver.HostnameFromDeviceName",
+    "  - TS: web/src/pages/add/hostname_vectors.test.ts, over hostnameFromDeviceName",
+    "",
+    "WHY THIS FILE EXISTS. There are two implementations of one rule, in two",
+    "languages, and they must agree FOREVER: a switch provisioned from a console",
+    "(the browser scripts, TS) and the same switch reconciled by the healer (the",
+    "controller, Go) would otherwise be named two different things, and the healer",
+    "would then chase a drift it can never resolve. Until this table existed that",
+    "agreement was asserted only by two hand-written suites that happened to carry",
+    "similar cases — nothing failed when one side was edited and the other was not.",
+    "That is precisely the drift that produced the ten spellings collapsed on",
+    "2026-08-09/10, so the unification would have come undone the first time",
+    "somebody \"fixed\" one side.",
+    "",
+    "THIS FILE LIVES UNDER web/ ON PURPOSE. `make test-web` mounts ONLY",
+    "/srv/meshcraft/web into its container, so the TS suite can read nothing outside",
+    "it; `make test-go` mounts the whole repo at /src, so the Go suite can reach",
+    "ACROSS to here. web/ is the only directory both suites can see, so the table",
+    "lives here and the Go test walks up to it.",
+    "",
+    "FULL REFUSAL SENTENCES ARE DELIBERATELY NOT PINNED HERE. The Go messages in",
+    "internal/driver/hostname.go are the operator-facing authority and are asserted",
+    "word for word in the Go suite; copying them into this file would create a THIRD",
+    "place to update whenever a sentence is reworded, and a third place to forget is",
+    "how the drift started. What is pinned instead is the MARKER that carries the",
+    "meaning: the offending character the refusal must name, or the phrase that",
+    "separates one diagnosis from another — \"does not shorten it\" is the ceiling",
+    "refusal, \"may only carry letters\" is the alphabet refusal, \"no meshcraft",
+    "name\" is the nothing-to-derive-from refusal. A reworded sentence that still",
+    "says the same thing keeps passing; a refusal that changes its MIND fails on",
+    "both sides at once.",
+    "",
+    "EVERY FIELD IS MANDATORY IN BOTH SUITES:",
+    "  why              - what the vector defends, quoted back in the failure",
+    "  in               - the meshcraft device name handed to the normalizer",
+    "  hostname         - the expected system name; EMPTY exactly when refused",
+    "  refusal_contains - substrings the refusal must carry; EMPTY when accepted",
+    "Both suites also assert the whole-table invariants: exactly one of hostname /",
+    "refusal is non-empty, and any non-empty hostname passes that language's own",
+    "ValidHostname — the string a connector concatenates into a command line.",
+    "",
+    "INVISIBLE CHARACTERS ARE WRITTEN AS \\u ESCAPES, never pasted literally: a",
+    "vector nobody can see in a diff is a vector nobody can review.",
+    "",
+    "DO NOT ADJUST A VECTOR TO MAKE A DISAGREEMENT GO AWAY. A vector the two sides",
+    "answer differently is the finding this file was built to produce; fix the side",
+    "that is wrong. The TS module is documented as MIRRORING the Go one, so where",
+    "they genuinely differ Go is the authority — it is the path the fleet actually",
+    "converges to."
+  ],
+  "vectors": [
+    {
+      "why": "an already-valid name passes through untouched: normalizing is not a licence to rewrite what was already right",
+      "in": "core01",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "hyphens an operator typed themselves survive",
+      "in": "sw-lab-01",
+      "hostname": "sw-lab-01",
+      "refusal_contains": []
+    },
+    {
+      "why": "case is NOT folded — a lowercasing normalizer on one side only would rename half the fleet on its next pass",
+      "in": "SW-Lab-01",
+      "hostname": "SW-Lab-01",
+      "refusal_contains": []
+    },
+    {
+      "why": "a single character is a name",
+      "in": "a",
+      "hostname": "a",
+      "refusal_contains": []
+    },
+    {
+      "why": "digits alone are a name",
+      "in": "0123456789",
+      "hostname": "0123456789",
+      "refusal_contains": []
+    },
+    {
+      "why": "separator set: space maps to hyphen",
+      "in": "sw lab 01",
+      "hostname": "sw-lab-01",
+      "refusal_contains": []
+    },
+    {
+      "why": "separator set: underscore maps to hyphen — four of the five Go spellings KEPT it, which ValidHostname forbids outright",
+      "in": "core_01",
+      "hostname": "core-01",
+      "refusal_contains": []
+    },
+    {
+      "why": "separator set: dot maps to hyphen",
+      "in": "sw.lab.01",
+      "hostname": "sw-lab-01",
+      "refusal_contains": []
+    },
+    {
+      "why": "separator set: slash maps to hyphen",
+      "in": "rack1/sw2",
+      "hostname": "rack1-sw2",
+      "refusal_contains": []
+    },
+    {
+      "why": "separator set: tab maps to hyphen",
+      "in": "a\tb",
+      "hostname": "a-b",
+      "refusal_contains": []
+    },
+    {
+      "why": "the whole separator set in one name — space, underscore, dot, slash, tab, and nothing else is rewritten",
+      "in": "a b_c.d/e\tf",
+      "hostname": "a-b-c-d-e-f",
+      "refusal_contains": []
+    },
+    {
+      "why": "a run of hyphens collapses to one",
+      "in": "a--b",
+      "hostname": "a-b",
+      "refusal_contains": []
+    },
+    {
+      "why": "a long run collapses just as far",
+      "in": "a-----b",
+      "hostname": "a-b",
+      "refusal_contains": []
+    },
+    {
+      "why": "separators of MIXED kinds collapse together, not each to its own hyphen",
+      "in": "a_ /b",
+      "hostname": "a-b",
+      "refusal_contains": []
+    },
+    {
+      "why": "a run made of a separator and a typed hyphen is still one hyphen",
+      "in": "a. .b",
+      "hostname": "a-b",
+      "refusal_contains": []
+    },
+    {
+      "why": "surrounding whitespace is trimmed, not turned into edge hyphens",
+      "in": "  sw-lab  ",
+      "hostname": "sw-lab",
+      "refusal_contains": []
+    },
+    {
+      "why": "a leading hyphen is TRIMMED, not refused — the operator wrote a separator and meant one",
+      "in": "-core01",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "a trailing hyphen is trimmed; four of the five Go spellings never trimmed and shipped the trailing hyphen RFC 1123 rejects",
+      "in": "core01-",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "hyphens at BOTH ends are trimmed",
+      "in": "-sw-lab-",
+      "hostname": "sw-lab",
+      "refusal_contains": []
+    },
+    {
+      "why": "a separator at the edges becomes a hyphen and is then trimmed away with it",
+      "in": "_core01_",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "a trailing space is trimmed before anything else happens",
+      "in": "core01 ",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "a trailing CR is whitespace and is trimmed — it is an injection only when it is INTERIOR",
+      "in": "core01\r",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "a name that is NOTHING but separators has no name left in it: empty is a refusal, never the literal `switch` all five spellings fell back to",
+      "in": " _ - . ",
+      "hostname": "",
+      "refusal_contains": [
+        "cannot be used as a system name",
+        "an empty system name is not a name"
+      ]
+    },
+    {
+      "why": "empty input has nothing to derive from, and says so in its own words rather than the alphabet's",
+      "in": "",
+      "hostname": "",
+      "refusal_contains": [
+        "no meshcraft name"
+      ]
+    },
+    {
+      "why": "whitespace-only input is empty input",
+      "in": "   ",
+      "hostname": "",
+      "refusal_contains": [
+        "no meshcraft name"
+      ]
+    },
+    {
+      "why": "whitespace-only counts tab and newline as whitespace on both sides",
+      "in": "\t\n ",
+      "hostname": "",
+      "refusal_contains": [
+        "no meshcraft name"
+      ]
+    },
+    {
+      "why": "THE accented case: \"Switch étage 1\" must REFUSE, never become `Switch-tage-1` — a mangled name looks deliberate on a console banner and nothing connects it back to the deleted letter",
+      "in": "Switch étage 1",
+      "hostname": "",
+      "refusal_contains": [
+        "\"é\"",
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "non-ASCII refuses even with no separator in sight",
+      "in": "réseau",
+      "hostname": "",
+      "refusal_contains": [
+        "\"é\""
+      ]
+    },
+    {
+      "why": "an astral-plane character is named as ONE character: Go ranges over runes and TS over code points, and a UTF-16 code-unit loop would name two broken halves",
+      "in": "sw🙂01",
+      "hostname": "",
+      "refusal_contains": [
+        "\"🙂\""
+      ]
+    },
+    {
+      "why": "three-byte characters refuse, and the offenders are named in the order met",
+      "in": "交换机",
+      "hostname": "",
+      "refusal_contains": [
+        "\"交\"",
+        "\"换\"",
+        "\"机\""
+      ]
+    },
+    {
+      "why": "a repeated offender is named once, not once per occurrence",
+      "in": "a#b#c@d",
+      "hostname": "",
+      "refusal_contains": [
+        "\"#\"",
+        "\"@\""
+      ]
+    },
+    {
+      "why": "U+00A0 NO-BREAK SPACE at the edges is whitespace to Go's TrimSpace and to JS .trim(): it is trimmed on both sides",
+      "in": "\u00a0core01\u00a0",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+000B VERTICAL TAB at the edges: whitespace to both, and NOT one of the five separators — it is trimmed away, never turned into a hyphen",
+      "in": "\u000bcore01\u000b",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+2000 EN QUAD at the edges pins the U+2000-U+200A range of Go's White_Space set — the part of the set a hand-written mirror is most likely to forget",
+      "in": "\u2000core01\u2000",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+2028 LINE SEPARATOR at the edges: a line terminator to JS and White_Space to Go, so both trim it",
+      "in": "\u2028core01\u2028",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+3000 IDEOGRAPHIC SPACE at the edges is whitespace on both sides too",
+      "in": "\u3000core01\u3000",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+0085 NEXT LINE is whitespace to Go's strings.TrimSpace but is NOT in JS String.prototype.trim's set — a mirror that leans on .trim() refuses here while Go accepts",
+      "in": "\u0085core01\u0085",
+      "hostname": "core01",
+      "refusal_contains": []
+    },
+    {
+      "why": "U+FEFF BYTE ORDER MARK is the mirror image: JS .trim() eats it, Go's TrimSpace does not. Go refuses, and refusing is right — swallowing an invisible character silently is exactly the mangling this module exists to end. A name pasted out of a CSV export carries one.",
+      "in": "\ufeffcore01",
+      "hostname": "",
+      "refusal_contains": [
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "a NO-BREAK SPACE in the MIDDLE is not one of the five separators: it refuses rather than quietly becoming a hyphen",
+      "in": "core\u00a001",
+      "hostname": "",
+      "refusal_contains": [
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "injection: a newline would run what follows it as a SECOND configuration command with the session's privileges — refuse, do not strip the newline and send the rest",
+      "in": "core01\nusername attacker privilege 15",
+      "hostname": "",
+      "refusal_contains": [
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "injection: an INTERIOR carriage return is a line ending on every CLI range",
+      "in": "a\rb",
+      "hostname": "",
+      "refusal_contains": [
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "injection: a semicolon chains a second command on several ranges",
+      "in": "a;b",
+      "hostname": "",
+      "refusal_contains": [
+        "\";\""
+      ]
+    },
+    {
+      "why": "injection: backticks substitute a command",
+      "in": "a`whoami`",
+      "hostname": "",
+      "refusal_contains": [
+        "\"`\""
+      ]
+    },
+    {
+      "why": "injection: a pipe redirects into another command",
+      "in": "a|b",
+      "hostname": "",
+      "refusal_contains": [
+        "\"|\""
+      ]
+    },
+    {
+      "why": "injection: $(...) substitutes a command, and every one of its characters is outside the alphabet",
+      "in": "a$(id)",
+      "hostname": "",
+      "refusal_contains": [
+        "\"$\"",
+        "\"(\"",
+        "\")\""
+      ]
+    },
+    {
+      "why": "injection: a NUL byte truncates the string inside a C-implemented CLI, so what the device stores is not what was validated",
+      "in": "a\u0000b",
+      "hostname": "",
+      "refusal_contains": [
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "the 63-octet ceiling: 62 octets is under it and passes",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hostname": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "refusal_contains": []
+    },
+    {
+      "why": "the 63-octet ceiling: 63 IS the DNS label limit and is ACCEPTED — an off-by-one on either side gives one path a name the other refuses",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hostname": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "refusal_contains": []
+    },
+    {
+      "why": "the 63-octet ceiling: 64 REFUSES and says meshcraft will not shorten it — a truncated hostname answers to a name the inventory does not carry, and its LLDP system name stops matching",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hostname": "",
+      "refusal_contains": [
+        "does not shorten it"
+      ]
+    },
+    {
+      "why": "THE MOST VALUABLE VECTOR IN THIS TABLE: 32 × \"é\" is 32 CHARACTERS but 64 OCTETS. Go counts octets with len(); a TS mirror using .length would count 32, sail past the ceiling and hand back the ALPHABET refusal instead of this one. That visible difference in WHY is the only cheap symptom of the two sides disagreeing about HOW LONG a name may be — the same disagreement that, on an all-ASCII name, would silently rename a device.",
+      "in": "éééééééééééééééééééééééééééééééé",
+      "hostname": "",
+      "refusal_contains": [
+        "does not shorten it"
+      ]
+    },
+    {
+      "why": "the other side of that boundary: 31 × \"é\" is 62 octets, UNDER the ceiling, so the refusal must be the alphabet one and must name the character. A .length implementation cannot tell this vector from the one above; an octet-counting one always can.",
+      "in": "ééééééééééééééééééééééééééééééé",
+      "hostname": "",
+      "refusal_contains": [
+        "\"é\"",
+        "may only carry letters, digits and hyphens"
+      ]
+    },
+    {
+      "why": "three-byte characters widen the character/octet gap further: 22 × \"交\" is 22 characters and 66 octets, over the ceiling",
+      "in": "交交交交交交交交交交交交交交交交交交交交交交",
+      "hostname": "",
+      "refusal_contains": [
+        "does not shorten it"
+      ]
+    },
+    {
+      "why": "21 × \"交\" is exactly 63 octets — on the ceiling, not over it — so it earns the alphabet refusal instead",
+      "in": "交交交交交交交交交交交交交交交交交交交交交",
+      "hostname": "",
+      "refusal_contains": [
+        "\"交\""
+      ]
+    },
+    {
+      "why": "runs collapse BEFORE the ceiling is measured: 64 separators between two letters is 66 input octets but a 3-octet name",
+      "in": "a________________________________________________________________b",
+      "hostname": "a-b",
+      "refusal_contains": []
+    }
+  ]
+}

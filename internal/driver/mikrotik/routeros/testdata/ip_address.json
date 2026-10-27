@@ -15,12 +15,12 @@
  {
   ".id": "*2",
   "actual-interface": "vlan99",
-  "address": "10.99.0.54/24",
+  "address": "192.0.2.54/24",
   "disabled": "false",
   "dynamic": "false",
   "interface": "vlan99",
   "invalid": "false",
-  "network": "10.99.0.0",
+  "network": "192.0.2.0",
   "slave": "false",
   "vrf": "main"
  }

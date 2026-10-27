@@ -50,7 +50,7 @@ func TestDecodeOfBothResponseShapes(t *testing.T) {
 // would be a disproportionate failure mode.
 func TestEverythingIsAStringInThisAPI(t *testing.T) {
 	var rows, err = decodeRows(
-		`[{"pvid":"100","hw-offload":"true","liste":["a","b"],"nombre":7}]`)
+		`[{"pvid":"100","hw-offload":"true","list":["a","b"],"count":7}]`)
 	if err != nil {
 		t.Fatalf("undecodable: %v", err)
 	}
@@ -63,11 +63,11 @@ func TestEverythingIsAStringInThisAPI(t *testing.T) {
 		t.Error("hw-offload must read true from the string 'true'")
 	}
 	// Unexpected forms are kept rather than lost.
-	if r.Get("liste") != `["a","b"]` {
-		t.Errorf("non-string value = %q, expected kept as JSON", r.Get("liste"))
+	if r.Get("list") != `["a","b"]` {
+		t.Errorf("non-string value = %q, expected kept as JSON", r.Get("list"))
 	}
-	if r.Get("nombre") != "7" {
-		t.Errorf("nombre = %q, expected '7'", r.Get("nombre"))
+	if r.Get("count") != "7" {
+		t.Errorf("count = %q, expected '7'", r.Get("count"))
 	}
 
 	// Int distinguishes 'absent' from 'zero', and the difference matters: a PVID 0
@@ -240,11 +240,11 @@ func TestRouterOSLists(t *testing.T) {
 // immediately, that is not a risk one takes to save a test.
 func TestEmptyCommandIsRefused(t *testing.T) {
 	var c = &Client{}
-	var cas string
-	for _, cas = range []string{"", "   ", "..", "?"} {
-		var _, err = c.Command(nil, "interface/bridge/vlan", cas, nil)
+	var cases string
+	for _, cases = range []string{"", "   ", "..", "?"} {
+		var _, err = c.Command(nil, "interface/bridge/vlan", cases, nil)
 		if err == nil {
-			t.Errorf("command %q must be refused before any send", cas)
+			t.Errorf("command %q must be refused before any send", cases)
 		}
 	}
 }

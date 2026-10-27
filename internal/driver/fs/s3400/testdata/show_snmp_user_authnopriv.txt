@@ -1,0 +1,30 @@
+show snmp user
+User name: mcau1
+Engine ID: 8000cda203649d99227b95
+storage-type: nonvolatile
+Rowstatus: active
+Authentication Protocol: SHA 
+Group-name: mcagA	
+
+User name: mcau2
+Engine ID: 8000cda203649d99227b95
+storage-type: nonvolatile
+Rowstatus: active
+Authentication Protocol: MD5 
+Group-name: mcagA	
+
+User name: mcau3
+Engine ID: 8000cda203649d99227b95
+storage-type: nonvolatile
+Rowstatus: active
+Authentication Protocol: SHA 
+Group-name: mcagA	
+
+User name: mcorph
+Engine ID: 8000cda203649d99227b95
+storage-type: nonvolatile
+Rowstatus: active
+Authentication Protocol: SHA 
+Group-name: mcnogroup	
+
+poefs3400lab#

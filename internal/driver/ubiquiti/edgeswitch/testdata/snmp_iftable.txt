@@ -1,0 +1,46 @@
+# ifTable of the lab EdgePoint S16 (192.0.2.4, EdgeSwitch firmware 1.9.2),
+# captured 2026-08-05 through the product's own diagnostic walk
+# (POST /api/devices/{id}/snmp-walk, proxy-lab).
+#
+# Columns, tab-separated — ifDescr last because it carries spaces:
+#   ifIndex	ifType (1.3.6.1.2.1.2.2.1.3)	ifOperStatus (…1.8)	ifDescr (…1.2)
+#
+# What this capture proves and the tests replay:
+#   - ifDescr is "Slot: 0 Port: N …", NOT the CLI/ifName "0/N" form.
+#     The poller labels samples with ifDescr, so StandardPortName must take
+#     this spelling or every sample fails facade resolution.
+#   - ifIndex 1..16 are the RJ45 sockets, 17..18 the SFP+ cages: index equals
+#     front-panel number on this hardware, all ifType 6 (ethernetCsmacd).
+#   - ifIndex 65 (CPU) and 66..71 (link aggregates) also sit in ifTable, with
+#     ifType 1 (other): both the ifType filter and the anchored ifDescr match
+#     must refuse them.
+#   - Only port 18 — the uplink to poefs3400lab XG1, LLDP-verified — and the
+#     CPU interface were oper-up at capture time.
+#
+# ifName for comparison (1.3.6.1.2.1.31.1.1.1.1): "0/1" … "0/18",
+# "CPU Interface:  5/1", "3/1" … "3/6".
+1	6	2	Slot: 0 Port: 1 Gigabit - Level
+2	6	2	Slot: 0 Port: 2 Gigabit - Level
+3	6	2	Slot: 0 Port: 3 Gigabit - Level
+4	6	2	Slot: 0 Port: 4 Gigabit - Level
+5	6	2	Slot: 0 Port: 5 Gigabit - Level
+6	6	2	Slot: 0 Port: 6 Gigabit - Level
+7	6	2	Slot: 0 Port: 7 Gigabit - Level
+8	6	2	Slot: 0 Port: 8 Gigabit - Level
+9	6	2	Slot: 0 Port: 9 Gigabit - Level
+10	6	2	Slot: 0 Port: 10 Gigabit - Level
+11	6	2	Slot: 0 Port: 11 Gigabit - Level
+12	6	2	Slot: 0 Port: 12 Gigabit - Level
+13	6	2	Slot: 0 Port: 13 Gigabit - Level
+14	6	2	Slot: 0 Port: 14 Gigabit - Level
+15	6	2	Slot: 0 Port: 15 Gigabit - Level
+16	6	2	Slot: 0 Port: 16 Gigabit - Level
+17	6	2	Slot: 0 Port: 17 10G - Level
+18	6	1	Slot: 0 Port: 18 10G - Level
+65	1	1	 CPU Interface for Slot: 5 Port: 1
+66	1	2	 Link Aggregate 1
+67	1	2	 Link Aggregate 2
+68	1	2	 Link Aggregate 3
+69	1	2	 Link Aggregate 4
+70	1	2	 Link Aggregate 5
+71	1	2	 Link Aggregate 6

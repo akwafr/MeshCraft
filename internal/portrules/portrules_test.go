@@ -48,7 +48,7 @@ func cfg(mode string, pvid int, tagged []int, all, poe bool) *Config {
 
 // The operator example, word for word: all SFP+ as trunk, last 4 RJ45 as trunk
 // PVID 100, everything else as access PVID 100.
-func exempleExploitant() Spec {
+func operatorExample() Spec {
 	return Spec{Rules: []Rule{
 		{Label: "SFP+ trunk",
 			Select: Selector{Media: MediaSFPPlus},
@@ -62,10 +62,10 @@ func exempleExploitant() Spec {
 	}}
 }
 
-// TestFacadeDeplieeDansLOrdreDeLEquipement : "the last four" only makes sense if
+// TestFacadeUnfoldedInTheDeviceOrder : "the last four" only makes sense if
 // order matches the front panel. Sorting by name would put GE10 before GE2 and the
 // rule would designate four random ports in the middle.
-func TestFacadeDeplieeDansLOrdreDeLEquipement(t *testing.T) {
+func TestFacadeUnfoldedInTheDeviceOrder(t *testing.T) {
 	var ports = Expand(json.RawMessage(facade48))
 	if len(ports) != 52 {
 		t.Fatalf("52 ports expected, %d", len(ports))
@@ -80,10 +80,10 @@ func TestFacadeDeplieeDansLOrdreDeLEquipement(t *testing.T) {
 	}
 }
 
-// TestSFPReconnusMalgreUnPrefixeCommun : on Instant On, copper and fiber share the
+// TestSFPRecognisedDespiteASharedPrefix : on Instant On, copper and fiber share the
 // SAME "GE" prefix. Classifying on prefix alone would mark all fiber as copper, and
 // "all SFP+ as trunk" would match nothing at all — silently.
-func TestSFPReconnusMalgreUnPrefixeCommun(t *testing.T) {
+func TestSFPRecognisedDespiteASharedPrefix(t *testing.T) {
 	var ports = Expand(json.RawMessage(facade48))
 	if ports[0].Media != MediaCopper {
 		t.Errorf("GE1 should be copper: %q", ports[0].Media)
@@ -93,19 +93,19 @@ func TestSFPReconnusMalgreUnPrefixeCommun(t *testing.T) {
 	}
 	// And on the catalog, where prefix distinguishes and speed separates SFP from
 	// SFP+.
-	var petit = Expand(json.RawMessage(facade8))
-	if petit[7].Media != MediaCopper || petit[8].Media != MediaSFP {
-		t.Errorf("catalog facade misclassified: %q / %q", petit[7].Media, petit[8].Media)
+	var small = Expand(json.RawMessage(facade8))
+	if small[7].Media != MediaCopper || small[8].Media != MediaSFP {
+		t.Errorf("catalog facade misclassified: %q / %q", small[7].Media, small[8].Media)
 	}
-	if petit[8].Media == MediaSFPPlus {
+	if small[8].Media == MediaSFPPlus {
 		t.Error("a 1G SFP cage is not SFP+")
 	}
 }
 
-// TestSelecteurSFPPrendAussiLesSFPPlus : "fiber ports" means the cages, all speeds.
+// TestSFPSelectorAlsoTakesSFPPlus : "fiber ports" means the cages, all speeds.
 // If "sfp" excluded SFP+, a fiber rule would leave 10G uplinks unconfigured — the
 // costliest case to miss.
-func TestSelecteurSFPPrendAussiLesSFPPlus(t *testing.T) {
+func TestSFPSelectorAlsoTakesSFPPlus(t *testing.T) {
 	var ports = Expand(json.RawMessage(facade48))
 	var spec = Spec{Rules: []Rule{
 		{Label: "fiber", Select: Selector{Media: MediaSFP},
@@ -117,11 +117,11 @@ func TestSelecteurSFPPrendAussiLesSFPPlus(t *testing.T) {
 	}
 }
 
-// TestLExempleDeLExploitantSurUn48Ports : the nominal case that motivated the
+// TestTheOperatorExampleOnA48Port : the nominal case that motivated the
 // feature. It mainly verifies that the catch-all written LAST does not eat what
 // previous rules took.
-func TestLExempleDeLExploitantSurUn48Ports(t *testing.T) {
-	var plan = Evaluate(exempleExploitant(), Expand(json.RawMessage(facade48)), nil)
+func TestTheOperatorExampleOnA48Port(t *testing.T) {
+	var plan = Evaluate(operatorExample(), Expand(json.RawMessage(facade48)), nil)
 	if len(plan.Issues) != 0 {
 		t.Fatalf("no refusal expected: %v", plan.Issues)
 	}
@@ -132,24 +132,24 @@ func TestLExempleDeLExploitantSurUn48Ports(t *testing.T) {
 	if sfp.RuleLabel != "SFP+ trunk" || !sfp.Config.TaggedAll {
 		t.Errorf("GE49: %+v", sfp)
 	}
-	var dernier, _ = byPort(plan, "GE48")
-	if dernier.RuleLabel != "last 4 RJ45" || dernier.Config.PVID != 100 ||
-		dernier.Config.Mode != "trunk" {
-		t.Errorf("GE48: %+v", dernier)
+	var last, _ = byPort(plan, "GE48")
+	if last.RuleLabel != "last 4 RJ45" || last.Config.PVID != 100 ||
+		last.Config.Mode != "trunk" {
+		t.Errorf("GE48: %+v", last)
 	}
-	var premierDesQuatre, _ = byPort(plan, "GE45")
-	if premierDesQuatre.RuleLabel != "last 4 RJ45" {
-		t.Errorf("GE45 opens the last 4 RJ45: %+v", premierDesQuatre)
+	var firstOfFour, _ = byPort(plan, "GE45")
+	if firstOfFour.RuleLabel != "last 4 RJ45" {
+		t.Errorf("GE45 opens the last 4 RJ45: %+v", firstOfFour)
 	}
 	// The boundary counts as much as the interior: "last 4" stops at copper and
 	// does not spill onto GE44 or the cages.
-	var avant, _ = byPort(plan, "GE44")
-	if avant.RuleLabel != "everything else" {
-		t.Errorf("GE44 is not part of the last 4: %+v", avant)
+	var before, _ = byPort(plan, "GE44")
+	if before.RuleLabel != "everything else" {
+		t.Errorf("GE44 is not part of the last 4: %+v", before)
 	}
-	var courant, _ = byPort(plan, "GE1")
-	if courant.RuleLabel != "everything else" || courant.Config.Mode != "access" {
-		t.Errorf("GE1: %+v", courant)
+	var current, _ = byPort(plan, "GE1")
+	if current.RuleLabel != "everything else" || current.Config.Mode != "access" {
+		t.Errorf("GE1: %+v", current)
 	}
 	// Per-rule counts: what the screen shows to make arbitration readable.
 	if plan.Rules[0].Won != 4 || plan.Rules[1].Won != 4 || plan.Rules[2].Won != 44 {
@@ -157,12 +157,12 @@ func TestLExempleDeLExploitantSurUn48Ports(t *testing.T) {
 	}
 }
 
-// TestLeMemeProfilSurUneAutreFacade : THE test separating a profile from
+// TestTheSameProfileOnAnotherFacade : THE test separating a profile from
 // configuration. The same spec, without rewriting a line, on an 8-port switch whose
 // cages are 1G. If it fails, each model would need its own profile and the object
 // would have no reason to exist.
-func TestLeMemeProfilSurUneAutreFacade(t *testing.T) {
-	var plan = Evaluate(exempleExploitant(), Expand(json.RawMessage(facade8)), nil)
+func TestTheSameProfileOnAnotherFacade(t *testing.T) {
+	var plan = Evaluate(operatorExample(), Expand(json.RawMessage(facade8)), nil)
 	if len(plan.Uncovered) != 0 {
 		t.Errorf("still uncovered: %v", plan.Uncovered)
 	}
@@ -186,11 +186,11 @@ func TestLeMemeProfilSurUneAutreFacade(t *testing.T) {
 	}
 }
 
-// TestTrancheRogneeSurUnePetiteFacade : "ranks 1 to 44" on a device with only 8
+// TestSliceTrimmedOnASmallFacade : "ranks 1 to 44" on a device with only 8
 // must take 8, not zero. Rejecting an out-of-bounds slice would make every profile
 // written for a 48-port switch unusable on the rest of the fleet, i.e. having no
 // profile at all.
-func TestTrancheRogneeSurUnePetiteFacade(t *testing.T) {
+func TestSliceTrimmedOnASmallFacade(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "offices",
 			Select: Selector{Media: MediaCopper, Slice: SliceRange, From: 1, To: 44},
@@ -201,20 +201,20 @@ func TestTrancheRogneeSurUnePetiteFacade(t *testing.T) {
 		t.Fatalf("8 copper ports expected, %d", plan.Rules[0].Won)
 	}
 	// And "last 4" on a set that only has 2.
-	var deux = Spec{Rules: []Rule{
+	var two = Spec{Rules: []Rule{
 		{Label: "cages", Select: Selector{Media: MediaSFP, Slice: SliceLast, Count: 4},
 			Config: cfg("trunk", 1, nil, true, false)},
 	}}
-	var petit = Evaluate(deux, Expand(json.RawMessage(facade8)), nil)
-	if petit.Rules[0].Won != 2 {
-		t.Errorf("2 cages expected, %d", petit.Rules[0].Won)
+	var small = Evaluate(two, Expand(json.RawMessage(facade8)), nil)
+	if small.Rules[0].Won != 2 {
+		t.Errorf("2 cages expected, %d", small.Rules[0].Won)
 	}
 }
 
-// TestLaPremiereRegleGagne : the chosen arbitration, and it must be verifiable
+// TestTheFirstRuleWins : the chosen arbitration, and it must be verifiable
 // without reading the code. Two rules target the same port; the top one wins, and
 // the other knows (Matched without Won).
-func TestLaPremiereRegleGagne(t *testing.T) {
+func TestTheFirstRuleWins(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "top", Select: Selector{Media: MediaCopper},
 			Config: cfg("access", 10, nil, false, false)},
@@ -233,12 +233,12 @@ func TestLaPremiereRegleGagne(t *testing.T) {
 	}
 }
 
-// TestLeSelecteurNeDependPasDesReglesPrecedentes : "last 2 RJ45" designates the
+// TestTheSelectorDoesNotDependOnPreviousRules : "last 2 RJ45" designates the
 // same two ports whether the rule is alone or preceded by another that already took
 // half the facade. Without this guarantee, moving a rule in the list would silently
 // change the set designated by later ones, and preview would be the only way to
 // know what was written.
-func TestLeSelecteurNeDependPasDesReglesPrecedentes(t *testing.T) {
+func TestTheSelectorDoesNotDependOnPreviousRules(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "first 6",
 			Select: Selector{Media: MediaCopper, Slice: SliceFirst, Count: 6},
@@ -260,8 +260,8 @@ func TestLeSelecteurNeDependPasDesReglesPrecedentes(t *testing.T) {
 	// the whole facade.
 	spec.Rules[0].Select.Count = 4
 	plan = Evaluate(spec, Expand(json.RawMessage(facade8)), nil)
-	var _, couverte = byPort(plan, "ether5")
-	if couverte {
+	var _, covered = byPort(plan, "ether5")
+	if covered {
 		t.Error("ether5 should be designated by neither rule")
 	}
 	var e8b, _ = byPort(plan, "ether8")
@@ -270,11 +270,11 @@ func TestLeSelecteurNeDependPasDesReglesPrecedentes(t *testing.T) {
 	}
 }
 
-// TestPrisesNonCouvertesLaisseesIntactes : a profile does not mention everything,
+// TestUncoveredJacksLeftIntact : a profile does not mention everything,
 // and what it does not mention must not be reset. Setting "libre" on undesignated
 // ports would silently destroy configuration nobody asked to touch — and that
 // cannot be repaired.
-func TestPrisesNonCouvertesLaisseesIntactes(t *testing.T) {
+func TestUncoveredJacksLeftIntact(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "cages", Select: Selector{Media: MediaSFP},
 			Config: cfg("trunk", 1, nil, true, false)},
@@ -291,10 +291,10 @@ func TestPrisesNonCouvertesLaisseesIntactes(t *testing.T) {
 	}
 }
 
-// TestTrunkAllResteUnJoker : "all" must NEVER be expanded to an enumeration by
+// TestTrunkAllStaysAWildcard : "all" must NEVER be expanded to an enumeration by
 // evaluation, even if site VLANs are known. Expansion belongs in recon.Resolve
 // only — a profile doing it too would diverge from apply/diff.
-func TestTrunkAllResteUnJoker(t *testing.T) {
+func TestTrunkAllStaysAWildcard(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "uplinks", Select: Selector{Media: MediaSFPPlus},
 			Config: cfg("trunk", 1, nil, true, false)},
@@ -315,17 +315,17 @@ func TestTrunkAllResteUnJoker(t *testing.T) {
 	}
 }
 
-// TestPoEIgnoreSurUnePriseQuiNEnAPas : an "office" profile with PoE must work on a
+// TestPoEIgnoredOnAJackWithoutIt : an "office" profile with PoE must work on a
 // mixed facade without an extra rule for cages. Refusal is therefore corrected —
 // but STATED, otherwise the operator believes they powered a port that never will.
-func TestPoEIgnoreSurUnePriseQuiNEnAPas(t *testing.T) {
+func TestPoEIgnoredOnAJackWithoutIt(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "all", Select: Selector{}, Config: cfg("access", 20, nil, false, true)},
 	}}
 	var plan = Evaluate(spec, Expand(json.RawMessage(facade8)), nil)
-	var cuivre, _ = byPort(plan, "ether1")
-	if !cuivre.Config.PoE || cuivre.Warn != "" {
-		t.Errorf("PoE copper must stay powered without warning: %+v", cuivre)
+	var copper, _ = byPort(plan, "ether1")
+	if !copper.Config.PoE || copper.Warn != "" {
+		t.Errorf("PoE copper must stay powered without warning: %+v", copper)
 	}
 	var cage, _ = byPort(plan, "sfp1")
 	if cage.Config.PoE {
@@ -336,13 +336,13 @@ func TestPoEIgnoreSurUnePriseQuiNEnAPas(t *testing.T) {
 	}
 }
 
-// TestProfilDePriseIntrouvableRefuseLaPose : a rule pointing at a deleted port
+// TestMissingPortProfileRefusesTheApply : a rule pointing at a deleted port
 // profile must not fall back to the next rule — the operator would see coherent and
 // wrong configuration. It takes nothing, says so, and the plan carries a refusal
 // that blocks apply.
-func TestProfilDePriseIntrouvableRefuseLaPose(t *testing.T) {
+func TestMissingPortProfileRefusesTheApply(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
-		{Label: "uplink", Select: Selector{Media: MediaSFP}, PortProfileID: "disparu"},
+		{Label: "uplink", Select: Selector{Media: MediaSFP}, PortProfileID: "gone"},
 		{Label: "rest", Select: Selector{}, Config: cfg("access", 20, nil, false, false)},
 	}}
 	var plan = Evaluate(spec, Expand(json.RawMessage(facade8)), map[string]Config{})
@@ -360,10 +360,10 @@ func TestProfilDePriseIntrouvableRefuseLaPose(t *testing.T) {
 	}
 }
 
-// TestReglePointantUnProfilDePrise : the nominal reuse case. A rule that copied
+// TestRulePointingAtAPortProfile : the nominal reuse case. A rule that copied
 // the profile configuration would drift on the first profile edit, with nothing
 // signaling it.
-func TestReglePointantUnProfilDePrise(t *testing.T) {
+func TestRulePointingAtAPortProfile(t *testing.T) {
 	var catalogue = map[string]Config{
 		"p1": {Mode: "trunk", PVID: 10, TaggedAll: true},
 	}
@@ -380,11 +380,66 @@ func TestReglePointantUnProfilDePrise(t *testing.T) {
 	}
 }
 
-// TestSpecDUnProfilDePriseSeLitDirectement : a port profile spec
+// TestRuleWithProfileStampsTheFollow : a rule that references a port profile
+// must also RECORD the follow — otherwise forty-eight ports configured through
+// a switch profile all read as "manual" in the panel, and the one object meant
+// to say "these ports live by the Bureaux group" says nothing. An inline rule,
+// by contrast, has no profile to follow and must stamp nothing.
+func TestRuleWithProfileStampsTheFollow(t *testing.T) {
+	var catalogue = map[string]Config{
+		"p1": {Mode: "access", PVID: 20},
+	}
+	var spec = Spec{Rules: []Rule{
+		{Label: "offices", Select: Selector{Media: MediaCopper}, PortProfileID: "p1"},
+		{Label: "cages", Select: Selector{Media: MediaSFP},
+			Config: cfg("trunk", 1, nil, true, false)},
+	}}
+	var plan = Evaluate(spec, Expand(json.RawMessage(facade8)), catalogue)
+	if len(plan.Issues) != 0 {
+		t.Fatalf("no refusal expected: %v", plan.Issues)
+	}
+	var copper, _ = byPort(plan, "ether1")
+	if copper.PortProfileID != "p1" {
+		t.Errorf("the follow-link must ride the assignment: %+v", copper)
+	}
+	var cage, _ = byPort(plan, "sfp1")
+	if cage.PortProfileID != "" {
+		t.Errorf("an inline rule must not invent a follow: %+v", cage)
+	}
+}
+
+// TestNoStampWhenFitAdjustsTheValues : the deliberate limit of the
+// stamp. A PoE profile lands on a cage that has none: fit corrects the value,
+// so the port does NOT hold exactly the profile's values — stamping it anyway
+// would make the panel claim a provenance the values contradict, and flag a
+// PoE "override" nobody chose. Ports that receive the values unchanged keep
+// the stamp on the same apply.
+func TestNoStampWhenFitAdjustsTheValues(t *testing.T) {
+	var catalogue = map[string]Config{
+		"p1": {Mode: "access", PVID: 20, PoE: true},
+	}
+	var spec = Spec{Rules: []Rule{
+		{Label: "all", Select: Selector{}, PortProfileID: "p1"},
+	}}
+	var plan = Evaluate(spec, Expand(json.RawMessage(facade8)), catalogue)
+	var copper, _ = byPort(plan, "ether1")
+	if copper.PortProfileID != "p1" || copper.Warn != "" {
+		t.Errorf("an unadjusted port keeps the follow: %+v", copper)
+	}
+	var cage, _ = byPort(plan, "sfp1")
+	if cage.Warn == "" {
+		t.Fatalf("the guard should have reported itself: %+v", cage)
+	}
+	if cage.PortProfileID != "" {
+		t.Errorf("adjusted values must not read as following the profile: %+v", cage)
+	}
+}
+
+// TestAPortProfileSpecReadsDirectly : a port profile spec
 // (port_profiles.spec) and a rule configuration share the SAME shape. If they
 // diverged, translation in the middle would be required — and that is where
 // "tagged: all" gets lost.
-func TestSpecDUnProfilDePriseSeLitDirectement(t *testing.T) {
+func TestAPortProfileSpecReadsDirectly(t *testing.T) {
 	var c Config
 	var err = json.Unmarshal([]byte(
 		`{"description":"Uplink","mode":"trunk","pvid":10,"tagged":"all","poe":false,"eng_only":true}`), &c)
@@ -394,21 +449,21 @@ func TestSpecDUnProfilDePriseSeLitDirectement(t *testing.T) {
 	if c.Mode != "trunk" || c.PVID != 10 || !c.TaggedAll {
 		t.Errorf("spec misread: %+v", c)
 	}
-	var liste Config
-	if json.Unmarshal([]byte(`{"mode":"trunk","pvid":1,"tagged":[30,20]}`), &liste) != nil {
+	var list Config
+	if json.Unmarshal([]byte(`{"mode":"trunk","pvid":1,"tagged":[30,20]}`), &list) != nil {
 		t.Fatal("unreadable VLAN list")
 	}
 	// Sorted on read: two entries in different order must not produce two
 	// configurations diff would see as distinct.
-	if len(liste.Tagged) != 2 || liste.Tagged[0] != 20 {
-		t.Errorf("list not normalized: %v", liste.Tagged)
+	if len(list.Tagged) != 2 || list.Tagged[0] != 20 {
+		t.Errorf("list not normalized: %v", list.Tagged)
 	}
 }
 
-// TestUnPortLibreNeGardeAucunResidu : setting a port to "libre" must also clear
+// TestAnUnmanagedPortKeepsNoResidue : setting a port to "libre" must also clear
 // PVID and tagged VLANs it carried. Leaving them would make them reappear on the
 // next pass to access, and nobody would know where they came from.
-func TestUnPortLibreNeGardeAucunResidu(t *testing.T) {
+func TestAnUnmanagedPortKeepsNoResidue(t *testing.T) {
 	var c = Config{Mode: "libre", PVID: 42, Tagged: []int{10, 20}}
 	var f = c.Fields()
 	if string(f["pvid"]) != "null" {
@@ -419,10 +474,10 @@ func TestUnPortLibreNeGardeAucunResidu(t *testing.T) {
 	}
 }
 
-// TestUnAccessEffaceLesVlansTagues : switching a trunk to access must REMOVE its
+// TestAnAccessClearsTaggedVLANs : switching a trunk to access must REMOVE its
 // tagged VLANs. Not writing the key would leave them in the database, and the port
 // would remain member of VLANs the screen no longer shows.
-func TestUnAccessEffaceLesVlansTagues(t *testing.T) {
+func TestAnAccessClearsTaggedVLANs(t *testing.T) {
 	var f = Config{Mode: "access", PVID: 20}.Fields()
 	if string(f["tagged"]) != "[]" {
 		t.Errorf("tagged VLANs must be explicitly cleared: %s", f["tagged"])
@@ -432,10 +487,10 @@ func TestUnAccessEffaceLesVlansTagues(t *testing.T) {
 	}
 }
 
-// TestFacadeIllisibleNeFaitPasEchouer : a device whose model nobody filled in has
+// TestUnreadableFacadeDoesNotFail : a device whose model nobody filled in has
 // an empty or broken facade. The screen must be able to say so — "no known ports"
 // — instead of refusing to display.
-func TestFacadeIllisibleNeFaitPasEchouer(t *testing.T) {
+func TestUnreadableFacadeDoesNotFail(t *testing.T) {
 	if len(Expand(json.RawMessage(`anything`))) != 0 {
 		t.Error("unreadable facade must return an empty list")
 	}
@@ -448,10 +503,10 @@ func TestFacadeIllisibleNeFaitPasEchouer(t *testing.T) {
 	}
 }
 
-// TestRegleSansConfigurationEstRefusee : a rule that does not say what it sets is
+// TestRuleWithoutConfigurationIsRefused : a rule that does not say what it sets is
 // incomplete input, not a neutral rule. Letting it through would write an empty
 // mode on ports it designates.
-func TestRegleSansConfigurationEstRefusee(t *testing.T) {
+func TestRuleWithoutConfigurationIsRefused(t *testing.T) {
 	var spec = Spec{Rules: []Rule{{Label: "empty", Select: Selector{}}}}
 	var plan = Evaluate(spec, Expand(json.RawMessage(facade8)), nil)
 	if len(plan.Issues) != 1 {
@@ -462,10 +517,10 @@ func TestRegleSansConfigurationEstRefusee(t *testing.T) {
 	}
 }
 
-// TestTrancheSansNombreEstRefusee : "first N" with N missing matches nothing on
+// TestSliceWithoutCountIsRefused : "first N" with N missing matches nothing on
 // any facade. That is an input error, and the safe default is to say so rather
 // than silently apply an inert rule.
-func TestTrancheSansNombreEstRefusee(t *testing.T) {
+func TestSliceWithoutCountIsRefused(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "first", Select: Selector{Slice: SliceFirst},
 			Config: cfg("access", 10, nil, false, false)},
@@ -476,10 +531,10 @@ func TestTrancheSansNombreEstRefusee(t *testing.T) {
 	}
 }
 
-// TestSelectionParGroupeDeFacade : targeting a group uses a SUBSTRING of its
+// TestSelectionByFacadeGroup : targeting a group uses a SUBSTRING of its
 // label, case-insensitive — labels are not normalized across models, and requiring
 // equality would silence the rule on the second model.
-func TestSelectionParGroupeDeFacade(t *testing.T) {
+func TestSelectionByFacadeGroup(t *testing.T) {
 	var spec = Spec{Rules: []Rule{
 		{Label: "poe", Select: Selector{Group: "poe"},
 			Config: cfg("access", 20, nil, false, true)},
@@ -490,21 +545,21 @@ func TestSelectionParGroupeDeFacade(t *testing.T) {
 	}
 }
 
-// TestSelectionParCapacitePoE : distinguish powerable ports without going through
+// TestSelectionByPoECapability : distinguish powerable ports without going through
 // media. On a facade where copper is NOT PoE, a "poe: yes" rule must take nothing
 // rather than all copper.
-func TestSelectionParCapacitePoE(t *testing.T) {
-	var sansPoE = `[{"prefix":"ether","count":4,"speed":"1G","label":"ETHER"}]`
+func TestSelectionByPoECapability(t *testing.T) {
+	var withoutPoE = `[{"prefix":"ether","count":4,"speed":"1G","label":"ETHER"}]`
 	var spec = Spec{Rules: []Rule{
 		{Label: "powered", Select: Selector{PoE: TriYes},
 			Config: cfg("access", 20, nil, false, true)},
 	}}
-	var nu = Evaluate(spec, Expand(json.RawMessage(sansPoE)), nil)
+	var nu = Evaluate(spec, Expand(json.RawMessage(withoutPoE)), nil)
 	if nu.Rules[0].Won != 0 {
 		t.Errorf("no PoE ports on this facade: %+v", nu.Rules[0])
 	}
-	var alimente = Evaluate(spec, Expand(json.RawMessage(facade8)), nil)
-	if alimente.Rules[0].Won != 8 {
-		t.Errorf("8 PoE ports expected: %+v", alimente.Rules[0])
+	var powered = Evaluate(spec, Expand(json.RawMessage(facade8)), nil)
+	if powered.Rules[0].Won != 8 {
+		t.Errorf("8 PoE ports expected: %+v", powered.Rules[0])
 	}
 }

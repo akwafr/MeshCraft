@@ -42,6 +42,28 @@ type applyCredsInput struct {
 	// settings. It is tried FIRST, never stored, and disappears with the request — what is
 	// kept is the generation installed afterward.
 	CurrentSecret string `json:"current_secret"`
+	// KeepPreviousAccount: place the fleet account WITHOUT removing the account the session
+	// entered through.
+	//
+	// The default sequence — create, verify, THEN delete the old account — is right for a
+	// rotation: the old ingress is meshcraft's own previous generation, and leaving it would
+	// leave a secret nobody rotates. FIRST placement is different: the old ingress is often
+	// the only door that has EVER been proven on this device (adoption credential, hand-set
+	// password), and an operator bringing a lab or takeover device under management may
+	// legitimately refuse to burn it on the same day the new one is first verified. The
+	// choice is the OPERATOR's, it is explicit, and it is traced: the kept account is named
+	// in the response and in the device's journal — a kept door nobody knows about would be
+	// worse than the deletion this flag avoids.
+	KeepPreviousAccount bool `json:"keep_previous_account"`
+}
+
+// shouldRemovePreviousAccount decides whether the rename sequence removes the account it
+// entered through. Extracted because this is the single most dangerous decision in the
+// flow — the device-side proof (verify) and the operator's explicit choice (keep) must BOTH
+// be consulted, and a future edit that drops one of the three conditions must break a test,
+// not a device.
+func shouldRemovePreviousAccount(renaming bool, verifyErr error, keepRequested bool) bool {
+	return renaming && verifyErr == nil && !keepRequested
 }
 
 func (s *Server) handleApplyDeviceCredential(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +95,7 @@ func (s *Server) handleApplyDeviceCredential(w http.ResponseWriter, r *http.Requ
 	var caps = conn.Capabilities(d.Model)
 
 	// Wanted secret: the device's TAG credential, else its group's, else the site's (cf.
-	// docs/01-Architecture/Tags and credential scope §3).
+	// docs/en/01-Architecture/Tags and credential scope.md §3).
 	var groupName = s.groupNameOf(r.Context(), d)
 	var cred, ambiguous, credErr = s.credentialForDevice(r.Context(), d, groupName)
 	if credErr != nil {
@@ -300,7 +322,7 @@ func (s *Server) handleApplyDeviceCredential(w http.ResponseWriter, r *http.Requ
 	// Old account removal happens ONLY HERE: after real access has been obtained under the new
 	// name. On a range without out-of-band fallback, delete first and verify second would cost
 	// a site visit.
-	if renaming && verifyErr == nil {
+	if shouldRemovePreviousAccount(renaming, verifyErr, in.KeepPreviousAccount) {
 		var vAccounts, vCanName = verify.(driver.AccountManager)
 		if !vCanName {
 			// New account works, but nothing here can remove the old one. Unreachable in
@@ -320,6 +342,13 @@ func (s *Server) handleApplyDeviceCredential(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		persistNow(r.Context(), verify, out, "old account removed")
+	} else if renaming && verifyErr == nil && in.KeepPreviousAccount {
+		// KEPT ON EXPLICIT REQUEST — and traced like any other open door. Nothing to persist
+		// here: the created account already went to flash above, and nothing was deleted.
+		out["previous_account_kept"] = previousUser
+		s.emitDeviceEvent(r, d, "credential.stale_account", model.SevWarning,
+			"Account \""+previousUser+"\" deliberately KEPT on \""+d.Name+"\" alongside \""+
+				wanted+"\" (keep_previous_account): a second door that rotation will not follow.")
 	}
 	// Concatenation is done on a copy, not the slice the connector just returned: `Transcript`
 	// exposes its internal field, and appending would write into its backing array. No visible
@@ -501,6 +530,9 @@ func (s *Server) handleDeviceWebProbe(w http.ResponseWriter, r *http.Request) {
 		// the anonymous branch below covers them, and unknown write gestures are reconstructed
 		// from them.
 		var conn, adm, _, admErr = s.adminFor(r.Context(), d)
+		if adm != nil {
+			defer adm.Close()
+		}
 		if admErr != nil {
 			respond(w, http.StatusOK, map[string]any{
 				"error": admErr.Error(), "steps": transcriptOf(adm)})
@@ -688,7 +720,7 @@ func (s *Server) discoveryOriginSecret(ctx context.Context, d model.Device) (gen
 	for _, c = range creds {
 		if c.ID == *cand.CredentialID && c.Username != "" && c.Secret != "" {
 			return genSecret{
-				Why:      "discovery credential that opened the device (« " + c.Name + " »)",
+				Why:      "discovery credential that opened the device (\"" + c.Name + "\")",
 				Secret:   c.Secret,
 				Username: c.Username,
 			}, true
@@ -710,8 +742,8 @@ type genSecret struct {
 
 // triesPerAccount caps connection tries ON ONE ACCOUNT.
 //
-// "Two tries per account, immediate stop beyond" — docs/03-Security/Service identity and
-// rotation §5, echoed in §4 "so as not to trigger AAA lockouts".
+// "Two tries per account, immediate stop beyond" — docs/en/03-Security/Service identity and
+// rotation.md §5, echoed in §4 "so as not to trigger AAA lockouts".
 //
 // THE REASON IS NOT THE SAME ON ALL THREE PLATFORMS, and saying so avoids treating this cap as
 // abstract caution one could raise:

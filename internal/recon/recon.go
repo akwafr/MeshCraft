@@ -1,7 +1,7 @@
 // Package recon compares what meshcraft WANTS to what the device CARRIES.
 //
 // This is the "Diff" step of the reconciliation pipeline
-// (docs/01-Architecture/Reconciliation section 3), and section 6 "Verify &
+// (docs/en/01-Architecture/Reconciliation.md section 3), and section 6 "Verify &
 // drift". Everything here is pure: two states enter, a list of gaps exits. This
 // decision drives an indicator that tells the operator whether the fleet is
 // compliant — making it testable without a database or device is not a luxury.

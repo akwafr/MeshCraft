@@ -1,31 +1,31 @@
--- Purge des ports FANTÔMES créés par la télémétrie SNMP.
+-- Purge of GHOST ports created by SNMP telemetry.
 --
--- La télémétrie nomme un port « préfixe + ifIndex ». Or un équipement expose par
--- SNMP bien plus d'interfaces que sa façade n'a de ports : interfaces de VLAN,
--- agrégats, boucles — relevés sur un 1930 avec des index à 1000, 3000, 20000 et
--- 100000. Écrites telles quelles, elles apparaissaient dans l'inventaire comme
--- des ports (« GE100041 »), à côté des vrais.
+-- Telemetry names a port "prefix + ifIndex". Yet a device exposes far more
+-- interfaces over SNMP than its faceplate has ports: VLAN interfaces,
+-- aggregates, loopbacks — seen on a 1930 with indexes at 1000, 3000, 20000 and
+-- 100000. Written as is, they showed up in the inventory as ports
+-- ("GE100041"), next to the real ones.
 --
--- Elles étaient inoffensives pour la réconciliation — sans `mode` elles comptent
--- comme non gérées et le diff les ignore — mais elles gonflaient l'inventaire :
--- 93 entrées pour 52 ports réels sur le switch qui a servi à les débusquer.
+-- They were harmless for reconciliation — without a `mode` they count as
+-- unmanaged and the diff ignores them — but they bloated the inventory: 93
+-- entries for 52 real ports on the switch that served to flush them out.
 --
--- La source est colmatée côté contrôleur (cf. applyPortTelemetry : la télémétrie
--- ne CRÉE plus jamais un port, elle ne met à jour que ceux de la façade). Reste
--- le dépôt laissé par les versions précédentes, que rien ne nettoyait : une
--- fusion de télémétrie ajoute des clés, elle n'en retire aucune.
+-- The source is plugged on the controller side (see applyPortTelemetry:
+-- telemetry never CREATES a port any more, it only updates the faceplate's).
+-- What remains is the residue left by previous versions, which nothing cleaned
+-- up: a telemetry merge adds keys, it removes none.
 --
--- Trois précautions, parce qu'une migration qui efface des ports par erreur
--- efface le travail de configuration de quelqu'un :
+-- Three precautions, because a migration that deletes ports by mistake deletes
+-- somebody's configuration work:
 --
---   1. la façade fait foi — un port n'est supprimé que si son nom ne tombe dans
---      AUCUNE plage déclarée par `port_groups` ;
---   2. un équipement dont la façade est inconnue ou illisible n'est pas touché :
---      on ne supprime pas sur la foi d'une liste qu'on n'a pas su lire ;
---   3. toute entrée portant une INTENTION (`mode`, `label`, `pvid`, `tagged`)
---      est épargnée, même hors plage. Une entrée configurée n'est pas un
---      fantôme, quel que soit son nom — et si son nom surprend, c'est une
---      anomalie à regarder, pas à effacer en silence.
+--   1. the faceplate is authoritative — a port is deleted only if its name falls
+--      into NO range declared by `port_groups`;
+--   2. a device whose faceplate is unknown or unreadable is not touched: we do
+--      not delete on the strength of a list we could not read;
+--   3. any entry carrying an INTENT (`mode`, `label`, `pvid`, `tagged`) is
+--      spared, even outside a range. A configured entry is not a ghost,
+--      whatever its name — and if its name is surprising, that is an anomaly
+--      to look at, not to erase silently.
 with plages as (
     select d.id,
            g->>'prefix'      as prefix,
@@ -48,11 +48,11 @@ fantomes as (
     from devices d,
          lateral jsonb_object_keys(d.ports) k(key)
     where jsonb_typeof(d.ports) = 'object'
-      -- (2) façade connue, sinon on s'abstient
+      -- (2) faceplate known, otherwise abstain
       and exists (select 1 from noms n where n.id = d.id)
-      -- (1) hors de toute plage de la façade
+      -- (1) outside every range of the faceplate
       and not exists (select 1 from noms n where n.id = d.id and n.nom = k.key)
-      -- (3) aucune intention portée
+      -- (3) no intent carried
       and coalesce(d.ports -> k.key ->> 'mode', '') = ''
       and coalesce(d.ports -> k.key ->> 'label', '') = ''
       and not (d.ports -> k.key ? 'pvid')

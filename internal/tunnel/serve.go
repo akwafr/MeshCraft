@@ -20,7 +20,7 @@ import (
 // PROXY side: accept streams and open requested connections.
 //
 // The proxy never chooses its targets -- it executes what the controller requests. That
-// is assumed in docs/03-Security/Proxy security ("installing the proxy = trusting the
+// is assumed in docs/en/03-Security/Proxy security.md ("installing the proxy = trusting the
 // controller operator"), with a guardrail that stays local: the CIDR allowlist, configured
 // on the proxy machine and therefore out of controller reach.
 
@@ -211,7 +211,9 @@ func serveWatch(stream net.Conn, br *bufio.Reader, onWatch WatchHandler) {
 // SendEvents opens the upstream stream and pushes proxy events. The proxy opens it: yamux is
 // bidirectional, so the controller need not fetch them.
 //
-// THREE PHASES, AND ORDER IS THE FIX: backlog, then snapshot, then live.
+// THREE PHASES, AND ORDER IS THE FIX: backlog, then snapshot, then live -- with an
+// EventResyncDone written between the second and the third to say the burst is over
+// (cf. EventResyncDone, and Hub.Resync for what the controller does with it).
 //
 // `snapshot` returns current state of each watched target (cf. Event.Resync). Optional --
 // nil for a caller with nothing to re-announce -- and CALLED HERE rather than passed as a
@@ -265,6 +267,23 @@ func SendEvents(y *yamux.Session, events <-chan Event, snapshot func() []Event) 
 		}
 	}
 
+	// 2b. END OF BURST, and it is emitted even when there was no snapshot at all.
+	//
+	// "I had nothing to restate" and "I have finished restating" are the same fact for
+	// the controller — the burst is over either way — and a proxy that stayed silent
+	// here would be indistinguishable from one still working through a long snapshot,
+	// which is the exact ambiguity this event removes. It goes AFTER the snapshot and
+	// BEFORE the live phase: everything that could correct the controller's view of
+	// this proxy's targets is already on the wire when it lands.
+	//
+	// Marked Resync so it reads as part of the burst it closes rather than as
+	// something that just happened, same rule as every other event of the phase.
+	if err = writeLine(stream, Event{
+		Type: EventResyncDone, TS: time.Now(), Resync: true,
+	}); err != nil {
+		return err
+	}
+
 	// 3. Live, until session end.
 	for ev = range events {
 		if err = writeLine(stream, ev); err != nil {
@@ -311,7 +330,7 @@ func serveDial(stream net.Conn, br *bufio.Reader, req DialRequest, allow *Allowl
 		return
 	}
 	// From here, byte copying: the proxy understands neither SSH nor HTTP, it relays
-	// (docs/01-Architecture/Proxy).
+	// (docs/en/01-Architecture/Proxy.md).
 	_ = stream.SetDeadline(time.Time{})
 	pipe(stream, br, remote)
 }

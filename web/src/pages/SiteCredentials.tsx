@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { viewerDate } from "../ui/clock";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSite, useSiteId } from "../useSite";
@@ -6,7 +7,6 @@ import { del, get, post, put, type KnownCredential, type SiteCredential } from "
 import { useAuth, useSiteRole } from "../auth";
 import {
   ActionButton,
-  DeleteButton,
   ErrorMsg,
   Field,
   HelpTip,
@@ -15,6 +15,9 @@ import {
   isReservedTagName,
   useToast,
 } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
+import CredentialDeploy from "./CredentialDeploy";
+import { deployableKind } from "./credDeploy";
 
 /**
  * {t("siteCredsPage.title")}: what meshcraft installs on the equipment, and
@@ -24,7 +27,7 @@ import {
  * Revealing it is a distinct action, reserved for the site-admin, and
  * logged in the audit trail.
  *
- * Three types coexist (docs/03-Security/SNMP Identity §2), and the screen
+ * Three types coexist (docs/en/03-Security/SNMP identity §2), and the screen
  * must make them impossible to confuse: an administration password opens
  * the door to equipment, a v2c community only reads, and a v3 identity is
  * only valid for one cryptographic family. Displaying them all "the same
@@ -32,17 +35,61 @@ import {
  */
 
 /** Kinds, such as `site_credentials.kind` carry them server-side. */
+/** The account name a new admin credential proposes. Data, never a label. */
+const DEFAULT_ADMIN_USERNAME = "admin";
+
 const KIND_ADMIN = "admin";
 const KIND_V2C = "snmp_v2c";
 const KIND_V3 = "snmp_v3";
+/**
+ * STREAMING TELEMETRY (`internal/api/gnmicred.go`). The fourth kind, and the
+ * only one on this page that is neither pushed onto equipment nor read back
+ * from it: it is an account that ALREADY EXISTS on the switch, which meshcraft
+ * merely uses to open a gNMI subscription.
+ *
+ * That difference is why it earns its own kind rather than riding the fleet
+ * admin password. A v2c community, leaked, reads a MIB; this one authenticates
+ * against the switch's ordinary AAA stack and therefore CONFIGURES IT. Handing
+ * that to every proxy that watches an Arista, as a side effect of a monitoring
+ * change, is the trade the separate kind refuses.
+ *
+ * Until this screen offered it, the credential could only be created through
+ * the raw API — and `gnmiWatchesFor` skips, silently and per device, any device
+ * with no credential. A lab Arista streamed perfectly while the product
+ * collected nothing, with nothing on any screen to say why.
+ */
+const KIND_GNMI = "gnmi";
+
+/**
+ * Transport posture of a gNMI subscription (`site_credentials.transport_tls`,
+ * migration 0039). Three values, never two booleans: "plaintext AND
+ * skip-verify" means nothing, and a pair of checkboxes would let it be typed.
+ */
+const TLS_VERIFY = "verify";
+const TLS_SKIP_VERIFY = "skip-verify";
+const TLS_PLAINTEXT = "plaintext";
+const TLS_MODES = [TLS_VERIFY, TLS_SKIP_VERIFY, TLS_PLAINTEXT];
 
 /**
  * `tag` and `priority` travel alongside the identifier in the API payload:
  * a v3 identity is identified ONLY by its label, and resubmitting it on
  * save is essential — an omitted `tag` would target the "site" scope and
  * create a second identifier instead of modifying the one being edited.
+ *
+ * `transport_tls` and `ca_pem` are here for a different reason: they are
+ * returned by the list endpoint, unlike every secret on this page, because a
+ * transport mode and a CA are NOT secrets. That is what lets the edit window
+ * prefill them — and it has to, since the server REPLACES `ca_pem` with
+ * whatever a save carries. Editing a note without resending the CA would drop
+ * it, and verification would silently fall back to a system pool that holds no
+ * switch's issuer.
  */
-type Cred = SiteCredential & { tag?: string; priority?: number };
+type Cred = SiteCredential & {
+  tag?: string;
+  priority?: number;
+  transport_tls?: string;
+  ca_pem?: string;
+};
 
 /**
  * Nameable algorithms. This list merely avoids typing a label that nothing
@@ -68,9 +115,46 @@ function KindBadge({ kind }: { kind: string }) {
       </span>
     );
   if (kind === KIND_ADMIN) return <span className="badge admin">{t("siteCredsPage.adminBadge")}</span>;
+  if (kind === KIND_GNMI)
+    return (
+      <span className="badge" style={{ color: "var(--ok)", borderColor: "var(--ok)" }}>
+        {t("siteCredsPage.gnmiBadge")}
+      </span>
+    );
   // Inherited or unknown kind: show it as-is rather than disguising it as
   // something known — the server will refuse it on save.
   return <span className="badge">{kind}</span>;
+}
+
+/**
+ * The transport posture, ON THE LIST, and only when it is worth a second look.
+ *
+ * `verify` says nothing here on purpose: it is the default and the safe state,
+ * and a badge on every row would train the eye to skip the column — which is
+ * exactly where the one row that matters would then hide.
+ *
+ * `plaintext` is a WARNING and not a label. Somebody chose it, possibly months
+ * ago, possibly on a credential whose scope has since grown to cover devices
+ * they never had in mind. Nothing else on any screen states it: the
+ * subscription works, the graphs fill in, and the password is on the wire.
+ */
+function TransportBadge({ cred }: { cred: Cred }) {
+  const { t } = useTranslation();
+  if (cred.kind !== KIND_GNMI) return null;
+  const mode = cred.transport_tls || TLS_VERIFY;
+  if (mode === TLS_PLAINTEXT)
+    return (
+      <QuickTip text={t("siteCredsPage.gnmiPlaintextBadgeTip")} className="quicktip-inline">
+        <span className="badge warn">⚠ {t("siteCredsPage.gnmiPlaintextBadge")}</span>
+      </QuickTip>
+    );
+  if (mode === TLS_SKIP_VERIFY)
+    return (
+      <QuickTip text={t("siteCredsPage.gnmiSkipVerifyBadgeTip")} className="quicktip-inline">
+        <span className="badge">{t("siteCredsPage.gnmiSkipVerifyBadge")}</span>
+      </QuickTip>
+    );
+  return null;
 }
 
 /** Readable name of an identifier: a community has no user. */
@@ -106,7 +190,14 @@ export default function SiteCredentialsPage() {
   const siteSlug = site?.slug ?? "";
   const qc = useQueryClient();
   const [toast, showToast] = useToast();
-  const canEdit = useSiteRole(siteId) === "ing";
+  const role = useSiteRole(siteId);
+  const canEdit = role === "ing";
+  // WATCHING A DEPLOYMENT IS NOT EDITING ONE. `GET …/deployment` and
+  // `GET …/deploy` are `operator`, the two that START and STOP a run are
+  // `site_admin` — so an operator gets the screen and no buttons, which is the
+  // difference between "who may look at where the fleet stands" and "who may
+  // change the password of every switch in it".
+  const canWatchDeploy = role !== "viewer";
   const [editing, setEditing] = useState<Cred | "new" | null>(null);
   // `secret2` is only present for a v3 identity: the server omits the key
   // rather than returning an empty string, otherwise the window would show
@@ -114,6 +205,7 @@ export default function SiteCredentialsPage() {
   const [revealed, setRevealed] = useState<
     { id?: string; username?: string; secret: string; secret2?: string } | null>(null);
   const [rotating, setRotating] = useState<Cred | null>(null);
+  const [deploying, setDeploying] = useState<Cred | null>(null);
   // INSTANCE credentials are listed here too, and that is not a convenience.
   // They are what the serial soft-reset actually places on a device — the
   // browser has to type a secret on a UART the controller cannot open — so any
@@ -274,15 +366,22 @@ export default function SiteCredentialsPage() {
                   <td className="creds-col-kind">
                     <span className="creds-kind-row">
                       <KindBadge kind={c.kind} />
+                      <TransportBadge cred={c} />
                       {c.kind === KIND_V2C && (
                         <HelpTip label={t("siteCredsPage.v2cReadHelpLabel")}>
                           <p>{t("siteCredsPage.v2cReadNote")}</p>
                         </HelpTip>
                       )}
+                      {c.kind === KIND_GNMI && (
+                        <HelpTip label={t("siteCredsPage.gnmiHelpLabel")}>
+                          <p>{t("siteCredsPage.gnmiWhatItIs")}</p>
+                          <p>{t("siteCredsPage.gnmiNotPushed")}</p>
+                        </HelpTip>
+                      )}
                     </span>
                   </td>
                   <td className="note creds-col-rotation">
-                    {new Date(c.rotated_at).toLocaleDateString()}
+                    {(viewerDate(c.rotated_at) ?? new Date(c.rotated_at)).toLocaleDateString()}
                     {!c.has_secret && (
                       <span style={{ color: "var(--warn)" }}>{t("siteCredsPage.noSecret")}</span>
                     )}
@@ -303,37 +402,70 @@ export default function SiteCredentialsPage() {
                     />
                   </td>
                   <td className="cred-actions-cell creds-col-actions">
-                    {canEdit && (
-                      <div className="cred-actions">
-                        {/* ROTATION stays available, even on credentials held by
-                            meshcraft: a whole product line's secret must be
-                            rotatable. The server then constrains the new secret
-                            to whatever the tag names — an out-of-bounds password
-                            would be rejected by the connector before it's ever
-                            sent, rather than producing a credential that looks
-                            active but is inert. */}
-                        <ActionButton kind="refresh" className="ghost" onClick={() => setRotating(c)}>
-                          {t("siteCredsPage.newGeneration")}
-                        </ActionButton>
-                        <ActionButton kind="download" className="ghost" disabled={reveal.isPending}
-                          onClick={() => reveal.mutate(c)}>
-                          {t("siteCredsPage.reveal")}
-                        </ActionButton>
-                        {isManaged(c) ? (
-                          <QuickTip text={t("siteCredsPage.managedScopeTitle")} className="quicktip-inline">
-                            <span className="badge">
-                              🔒 {t("siteCredsPage.managedByMeshcraft")}
-                            </span>
-                          </QuickTip>
-                        ) : (
-                          <>
-                            <ActionButton kind="edit" className="ghost" onClick={() => setEditing(c)}>
-                              {t("siteCredsPage.editCredential")}
-                            </ActionButton>
-                            <DeleteButton onConfirm={() => remove.mutate(c)} />
-                          </>
-                        )}
-                      </div>
+                    {/* UP TO FIVE LABELLED VERBS, STACKED VERTICALLY — which
+                        is what "stack them so the other columns keep their
+                        width" actually costs: the width comes back as five
+                        lines of row height. As glyphs they fit on one or two
+                        lines in a narrower cell, and the column stops having
+                        to trade height for width at all. */}
+                    <div className="icon-actions">
+                      {/* WHERE THE ROTATION ACTUALLY REACHES THE FLEET. A new
+                          generation changes the vault and nothing else; until
+                          this screen existed there was no way to see which
+                          switches had taken it, and no way to push it other than
+                          one device at a time. Offered on `admin` credentials
+                          only — see `deployableKind`: the runner resolves each
+                          device's credential as kind `admin`, so a run started on
+                          a community or a gNMI account would skip every device. */}
+                      {canWatchDeploy && deployableKind(c.kind) && (
+                        <IconAction
+                          kind="upload"
+                          label={t("siteCredsPage.deployment") as string}
+                          onClick={() => setDeploying(c)}
+                        />
+                      )}
+                      {canEdit && (
+                        <>
+                          {/* ROTATION stays available, even on credentials held by
+                              meshcraft: a whole product line's secret must be
+                              rotatable. The server then constrains the new secret
+                              to whatever the tag names — an out-of-bounds password
+                              would be rejected by the connector before it's ever
+                              sent, rather than producing a credential that looks
+                              active but is inert. */}
+                          <IconAction
+                            kind="refresh"
+                            label={t("siteCredsPage.newGeneration") as string}
+                            onClick={() => setRotating(c)}
+                          />
+                          <IconAction
+                            kind="download"
+                            label={t("siteCredsPage.reveal") as string}
+                            disabled={reveal.isPending}
+                            onClick={() => reveal.mutate(c)}
+                          />
+                          {!isManaged(c) && (
+                            <>
+                              <IconAction
+                                kind="edit"
+                                label={t("siteCredsPage.editCredential") as string}
+                                onClick={() => setEditing(c)}
+                              />
+                              <IconDeleteButton onConfirm={() => remove.mutate(c)} />
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {/* NOT AN ACTION — it says why edit and delete are absent.
+                        A badge stating a fact never becomes a glyph (§3: an
+                        observation is read every time). */}
+                    {canEdit && isManaged(c) && (
+                      <QuickTip text={t("siteCredsPage.managedScopeTitle")} className="quicktip-inline">
+                        <span className="badge">
+                          🔒 {t("siteCredsPage.managedByMeshcraft")}
+                        </span>
+                      </QuickTip>
                     )}
                   </td>
                 </tr>
@@ -477,6 +609,23 @@ export default function SiteCredentialsPage() {
           }}
         />
       )}
+      {deploying && (
+        <CredentialDeploy
+          siteId={siteId}
+          credId={deploying.id}
+          label={credWho(deploying, t)}
+          perDevice={deploying.per_device}
+          canDeploy={canEdit}
+          onClose={() => {
+            setDeploying(null);
+            // The generations' `installed_on` counts are what a run moves, and
+            // they are served by the credential LIST rather than by the
+            // deployment view — leaving them stale would have the row under the
+            // modal contradict the modal that just closed.
+            qc.invalidateQueries({ queryKey: ["site-credentials", siteId] });
+          }}
+        />
+      )}
       {editing && (
         <CredentialModal
           siteId={siteId}
@@ -509,7 +658,15 @@ function CredentialModal({
   const [group, setGroup] = useState(cred?.group_name ?? "");
   const [kind, setKind] = useState(cred?.kind ?? KIND_ADMIN);
   const [tag, setTag] = useState(cred?.tag ?? "");
-  const [username, setUsername] = useState(cred?.username ?? t("siteCredsPage.adminBadge"));
+  // "admin" as a plain constant, NOT t("siteCredsPage.adminBadge").
+  //
+  // That badge is a DISPLAY label for the credential kind, and using it as a
+  // data default meant a translated UI string became the account name written
+  // onto switches. It happens to read "admin" in all eleven locales today, so
+  // nothing has broken yet — but the first translator who renders that badge as
+  // "administrateur" would have meshcraft creating French accounts on
+  // customer hardware, and nothing in the type system would notice.
+  const [username, setUsername] = useState(cred?.username ?? DEFAULT_ADMIN_USERNAME);
   const [secret, setSecret] = useState("");
   // Second passphrase, specific to v3. Always empty when opened, like the
   // first: this page never redisplays a stored secret.
@@ -525,14 +682,31 @@ function CredentialModal({
   const [auth, setAuth] = useState(couple[0] ?? "sha256");
   const [priv, setPriv] = useState(couple[1] ?? "aes128");
 
+  // Transport posture. Prefilled from the row rather than reset to the default,
+  // because these two are the only non-secret fields on this form and the
+  // server REPLACES `ca_pem` with what a save carries: reopening a credential
+  // on `verify` when it is stored as `skip-verify`, then saving a note, would
+  // quietly break its subscription — and reopening with an empty CA would erase
+  // the only setting on this page that actually resists someone on the path.
+  const [tlsMode, setTlsMode] = useState(cred?.transport_tls || TLS_VERIFY);
+  const [caPem, setCaPem] = useState(cred?.ca_pem ?? "");
+
   const isV2c = kind === KIND_V2C;
   const isV3 = kind === KIND_V3;
+  const isGnmi = kind === KIND_GNMI;
   // The scope actually sent: composed for v3, empty for v2c, and for
-  // admin whatever the screen displays. Resubmitting it is essential —
+  // admin and gnmi whatever the screen displays. Resubmitting it is essential —
   // (site, group, tag, kind) is the KEY to the identifier: an omitted field
   // would not modify the row being edited, it would create another one.
   const scopeTag = isV3 ? `snmpv3-${auth}-${priv}` : isV2c ? "" : tag.trim();
   const scopeGroup = isV2c || isV3 ? "" : group.trim();
+
+  // A CA is meaningless without a TLS session, and the server refuses the pair
+  // outright rather than storing a row that reads as verified-with-a-CA while
+  // the wire carries the password in clear. The field is hidden under
+  // `plaintext`, so drop what it holds too: keeping a hidden value and posting
+  // it would produce a 400 pointing at a field the operator cannot see.
+  const sentCaPem = isGnmi && tlsMode !== TLS_PLAINTEXT ? caPem.trim() : "";
 
   const save = useMutation({
     mutationFn: () =>
@@ -545,6 +719,11 @@ function CredentialModal({
         // switching kind would make the save fail without the operator
         // seeing why.
         secret, secret2: isV3 ? secret2 : "", note,
+        // Same rule for the transport pair, and the server enforces it: only a
+        // `gnmi` credential has a transport to set. An SNMP community has no
+        // TLS session and an admin password rides SSH, so a mode sent on those
+        // would describe a protection that does not exist.
+        transport_tls: isGnmi ? tlsMode : "", ca_pem: sentCaPem,
       }),
     onSuccess: onDone,
   });
@@ -554,7 +733,7 @@ function CredentialModal({
   // refuse it anyway: what matters here is explaining WHY, rather than
   // letting people read "refused" on an ordinary-looking label.
   const reservedScope =
-    kind === KIND_ADMIN && isReservedTagName(scopeTag)
+    (kind === KIND_ADMIN || isGnmi) && isReservedTagName(scopeTag)
       ? t("siteCredsPage.reservedScopeErrorDetail", { tag: scopeTag })
       : "";
 
@@ -575,7 +754,12 @@ function CredentialModal({
   // the same name as the web account — two distinct things that cannot be
   // revoked together. Only a value still at its default gets replaced:
   // never a value the operator typed in.
+  // `gnmi` gets NO default, and that is the point: this account is not created
+  // by meshcraft, it already exists on the switch. Prefilling "admin" would
+  // propose exactly the account this credential kind exists to keep off every
+  // proxy, and it would be accepted without anyone deciding anything.
   function defaultUser(k: string) {
+    if (k === KIND_GNMI) return "";
     return k === KIND_V3 ? "mcadmin" : t("siteCredsPage.adminBadge");
   }
   function chooseKind(k: string) {
@@ -591,7 +775,9 @@ function CredentialModal({
     ? t("siteCredsPage.snmpV2cCommunity")
     : isV3
       ? t("siteCredsPage.authPhrase")
-      : t("siteCredsPage.passwordLabel");
+      : isGnmi
+        ? t("siteCredsPage.gnmiPasswordLabel")
+        : t("siteCredsPage.passwordLabel");
 
   return (
     <Modal title={cred ? t("siteCredsPage.editCredentialTitle") : t("siteCredsPage.newCredentialTitle")} onClose={onClose}>
@@ -602,13 +788,30 @@ function CredentialModal({
           <option value={KIND_ADMIN}>{t("siteCredsPage.kindAdmin")}</option>
           <option value={KIND_V2C}>{t("siteCredsPage.kindV2c")}</option>
           <option value={KIND_V3}>{t("siteCredsPage.kindV3")}</option>
-          {cred && ![KIND_ADMIN, KIND_V2C, KIND_V3].includes(kind) && (
+          <option value={KIND_GNMI}>{t("siteCredsPage.kindGnmi")}</option>
+          {cred && ![KIND_ADMIN, KIND_V2C, KIND_V3, KIND_GNMI].includes(kind) && (
             <option value={kind}>{t("siteCredsPage.kindInherited", { kind })}</option>
           )}
         </select>
       </Field>
 
-      {kind === KIND_ADMIN && (
+      {isGnmi && (
+        // Said BEFORE the fields, because it changes what the two below mean.
+        // Every other kind on this page is a secret meshcraft PUSHES onto
+        // equipment; this one is an account that must already exist there. An
+        // operator who invents a username here files a credential that looks
+        // complete and subscribes to nothing.
+        <p className="note" style={{ marginTop: 0 }}>
+          {t("siteCredsPage.gnmiIntro")}
+          <HelpTip label={t("siteCredsPage.gnmiHelpLabel")}>
+            <p>{t("siteCredsPage.gnmiWhatItIs")}</p>
+            <p>{t("siteCredsPage.gnmiNotPushed")}</p>
+            <p>{t("siteCredsPage.gnmiLeastPrivilegeUnverified")}</p>
+          </HelpTip>
+        </p>
+      )}
+
+      {(kind === KIND_ADMIN || isGnmi) && (
         <>
           <div className="row">
             <div style={{ flex: 1 }}>
@@ -675,8 +878,16 @@ function CredentialModal({
       )}
 
       {!isV2c && (
-        <Field label={isV3 ? t("siteCredsPage.snmpV3User") : t("siteCredsPage.usernameCol")}>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} className="mono" />
+        <Field
+          label={isV3
+            ? t("siteCredsPage.snmpV3User")
+            : isGnmi
+              ? t("siteCredsPage.gnmiUserLabel")
+              : t("siteCredsPage.usernameCol")}
+          help={isGnmi ? <p>{t("siteCredsPage.gnmiLeastPrivilegeUnverified")}</p> : undefined}
+        >
+          <input value={username} onChange={(e) => setUsername(e.target.value)} className="mono"
+            placeholder={isGnmi ? t("siteCredsPage.gnmiUserPlaceholder") : undefined} />
         </Field>
       )}
 
@@ -690,6 +901,92 @@ function CredentialModal({
             className="mono" autoComplete="new-password" />
         </Field>
       )}
+      {isGnmi && (
+        <>
+          {/* THE TRANSPORT CHOICE SITS DIRECTLY UNDER THE PASSWORD IT EXPOSES,
+              and it is a list of three exclusive options rather than a pair of
+              checkboxes. Two booleans would let "in clear AND unverified" be
+              expressed, which means nothing and would silently resolve to the
+              worse of the two; migration 0039 makes that state inexpressible in
+              the column, and this control has to match, or the screen would
+              offer what the database refuses.
+
+              Each option carries its CONSEQUENCE on the same line, not behind a
+              tooltip. The one thing that must not happen is for somebody to pick
+              `plaintext` because it is the option that makes a handshake error
+              go away, and never learn what they traded for it. */}
+          <div className="kicker" style={{ marginTop: 14 }}>
+            {t("siteCredsPage.gnmiTransportTitle")}
+          </div>
+          <div className="choice-list">
+            {TLS_MODES.map((m) => (
+              <label key={m} className={tlsMode === m ? "choice active" : "choice"}>
+                <input type="radio" checked={tlsMode === m} onChange={() => setTlsMode(m)} />
+                <span>
+                  <b>
+                    {m === TLS_VERIFY
+                      ? t("siteCredsPage.tlsVerify")
+                      : m === TLS_SKIP_VERIFY
+                        ? t("siteCredsPage.tlsSkipVerify")
+                        : t("siteCredsPage.tlsPlaintext")}
+                  </b>
+                  <span
+                    className="note"
+                    style={m === TLS_PLAINTEXT ? { color: "var(--warn)" } : undefined}
+                  >
+                    {m === TLS_VERIFY
+                      ? t("siteCredsPage.tlsVerifyNote")
+                      : m === TLS_SKIP_VERIFY
+                        ? t("siteCredsPage.tlsSkipVerifyNote")
+                        : t("siteCredsPage.tlsPlaintextNote")}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {/* Stated AGAIN, in full, once the choice is made — because the line
+              inside a radio option is read while comparing three of them, and
+              the one that matters is the one that survives the comparison. This
+              paragraph names what leaks, where, and how far it reaches. */}
+          {tlsMode === TLS_PLAINTEXT && (
+            <p className="error" style={{ marginTop: 8 }}>
+              {t("siteCredsPage.tlsPlaintextWarning")}
+            </p>
+          )}
+          {tlsMode === TLS_SKIP_VERIFY && (
+            <p className="note" style={{ color: "var(--warn)" }}>
+              {t("siteCredsPage.tlsSkipVerifyWarning")}
+            </p>
+          )}
+          {/* Hidden under `plaintext`: there is no certificate to check when
+              there is no TLS session, and a CA field sitting there filled in
+              would read as protection to whoever audits this page next. */}
+          {tlsMode !== TLS_PLAINTEXT && (
+            <Field
+              label={t("siteCredsPage.caPemLabel")}
+              help={<p>{t("siteCredsPage.caPemHelp")}</p>}
+            >
+              <textarea
+                rows={5}
+                value={caPem}
+                onChange={(e) => setCaPem(e.target.value)}
+                className="mono"
+                placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+              />
+              {/* NOT A SECRET, and said ON THE PAGE rather than only behind the
+                  label's help. Every other field on this form goes through the
+                  vault and is never redisplayed; this one is stored in clear and
+                  comes back on every list. Someone who assumed the page's rule
+                  applied uniformly would be wrong — harmlessly here, since a CA
+                  certificate is public by construction, but it is the assumption
+                  that has to be corrected, before it is carried to a field where
+                  being wrong costs something. */}
+              <span className="note">{t("siteCredsPage.caPemNotSealed")}</span>
+            </Field>
+          )}
+        </>
+      )}
+
       <Field label={t("siteCredsPage.noteField")}>
         <input value={note} onChange={(e) => setNote(e.target.value)}
           placeholder={t("siteCredsPage.noteMaxLenPlaceholder")} />
@@ -816,10 +1113,22 @@ function RotateModal({
         {cred.kind === KIND_V2C && (
           <> {t("siteCredsPage.v2cRotateNote")}</>
         )}
+        {/* THE ONE KIND MESHCRAFT DOES NOT PUSH. Every other rotation on this
+            page ends with the new secret being written onto equipment; this one
+            records a password that must ALREADY have been changed on the switch,
+            by hand or by whatever manages its AAA. Rotating here first would
+            leave every subscription failing authentication — which surfaces as
+            "the Aristas stopped streaming", days from the gesture that caused
+            it. */}
+        {cred.kind === KIND_GNMI && (
+          <> {t("siteCredsPage.gnmiRotateNote")}</>
+        )}
       </p>
       <Field label={isV3
         ? t("siteCredsPage.newAuthPhrase")
-        : cred.kind === KIND_ADMIN ? t("siteCredsPage.newPassword") : t("siteCredsPage.newSecret")}>
+        : cred.kind === KIND_ADMIN || cred.kind === KIND_GNMI
+          ? t("siteCredsPage.newPassword")
+          : t("siteCredsPage.newSecret")}>
         <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)}
           className="mono" autoComplete="new-password" autoFocus />
       </Field>

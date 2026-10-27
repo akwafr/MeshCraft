@@ -13,7 +13,7 @@ var _ driver.SpanningTreeApplier = (*Admin)(nil)
 // ApplySpanningTree writes RSTP enable masks and optional bridge priority.
 //
 // SwOS is RSTP-only (Capabilities.STPModes = ["rstp"]). Modes other than rstp
-// are refused with a Skipped note. Site preference « none » never reaches here
+// are refused with a Skipped note. Site preference "none" never reaches here
 // (ResolveSTPMode skips none when it is not in capabilities); Enabled=false
 // still clears per-port ena if a caller asks directly.
 //
@@ -26,6 +26,16 @@ var _ driver.SpanningTreeApplier = (*Admin)(nil)
 // noted; use Enabled (ena) to leave the tree.
 func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreePlan) (driver.ApplyResult, error) {
 	var out driver.ApplyResult
+	// SuperRoot is scoped to MST, and SwOS has no MST at all — one bridge, one
+	// instance, RSTP only. There is nothing here to be the root OF in the sense
+	// the checkbox means, so this is not "not implemented yet": it is a field this
+	// platform cannot have.
+	if plan.SuperRoot {
+		out.Skipped = append(out.Skipped,
+			"SUPER ROOT not applied: SwOS runs a SINGLE RSTP instance and has no MST "+
+				"region, so there is no MST instance 0 to win. The bridge priority "+
+				"(/sys.b prio) is the only root-election control this platform offers")
+	}
 	if plan.Enabled {
 		var mode = driver.NormalizeSTPMode(plan.Mode)
 		if mode != "rstp" && mode != "" {
@@ -59,8 +69,8 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 		}
 	} else if len(plan.Ports) == 0 {
 		// Site preference resolved to RSTP with no per-port intents: SwOS has no
-		// global protocol-mode field — enabling ena on every port is how « turn
-		// RSTP on » is expressed on this platform.
+		// global protocol-mode field — enabling ena on every port is how "turn
+		// RSTP on" is expressed on this platform.
 		for i = range names {
 			if !rstp.SetBit("ena", i, true) {
 				return out, fmt.Errorf("%s: cannot set ena bit %d", PageRSTP, i)

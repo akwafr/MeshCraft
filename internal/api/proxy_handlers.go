@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,18 +16,16 @@ import (
 	"meshcraft/internal/model"
 	"meshcraft/internal/store"
 	"meshcraft/internal/tunnel"
+	"meshcraft/wire/agentv1"
 )
 
 // --- Proxy side: enrollment, heartbeat, migration confirmation ---
 //
 // The proxy has no session: it authenticates with the (proxy_id, secret) pair
-// received at enrollment. See docs/03-Security/Proxy security.
+// received at enrollment. See docs/en/03-Security/Proxy security.md.
 
 func (s *Server) handleProxyEnroll(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Token string `json:"token"`
-		Name  string `json:"name"`
-	}
+	var in agentv1.EnrollRequest
 	if !decode(w, r, &in) {
 		return
 	}
@@ -56,11 +53,11 @@ func (s *Server) handleProxyEnroll(w http.ResponseWriter, r *http.Request) {
 		Type: "proxy.enrolled", Severity: model.SevNotice,
 		Message: "Proxy \"" + p.Name + "\" enrolled — " + coverageLabel(p), Actor: "proxy",
 	})
-	respond(w, http.StatusOK, map[string]string{
-		"status":         "enrolled",
-		"proxy_id":       p.ID,
-		"secret":         secret,
-		"controller_url": s.Distrib.PublicURL(r),
+	respond(w, http.StatusOK, agentv1.EnrollResponse{
+		Status:        "enrolled",
+		ProxyID:       p.ID,
+		Secret:        secret,
+		ControllerURL: s.Distrib.PublicURL(r),
 	})
 }
 
@@ -92,21 +89,7 @@ const upgradeOfferWindow = 15 * time.Minute
 // handleProxyHeartbeat: the proxy signals presence, reports its last upgrade attempt,
 // and receives pending orders — migration to another instance, or binary upgrade.
 func (s *Server) handleProxyHeartbeat(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ProxyID  string          `json:"proxy_id"`
-		Secret   string          `json:"secret"`
-		Version  string          `json:"version"`
-		Protocol int             `json:"protocol"`
-		OS       string          `json:"os"`
-		Arch     string          `json:"arch"`
-		Ifaces   json.RawMessage `json:"ifaces"`
-		// Upgrade report, present only when there is something to say.
-		Upgrade *struct {
-			State   string `json:"state"` // downloading | applied | failed
-			Version string `json:"version"`
-			Error   string `json:"error"`
-		} `json:"upgrade"`
-	}
+	var in agentv1.HeartbeatRequest
 	if !decode(w, r, &in) {
 		return
 	}
@@ -136,11 +119,11 @@ func (s *Server) handleProxyHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// Migration TAKES PRIORITY over upgrade: change instance, then upgrade from the new
 	// one. Target version belongs to the instance hosting the proxy.
 	if migrateURL != "" && migrateToken != "" {
-		respond(w, http.StatusOK, map[string]any{
-			"status": "migrate",
-			"migrate": map[string]string{
-				"controller_url": migrateURL,
-				"enroll_token":   migrateToken,
+		respond(w, http.StatusOK, agentv1.HeartbeatResponse{
+			Status: "migrate",
+			Migrate: &agentv1.MigrateOrder{
+				ControllerURL: migrateURL,
+				EnrollToken:   migrateToken,
 			},
 		})
 		return
@@ -158,10 +141,13 @@ func (s *Server) handleProxyHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"Upgrade "+up.Version+" offered to proxy \""+p.Name+"\" (from "+
 					versionOrUnknown(in.Version)+")")
 		}
-		respond(w, http.StatusOK, map[string]any{"status": "ok", "upgrade": up})
+		respond(w, http.StatusOK, agentv1.HeartbeatResponse{
+			Status:  "ok",
+			Upgrade: &agentv1.UpgradeOffer{Version: up.Version, URL: up.URL, SHA256: up.SHA256, Size: up.Size},
+		})
 		return
 	}
-	respond(w, http.StatusOK, map[string]string{"status": "ok"})
+	respond(w, http.StatusOK, agentv1.HeartbeatResponse{Status: "ok"})
 }
 
 func versionOrUnknown(v string) string {
@@ -175,11 +161,8 @@ func versionOrUnknown(v string) string {
 // success on the ONLY proof that counts: the version it announces now.
 // recordUpgradeReport returns true if database state changed — the caller must reread
 // the proxy before deciding anything.
-func (s *Server) recordUpgradeReport(r *http.Request, p model.Proxy, report *struct {
-	State   string `json:"state"`
-	Version string `json:"version"`
-	Error   string `json:"error"`
-}, running string) bool {
+func (s *Server) recordUpgradeReport(r *http.Request, p model.Proxy,
+	report *agentv1.UpgradeReport, running string) bool {
 	var changed = false
 	if report != nil && report.State != "" {
 		changed = true
@@ -266,11 +249,7 @@ func (s *Server) upgradeOffer(r *http.Request, p model.Proxy, running, osName, a
 // handleProxyMigrated: the proxy confirms attaching to the new instance. Mark it
 // migrated (and revoked here) so we stop counting it.
 func (s *Server) handleProxyMigrated(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		ProxyID       string `json:"proxy_id"`
-		Secret        string `json:"secret"`
-		NewController string `json:"new_controller"`
-	}
+	var in agentv1.MigratedRequest
 	if !decode(w, r, &in) {
 		return
 	}
@@ -308,7 +287,7 @@ func (s *Server) handleProxyMigrated(w http.ResponseWriter, r *http.Request) {
 
 // --- Administration side ---
 //
-// Coverage is the rights boundary (cf. docs/01-Architecture/Proxy):
+// Coverage is the rights boundary (cf. docs/en/01-Architecture/Proxy.md):
 //
 //   - see a proxy         : have a role on a covered site (or be global-admin, or the
 //                           proxy is instance-wide);
@@ -639,7 +618,7 @@ func (s *Server) handleRenameProxy(w http.ResponseWriter, r *http.Request) {
 
 // handleSetProxyUpgrade sets a proxy's upgrade policy. An action on the proxy itself:
 // same right as revoke or migrate — a proxy shared across sites is not upgraded on one
-// site's decision alone (cf. docs/03-Security/RBAC).
+// site's decision alone (cf. docs/en/03-Security/RBAC.md).
 func (s *Server) handleSetProxyUpgrade(w http.ResponseWriter, r *http.Request) {
 	var p, ok = s.proxyForAdmin(w, r)
 	if !ok {

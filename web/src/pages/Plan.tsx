@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useBreakpoint } from "../ui/breakpoint";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { sitePath } from "../paths";
+import { deviceDetailPath, sitePath } from "../paths";
 import { useSite, useSiteId } from "../useSite";
 import {
   useSiteLive,
@@ -19,20 +20,105 @@ import {
   type Vlan,
 } from "../api";
 import { useSiteRole } from "../auth";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal, QuickTip, Switch } from "../components";
-import { expandPorts, fmtMbps, vlanMap } from "../network";
-import { modelShort } from "../modelLabel";
 import {
+  ActionButton,
+  DeleteButton,
+  ErrorMsg,
+  Field,
+  HelpTip,
+  Modal,
+  QuickTip,
+  Switch,
+} from "../components";
+import {
+  blindNow,
+  expandPorts,
+  fmtMbps,
+  isSFPPort,
+  isSFPRef,
+  neverObserved,
+  trafficColor,
+  vlanMap,
+  type PortRef,
+} from "../network";
+import { modelOf, modelShort } from "../modelLabel";
+import {
+  lldpIsolationBadge,
   lldpLinkKind,
   lldpLinkTooltip,
+  lldpSilencePhrase,
 } from "../lldp";
 import { PortSquare, StatusDot } from "../netui";
-import { ghostPeerLinkStroke, linkCapacityMbps, linkSpeedLabel, topologyLinkStroke } from "../topologyLinks";
+import {
+  ghostPeerLinkStroke,
+  linkCapacityMbps,
+  linkDiagColor,
+  linkHalfShape,
+  linkSpeedLabel,
+  topologyLinkPaint,
+  type TopologyLinkPaint,
+} from "../topologyLinks";
 import { TopologyLinkLabels } from "../TopologyLinkLabels";
 import { LinkTrafficTip, type LinkTrafficHover } from "../LinkTrafficTip";
 import { claimHoverTip, registerHoverTip, releaseHoverTip } from "../hoverExclusive";
 
 type PlanBox = { x: number; y: number; w: number; h: number };
+
+/**
+ * THE BODY OF A LINK: two halves meeting tip to tip at its midpoint (ADR-0026).
+ *
+ * Each half is a shaft plus a triangle, and NOT one filled polygon, for a
+ * reason that is not style: a polygon cannot be dashed, and the dash still
+ * carries two meanings on this stroke (a link that is down, and an LLDP
+ * neighbour seen from one side only). Stroking the shaft keeps the dash,
+ * filling the point keeps the apex exactly on the midpoint.
+ *
+ * Both call sites below — the LLDP overlay and the declared links — draw their
+ * body through this, so the two can never drift into two renderings of the
+ * same cable.
+ */
+function LinkBody({
+  x1,
+  y1,
+  x2,
+  y2,
+  paint,
+}: {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  paint: TopologyLinkPaint;
+}) {
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  const halves = [
+    { key: "a", ink: paint.inkA, s: linkHalfShape(x1, y1, mx, my, paint.strokeWidth, paint.heads) },
+    { key: "b", ink: paint.inkB, s: linkHalfShape(x2, y2, mx, my, paint.strokeWidth, paint.heads) },
+  ];
+  return (
+    <>
+      {halves.map((h) => (
+        <g key={h.key}>
+          <line
+            x1={h.s.x1}
+            y1={h.s.y1}
+            x2={h.s.x2}
+            y2={h.s.y2}
+            stroke={h.ink}
+            strokeWidth={paint.strokeWidth}
+            strokeDasharray={paint.strokeDasharray}
+            opacity={paint.opacity}
+            filter={paint.filter}
+          />
+          {h.s.head && (
+            <polygon points={h.s.head} fill={h.ink} opacity={paint.opacity} />
+          )}
+        </g>
+      ))}
+    </>
+  );
+}
 
 /** Point where the segment from the box center toward (tx,ty) meets the border. */
 function boxEdgeToward(box: PlanBox, tx: number, ty: number): { x: number; y: number } {
@@ -61,9 +147,6 @@ function linkBetweenBoxes(a: PlanBox, b: PlanBox): {
   const p2 = boxEdgeToward(b, acx, acy);
   return { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
 }
-
-const linkDiagColor = (status: DeviceLink["status"]) =>
-  status === "down" ? "#0a0a0a" : status === "warn" ? "#f5a524" : "#46a758";
 
 const NODE_W = 176;
 const NODE_CX = 88;
@@ -153,10 +236,40 @@ function lldpPeerKey(link: LldpLink): string {
   return `${link.a_device}|${link.a_port}|${peer}`;
 }
 
+/**
+ * Port pill text, marked when it's an SFP/SFP+ cage rather than copper —
+ * the same " · " compound-label convention the backend already uses for a
+ * facade group ("1-48 · PoE", cf. internal/portrules), reused here rather
+ * than inventing a new visual language for one badge. `dev` undefined
+ * (an LLDP neighbor not yet in inventory) or the port unresolved: no claim
+ * is made, same as everywhere else a ghost peer's media is unknown.
+ */
+function portLabelWithMedia(
+  dev: Device | undefined,
+  port: string | null | undefined,
+): string | null {
+  if (!port) return null;
+  if (dev && isSFPPort(dev, port)) return `${port} · SFP+`;
+  return port;
+}
+
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
+/**
+ * THE FLOOR THE "FIT" GESTURE IS ALLOWED TO GO THROUGH.
+ *
+ * `MIN_ZOOM` is 0.3 because below that a node is unreadable, and a user
+ * zooming out by hand should be stopped before the map becomes decoration.
+ * Fitting is a different question: on a 393px phone a site of nineteen
+ * devices simply does not go into the window at 0.3, and the honest answer
+ * to "show me the whole site" is a very small whole site — not a readable
+ * corner of it, which is what the clamp produced.
+ */
+const MIN_FIT_ZOOM = 0.06;
 
 export default function Plan() {
   const { t, i18n } = useTranslation();
+  const narrow = useBreakpoint() === "narrow";
   const { site } = useSite();
   const siteId = useSiteId();
   const siteSlug = site?.slug ?? "";
@@ -388,6 +501,38 @@ export default function Plan() {
   const vm = vlanMap(vlans);
   const byId = new Map((devices ?? []).map((d) => [d.id, d]));
 
+  /**
+   * A SWITCH WITH NOTHING ATTACHED IS A QUESTION, and this is the answer.
+   *
+   * Measured case (sw01-arena, FS S3400, 2026-10-25): a switch carrying a
+   * live 20 Gb/s uplink to the site core sat on this plan connected to
+   * nothing, with no indication of why. The backend knew why the whole time
+   * — `silent[]` has carried the reason and `silent_help` its vocabulary
+   * since the endpoint existed — and `lldpSilencePhrase` had been written to
+   * phrase it. Nothing on any screen called it. The explanation existed at
+   * both ends of the wire and never reached an operator.
+   *
+   * The condition is "no edge of EITHER kind", not "no LLDP link": a device
+   * cabled in the declared plan is explained by that plan, and badging it
+   * because an observation is missing would decorate the normal case. Only a
+   * node the operator sees truly alone earns a word.
+   */
+  const silenceById = new Map(
+    (lldp?.silent ?? []).map((s) => [s.device_id, s]),
+  );
+  const connectedIds = (() => {
+    const ids = new Set<string>();
+    for (const l of links ?? []) {
+      ids.add(l.a_device);
+      ids.add(l.b_device);
+    }
+    for (const l of lldp?.links ?? []) {
+      ids.add(l.a_device);
+      if (l.b_device) ids.add(l.b_device);
+    }
+    return ids;
+  })();
+
   const savePos = useMutation({
     mutationFn: (d: Device) =>
       patch<Device>(`/api/devices/${d.id}`, {
@@ -531,16 +676,34 @@ export default function Plan() {
     if (!el || extent.w <= 0 || extent.h <= 0) return;
     const pad = 32;
     scrollFix.current = { left: 0, top: 0 };
-    setZoom(
-      clampZoom(
-        Math.min(
-          1,
-          (el.clientWidth - pad) / extent.w,
-          (el.clientHeight - pad) / extent.h,
-        ),
-      ),
+    const wanted = Math.min(
+      1,
+      (el.clientWidth - pad) / extent.w,
+      (el.clientHeight - pad) / extent.h,
     );
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_FIT_ZOOM, wanted)));
   };
+
+  /**
+   * ON A PHONE THE MAP OPENS FITTED, once, when the extent is first known.
+   *
+   * The stored zoom is a DESKTOP preference — it is the same key on both —
+   * and restoring 100% on a 393px screen opens the weathermap on a corner of
+   * one rack with no clue that there are eighteen more devices off screen.
+   * Fitting is what the first glance is for; panning in is the next gesture,
+   * and it still works.
+   *
+   * Once only: a re-fit on every extent change would fight a user who has
+   * just zoomed in to read a port.
+   */
+  const didAutoFit = useRef(false);
+  useEffect(() => {
+    if (didAutoFit.current || !narrow) return;
+    if (extent.w <= 0 || extent.h <= 0) return;
+    if (!wrapRef.current || wrapRef.current.clientWidth <= 0) return;
+    didAutoFit.current = true;
+    fitToView();
+  });
 
   const onPointerDown = (e: React.PointerEvent, d: Device) => {
     // While picking link ends, a click selects — never starts a drag.
@@ -607,7 +770,7 @@ export default function Plan() {
       const pos = dragPos[d.id];
       if (pos) savePos.mutate({ ...d, pos_x: pos.x, pos_y: pos.y });
     } else {
-      navigate(sitePath(siteSlug, "equipment", d.name));
+      navigate(deviceDetailPath(siteSlug, d));
     }
   };
   const onPeerPointerUp = (key: string) => {
@@ -631,7 +794,16 @@ export default function Plan() {
     return expandPorts(dev).find((p) => p.name === portName) ?? null;
   };
 
-  /** Negotiated + facade speeds from both ends — driver/catalog only. */
+  /**
+   * The ONE SPEED LABEL printed in the middle of a link — driver/catalog only,
+   * never a hand-entered `link.speed`.
+   *
+   * It no longer carries a capacity in Mb/s, and it must not: ADR-0026 reads
+   * each half against ITS OWN port's line rate, so a single number for the
+   * whole link would be the thing that erased a 10 G cage facing a 1 G one. See
+   * [linkEndEgress]. The LABEL stays single because it is prose for a human and
+   * a 1G/10G mismatch is already visible as two differently coloured halves.
+   */
   const linkDriverSpeed = (
     a: Device | undefined, aPort: string,
     b: Device | undefined, bPort: string,
@@ -647,7 +819,6 @@ export default function Plan() {
       observed: observed || undefined,
       facade,
       label: linkSpeedLabel(observed, facade),
-      mbps: linkCapacityMbps(observed, facade),
     };
   };
 
@@ -719,6 +890,84 @@ export default function Plan() {
 
   const linkRates = (l: DeviceLink) =>
     linkRatesBetween(byId.get(l.a_device), l.a_port, byId.get(l.b_device), l.b_port);
+
+  /**
+   * Is this device's inventory rate on this port a READING, or a zero that only
+   * means nobody wrote anything?
+   *
+   * `internal/api/portrates.go` answers this in its own words: "Zero is not 'no
+   * measurement' — inventory cannot express ignorance on this field", and each
+   * pass zeroes every faceplate port whose series the store no longer returns.
+   * So the field itself cannot be asked, and the question has to be put to the
+   * DEVICE instead — which is where the product already has an answer, and the
+   * same one three other screens use:
+   *
+   *   status "off"       unreachable: whatever is in inventory is the last
+   *                      thing we saw, not the current rate
+   *   neverObserved      monitoring has never spoken about it (UI-GUIDE §2)
+   *   blindNow           observed before, no connected proxy can watch it now —
+   *                      so its series have stopped and its rates were zeroed
+   *   no rate field      no pass has ever touched this port
+   *
+   * Outside those four, a zero is a real idle port and must be painted as one.
+   *
+   * THE LIMIT, stated rather than hidden: a single port with no series on a
+   * device that is otherwise polled gets a zero like any idle port, and this
+   * cannot tell the difference. Fixing that needs the series store, i.e. a
+   * telemetry query per device on a page that currently makes none — the hover
+   * tip pays for one device at a time, deliberately.
+   */
+  const egressIsReading = (dev: Device, pr: PortRef) =>
+    dev.status !== "off" &&
+    !neverObserved(dev) &&
+    !blindNow(dev) &&
+    (pr.p.rx_mbps != null || pr.p.tx_mbps != null);
+
+  /**
+   * THE EGRESS OF ONE END of a link, and the line rate to read it against
+   * (ADR-0026).
+   *
+   * The egress of the switch at this end is the `tx` of ITS port. The `rx` of
+   * the far port measures the same quantity minus what was lost on the way, so
+   * it serves as the fallback when the near end has no counters — never as an
+   * average and never added to it, because the asymmetry between the two
+   * directions is the entire reason this half has a colour of its own.
+   *
+   * The capacity is always the NEAR port's, even when the rate came from the
+   * far one: it is the near port that has to carry this egress, and a 10 G cage
+   * facing a 1 G one is a fact the two halves are meant to show.
+   */
+  const linkEndEgress = (
+    near: Device | undefined, nearPort: string,
+    far: Device | undefined, farPort: string,
+  ): { known: boolean; mbps: number; capacityMbps: number } => {
+    const pn = portRefOf(near, nearPort);
+    const capacityMbps = linkCapacityMbps(pn?.p.link, pn?.speed);
+    if (near && pn && egressIsReading(near, pn)) {
+      return { known: true, mbps: pn.p.tx_mbps ?? 0, capacityMbps };
+    }
+    const pf = portRefOf(far, farPort);
+    if (far && pf && egressIsReading(far, pf)) {
+      return { known: true, mbps: pf.p.rx_mbps ?? 0, capacityMbps };
+    }
+    return { known: false, mbps: 0, capacityMbps };
+  };
+
+  /** Ramp ink for one half, or null when that end has nothing to show. */
+  const egressInk = (e: { known: boolean; mbps: number; capacityMbps: number }) =>
+    e.known ? trafficColor(e.mbps, e.capacityMbps) : null;
+
+  /**
+   * The pill under a half: the glyph points the way that end's traffic LEAVES,
+   * so it agrees with the point drawn on the same half, and `?` — the glyph
+   * this product already uses for an unknown vendor and an unnamed neighbour —
+   * stands in for a rate that was never measured. Never a zero: a zero paints
+   * and reads as "at rest", which is a claim nobody made.
+   */
+  const egressPill = (
+    e: { known: boolean; mbps: number },
+    glyph: string,
+  ) => `${glyph} ${e.known ? fmtMbps(e.mbps) : "?"}`;
 
   /** Prefer the end that already feeds live rates; fall back to A. */
   const linkHoverSource = (
@@ -811,11 +1060,25 @@ export default function Plan() {
 
   return (
     <div className="plan-page">
+      {/* No page heading: the tab bar names this page. The equipment count
+          stays — it is an observation, not a label — and takes the slot the
+          title had, which keeps the view controls at the end of the toolbar
+          where they were. */}
       <div className="toolbar">
-        <h1>
-          {t("planPage.title")}
-          <span className="sub">{t("planPage.subtitle", { count: (devices ?? []).length })}</span>
-        </h1>
+        <span className="note">
+          {t("planPage.subtitle", { count: (devices ?? []).length })}
+          {/* The two halves are the one thing on this map nobody can derive by
+              looking: that the colour is the EGRESS of the switch on that side,
+              and that a grey half with a `?` is a reading we do not have rather
+              than an idle wire (ADR-0026). Behind a HelpTip because it is an
+              explanation, not an observation — UI-GUIDE writing style. */}
+          <HelpTip label={t("planPage.linkRenderHelpLabel")}>
+            <p>{t("planPage.linkRenderHelpHalves")}</p>
+            <p>{t("planPage.linkRenderHelpRamp")}</p>
+            <p>{t("planPage.linkRenderHelpUnknown")}</p>
+            <p>{t("planPage.linkRenderHelpBlocked")}</p>
+          </HelpTip>
+        </span>
         <div className="row" style={{ gap: 6 }}>
           <div className="zoom-ctl">
             <QuickTip text={t("planPage.zoomOut")} className="quicktip-inline">
@@ -978,8 +1241,17 @@ export default function Plan() {
             }}
           >
             <defs>
+              {/* The glow that MAKES an offline link readable — the near-black
+                  stroke it sits on carries no signal by itself
+                  (topologyLinks.ts). It was #e5484d, i.e. --danger written out.
+                  var() DOES resolve in an SVG presentation attribute — measured
+                  on Chromium 124 and Firefox 152, both of which paint this
+                  filter rgb(229,73,77) — which is also what the rest of the
+                  frontend already relies on (viz.tsx's stroke="var(--border)",
+                  TopologyLinkLabels' fill="var(--bg-panel)"). No CSS rule
+                  needed; see UI-GUIDE §6. */}
               <filter id="topo-link-offline" x="-40%" y="-40%" width="180%" height="180%">
-                <feDropShadow dx="0" dy="0" stdDeviation="2.2" floodColor="#e5484d" floodOpacity="0.95" />
+                <feDropShadow dx="0" dy="0" stdDeviation="2.2" floodColor="var(--danger)" floodOpacity="0.95" />
               </filter>
             </defs>
             {/* OBSERVED LLDP links, UNDER declared links.
@@ -1014,19 +1286,36 @@ export default function Plan() {
                 : false;
               const drv = linkDriverSpeed(a, l.a_port, b, l.b_port ?? "");
               const r = linkRatesBetween(a, l.a_port, b, l.b_port ?? "");
-              const mbps = Math.max(r.toA, r.toB);
               const isGhost = !b;
-              const st = isGhost
-                ? ghostPeerLinkStroke(online)
-                : topologyLinkStroke({
+              const egA = linkEndEgress(a, l.a_port, b, l.b_port ?? "");
+              const egB = linkEndEgress(b, l.b_port ?? "", a, l.a_port);
+              const ghostSt = isGhost ? ghostPeerLinkStroke(online) : null;
+              const paint: TopologyLinkPaint = ghostSt
+                ? {
+                    // A ghost peer is one box meshcraft invented for a
+                    // neighbour it does not manage: there is no far port and no
+                    // far egress, so it keeps its single thin stroke rather
+                    // than being split into a half nobody can colour.
+                    strokeWidth: ghostSt.strokeWidth,
+                    strokeDasharray: ghostSt.strokeDasharray,
+                    opacity: ghostSt.opacity,
+                    filter: ghostSt.filter,
+                    inkA: ghostSt.stroke,
+                    inkB: ghostSt.stroke,
+                    heads: false,
+                  }
+                : topologyLinkPaint({
                     online,
                     blocking,
-                    util: drv.mbps > 0 ? mbps / drv.mbps : 0,
+                    loadInkA: egressInk(egA),
+                    loadInkB: egressInk(egB),
                     uncertain: lldpLinkKind(l) === "one_side",
                     lldp: true,
                   });
-              const towardA = lx1 <= lx2 ? "◂" : "▸";
-              const towardB = lx1 <= lx2 ? "▸" : "◂";
+              // Glyphs point the way each end's traffic LEAVES, which is also
+              // the way that half's point faces (ADR-0026).
+              const outOfA = lx1 <= lx2 ? "▸" : "◂";
+              const outOfB = lx1 <= lx2 ? "◂" : "▸";
               const stpA = stpPortOf(a, l.a_port);
               const stpB = b ? stpPortOf(b, l.b_port ?? "") : undefined;
               const midLabel = !online
@@ -1076,24 +1365,19 @@ export default function Plan() {
                     x1={lx1} y1={ly1} x2={lx2} y2={ly2}
                     stroke="transparent" strokeWidth={14}
                   />
-                  <line
-                    x1={lx1} y1={ly1} x2={lx2} y2={ly2}
-                    stroke={st.stroke} strokeWidth={st.strokeWidth}
-                    strokeDasharray={st.strokeDasharray} opacity={st.opacity}
-                    filter={st.filter}
-                  />
+                  <LinkBody x1={lx1} y1={ly1} x2={lx2} y2={ly2} paint={paint} />
                   <TopologyLinkLabels
                     x1={lx1}
                     y1={ly1}
                     x2={lx2}
                     y2={ly2}
-                    portA={l.a_port}
-                    portB={peerPort}
+                    portA={portLabelWithMedia(a, l.a_port)}
+                    portB={portLabelWithMedia(b, peerPort)}
                     speedText={speedText}
-                    speedFill={!online ? st.stroke : "var(--text)"}
+                    speedFill={!online ? paint.inkA : "var(--text)"}
                     speedLetterSpacing={1}
-                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
-                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    bwA={!stpView && online && !isGhost ? egressPill(egA, outOfA) : null}
+                    bwB={!stpView && online && !isGhost ? egressPill(egB, outOfB) : null}
                     extraText={stpExtra || null}
                   />
                 </g>
@@ -1110,14 +1394,17 @@ export default function Plan() {
               const online = linkOnline(a, l.a_port, b, l.b_port) && l.status !== "down";
               const blocking = linkBlocking(a, l.a_port, b, l.b_port);
               const drv = linkDriverSpeed(a, l.a_port, b, l.b_port);
-              const mbps = Math.max(r.toA, r.toB);
-              const st = topologyLinkStroke({
+              const egA = linkEndEgress(a, l.a_port, b, l.b_port);
+              const egB = linkEndEgress(b, l.b_port, a, l.a_port);
+              const st = topologyLinkPaint({
                 online,
                 blocking,
-                util: drv.mbps > 0 ? mbps / drv.mbps : 0,
+                loadInkA: egressInk(egA),
+                loadInkB: egressInk(egB),
               });
-              const towardA = x1 <= x2 ? "◂" : "▸";
-              const towardB = x1 <= x2 ? "▸" : "◂";
+              // Glyphs point the way each end's traffic LEAVES (ADR-0026).
+              const outOfA = x1 <= x2 ? "▸" : "◂";
+              const outOfB = x1 <= x2 ? "◂" : "▸";
               const stpA = stpPortOf(a, l.a_port);
               const stpB = stpPortOf(b, l.b_port);
               const midLabel = !online
@@ -1136,8 +1423,20 @@ export default function Plan() {
                 selected
                   ? "var(--accent)"
                   : !online || l.note
-                    ? st.stroke
+                    ? st.inkA
                     : "var(--text)";
+              // Selection repaints both halves and thickens them; the points
+              // stay, so a selected forwarding link is still not mistakable for
+              // a blocked one (which has none).
+              const paint: TopologyLinkPaint = selected
+                ? {
+                    ...st,
+                    strokeWidth: st.strokeWidth + 1.5,
+                    filter: undefined,
+                    inkA: "var(--accent)",
+                    inkB: "var(--accent)",
+                  }
+                : st;
               const stpExtra =
                 stpView && online
                   ? [stpA?.state, stpB?.state].filter(Boolean).join(" / ")
@@ -1175,26 +1474,19 @@ export default function Plan() {
                     x1={x1} y1={y1} x2={x2} y2={y2}
                     stroke="transparent" strokeWidth={14}
                   />
-                  <line
-                    x1={x1} y1={y1} x2={x2} y2={y2}
-                    stroke={selected ? "var(--accent)" : st.stroke}
-                    strokeWidth={selected ? st.strokeWidth + 1.5 : st.strokeWidth}
-                    strokeDasharray={st.strokeDasharray}
-                    filter={selected ? undefined : st.filter}
-                    opacity={st.opacity}
-                  />
+                  <LinkBody x1={x1} y1={y1} x2={x2} y2={y2} paint={paint} />
                   <TopologyLinkLabels
                     x1={x1}
                     y1={y1}
                     x2={x2}
                     y2={y2}
-                    portA={l.a_port}
-                    portB={l.b_port}
+                    portA={portLabelWithMedia(a, l.a_port)}
+                    portB={portLabelWithMedia(b, l.b_port)}
                     speedText={midLabel + (l.note && online ? " ⚠" : "")}
                     speedFill={midFill}
                     speedLetterSpacing={1}
-                    bwA={!stpView && online && r.from ? `${towardA} ${fmtMbps(r.toA)}` : null}
-                    bwB={!stpView && online && r.from ? `${towardB} ${fmtMbps(r.toB)}` : null}
+                    bwA={!stpView && online ? egressPill(egA, outOfA) : null}
+                    bwB={!stpView && online ? egressPill(egB, outOfB) : null}
                     extraText={stpExtra || null}
                   />
                 </g>
@@ -1222,10 +1514,22 @@ export default function Plan() {
           {(devices ?? []).map((d) => {
             const pos = posOf(d);
             const off = d.status === "off";
+            // Copper only earns its square once configured; the SFP/SFP+
+            // cages are drawn UNCONDITIONALLY — they are the uplinks, and an
+            // uplink is exactly what a topology reader looks for. The intent
+            // filter used to hide them twice over: unconfigured (libre) like
+            // any idle copper port, and configured as the trunk-all a cage
+            // almost always carries.
             const devPorts = expandPorts(d).filter(
-              (pr) => pr.p.mode && pr.p.mode !== "libre" && pr.p.tagged !== "all",
+              (pr) =>
+                isSFPRef(pr) ||
+                (pr.p.mode && pr.p.mode !== "libre" && pr.p.tagged !== "all"),
             );
+            const configured = devPorts.filter((pr) => pr.p.mode && pr.p.mode !== "libre").length;
             const up = expandPorts(d).filter((pr) => pr.p.link && pr.p.mode !== "libre").length;
+            // Null whenever there is nothing to say — a device with links, or
+            // one whose neighborhood is known and simply empty.
+            const isolation = lldpIsolationBadge(silenceById.get(d.id));
             return (
               <div
                 key={d.id}
@@ -1241,7 +1545,7 @@ export default function Plan() {
                 onPointerUp={() => onPointerUp(d)}
               >
                 <QuickTip
-                  text={`${d.name} — ${d.model}${d.location ? " · " + d.location : ""}\n${t("planPage.configuredPorts", { configured: devPorts.length, active: up })}`}
+                  text={`${d.name} — ${d.model}${d.location ? " · " + d.location : ""}\n${t("planPage.configuredPorts", { configured, active: up })}`}
                   className="quicktip-block"
                 >
                 <div className="row" style={{ gap: 7 }}>
@@ -1252,6 +1556,22 @@ export default function Plan() {
                   {stpView && d.stp?.is_root && (
                     <QuickTip text={t("planPage.stpRoot")} className="quicktip-inline">
                       <span className="plan-stp-root">ROOT</span>
+                    </QuickTip>
+                  )}
+                  {!connectedIds.has(d.id) && isolation && (
+                    /* QuickTip and not HelpTip: a plan node is already a
+                       click target for selection and dragging, and a second
+                       click meaning "explain" would fight the drag. The full
+                       paragraph rides the hover. */
+                    <QuickTip
+                      text={lldpSilencePhrase(silenceById.get(d.id)) || undefined}
+                      className="quicktip-inline"
+                    >
+                      <span
+                        className={"plan-node-isolated tone-" + isolation.tone}
+                      >
+                        {isolation.label}
+                      </span>
                     </QuickTip>
                   )}
                 </div>
@@ -1308,12 +1628,12 @@ export default function Plan() {
                         className="note"
                         style={{ fontSize: 9, margin: "1px 0 6px 15px" }}
                       >
-                        {modelShort(d.model, d.vendor)}
+                        {modelShort(modelOf(d), d.vendor)}
                       </div>
                     </QuickTip>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginLeft: 15 }}>
                       {devPorts.map((pr) => (
-                        <PortSquare key={pr.name} name={pr.name} displayName={pr.display} port={pr.p} vm={vm} size={9} off={off} />
+                        <PortSquare key={pr.name} name={pr.name} displayName={pr.display} port={pr.p} vm={vm} size={9} off={off} sfp={isSFPRef(pr)} />
                       ))}
                     </div>
                     <div className="note" style={{ fontSize: 9, margin: "6px 0 0 15px" }}>

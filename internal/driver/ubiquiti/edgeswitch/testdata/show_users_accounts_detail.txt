@@ -1,0 +1,26 @@
+show users accounts detail
+
+UserName....................................... ubnt
+Privilege...................................... 15
+Password Aging................................. ---
+Password Expiry................................ ---
+Lockout........................................ False
+Override Complexity Check...................... Disable
+Password Strength.............................. ---
+
+UserName....................................... admin
+Privilege...................................... 15
+Password Aging................................. ---
+Password Expiry................................ ---
+Lockout........................................ False
+Override Complexity Check...................... Disable
+Password Strength.............................. ---
+
+UserName....................................... mcadmin
+Privilege...................................... 15
+Password Aging................................. ---
+Password Expiry................................ ---
+Lockout........................................ False
+Override Complexity Check...................... Disable
+Password Strength.............................. ---
+

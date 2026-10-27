@@ -13,64 +13,60 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"meshcraft/wire/agentv1"
 )
 
-// Mise a jour automatique du proxy : le binaire est remplace, pas le conteneur.
+// Automatic proxy update: the binary is replaced, not the container.
 //
-// Le proxy telecharge le binaire de son architecture depuis le controleur,
-// verifies son SHA-256, le range dans son volume state et se reexecute. L'image
-// Docker n'est pas touchee — donc aucun access au socket Docker, et le same code
-// marche pour une installation systemd.
+// The proxy downloads the binary for its architecture from the controller,
+// verifies its SHA-256, stores it in its state volume and re-executes itself.
+// The Docker image is not touched — hence no access to the Docker socket, and
+// the same code works for a systemd installation.
 //
-// Cf. docs/01-Architecture/Versionnage et mise a jour du proxy.
+// See docs/en/01-Architecture/Proxy versioning and updates.md.
 
-// binDir : les binaires telecharges vivent dans le volume state, seul chemin
-// inscriptible d'une installation durcie (StateDirectory cote systemd).
+// binDir: downloaded binaries live in the state volume, the only writable path
+// of a hardened installation (StateDirectory on the systemd side).
 func binDir() string { return filepath.Join(stateDir, "bin") }
 
 func binPath(version string) string {
 	return filepath.Join(binDir(), "meshcraft-proxy-"+version)
 }
 
-// upgradeOffer est ce que le controleur propose dans la response au heartbeat.
-type upgradeOffer struct {
-	Version string `json:"version"`
-	URL     string `json:"url"`
-	SHA256  string `json:"sha256"`
-	Size    int64  `json:"size"`
-}
+// upgradeOffer / upgradeReport are the agent contract's types
+// (meshcraft/wire/agentv1), shared with the controller: the same declaration
+// on both sides is what stops a field added on one side from being ignored on
+// the other. The aliases keep the rest of the file unchanged.
+type upgradeOffer = agentv1.UpgradeOffer
 
-// report est ce que le proxy renvoie au heartbeat suivant. Un failure muet serait
-// pire que pas de mise a jour du tout.
-type upgradeReport struct {
-	State   string `json:"state"` // downloading | applied | failed
-	Version string `json:"version"`
-	Error   string `json:"error,omitempty"`
-}
+// report is what the proxy sends back on the next heartbeat. A silent failure
+// would be worse than no update at all.
+type upgradeReport = agentv1.UpgradeReport
 
-// pendingReport porte le rapport jusqu'au prochain heartbeat. Apres un exec
-// reussi, c'est le NOUVEAU processus qui rapporte — sa seule preuve etant la
-// version qu'il annonce, ce qui suffit au controleur.
+// pendingReport carries the report until the next heartbeat. After a
+// successful exec, it is the NEW process that reports — its only proof being
+// the version it announces, which is enough for the controller.
 var pendingReport *upgradeReport
 
-// applyUpgrade execute la mise a jour proposee. Elle ne rend la main que si
-// quelque chose a echoue : en cas de success, le processus est remplace.
+// applyUpgrade carries out the proposed update. It only returns if something
+// failed: on success, the process is replaced.
 func applyUpgrade(st State, offer upgradeOffer) error {
 	if offer.Version == "" || offer.URL == "" || offer.SHA256 == "" {
-		return errors.New("offre de mise a jour incomplete")
+		return errors.New("incomplete update offer")
 	}
 	if offer.Version == version {
-		return nil // already a jour : rien a faire
+		return nil // already up to date: nothing to do
 	}
-	// L'URL doit be SUR LE CONTROLEUR de cet etat local. Le controleur est de
-	// confiance par construction, mais rien ne justifie d'executer un binaire
-	// telecharge ailleurs.
+	// The URL must be ON THE CONTROLLER of this local state. The controller is
+	// trusted by construction, but nothing justifies executing a binary
+	// downloaded elsewhere.
 	var err = sameHost(offer.URL, st.Controller)
 	if err != nil {
 		return err
 	}
 
-	slog.Info("mise a jour : telechargement", "version", offer.Version, "url", offer.URL)
+	slog.Info("update: downloading", "version", offer.Version, "url", offer.URL)
 	pendingReport = &upgradeReport{State: "downloading", Version: offer.Version}
 
 	var path string
@@ -79,8 +75,8 @@ func applyUpgrade(st State, offer upgradeOffer) error {
 		return err
 	}
 
-	// L'enregistrement dans state.json AVANT l'exec : c'est lui, et non la
-	// presence du fichier, qui autorisera l'execution au prochain demarrage.
+	// Recorded in state.json BEFORE the exec: it is this record, and not the
+	// presence of the file, that will authorise execution at the next startup.
 	var newState = st
 	newState.Binary = &BinaryRecord{
 		Version:      offer.Version,
@@ -89,16 +85,16 @@ func applyUpgrade(st State, offer upgradeOffer) error {
 		Confirmed:    false,
 	}
 	if err = saveState(newState); err != nil {
-		return fmt.Errorf("etat non persiste: %w", err)
+		return fmt.Errorf("state not persisted: %w", err)
 	}
 
-	slog.Info("mise a jour : exec du nouveau binaire", "version", offer.Version, "path", path)
+	slog.Info("update: exec of the new binary", "version", offer.Version, "path", path)
 	return execBinary(path, offer.Version)
 }
 
-// download recupere le binaire et REFUSE de l'installer si le SHA-256 ne
-// correspond pas. Le fichier temporaire est written a cote de la cible puis
-// renomme : pas de binaire a half written executable.
+// download fetches the binary and REFUSES to install it if the SHA-256 does
+// not match. The temporary file is written next to the target then renamed:
+// no half-written executable binary.
 func download(offer upgradeOffer) (string, error) {
 	var err = os.MkdirAll(binDir(), 0o750)
 	if err != nil {
@@ -120,7 +116,7 @@ func download(offer upgradeOffer) (string, error) {
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		_ = tmp.Close()
-		return "", fmt.Errorf("telechargement HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("download HTTP %d", resp.StatusCode)
 	}
 
 	var h = sha256.New()
@@ -131,11 +127,11 @@ func download(offer upgradeOffer) (string, error) {
 		return "", err
 	}
 	if offer.Size > 0 && written != offer.Size {
-		return "", fmt.Errorf("taille inattendue : %d octets recus, %d annonces", written, offer.Size)
+		return "", fmt.Errorf("unexpected size: %d bytes received, %d announced", written, offer.Size)
 	}
 	var got = hex.EncodeToString(h.Sum(nil))
 	if got != offer.SHA256 {
-		return "", fmt.Errorf("SHA-256 inattendu : %s (expected %s)", got, offer.SHA256)
+		return "", fmt.Errorf("unexpected SHA-256: %s (expected %s)", got, offer.SHA256)
 	}
 	if err = os.Chmod(tmpName, 0o750); err != nil {
 		return "", err
@@ -147,89 +143,89 @@ func download(offer upgradeOffer) (string, error) {
 	return final, nil
 }
 
-// sameHost verifies que l'URL de telechargement est bien sur le controleur
-// courant (same schema et same hote).
+// sameHost checks that the download URL is indeed on the current controller
+// (same scheme and same host).
 func sameHost(rawURL, controller string) error {
 	var u, err = url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("URL de mise a jour illisible: %w", err)
+		return fmt.Errorf("unreadable update URL: %w", err)
 	}
 	var c, cErr = url.Parse(controller)
 	if cErr != nil {
-		return fmt.Errorf("URL de controleur illisible: %w", cErr)
+		return fmt.Errorf("unreadable controller URL: %w", cErr)
 	}
 	if !strings.EqualFold(u.Host, c.Host) || u.Scheme != c.Scheme {
-		return fmt.Errorf("URL de mise a jour hors du controleur (%s ≠ %s)", u.Host, c.Host)
+		return fmt.Errorf("update URL outside the controller (%s ≠ %s)", u.Host, c.Host)
 	}
 	return nil
 }
 
-// execBinary remplace le processus courant. MESHCRAFT_UPGRADED_FROM est un
-// garde-fou : si le binaire execute annoncait une version incoherente avec
-// l'enregistrement, l'amorcage refuserait de recommencer indefiniment.
+// execBinary replaces the current process. MESHCRAFT_UPGRADED_FROM is a guard:
+// if the executed binary announced a version inconsistent with the record, the
+// bootstrap would refuse to start over indefinitely.
 func execBinary(path, toVersion string) error {
 	var env = append(os.Environ(), "MESHCRAFT_UPGRADED_FROM="+version)
 	var err = syscall.Exec(path, []string{path}, env)
-	// syscall.Exec ne revient qu'en cas failure.
+	// syscall.Exec only returns on failure.
 	return fmt.Errorf("exec %s (→ %s): %w", path, toVersion, err)
 }
 
-// bootstrapBinary est appele au DEMARRAGE, avant toute autre chose.
+// bootstrapBinary is called at STARTUP, before anything else.
 //
-// Apres un reboot de conteneur, l'entrypoint relance le binaire de l'image
-// — l'ancienne version. C'est donc ici qu'on rebascule sur le binaire mis a
-// jour, et ici qu'on refuse de le faire quand il ne demarre pas.
+// After a container reboot, the entrypoint relaunches the image's binary — the
+// old version. So this is where we switch back to the updated binary, and
+// where we refuse to when it does not start.
 func bootstrapBinary(st State) State {
 	if st.Binary == nil || st.Binary.Version == "" {
 		return st
 	}
-	// On est already le bon binaire : on confirmera au premier heartbeat reussi.
+	// We already are the right binary: we will confirm on the first successful heartbeat.
 	if st.Binary.Version == version {
 		return st
 	}
 	var record = st.Binary
 
-	// Garde-fou : un binaire qui n'annonce pas la version enregistree ne doit pas
-	// provoquer une boucle d'exec.
+	// Guard: a binary that does not announce the recorded version must not cause
+	// an exec loop.
 	if os.Getenv("MESHCRAFT_UPGRADED_FROM") != "" {
-		slog.Error("mise a jour : le binaire execute n'annonce pas la version attendue — abandon",
-			"expected", record.Version, "annonce", version)
-		return fallback(st, "binaire incoherent : "+version+" au lieu de "+record.Version)
+		slog.Error("update: the executed binary does not announce the expected version — giving up",
+			"expected", record.Version, "announced", version)
+		return fallback(st, "inconsistent binary: "+version+" instead of "+record.Version)
 	}
 
 	var path = binPath(record.Version)
 	var err = verifyFile(path, record.SHA256)
 	if err != nil {
-		slog.Error("mise a jour : binaire enregistre inutilisable", "err", err)
+		slog.Error("update: recorded binary unusable", "err", err)
 		_ = os.Remove(path)
 		return fallback(st, err.Error())
 	}
 	if record.BootAttempts >= 2 {
-		// Deux demarrages sans confirmation : le binaire ne tient pas debout.
-		// On repart sur celui de l'image et on le fait savoir.
-		slog.Error("mise a jour : deux demarrages sans confirmation — retour au binaire de l'image",
+		// Two startups without confirmation: the binary cannot stand up.
+		// We go back to the image's and make it known.
+		slog.Error("update: two startups without confirmation — back to the image binary",
 			"version", record.Version)
 		_ = os.Remove(path)
-		return fallback(st, "le binaire "+record.Version+" ne demarre pas (2 tentatives)")
+		return fallback(st, "binary "+record.Version+" does not start (2 attempts)")
 	}
 
 	record.BootAttempts++
 	st.Binary = record
 	if err = saveState(st); err != nil {
-		slog.Error("mise a jour : compteur de demarrage non persiste", "err", err)
+		slog.Error("update: startup counter not persisted", "err", err)
 		return st
 	}
-	slog.Info("mise a jour : bascule sur le binaire enregistre",
+	slog.Info("update: switching to the recorded binary",
 		"version", record.Version, "tentative", record.BootAttempts)
 	if err = execBinary(path, record.Version); err != nil {
-		slog.Error("mise a jour : exec impossible", "err", err)
+		slog.Error("update: exec impossible", "err", err)
 		return fallback(st, err.Error())
 	}
 	return st // inatteignable
 }
 
-// fallback abandonne le binaire enregistre, revient a celui de l'image et
-// prepare le rapport failure pour le prochain heartbeat.
+// fallback gives up the recorded binary, goes back to the image's and prepares
+// the failure report for the next heartbeat.
 func fallback(st State, reason string) State {
 	var failed = ""
 	if st.Binary != nil {
@@ -238,17 +234,17 @@ func fallback(st State, reason string) State {
 	st.Binary = nil
 	var err = saveState(st)
 	if err != nil {
-		slog.Error("etat non persiste after repli", "err", err)
+		slog.Error("state not persisted after fallback", "err", err)
 	}
 	pendingReport = &upgradeReport{State: "failed", Version: failed, Error: reason}
 	return st
 }
 
-// verifyFile relit le fichier et compare son empreinte a celle enregistree.
+// verifyFile re-reads the file and compares its fingerprint with the recorded one.
 func verifyFile(path, wantSHA string) error {
 	var f, err = os.Open(path)
 	if err != nil {
-		return fmt.Errorf("binaire absent: %w", err)
+		return fmt.Errorf("binary missing: %w", err)
 	}
 	defer f.Close() //nolint:errcheck
 	var h = sha256.New()
@@ -257,13 +253,13 @@ func verifyFile(path, wantSHA string) error {
 	}
 	var got = hex.EncodeToString(h.Sum(nil))
 	if got != wantSHA {
-		return fmt.Errorf("SHA-256 du binaire enregistre ne correspond pas (%s ≠ %s)", got, wantSHA)
+		return fmt.Errorf("SHA-256 of the recorded binary does not match (%s ≠ %s)", got, wantSHA)
 	}
 	return nil
 }
 
-// confirmBinary : un heartbeat a reussi, la version tient. On remet le compteur
-// a zero pour que le prochain reboot ne consomme pas de tentative.
+// confirmBinary: a heartbeat succeeded, the version holds. The counter is reset
+// to zero so the next reboot does not consume an attempt.
 func confirmBinary(st *State) {
 	if st.Binary == nil || st.Binary.Confirmed && st.Binary.BootAttempts == 0 {
 		return
@@ -275,7 +271,7 @@ func confirmBinary(st *State) {
 	st.Binary.BootAttempts = 0
 	var err = saveState(*st)
 	if err != nil {
-		slog.Error("confirmation de version non persistee", "err", err)
+		slog.Error("version confirmation not persisted", "err", err)
 	}
-	slog.Info("mise a jour confirmee", "version", version)
+	slog.Info("update confirmed", "version", version)
 }

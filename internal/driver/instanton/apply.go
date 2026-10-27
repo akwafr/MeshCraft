@@ -13,21 +13,21 @@ import (
 
 // Port configuration writes.
 //
-// This is the « Apply » step of the pipeline (docs/01-Architecture/Reconciliation §4 and
+// This is the "Apply" step of the pipeline (docs/en/01-Architecture/Reconciliation.md §4 and
 // §5), and the most dangerous step in the whole connector: this product line has no
 // SSH, Telnet, or serial port. A write that removes the uplink port from its VLAN
 // makes the device unreachable, and the only recovery is a paperclip in the reset
 // button, on site.
 //
 // Hence the central rule in this file: **never touch the management VLAN**. This is
-// not a temporary limitation we will lift for convenience; it is the « never cut off
-// your own hand » rule translated into the only place it can be guaranteed — the code
+// not a temporary limitation we will lift for convenience; it is the "never cut off
+// your own hand" rule translated into the only place it can be guaranteed — the code
 // that writes.
 
 // membership is ONE VLAN's membership as the device stores it.
 //
-// The device reasons by VLAN (« who is a member? »), meshcraft by port
-// (« what does this port carry? »). Writing therefore requires the inverse pivot of
+// The device reasons by VLAN ("who is a member?"), meshcraft by port
+// ("what does this port carry?"). Writing therefore requires the inverse pivot of
 // reading.
 type membership struct {
 	VLAN     int
@@ -62,7 +62,7 @@ func MembershipFor(desired map[string]PortState) []membership {
 	for _, name = range names {
 		var p = desired[name]
 		if p.Mode == "" || p.Mode == "libre" {
-			continue // « absent = unmanaged »: meshcraft does not claim this port
+			continue // "absent = unmanaged": meshcraft does not claim this port
 		}
 		if p.PVID > 0 {
 			var m = at(p.PVID)
@@ -115,10 +115,10 @@ func portNumbers(names []string, prefix string) []string {
 // Three observations on a real 1930 govern what follows:
 //
 //	IPv4InterfaceList              → one entry per IP interface. VLAN1 carries
-//	                                 « owner 2 » and `DHCPclientIdSupported`,
+//	                                 "owner 2" and `DHCPclientIdSupported`,
 //	                                 i.e. a DHCP CLIENT; the default interface on
-//	                                 169.254 carries « owner 3 ».
-//	IPv4GlobalSetting              → managementInterfaceName = « VLAN1 »
+//	                                 169.254 carries "owner 3".
+//	IPv4GlobalSetting              → managementInterfaceName = "VLAN1"
 //	ManagementInterfaceGlobalSetting → managementVLAN = 1
 //
 // The good news from the observation: the device accepts MULTIPLE IPv4 interfaces.
@@ -137,7 +137,7 @@ func portNumbers(names []string, prefix string) []string {
 // default interface at 169.254.0.1, configured by nobody, is 3.
 const ownerDHCP = 2
 
-// vlanIfName renders the interface name as the device names it: « VLAN99 ».
+// vlanIfName renders the interface name as the device names it: "VLAN99".
 func vlanIfName(vlanID int) string { return "VLAN" + strconv.Itoa(vlanID) }
 
 // AddManagementInterface ADDS an IPv4 interface as a DHCP client on a VLAN.
@@ -148,14 +148,14 @@ func vlanIfName(vlanID int) string { return "VLAN" + strconv.Itoa(vlanID) }
 // The field set is MINIMAL, and the device decided that.
 //
 // The temptation was to copy the entry from a working interface, observed on hardware.
-// It is refused: « code 3, wrong field for dhcp address ». A DHCP entry does not
+// It is refused: "code 3, wrong field for dhcp address". A DHCP entry does not
 // accept static entry fields — not `status`, not `adminStatus`, not broadcast options.
 // The opposite of this product line's usual rule, where partial sections are the problem.
 //
 // On read, an interface created this way carries `status 6` until a lease is granted,
 // versus `status 1` for an addressed interface. That is NOT a configuration defect:
 // the device says it is still waiting for a DHCP reply. Not confusing the two avoided
-// « fixing » a write that was already correct.
+// "fixing" a write that was already correct.
 func (a *Admin) AddManagementInterface(ctx context.Context, vlanID int) error {
 	var name = vlanIfName(vlanID)
 	return a.writeSection(ctx, "IPv4InterfaceList", "set",
@@ -196,11 +196,11 @@ var reIfEntry = regexp.MustCompile(`(?is)<ifEntry>(.*?)</ifEntry>`)
 //
 // Required just BEFORE the switch, and not an extra annoyance: it is the device
 // model. It refuses to designate a management VLAN that already carries IP
-// configuration — « Please remove IPv4 configuration on new management VLAN » —
+// configuration — "Please remove IPv4 configuration on new management VLAN" —
 // because IT installs the management address there and does not want another on its path.
 //
 // `owner` accompanies removal, not just addition: without it, the device replies
-// « Invalid owner value ». An entry in this table is identified by its interface AND
+// "Invalid owner value". An entry in this table is identified by its interface AND
 // who owns it.
 func (a *Admin) RemoveManagementInterface(ctx context.Context, vlanID int) error {
 	var name = vlanIfName(vlanID)
@@ -283,7 +283,7 @@ func vlanCSV(ids []int) string {
 //
 // The LINK condition is what makes the guardrail usable. On a factory-fresh device,
 // all 48 ports are untagged in VLAN 1, which is also administration: without it, no
-// port could ever be modified and « adopt » would mean nothing. A port with no cable
+// port could ever be modified and "adopt" would mean nothing. A port with no cable
 // cannot carry any session.
 //
 // Two VLANs count as management: the one the site plan wants, and the one the DEVICE
@@ -332,11 +332,11 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, err
 	//    The SITE VLAN plan is applied in full, not only VLANs a port uses: an adopted
 	//    device must know its site's VLANs, otherwise assigning a port from the device
 	//    UI — or plugging a trunk — would offer nothing. That is what we expect from an
-	//    « adopted » device rather than « merely reachable ».
+	//    "adopted" device rather than "merely reachable".
 	//
-	//    « set » not « add »: the dispatcher looks for a function named
+	//    "set" not "add": the dispatcher looks for a function named
 	//    `<action>_<Section>`, and `add_VLANList` does not exist — it says so plainly
-	//    (« function name not found »). Its interface creates a VLAN with `set`.
+	//    ("function name not found"). Its interface creates a VLAN with `set`.
 	var todo = append([]VLAN{}, plan.SiteVLANs...)
 	var m membership
 	for _, m = range MembershipFor(desired) {
@@ -373,7 +373,7 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, err
 	for _, name = range names {
 		var want = desired[name]
 		if want.Mode == "" || want.Mode == "libre" {
-			continue // « absent = unmanaged »
+			continue // "absent = unmanaged"
 		}
 		var num = strings.TrimPrefix(name, prefix)
 		if num == name || num == "" {
@@ -396,28 +396,36 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, err
 		}
 
 		// The device expects a DELTA, not a full state: `set` ADDS VLANs, `delete`
-		// removes them. Sending the full list yields « wrong Vlans List have specified »
+		// removes them. Sending the full list yields "wrong Vlans List have specified"
 		// — that is how its interface works (`postFormat`), and there is no other path.
 		var toAdd = missing(want.Tagged, now.Tagged)
 		var toDrop = missing(now.Tagged, want.Tagged)
-		// Unresolved « all » (`TaggedAtLeast`, empty site plan) must not strip
-		// tagged membership. A resolved « all » carries the exact site VLAN list
+		// Unresolved "all" (`TaggedAtLeast`, empty site plan) must not strip
+		// tagged membership. A resolved "all" carries the exact site VLAN list
 		// in Tagged — extras are removed like any explicit trunk.
 		if want.TaggedAtLeast {
 			toDrop = nil
 		}
 		var changed bool
 
-		if len(toDrop) > 0 {
-			if err = a.writeSection(ctx, "VLANInterfaceISList", "delete",
-				"<Entry><interfaceName>"+num+"</interfaceName>"+
-					"<generalTaggedVLANs>"+vlanCSV(toDrop)+"</generalTaggedVLANs></Entry>",
-				fmt.Sprintf("%s: tagged VLANs removed [%s]", name, vlanCSV(toDrop))); err != nil {
-				return out, err
-			}
-			changed = true
-		}
-		// Native VLAN is sent ONLY when it changes: reaffirming the same value is refused.
+		// SET BEFORE DELETE, and this order is load-bearing, not cosmetic.
+		//
+		// CAPTURED 2026-08-04 on sw-labo-1930 ("device refused change (code 3
+		// port 7 MUST belong to at least one vlan)"): GE7 was a TAGGED-ONLY
+		// member of VLAN 99 with no native VLAN of its own (a legal state on
+		// this range), moving to native access VLAN 100 with no tagged
+		// membership at all. The two writes below used to go DELETE then SET
+		// — dropping the port's only membership (VLAN 99, tagged) before its
+		// replacement (VLAN 100, native) had been written. The device
+		// validates each POST synchronously, not the eventual end state: the
+		// DELETE alone would have left port 7 belonging to nothing, and it
+		// refused right there, before the SET that would have fixed it ever
+		// went out. Sending SET first means the port only ever GAINS
+		// membership before anything is taken away — it can never be
+		// observed at zero.
+		//
+		// Native VLAN is sent ONLY when it changes: reaffirming the same
+		// value is refused.
 		var entry string
 		if want.PVID != now.PVID {
 			entry += "<generalPVID>" + strconv.Itoa(want.PVID) + "</generalPVID>" +
@@ -431,6 +439,15 @@ func (a *Admin) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, err
 				"<Entry><interfaceName>"+num+"</interfaceName>"+entry+"</Entry>",
 				fmt.Sprintf("%s: native %d, tagged VLANs added [%s]", name, want.PVID,
 					vlanCSV(toAdd))); err != nil {
+				return out, err
+			}
+			changed = true
+		}
+		if len(toDrop) > 0 {
+			if err = a.writeSection(ctx, "VLANInterfaceISList", "delete",
+				"<Entry><interfaceName>"+num+"</interfaceName>"+
+					"<generalTaggedVLANs>"+vlanCSV(toDrop)+"</generalTaggedVLANs></Entry>",
+				fmt.Sprintf("%s: tagged VLANs removed [%s]", name, vlanCSV(toDrop))); err != nil {
 				return out, err
 			}
 			changed = true

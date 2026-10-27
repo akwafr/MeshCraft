@@ -5,7 +5,7 @@ import { sinceLabel } from "./network";
 /**
  * LLDP neighborhood presentation — pure logic, no component, no HTTP call.
  *
- * See docs/01-Architecture/Voisinage LLDP.md and docs/02-Frontend/Weathermap.md.
+ * See docs/en/01-Architecture/LLDP neighbours.md and docs/en/02-Frontend/Weathermap.md.
  *
  * # A separate file, and why
  *
@@ -70,7 +70,7 @@ export function lldpSilenceByDevice(
  * The fleet's recognized device first, because that's the name the operator
  * uses; the name the neighbor gave itself second. The two do NOT coincide on
  * the reference fleet — `lab-crs326` announces itself as "lan-r4" and
- * `sw-labo-1930` announces itself by its serial number "CN2AKPH86J" — and
+ * `sw-labo-1930` announces itself by its serial number "CN0EXAMPL1" — and
  * that's precisely why the tooltip shows BOTH when they differ: it's the
  * only way to understand why meshcraft matched this observation to this
  * device.
@@ -142,7 +142,16 @@ export function neighborTooltip(
       // The neighbor's model is only shown if it's NOT in the fleet: for a
       // known device, the operator already has its sheet, and lengthening
       // the tooltip would hide the line that matters.
-      (!n.peer_device && n.sys_desc ? `\n  ${n.sys_desc}` : "")
+      (!n.peer_device && n.sys_desc ? `\n  ${n.sys_desc}` : "") +
+      // A refuted observation stays in this list, and this line is the only
+      // thing that explains why the map draws no cable for it. Without it,
+      // the panel would show a neighbor the weathermap ignores, and the
+      // operator would conclude the map is broken rather than the cable moved.
+      (n.refuted
+        ? `\n  ${i18n.t("lldp.refutedByFresher", {
+            device: n.refuted_by ? (byId.get(n.refuted_by)?.name ?? n.refuted_by) : "",
+          })}`
+        : "")
     );
   });
   if (list.length > 1) {
@@ -251,10 +260,12 @@ export function lldpLinkTooltip(
 /**
  * A silence's phrase, for the screen.
  *
- * Three phrases and not one, because the three causes are fixed with
+ * Four phrases and not one, because the four causes are fixed with
  * OPPOSITE actions. The first can't be fixed at all, and that's the most
  * important message to convey: an operator reading "a collector is missing"
- * on a CSS326 will go looking for a setting that doesn't exist.
+ * on a CSS326 will go looking for a setting that doesn't exist. The second
+ * is the opposite extreme — the device itself refused, and one command on it
+ * repairs the whole hole.
  */
 export function lldpSilencePhrase(s: LldpSilence | undefined): string | null {
   if (!s) return null;
@@ -266,8 +277,45 @@ export function lldpSilencePhrase(s: LldpSilence | undefined): string | null {
       (s.detail ? "\n\n" + s.detail : "")
     );
   }
+  if (s.reason === "lldp_disabled") {
+    return i18n.t("lldp.silenceDisabled");
+  }
   if (s.reason === "not_served") {
     return i18n.t("lldp.silenceNotServed");
   }
   return i18n.t("lldp.silenceNeverPolled");
+}
+
+/**
+ * The ONE-LINE badge for a device drawn with no observed link at all.
+ *
+ * Separate from `lldpSilencePhrase`, which is the paragraph behind the help
+ * tip: a plan is read at a glance, and a switch sitting there with nothing
+ * attached is a question the operator is asking right now. The badge answers
+ * it in the space a plan has; the paragraph says why.
+ *
+ * Returns null when there is NOTHING TO SAY — and that is the important
+ * case, not an oversight. A device with links drawn needs no badge, and a
+ * device whose neighborhood is simply known-and-empty (an unplugged spare)
+ * must not be decorated with a warning: absence of an observation is not a
+ * fault (cf. the `neighbor` prop in netui.tsx).
+ */
+export function lldpIsolationBadge(
+  s: LldpSilence | undefined,
+): { label: string; tone: "info" | "act" } | null {
+  if (!s) return null;
+  switch (s.reason) {
+    case "platform_unsupported":
+      // Nothing to repair, ever. INFO, never a call to act: orange on a
+      // permanent platform limit is the thing UI-GUIDE forbids.
+      return { label: i18n.t("lldp.badgePlatformUnsupported"), tone: "info" };
+    case "lldp_disabled":
+      // The device refused, and a human can lift the refusal. This is the
+      // only one of the four that names a gesture on the equipment.
+      return { label: i18n.t("lldp.badgeDisabled"), tone: "act" };
+    case "not_served":
+      return { label: i18n.t("lldp.badgeNotServed"), tone: "act" };
+    default:
+      return { label: i18n.t("lldp.badgeNeverPolled"), tone: "info" };
+  }
 }

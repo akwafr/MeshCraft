@@ -75,4 +75,44 @@ function layersOf(x1: number, y1: number, x2: number, y2: number) {
   }
 }
 
+/*
+ * NO MID PILL MAY SIT ON THE STROKE (ADR-0026).
+ *
+ * The two meeting points of a link live at its midpoint, reaching ±5.4 px off
+ * the line — exactly where the speed pill used to be placed, with an opaque
+ * `--bg-panel` backing that would have hidden them. The pills whose preferred
+ * position is the middle must therefore clear the stroke by more than that
+ * half-width plus their own half-height.
+ *
+ * Asserted on the PLACED geometry rather than on the constant, so it also
+ * catches the collision resolver nudging a pill back onto the line.
+ */
+{
+  const HEAD_HALF_W = 5.4;
+  const COLLIDE_PAD = 4;
+  for (const spec of [
+    { speedText: "10G" },
+    { speedText: "10G", extraText: "forwarding / discarding" },
+    { extraText: "forwarding / discarding" },
+    {
+      portA: "XG3",
+      portB: "GE49",
+      speedText: "10G",
+      bwA: "▸ 1.2 Gbit/s",
+      bwB: "◂ ?",
+      extraText: "root / designated",
+    },
+  ]) {
+    const placed = resolveLinkLabels(0, 0, 320, 0, buildLinkLabelSpecs(spec));
+    for (const p of placed) {
+      if (p.layer !== "speed" && p.layer !== "extra") continue;
+      const clear = Math.abs(p.y) - p.h / 2;
+      assert.ok(
+        clear >= HEAD_HALF_W + COLLIDE_PAD,
+        `${p.layer} pill crowds the points: clears ${clear.toFixed(1)} px`,
+      );
+    }
+  }
+}
+
 console.log("topologyLinkLabels.test.ts: ok");

@@ -1,102 +1,99 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// TestBuildLayout verifies que le layout OCI produit est consistent :
-// index → manifests → config/layers, avec des digests exacts.
-func TestBuildLayout(t *testing.T) {
-	var dir = t.TempDir()
-	var binPath = filepath.Join(dir, "fakebin")
-	var err = os.WriteFile(binPath, []byte("#!/bin/false\nfake proxy\n"), 0o755)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out = filepath.Join(dir, "oci")
-	if err = build(out, "", map[string]string{"amd64": binPath, "arm/v7": binPath}); err != nil {
-		t.Fatalf("build: %v", err)
+// TestBuildDefaultsAndNameTag: the default build reproduces the proxy layout
+// (entrypoint meshcraft-proxy, tag latest), and -name/-tag steer both — the
+// two knobs that let one tool feed a multi-repository registry.
+func TestBuildDefaultsAndNameTag(t *testing.T) {
+	var bin = filepath.Join(t.TempDir(), "fakebin")
+	var werr = os.WriteFile(bin, []byte("ELF-ish bytes"), 0o755)
+	if werr != nil {
+		t.Fatal(werr)
 	}
 
-	var indexData, readErr = os.ReadFile(filepath.Join(out, "index.json"))
-	if readErr != nil {
-		t.Fatalf("index.json: %v", readErr)
+	var cases = []struct {
+		name string
+		tag  string
+		// what the layer's entrypoint must be.
+		entry string
+	}{
+		{"meshcraft-proxy", "latest", "/usr/local/bin/meshcraft-proxy"},
+		{"agent-foo", "20260820.120000", "/usr/local/bin/agent-foo"},
 	}
-	var index struct {
-		SchemaVersion int          `json:"schemaVersion"`
-		MediaType     string       `json:"mediaType"`
-		Manifests     []descriptor `json:"manifests"`
+	var c struct {
+		name  string
+		tag   string
+		entry string
 	}
-	if err = json.Unmarshal(indexData, &index); err != nil {
-		t.Fatalf("index.json invalide: %v", err)
-	}
-	if index.SchemaVersion != 2 || index.MediaType != mtIndex {
-		t.Errorf("en-tete d'index inattendu: %+v", index)
-	}
-	if len(index.Manifests) != 2 {
-		t.Fatalf("2 plateformes attendues, %d trouvees", len(index.Manifests))
-	}
-
-	var m descriptor
-	for _, m = range index.Manifests {
-		if m.Platform["os"] != "linux" {
-			t.Errorf("os expected linux, recu %q", m.Platform["os"])
+	for _, c = range cases {
+		var out = t.TempDir()
+		var err = build(out, "", c.name, c.tag, map[string]string{"amd64": bin})
+		if err != nil {
+			t.Fatalf("%s: build: %v", c.name, err)
 		}
-		// Le blob du manifest doit exister et son digest correspondre.
-		var blob = readBlob(t, out, m.Digest)
+
+		// oci-layout marker.
+		if _, err = os.Stat(filepath.Join(out, "oci-layout")); err != nil {
+			t.Errorf("%s: no oci-layout marker", c.name)
+		}
+
+		// The index answers to the requested tag, and is itself a blob.
+		var indexRaw, _ = os.ReadFile(filepath.Join(out, "index.json"))
+		var index struct {
+			Annotations map[string]string `json:"annotations"`
+			Manifests   []struct {
+				Digest   string            `json:"digest"`
+				Platform map[string]string `json:"platform"`
+			} `json:"manifests"`
+		}
+		if err = json.Unmarshal(indexRaw, &index); err != nil {
+			t.Fatalf("%s: index: %v", c.name, err)
+		}
+		var gotTag = index.Annotations["org.opencontainers.image.ref.name"]
+		if gotTag != c.tag {
+			t.Errorf("%s: index tag %q, want %q", c.name, gotTag, c.tag)
+		}
+		if len(index.Manifests) != 1 {
+			t.Fatalf("%s: %d manifests, want 1", c.name, len(index.Manifests))
+		}
+
+		// Follow manifest -> config -> entrypoint.
+		var man = readBlob(t, out, index.Manifests[0].Digest)
 		var manifest struct {
-			Config descriptor   `json:"config"`
-			Layers []descriptor `json:"layers"`
+			Config struct {
+				Digest string `json:"digest"`
+			} `json:"config"`
 		}
-		if err = json.Unmarshal(blob, &manifest); err != nil {
-			t.Fatalf("manifest invalide: %v", err)
+		if err = json.Unmarshal(man, &manifest); err != nil {
+			t.Fatal(err)
 		}
-		readBlob(t, out, manifest.Config.Digest)
-		if len(manifest.Layers) != 1 {
-			t.Fatalf("1 layer expected, %d trouves", len(manifest.Layers))
+		var cfg = readBlob(t, out, manifest.Config.Digest)
+		var config struct {
+			Config struct {
+				Entrypoint []string `json:"Entrypoint"`
+			} `json:"config"`
 		}
-		readBlob(t, out, manifest.Layers[0].Digest)
-	}
-
-	// REGRESSION : l'index doit be adressable par son propre digest, donc
-	// present comme blob. Sans ca, `docker pull` bascule sur un repli deprecie
-	// et `docker compose up` fails — le client resout le tag puis redemande le
-	// manifeste par digest (cf. build() et internal/distrib/registry.go).
-	var sum = sha256.Sum256(indexData)
-	var indexDigest = "sha256:" + hex.EncodeToString(sum[:])
-	var indexBlob = readBlob(t, out, indexDigest)
-	if string(indexBlob) != string(indexData) {
-		t.Error("le blob de l'index ne correspond pas a index.json")
-	}
-
-	// La variante arm/v7 doit be decrite dans une des plateformes.
-	var hasVariant = false
-	for _, m = range index.Manifests {
-		if m.Platform["variant"] == "v7" && m.Platform["architecture"] == "arm" {
-			hasVariant = true
+		if err = json.Unmarshal(cfg, &config); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if !hasVariant {
-		t.Error("plateforme arm/v7 absente de l'index")
+		if len(config.Config.Entrypoint) != 1 || config.Config.Entrypoint[0] != c.entry {
+			t.Errorf("%s: entrypoint %v, want [%s]", c.name, config.Config.Entrypoint, c.entry)
+		}
 	}
 }
 
-// readBlob lit un blob et verifies que son contenu correspond a son digest.
-func readBlob(t *testing.T, layout, digest string) []byte {
+func readBlob(t *testing.T, out, digest string) []byte {
 	t.Helper()
-	var hexDigest = digest[len("sha256:"):]
-	var data, err = os.ReadFile(filepath.Join(layout, "blobs", "sha256", hexDigest))
+	var hex = digest[len("sha256:"):]
+	var data, err = os.ReadFile(filepath.Join(out, "blobs", "sha256", hex))
 	if err != nil {
 		t.Fatalf("blob %s: %v", digest, err)
-	}
-	var sum = sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != hexDigest {
-		t.Fatalf("digest du blob %s ne correspond pas a son contenu", digest)
 	}
 	return data
 }

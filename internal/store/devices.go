@@ -284,6 +284,153 @@ func (s *Store) SaveSTPObserved(ctx context.Context, deviceID string, observed [
 	return err
 }
 
+// SaveSTPSuperRoot records the operator's SUPER ROOT intent for one device under
+// devices.extra.stp_super_root.
+//
+// # This one is an INTENT, and every other tenant of this shelf is an OBSERVATION
+//
+// `stp_observed`, `poe_observed`, `optics_observed` and `dhcp_snooping_observed`
+// are all "what the device said last time somebody asked". This is the opposite:
+// nobody read it off a switch, an operator ticked a box. Putting it here anyway
+// is a deliberate departure and worth naming, because a reviewer will notice.
+//
+// It goes here because Extra is EXPLICITLY OUTSIDE THE CONFORMITY DIFF (cf.
+// deviceaddr.go and the conformity walk): a device carrying this flag must not
+// show drift on account of it. A dedicated column would put it inside the model
+// the diff compares, and "this switch is the region root" is not a divergence
+// from anything — it is a decision.
+//
+// # Why it is stored at all rather than derived
+//
+// The only alternative signal is an OBSERVED bridge priority of 0, and reading
+// the checkbox back off that would be a deduction dressed as a record: a switch
+// somebody set to priority 0 by hand years ago would render as though meshcraft
+// had been asked for it, and un-ticking the box would then "restore" a value
+// meshcraft never chose. The checkbox has to render the INTENT.
+func (s *Store) SaveSTPSuperRoot(ctx context.Context, deviceID string, on bool) error {
+	var raw = "false"
+	if on {
+		raw = "true"
+	}
+	var tag, err = s.pool.Exec(ctx,
+		`update devices set extra = jsonb_set(
+		    coalesce(extra, '{}'::jsonb), '{stp_super_root}', $2::jsonb, true)
+		 where id = $1::uuid`, deviceID, raw)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// SaveLAGIntent records the DESIRED aggregate list under devices.extra.lags.
+//
+// An INTENT on the observation shelf, like stp_super_root and under its
+// argument: Extra is outside the conformity diff, and an aggregate intent
+// must not surface as port drift while no LAG conformity rule exists. The
+// OBSERVED aggregates ride devices.observed.lags (driver.State carries them),
+// so the pair reads exactly like ports do — desired beside observed —
+// without either entering the other's comparisons.
+func (s *Store) SaveLAGIntent(ctx context.Context, deviceID string, lags []byte) error {
+	if len(lags) == 0 {
+		lags = []byte("[]")
+	}
+	var tag, err = s.pool.Exec(ctx,
+		`update devices set extra = jsonb_set(
+		    coalesce(extra, '{}'::jsonb), '{lags}', $2::jsonb, true)
+		 where id = $1::uuid`, deviceID, lags)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// SavePoEObserved records the last PoE observation under devices.extra.poe_observed.
+//
+// Same shelf as SaveSTPObserved, and for the same reason: an optional platform
+// fact, refreshed on read-state, that must never enter VLAN drift. What is
+// stored is the whole driver.PoEState — per-port scope (Capable), configured
+// class, and the measured snapshot that came with the read. The measured part
+// is NOT a history and must not be read as one: it is "what the device said
+// the last time someone asked", refreshed at read-state cadence, and the
+// per-port history that would answer "since when" belongs to the metrics
+// pipeline (internal/tsdb), not here. Persisting the snapshot anyway is what
+// lets the device sheet say "this jack has no PSE hardware" and "configured
+// passive 24V" without forcing a live round-trip to a switch that may be
+// unreachable at that moment.
+func (s *Store) SavePoEObserved(ctx context.Context, deviceID string, observed []byte) error {
+	if len(observed) == 0 {
+		observed = []byte("{}")
+	}
+	var tag, err = s.pool.Exec(ctx,
+		`update devices set extra = jsonb_set(
+		    coalesce(extra, '{}'::jsonb), '{poe_observed}', $2::jsonb, true)
+		 where id = $1::uuid`, deviceID, observed)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// SaveDHCPSnoopObserved records the last DHCP-snooping observation under
+// devices.extra.dhcp_snooping_observed.
+//
+// Same shelf as SaveSTPObserved and SavePoEObserved, and for the same reason:
+// an optional platform fact, refreshed when someone asks, that must never
+// enter VLAN drift. What is stored is the whole driver.DHCPSnoopState — the
+// GLOBAL enable, the VLANs the feature actually inspects, and the per-port
+// trust flags — and storing the three together is the entire point. A screen
+// that kept only the port flags would show "trusted" on a device whose
+// global snooping is off, which is the precise failure the driver contract
+// (internal/driver/dhcpsnoop.go, § "the per-port control is TRUST") exists to
+// prevent: an exact configuration and zero protection.
+//
+// A port ABSENT from the stored Ports list was NOT OBSERVED, and that is not
+// the same as untrusted. Nothing here defaults it — the reader on the other
+// end must keep the distinction, because "untrusted" is the protected state
+// and "not read" is an unknown.
+//
+// NO MIGRATION: `devices.extra` is jsonb and this is one more key on the same
+// shelf, exactly like the three above.
+func (s *Store) SaveDHCPSnoopObserved(ctx context.Context, deviceID string, observed []byte) error {
+	if len(observed) == 0 {
+		observed = []byte("{}")
+	}
+	var tag, err = s.pool.Exec(ctx,
+		`update devices set extra = jsonb_set(
+		    coalesce(extra, '{}'::jsonb), '{dhcp_snooping_observed}', $2::jsonb, true)
+		 where id = $1::uuid`, deviceID, observed)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+// SaveOpticsObserved records the last transceiver-diagnostics observation
+// under devices.extra.optics_observed.
+//
+// Same shelf as SaveSTPObserved and SavePoEObserved, and the same doctrine:
+// an optional platform fact, refreshed on read-state, that must never enter
+// VLAN drift — a receive power that moves a tenth of a dBm between two reads
+// is a fibre being a fibre, not a configuration change. And like the PoE
+// snapshot, this is "what the device said the last time someone asked", not
+// a history: per-port power over time belongs to the metrics pipeline
+// (internal/tsdb) the day a collector can take a CLI-sourced sample.
+// Persisting the snapshot is what lets the device sheet say "FS SFP-10G-BX
+// in XG1, RX -1.85 dBm at last read" while the switch is unreachable.
+func (s *Store) SaveOpticsObserved(ctx context.Context, deviceID string, observed []byte) error {
+	if len(observed) == 0 {
+		observed = []byte("{}")
+	}
+	var tag, err = s.pool.Exec(ctx,
+		`update devices set extra = jsonb_set(
+		    coalesce(extra, '{}'::jsonb), '{optics_observed}', $2::jsonb, true)
+		 where id = $1::uuid`, deviceID, observed)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
 // ErrProxyUnknown: the designated collector proxy does not exist.
 //
 // The foreign key catches it, and that is intentional: a control `select` before
@@ -590,7 +737,7 @@ func (s *Store) SetDeviceMgmtIP(ctx context.Context, deviceID, ip string) error 
 // DevicesWatchedBy returns devices CANDIDATE for monitoring by a proxy: those with an
 // address, on sites this proxy covers. An instance proxy covers all sites.
 //
-// Coverage decides eligibility, as elsewhere (cf. docs/01-Architecture/Proxy). It is not
+// Coverage decides eligibility, as elsewhere (cf. docs/en/01-Architecture/Proxy.md). It is not
 // enough to make a target list: an instance proxy covering two sites both using
 // 192.168.1.0/24 would receive two devices at the SAME address here, and the proxy pings
 // by address. Final sorting belongs to netscope.SelectWatchTargets, which uses the address
@@ -729,7 +876,7 @@ func (s *Store) SetDeviceSNMPStatus(ctx context.Context, deviceID, status,
 }
 
 // --- Observed state and drift attribution ---
-// See docs/01-Architecture/Reconciliation sections 2 and 6.
+// See docs/en/01-Architecture/Reconciliation.md sections 2 and 6.
 
 // SaveObserved records what the device ACTUALLY carries.
 //

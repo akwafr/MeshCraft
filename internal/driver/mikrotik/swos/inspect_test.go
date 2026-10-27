@@ -10,7 +10,7 @@ import (
 // Identification, and this platform's pleasant surprise: the model is obtained
 // WITHOUT the slightest credential.
 
-// TestModeleDansLeRealm: the Digest challenge carries the exact reference.
+// TestModelInTheRealm: the Digest challenge carries the exact reference.
 //
 // This is the REAL challenge from the equipment, captured by hitting /sys.b with no
 // credentials:
@@ -23,7 +23,7 @@ import (
 // page in hopes of a descriptor, here it's enough to knock on the door. This is
 // what lets discovery pick the right capabilities — and therefore the right
 // facade geometry — before it even has a secret.
-func TestModeleDansLeRealm(t *testing.T) {
+func TestModelInTheRealm(t *testing.T) {
 	var challenge = `Digest realm="CSS326-24G-2S+", qop="auth", nonce="84aaad9d", stale=FALSE`
 	var model, ok = ModelFromRealm(challenge)
 	if !ok || model != "CSS326-24G-2S+" {
@@ -34,13 +34,13 @@ func TestModeleDansLeRealm(t *testing.T) {
 	}
 }
 
-// TestRealmInattenduRefuse: a realm that isn't a MikroTik reference means
+// TestUnexpectedRealmRefused: a realm that isn't a MikroTik reference means
 // we aren't talking to a SwOS device.
 //
 // Saying so is better than forcing the equipment into this range anyway: the
 // capabilities that follow from it decide what gets written.
-func TestRealmInattenduRefuse(t *testing.T) {
-	var cas = []string{
+func TestUnexpectedRealmRefused(t *testing.T) {
+	var cases = []string{
 		"",
 		"Basic realm=\"index.html\"",
 		`Digest realm="RouterOS", qop="auth", nonce="x"`,
@@ -48,7 +48,7 @@ func TestRealmInattenduRefuse(t *testing.T) {
 		`Digest qop="auth", nonce="x"`, // no realm at all
 	}
 	var c string
-	for _, c = range cas {
+	for _, c = range cases {
 		var model, ok = ModelFromRealm(c)
 		if ok {
 			t.Errorf("ModelFromRealm(%q) latched onto %q", c, model)
@@ -61,16 +61,16 @@ func TestRealmInattenduRefuse(t *testing.T) {
 	}
 }
 
-// TestEnTeteInsensibleALaCasse: the header is found regardless of case.
+// TestHeaderIsCaseInsensitive: the header is found regardless of case.
 //
 // `driver.Response.Headers` is a plain map that carries keys in whatever case the
 // SERVER sent them. A direct lookup by "WWW-Authenticate" would return an empty
 // string the day a firmware capitalizes it differently — which would lead to
 // concluding "this isn't a SwOS" about equipment that actually is one.
-func TestEnTeteInsensibleALaCasse(t *testing.T) {
-	var cas = []string{"WWW-Authenticate", "Www-Authenticate", "www-authenticate"}
+func TestHeaderIsCaseInsensitive(t *testing.T) {
+	var cases = []string{"WWW-Authenticate", "Www-Authenticate", "www-authenticate"}
 	var k string
-	for _, k = range cas {
+	for _, k = range cases {
 		var h = map[string][]string{k: {`Digest realm="CSS326-24G-2S+"`}}
 		var got = header(h, hdrAuthenticate)
 		if got == "" {
@@ -88,12 +88,12 @@ func TestEnTeteInsensibleALaCasse(t *testing.T) {
 	}
 }
 
-// TestIdentiteDepuisLesCapturesReelles: what /sys.b and /link.b add to the realm.
+// TestIdentityFromRealCaptures: what /sys.b and /link.b add to the realm.
 //
 // The realm gives the model; everything else — serial, firmware, system name, MAC,
 // facade, management addressing — requires authenticating. This test replays the two
 // pages exactly as the equipment served them.
-func TestIdentiteDepuisLesCapturesReelles(t *testing.T) {
+func TestIdentityFromRealCaptures(t *testing.T) {
 	var sys, err = ParseObject(capture(t, "sys.b"))
 	if err != nil {
 		t.Fatalf("/sys.b: %v", err)
@@ -112,8 +112,8 @@ func TestIdentiteDepuisLesCapturesReelles(t *testing.T) {
 		t.Fatalf("facade unreadable: %v", fillErr)
 	}
 
-	var cas = []struct {
-		champ, got, attendu string
+	var cases = []struct {
+		field, got, want string
 	}{
 		{"model", id.Model, "CSS326-24G-2S+"},
 		{"family", id.Family, "CSS"},
@@ -121,16 +121,16 @@ func TestIdentiteDepuisLesCapturesReelles(t *testing.T) {
 		{"firmware", id.Firmware, "2.17"},
 		{"system name", id.Hostname, "lan-m6"},
 		{"MAC", id.MAC, "b8:69:f4:5f:14:a8"},
-		{"management address", id.MgmtIP, "10.99.0.36"},
+		{"management address", id.MgmtIP, "192.0.2.36"},
 		// The source must switch to `sys.b`: the model was CONFIRMED from the
 		// inside, and the interface must not present at the same rank what comes from
 		// the front door and what comes from the inside.
 		{"source", id.Source, "sys.b"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		if c.got != c.attendu {
-			t.Errorf("%s = %q, expected %q", c.champ, c.got, c.attendu)
+	var c = cases[0]
+	for _, c = range cases {
+		if c.got != c.want {
+			t.Errorf("%s = %q, expected %q", c.field, c.got, c.want)
 		}
 	}
 	if id.MgmtVLAN != 99 {
@@ -157,7 +157,7 @@ func TestIdentiteDepuisLesCapturesReelles(t *testing.T) {
 	}
 }
 
-// TestGroupesDeFacadeNommesCommeLEquipement: the recorded facade carries the names
+// TestFaceplateGroupsNamedLikeTheDevice: the recorded facade carries the names
 // the switch itself uses.
 //
 // TWO FAMILIES, each restarting at 1: "Port1"… "Port24" for copper, "SFP1"
@@ -176,7 +176,7 @@ func TestIdentiteDepuisLesCapturesReelles(t *testing.T) {
 // These groups aren't decorative: they're what the web interface expands to enumerate
 // the ports (`expandPorts`), and what internal/portrules draws the media from — hence the
 // "SFP+" label being kept, which is what causes the cage to be classified as 10 gigabit.
-func TestGroupesDeFacadeNommesCommeLEquipement(t *testing.T) {
+func TestFaceplateGroupsNamedLikeTheDevice(t *testing.T) {
 	var id = Identity{
 		Model: "CSS326-24G-2S+", CopperPorts: 24, SFPPorts: 2, SFPFirst: 24, SFPPlus: true,
 	}
@@ -214,14 +214,14 @@ func TestGroupesDeFacadeNommesCommeLEquipement(t *testing.T) {
 	}
 }
 
-// TestGeometrieSansOffsetDeCages: the fallback when the firmware doesn't say where the
+// TestGeometryWithoutCageOffset: the fallback when the firmware doesn't say where the
 // cages are.
 //
 // The `sfpo` field is OPTIONAL, and the equipment's interface then places the
 // cages at the end (`t = void 0==d.sfpo ? da : d.sfpo`). Reproducing this fallback is
 // necessary: an older firmware may omit it, and assuming 0 would place the
 // cages at the front of the facade.
-func TestGeometrieSansOffsetDeCages(t *testing.T) {
+func TestGeometryWithoutCageOffset(t *testing.T) {
 	var page, err = ParseObject("{prt:0x1a,sfp:0x02}")
 	if err != nil {
 		t.Fatalf("page refused: %v", err)
@@ -235,22 +235,22 @@ func TestGeometrieSansOffsetDeCages(t *testing.T) {
 	}
 }
 
-// TestGeometrieIncoherenteRefusee: a geometry that makes no sense must stop
+// TestInconsistentGeometryRefused: a geometry that makes no sense must stop
 // the read.
 //
 // The port count decides the field set to send back on /fwd.b: getting it wrong
 // would send a truncated page, and the equipment would be free to reset to zero
 // the port isolation of all its ports.
-func TestGeometrieIncoherenteRefusee(t *testing.T) {
-	var cas = []struct{ nom, src string }{
+func TestInconsistentGeometryRefused(t *testing.T) {
+	var cases = []struct{ name, src string }{
 		{"no port count", "{sfp:0x02}"},
 		{"zero ports", "{prt:0x00}"},
 		{"more cages than ports", "{prt:0x02,sfp:0x04}"},
 		{"cages outside the facade", "{prt:0x1a,sfp:0x02,sfpo:0x40}"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
 			var page, err = ParseObject(c.src)
 			if err != nil {
 				t.Fatalf("page refused by the parser: %v", err)
@@ -266,26 +266,26 @@ func TestGeometrieIncoherenteRefusee(t *testing.T) {
 // doesn't need `:=`, which is forbidden in this repository.
 var geoErr error
 
-// TestAdressageAllerRetour: decoding and encoding an address agree.
+// TestAddressingRoundTrip: decoding and encoding an address agree.
 //
 // This is THE detail that makes you set a wrong address. Byte order is
 // little-endian: the first octet in dotted notation is the low-order
 // byte. Checking it in both directions is what proves the two functions weren't
 // simply inverted in a consistently wrong way.
-func TestAdressageAllerRetour(t *testing.T) {
+func TestAddressingRoundTrip(t *testing.T) {
 	// The left-hand value is what the equipment actually served for
 	// the address it answered on.
-	var cas = []struct {
+	var cases = []struct {
 		brut   uint32
 		pointe string
 	}{
-		{0x2400630a, "10.99.0.36"},
+		{0x240200c0, "192.0.2.36"},
 		{0x0100a8c0, "192.168.0.1"},
 		{0x00000000, "0.0.0.0"},
 		{0xffffffff, "255.255.255.255"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got = DecodeIPv4(c.brut)
 		if got != c.pointe {
 			t.Errorf("DecodeIPv4(%#x) = %q, expected %q", c.brut, got, c.pointe)
@@ -297,7 +297,7 @@ func TestAdressageAllerRetour(t *testing.T) {
 	}
 	// Something that isn't an address must be refused, not turned into zero: setting
 	// 0.0.0.0 while believing an address was set would make the equipment unreachable.
-	var mauvaises = []string{"", "10.99.0", "10.99.0.256", "10.99.0.36.1", "ten.99.0.36"}
+	var mauvaises = []string{"", "192.0.2", "192.0.2.256", "192.0.2.36.1", "ten.99.0.36"}
 	var s string
 	for _, s = range mauvaises {
 		var _, crsOK = EncodeIPv4(s)
@@ -307,8 +307,8 @@ func TestAdressageAllerRetour(t *testing.T) {
 	}
 }
 
-// TestDecodageMAC: no byte-order inversion, and refusal of anything that isn't a MAC.
-func TestDecodageMAC(t *testing.T) {
+// TestMACDecoding: no byte-order inversion, and refusal of anything that isn't a MAC.
+func TestMACDecoding(t *testing.T) {
 	var got, ok = DecodeMAC("b869f45f14a8")
 	if !ok || got != "b8:69:f4:5f:14:a8" {
 		t.Errorf("DecodeMAC = %q (ok=%v)", got, ok)
@@ -323,66 +323,66 @@ func TestDecodageMAC(t *testing.T) {
 	}
 }
 
-// TestFingerprintReconnaissance: SwOS is recognized by its name, and RouterOS is excluded.
+// TestFingerprintRecognition: SwOS is recognized by its name, and RouterOS is excluded.
 //
 // The RouterOS exclusion is the only case in this project where two connectors
 // compete for the same chassis: a CRS boots under one system or the other, and their
 // capabilities have nothing in common.
-func TestFingerprintReconnaissance(t *testing.T) {
+func TestFingerprintRecognition(t *testing.T) {
 	var d = &Driver{}
-	var cas = []struct {
-		nom      string
+	var cases = []struct {
+		name     string
 		ev       driver.Evidence
-		attendu  int
+		want     int
 		operator string
 	}{
 		{
-			nom: "title and model",
+			name: "title and model",
 			ev: driver.Evidence{
 				HTTPTitle: "MikroTik SwOS",
 				HTTPBody:  `Digest realm="CSS326-24G-2S+"`,
 			},
-			attendu: 98,
+			want: 98,
 		},
 		{
-			nom:     "title alone",
-			ev:      driver.Evidence{HTTPTitle: "MikroTik SwOS"},
-			attendu: 95,
+			name: "title alone",
+			ev:   driver.Evidence{HTTPTitle: "MikroTik SwOS"},
+			want: 95,
 		},
 		{
-			nom:     "model alone, without the system name",
-			ev:      driver.Evidence{HTTPBody: `Digest realm="CSS610-8G-2S+"`},
-			attendu: 55,
+			name: "model alone, without the system name",
+			ev:   driver.Evidence{HTTPBody: `Digest realm="CSS610-8G-2S+"`},
+			want: 55,
 		},
 		{
 			// The chassis is a CRS, but it's RouterOS that booted: it's not
 			// meant for this connector.
-			nom: "CRS running RouterOS",
+			name: "CRS running RouterOS",
 			ev: driver.Evidence{
 				HTTPTitle: "RouterOS",
 				SysDescr:  "RouterOS CRS328-24P-4S+",
 			},
-			attendu: 0,
+			want: 0,
 		},
 		{
-			nom:     "other platform",
-			ev:      driver.Evidence{HTTPTitle: "Instant On - Hewlett Packard Enterprise"},
-			attendu: 0,
+			name: "other platform",
+			ev:   driver.Evidence{HTTPTitle: "Instant On - Hewlett Packard Enterprise"},
+			want: 0,
 		},
-		{nom: "nothing", ev: driver.Evidence{}, attendu: 0},
+		{name: "nothing", ev: driver.Evidence{}, want: 0},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
 			var got = d.Fingerprint(c.ev)
-			if got != c.attendu {
-				t.Errorf("Fingerprint = %d, expected %d", got, c.attendu)
+			if got != c.want {
+				t.Errorf("Fingerprint = %d, expected %d", got, c.want)
 			}
 		})
 	}
 }
 
-// TestJeuDeChampsFwdSuitLaTaille: the port count decides the field set.
+// TestFwdFieldSetFollowsTheSize: the port count decides the field set.
 //
 // /fwd.b is the only page whose writable set depends on the model's size:
 // it carries a SOURCE-port isolation mask. Copying the field set observed
@@ -393,7 +393,7 @@ func TestFingerprintReconnaissance(t *testing.T) {
 // This is also why the geometry is READ from /link.b and never deduced from the
 // model name: a naming convention can be wrong, equipment asked about its own
 // geometry cannot.
-func TestJeuDeChampsFwdSuitLaTaille(t *testing.T) {
+func TestFwdFieldSetFollowsTheSize(t *testing.T) {
 	var petits = FwdWritableFields(10)
 	var grands = FwdWritableFields(26)
 	if len(grands)-len(petits) != 16 {
@@ -421,8 +421,8 @@ func TestJeuDeChampsFwdSuitLaTaille(t *testing.T) {
 	}
 }
 
-// TestPortGroupsVideSansFacade: with no facade read, no ports are invented.
-func TestPortGroupsVideSansFacade(t *testing.T) {
+// TestPortGroupsEmptyWithoutFaceplate: with no facade read, no ports are invented.
+func TestPortGroupsEmptyWithoutFaceplate(t *testing.T) {
 	var id = Identity{Model: "CSS326-24G-2S+"}
 	if !reflect.DeepEqual(id.PortGroups(), []map[string]any{}) {
 		t.Errorf("PortGroups with no facade = %v, expected empty", id.PortGroups())

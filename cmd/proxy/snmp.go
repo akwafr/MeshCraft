@@ -17,163 +17,203 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Collecte SNMP, executee par le PROXY.
+// SNMP collection, run by the PROXY.
 //
-// Voir docs/01-Architecture/Monitoring unifie et pipelines §2. Le controleur
-// dit QUI interroger et a quelle cadence ; le proxy interroge, met en tampon, et
-// pousse. Il n'arbitre pas les cadences : elles resultent d'une politique
-// d'exploitation bornee par le plancher du connecteur, et ces deux data ne sont
-// connues que du controleur.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md §2. The
+// controller says WHO to poll and at what cadence; the proxy polls, buffers and
+// pushes. It does not arbitrate cadences: they come out of an operating policy
+// bounded by the connector's floor, and both of those facts are known only to
+// the controller.
 //
-// Ce que le proxy decide, en revanche, c'est le RATE de sa remontee — et c'est
-// tout l'objet de la section suivante.
+// What the proxy does decide is the RATE at which it ships upstream — and that
+// is the whole subject of the next section.
 
-// --- Debit de remontee : le calcul, avant les valeurs ---
+// --- Upstream rate: the arithmetic, before the values ---
 //
-// La politique de collecte (cf. internal/api/watch_handlers.go) met le trafic et
-// les erreurs a 5 s. Le calcul qui en decoule est refait ICI parce que c'est ici
-// qu'il se paie :
+// The collection policy (see internal/api/watch_handlers.go) puts traffic and
+// errors at 5 s. The arithmetic that follows from it is redone HERE because
+// this is where it is paid for:
 //
-//   - `snmppoll.Samples` rend QUATRE samples par port pour `if_counters`
-//     (octets in/out, erreurs in/out) et DEUX pour `if_state` (etat, vitesse) ;
-//   - un 1930 48 ports expose 52 interfaces physiques (48 cuivre + 4 SFP) ;
-//   - donc 208 samples toutes les 5 s (41,6/s) plus 104 toutes les 30 s
-//     (3,5/s) : environ 45 samples par seconde et PAR DEVICE.
+//   - `snmppoll.Samples` returns FOUR samples per port for `if_counters`
+//     (octets in/out, errors in/out) and TWO for `if_state` (state, speed);
+//   - a 48-port 1930 exposes 52 physical interfaces (48 copper + 4 SFP);
+//   - so 208 samples every 5 s (41.6/s) plus 104 every 30 s
+//     (3.5/s): about 45 samples per second PER DEVICE.
 //
-// L'ancien reglage — 5000 samples toutes les 10 s — evacuait 500/s, soit
-// ONZE devices de 48 ports. Au-dela, `metricbuf` jetait ses points les plus
-// vieux : des trous dans les courbes, et pas une ligne de journal pour les
-// expliquer, puisque `flush` ne parlait que des pertes par failure d'ENVOI. Livrer
-// la cadence sans regler ca, c'eut been livrer une cadence qui ne remonte pas.
+// # THE BUFFER HAS TWO PRODUCERS, AND THIS ARITHMETIC DESCRIBES ONLY ONE
 //
-// # Le plafond n'est pas dans ce fichier
+// Everything above talks about POLLING. Since streaming telemetry exists,
+// `cmd/proxy/main.go` hands THIS buffer to the gNMI collector — one buffer, one
+// saturation counter, on purpose (see cmd/proxy/gnmi.go) — and a streaming
+// device has no poll cadence to put in the table above.
 //
-// Il est chez le controleur : `/api/proxy/metrics` lit son corps avec un
-// `http.MaxBytesReader` a 8 MiB (`maxProxyMetricsBody`) et refuse au-dela de
-// 20 000 samples par lot (`maxSamplesPerBatch`). Ca n'a pas toujours been le
-// cas, et c'est l'histoire qu'il faut garder : cette route passait par le decoder
-// generique de l'API, borne a 1 MiB, soit environ 5000 samples. Son garde-fou
-// affiche de 20 000 was donc INATTEIGNABLE, et la troncature repondait a sa place
-// par un 400 « JSON invalide ». Un lot un peu trop gros ne degradait pas la
-// remontee, il l'ARRETAIT : le proxy faisait `Nack`, qui rend le lot EN TETE de
-// file, donc le `Take` suivant reprenait exactement le same — et il le rejouait sans
-// fin sur un lot qui ne passerait jamais.
+// The tempting conclusion is that streaming costs nothing: ON CHANGE
+// subscriptions produce nothing on a stable fleet. It is WRONG, and defusing
+// that trap is why this section exists. What dominates is not on-change, it is
+// `if_counters`, subscribed in SAMPLE mode, at a cadence, on every port at
+// once — exactly the shape of a poll and fully subject to the same
+// arithmetic:
 //
-// Ce default avait deux halves, et il fallait reparer les deux. Le controleur
-// accepte now ce qu'il annonce ; et `flush` sait ne plus rejouer un refus
-// DEFINITIF (voir refusDefinitif). La seconde half compte au moins autant que la
-// first : le 413 n'est plus atteignable pour un proxy a jour, mais la boucle
-// restait armee pour n'importe quel AUTRE refus de forme.
+//   - EIGHT series per port arrive from a 7050SX (octets, packets, errors and
+//     discards, in and out; `carrier-transitions` is NOT served by this stream);
+//   - the reference chassis carries 64 front-panel ports;
+//   - the resolved cadence is 5 s — the floor declared by the connector and the
+//     value the controller wants coincide;
+//   - so 512 samples every 5 s: about 102 samples per second per device,
+//     MORE THAN TWICE a 1930 polled over SNMP.
 //
-// Ce qui borne `maxPerFlush` aujourd'hui, c'est donc le garde-fou en NOMBRE et non
-// plus la taille en octets : mesure sur des samples actually produits par
-// `snmppoll` (52 ports, identifiant d'device en UUID), un compteur pese 196 o
-// de JSON avec le nommage d'usine et 229 o avec un label de 37 caracteres saisi
-// par l'exploitant — 8 MiB laissent donc passer ~36 000 samples, bien after le
-// mur des 20 000. Et c'est toujours la FREQUENCE qui porte le rate.
+// The two figures add up in the same buffer. A mixed fleet is therefore bounded
+// by the sum of both rates, and a streaming fleet tops out at LESS THAN HALF
+// the device count announced below for polling. Both calculations are checked
+// on every test run, against the code that produces the samples and not
+// against this comment: see cmd/proxy/snmp_throughput_test.go for polling and
+// cmd/proxy/gnmi_throughput_test.go for streaming.
+//
+// The old setting — 5000 samples every 10 s — drained 500/s, i.e. ELEVEN
+// 48-port devices. Beyond that, `metricbuf` dropped its oldest points: holes in
+// the graphs, and not one log line to explain them, since `flush` only spoke of
+// losses caused by a SEND failure. Shipping the cadence without fixing that
+// would have meant shipping a cadence that never reaches the controller.
+//
+// # The ceiling is not in this file
+//
+// It lives on the controller: `/api/proxy/metrics` reads its body through an
+// `http.MaxBytesReader` at 8 MiB (`maxProxyMetricsBody`) and refuses more than
+// 20,000 samples per batch (`maxSamplesPerBatch`). That has not always been the
+// case, and the history is worth keeping: this route used to go through the
+// API's generic decoder, capped at 1 MiB, i.e. about 5000 samples. Its
+// advertised guard of 20,000 was therefore UNREACHABLE, and truncation answered
+// in its place with a 400 "invalid JSON". A slightly oversized batch did not
+// degrade the upstream flow, it STOPPED it: the proxy did a `Nack`, which puts
+// the batch back at the HEAD of the queue, so the next `Take` picked up exactly
+// the same one — and replayed it forever on a batch that would never pass.
+//
+// That defect had two halves, and both had to be fixed. The controller now
+// accepts what it advertises; and `flush` knows not to replay a PERMANENT
+// refusal (see isPermanentRefusal). The second half matters at least as much as the
+// first: a 413 is no longer reachable for an up-to-date proxy, but the loop was
+// still armed for any OTHER shape refusal.
+//
+// What bounds `maxPerFlush` today is therefore the COUNT guard and no longer
+// the byte size: measured on samples actually produced by `snmppoll` (52 ports,
+// device identifier as a UUID), a counter weighs 196 B of JSON with factory
+// naming and 229 B with a 37-character label typed by the operator — so 8 MiB
+// lets ~36,000 samples through, well past the 20,000 wall. And it is still the
+// FREQUENCY that carries the rate.
 
-// flushEvery : period de wake du vidage.
+// flushEvery: wake-up period of the flush.
 //
-// 2 s et non 10 : a taille de lot bornee, la frequence est le seul levier de rate
-// qui reste. Le cost est en requests HTTP, pas en octets — le
-// volume de data est le same, decoupe plus fin — et il ne se paie que s'il y a
-// quelque chose a envoyer : `flush` sort immediatement sur un tampon vide, donc un
-// petit site ne fabrique pas de trafic pour rien.
+// 2 s and not 10: with a bounded batch size, frequency is the only rate lever
+// left. The cost is in HTTP requests, not bytes — the data volume is the same,
+// cut finer — and it is only paid when there is something to send: `flush`
+// returns immediately on an empty buffer, so a small site generates no traffic
+// for nothing.
 const flushEvery = 2 * time.Second
 
-// maxPerFlush borne un lot. 3000 × 229 o = 672 KiB mesures au poids d'un label long,
-// soit 8 % du plafond de corps de 8 MiB du controleur et 15 % de son garde-fou de
-// 20 000 samples par lot — c'est ce DERNIER qui est now le mur, et il est
-// loin. Les chiffres sont verified a chaque execution des tests sur des samples
-// produits par `snmppoll`, et le mur y est CALCULE a partir du poids mesure rather
-// que recopie : voir cmd/proxy/snmp_throughput_test.go.
+// maxPerFlush bounds a batch. 3000 × 229 B = 672 KiB measured at the weight of
+// a long label, i.e. 8 % of the controller's 8 MiB body ceiling and 15 % of its
+// 20,000-samples-per-batch guard — the LATTER is now the wall, and it is far
+// away. The figures are checked on every test run against samples produced by
+// `snmppoll`, and the wall is COMPUTED there from the measured weight rather
+// than copied: see cmd/proxy/snmp_throughput_test.go.
 //
-// Monter ce nombre reste un arbitrage, mais ce n'est plus un risque de blocage :
-// au-dela du mur, le controleur repond 413 et `flush` ABANDONNE le lot en le
-// journalisant (cf. refusDefinitif) au lieu de le rejouer pour toujours. Ce qui se
-// paie de l'autre cote, c'est la memory transitoire du controleur — il decodes le
-// lot entier en RAM avant d'en write le premier point.
+// Raising this number remains a trade-off, but no longer a risk of a stall:
+// past the wall, the controller answers 413 and `flush` DROPS the batch and
+// logs it (see isPermanentRefusal) instead of replaying it forever. What is paid on
+// the other side is the controller's transient memory — it decodes the whole
+// batch in RAM before writing its first point.
 const maxPerFlush = 3000
 
-// maxFlushBurst : lots consecutifs autorises par wake. C'est LUI qui porte le
-// rate soutenable, et c'est aussi lui qui permet a un tampon en retard — retour
-// de coupure de tunnel — de se rattraper au lieu de courir derriere la collecte
-// pour toujours.
+// maxFlushBurst: consecutive batches allowed per wake-up. THIS is what carries
+// the sustainable rate, and it is also what lets a lagging buffer — after a
+// tunnel outage — catch up instead of chasing the collection forever.
 //
-// 4 × 3000 toutes les 2 s = 6000 samples/s, soit 133 devices de
-// 48 ports par proxy (contre 11 avant ce lot). Au plafond, cela demande au
-// controleur 2 requests par seconde de ~670 KiB, environ 1,3 Mo/s : c'est le prix
-// affiche de la cadence a 5 s, et il est lineaire en nombre d'devices.
+// 4 × 3000 every 2 s = 6000 samples/s. At the ceiling, that asks the controller
+// for 2 requests per second of ~670 KiB, about 1.3 MB/s: that is the advertised
+// price of the 5 s cadence, and it is linear in the number of devices.
+//
+// WHAT 6000 samples/s MEANS IN DEVICES DEPENDS ON THE PRODUCER, and stating it
+// as a single figure was this comment's mistake:
+//
+//   - 133 devices of 48 ports polled over SNMP at 45 samples/s (versus 11 before
+//     this batch);
+//   - ~58 chassis of 64 ports on gNMI telemetry at ~102 samples/s.
+//
+// Since the buffer is shared, a mixed fleet is bounded by the sum of the rates
+// and not by the larger of the two numbers. The second figure is the one to
+// remember when sizing a proxy that sees Aristas: it is the lower one.
 const maxFlushBurst = 4
 
-// bufCapacity : profondeur du tampon, en samples.
+// bufCapacity: buffer depth, in samples.
 //
-// Une fois le rate regle, le tampon ne sert plus a absorber un deficit
-// permanent — il n'y en a plus jusqu'a 133 devices — mais a couvrir une
-// COUPURE DE TUNNEL, ce pour quoi il a been written. Sa taille se lit donc en duree
-// d'indisponibilite : 150 000 samples, c'est 25 s au plafond de rate,
-// 2 min 46 s pour un parc de 20 devices et 4 min 37 s pour 12 — there where
-// l'ancienne capability de 50 000 ne couvrait qu'une minute et demie pour ce
-// dernier, tout en debordant already en regime NORMAL.
+// Once the rate is set, the buffer no longer absorbs a permanent deficit —
+// there is none up to the ceilings announced by `maxFlushBurst`, 133 devices
+// polled or ~58 streaming — but covers a TUNNEL OUTAGE, which is what it was
+// written for. Its size therefore reads as outage duration: 150,000 samples is
+// 25 s at the rate ceiling, 2 min 46 s for a 20-device fleet and 4 min 37 s for
+// 12 — where the old capacity of 50,000 covered only a minute and a half for
+// the latter, while already overflowing in NORMAL operation.
 //
-// La borne haute est la MEMORY du proxy, qui tourne sur une VM minimale ou un
-// Raspberry Pi (docs/01-Architecture/Proxy.md) : mesure, un `metricbuf.Sample`
-// occupe 401 octets en tas — l'essentiel etant sa carte d'tags, pas sa
-// valeur. 150 000 points plafonnent donc a ~57 Mio, et seulement pendant une
-// coupure. Doubler la capability doublerait ce chiffre : c'est there qu'est
-// l'arbitrage, pas dans le nombre d'samples.
+// The upper bound is the proxy's MEMORY, since it runs on a minimal VM or a
+// Raspberry Pi (docs/en/01-Architecture/Proxy.md): measured, a
+// `metricbuf.Sample` takes 401 bytes of heap — mostly its tag map, not its
+// value. 150,000 points therefore top out at ~57 MiB, and only during an
+// outage. Doubling the capacity would double that figure: that is where the
+// trade-off is, not in the sample count.
 const bufCapacity = 150000
 
-// dropReportEvery amortit l'alerte de saturation. Voir reportSaturation : une
-// saturation dure, et une ligne toutes les deux secondes pendant une heure
-// noierait le journal au lieu de l'informer.
+// dropReportEvery throttles the saturation alert. See reportSaturation:
+// saturation lasts, and one line every two seconds for an hour would drown the
+// log instead of informing it.
 const dropReportEvery = time.Minute
 
-// snmpCollector est l'instance du proxy. Nil tant que le proxy n'est pas
-// enrole : sans identity, il n'a personne a qui pousser.
+// snmpCollector is the proxy's instance. Nil while the proxy is not enrolled:
+// without an identity, it has nobody to push to.
 var snmpCollector *SNMPCollector
 
-// SNMPCollector interroge les cibles et pousse les results.
+// SNMPCollector polls the targets and pushes the results.
 type SNMPCollector struct {
 	mu      sync.Mutex
 	watches []tunnel.SNMPWatch
 	buf     *metricbuf.Buffer
-	// last : last interrogation par (device, metrique), pour tenir la cadence
-	// sans un minuteur par cible — cent minuteurs pour cent devices coutent
-	// plus que de regarder l'heure.
+	// last: last poll per (device, metric), to keep the cadence without one timer
+	// per target — a hundred timers for a hundred devices cost more than looking
+	// at the clock.
 	last map[string]time.Time
-	// portStates : dernier `ifOperStatus` observe, par device puis par index
-	// d'interface. C'est de CETTE carte que sortent les transitions de port, a
-	// chaque poll `if_state` et quel qu'en soit le declencheur (cf. trap.go).
+	// portStates: last observed `ifOperStatus`, per device then per interface
+	// index. Port transitions come out of THIS map, on every `if_state` poll and
+	// whatever triggered it (see trap.go).
 	//
-	// Elle vit a cote du tampon de metriques, pas dedans : le tampon part par lots
-	// vers le controleur (cf. flushEvery), l'evenement part TOUT DE SUITE. C'est
-	// exactement there que se gagne la reactivity — et c'est ce qui rend tenable de
-	// ralentir `if_state` a 30 s, puisque la pastille d'un port ne depend pas du
-	// rythme de vidage.
+	// It lives next to the metrics buffer, not inside it: the buffer goes to the
+	// controller in batches (see flushEvery), the event goes RIGHT AWAY. That is
+	// exactly where responsiveness is won — and it is what makes slowing
+	// `if_state` to 30 s bearable, since a port's status dot does not depend on the
+	// flush rhythm.
 	portStates map[string]map[int]portObs
 	// snmpReach: last known SNMP reachability per device. Same shape as ICMP
 	// targetState — nil means never observed, and Snapshot stays silent then.
 	snmpReach map[string]*snmpReachState
-	// emit : depot d'un evenement vers le controleur, branche par le proxy
-	// (SetEmitter). Nil = pas encore cable.
+	// emit: hands an event to the controller, wired by the proxy (SetEmitter).
+	// Nil = not wired yet.
 	emit func(tunnel.Event)
-	// traps : la socket de traps en ecoute, nil sinon. trapTried / trapRetryAt /
-	// trapErrSaid amortissent un bind qui fails (voir reconcileTraps).
+	// traps: the listening trap socket, nil otherwise. trapTried / trapRetryAt /
+	// trapErrSaid throttle a failing bind (see reconcileTraps).
 	traps       *trapReceiver
 	trapTried   int
 	trapRetryAt time.Time
 	trapErrSaid bool
 	trapGate    *trapGate
 	trapStats   trapStats
-	// lldpSaid : dernier instant where failure de poussee du voisinage a been journalise,
-	// par device (cf. sayLLDPError). Sous le same verrou que le reste, parce qu'un
-	// travail de voisinage tourne dans la same rafale de goroutines que les polls.
+	// lldpSaid: last instant a neighbour-push failure was logged, per device (see
+	// sayLLDPError). Under the same lock as the rest, because neighbour work runs
+	// in the same burst of goroutines as the polls.
 	//
-	// Borne par le nombre d'devices SURVEILLES, pas par le nombre d'echecs : une
-	// ingress par device dont une poussee a echoue au moins une fois. Purge avec la
-	// liste de surveillance, comme `portStates`.
+	// Bounded by the number of WATCHED devices, not by the number of failures: one
+	// entry per device whose push failed at least once. Purged with the watch
+	// list, like `portStates`.
 	lldpSaid map[string]time.Time
+	// fdbSaid : same contract as lldpSaid, for the forwarding-table pushes.
+	fdbSaid map[string]time.Time
 
 	controllerURL string
 	proxyID       string
@@ -195,12 +235,12 @@ func NewSNMPCollector(controllerURL, proxyID, secret string) *SNMPCollector {
 	}
 }
 
-// SetEmitter branche la sortie d'evenements du collecteur.
+// SetEmitter wires the collector's event output.
 //
-// Le collecteur ne possede pas ce canal : c'est celui du Monitor, already relie au
-// controleur par le tunnel (cf. tunnel.SendEvents) et already non bloquant. Un
-// second canal obligerait a fusionner deux flux qui vont au same endroit, et a
-// arbitrer leur ordre — du travail pour aucune information de plus.
+// The collector does not own this channel: it is the Monitor's, already linked
+// to the controller by the tunnel (see tunnel.SendEvents) and already
+// non-blocking. A second channel would force merging two streams going to the
+// same place, and arbitrating their order — work for no extra information.
 func (c *SNMPCollector) SetEmitter(fn func(tunnel.Event)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -286,17 +326,17 @@ func (c *SNMPCollector) Snapshot() []tunnel.Event {
 	return out
 }
 
-// SetWatches remplace la liste des cibles.
+// SetWatches replaces the target list.
 func (c *SNMPCollector) SetWatches(w []tunnel.SNMPWatch) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.watches = w
 
-	// Un device retire de la surveillance sort des etats de port, SANS
-	// evenement : ce n'est pas une panne, c'est une decision d'exploitation — la
-	// same rule que pour les cibles ICMP dans Monitor.SetConfig. Le garder
-	// laisserait en plus, a sa reintegration, un etat vieux de plusieurs jours
-	// contre lequel diffe produirait une transition imaginaire.
+	// A device removed from monitoring leaves the port states WITHOUT an event:
+	// it is not an outage, it is an operating decision — the same rule as for ICMP
+	// targets in Monitor.SetConfig. Keeping it would also leave, when it comes
+	// back, a state several days old against which the diff would produce an
+	// imaginary transition.
 	var watched = make(map[string]bool, len(w))
 	var one tunnel.SNMPWatch
 	for _, one = range w {
@@ -308,13 +348,18 @@ func (c *SNMPCollector) SetWatches(w []tunnel.SNMPWatch) {
 			delete(c.portStates, id)
 		}
 	}
-	// L'amortissement du journal de voisinage suit la same rule, et pour une raison de
-	// plus : un device qui revient dans la surveillance revient d'un monde where la
-	// configuration du controleur a pu changer. Taire le premier failure de sa poussee
-	// ferait manquer precisely celui qui denonce le nouveau reglage.
+	// The neighbour-log throttle follows the same rule, and for one more reason: a
+	// device coming back into monitoring comes back from a world where the
+	// controller's configuration may have changed. Silencing the first failure of
+	// its push would miss precisely the one that exposes the new setting.
 	for id = range c.lldpSaid {
 		if !watched[id] {
 			delete(c.lldpSaid, id)
+		}
+	}
+	for id = range c.fdbSaid {
+		if !watched[id] {
+			delete(c.fdbSaid, id)
 		}
 	}
 	for id = range c.snmpReach {
@@ -322,20 +367,46 @@ func (c *SNMPCollector) SetWatches(w []tunnel.SNMPWatch) {
 			delete(c.snmpReach, id)
 		}
 	}
+	// The cadences follow, for both reasons at once.
+	//
+	// The first is size: `c.last` was the only collector map that was never
+	// purged, hence the only one bounded by devices EVER watched rather than by
+	// devices watched. On a controller that moves its devices between proxies, it
+	// never shrinks.
+	//
+	// The second is the first poll on return, and it is narrower than size: `due`
+	// compares `now - prev` to the cadence, so a stale timestamp delays nothing as
+	// soon as it is older than the cadence — a device gone for an hour is polled
+	// again right away. What is paid is removal then return WITHIN the cadence (a
+	// watch correction, a controller restart): the map says "already polled" and
+	// the first poll waits up to a whole period. The device therefore comes back
+	// silent precisely during the seconds one wants to see it.
+	//
+	// Keys are composite (`deviceID|metric`, see pollDue and trapPoll): split on
+	// the LAST separator, the suffix never contains one.
+	var key string
+	for key = range c.last {
+		var cut = strings.LastIndex(key, "|")
+		if cut < 0 {
+			continue
+		}
+		if !watched[key[:cut]] {
+			delete(c.last, key)
+		}
+	}
 	c.trapGate.forget(watched)
 }
 
-// Run boucle jusqu'a l'arret : interroger ce qui est du, pousser ce qui attend.
+// Run loops until stopped: poll what is due, push what is waiting.
 func (c *SNMPCollector) Run(ctx context.Context) {
-	// L'ecoute des traps se reconcilie dans sa propre goroutine : lier ou fermer
-	// une socket n'a pas a retarder l'interrogation du parc.
+	// Trap listening is reconciled in its own goroutine: binding or closing a
+	// socket has no business delaying the fleet poll.
 	go c.trapLoop(ctx)
-	// Le vidage aussi, et c'est un changement que la nouvelle cadence rend
-	// necessary : il est cinq fois plus frequent qu'avant et porte le trafic de
-	// tout le parc. Laisse sur le tic de cette boucle, un controleur lent — jusqu'a
-	// 20 s de delai d'attente HTTP — aurait retarde d'autant l'INTERROGATION des
-	// devices. La remontee aurait alors degrade la collecte, i.e.
-	// exactement ce qu'un tampon existe pour empecher.
+	// So is flushing, and the new cadence makes that change necessary: it is five
+	// times more frequent than before and carries the whole fleet's traffic. Left
+	// on this loop's tick, a slow controller — up to a 20 s HTTP timeout — would
+	// have delayed device POLLING by as much. Upstream would then have degraded
+	// collection, i.e. exactly what a buffer exists to prevent.
 	go c.flushLoop(ctx)
 
 	var tick = time.NewTicker(time.Second)
@@ -351,19 +422,19 @@ func (c *SNMPCollector) Run(ctx context.Context) {
 	}
 }
 
-// flushLoop evacue le tampon vers le controleur.
+// flushLoop drains the buffer to the controller.
 //
-// Jusqu'a `maxFlushBurst` lots par wake, et l'on stops from qu'un lot part
-// INCOMPLET : c'est le signal qu'il n'y a plus rien en attente, et insister
-// enverrait des requests vides. Voir aussi le retour de `flush` pour le cas d'un
-// controleur qui refuse.
+// Up to `maxFlushBurst` batches per wake-up, stopping as soon as a batch goes
+// out INCOMPLETE: that signals nothing is left waiting, and insisting would
+// send empty requests. See also `flush`'s return value for the case of a
+// controller that refuses.
 func (c *SNMPCollector) flushLoop(ctx context.Context) {
 	var tick = time.NewTicker(flushEvery)
 	defer tick.Stop()
-	// Ces deux compteurs sont LOCAUX a cette goroutine : personne d'autre ne les
-	// lit, donc aucun verrou a prendre et rien a ajouter a la structure. Les
-	// ranger dans `SNMPCollector` aurait ouvert un troisieme etat partage pour un
-	// besoin qui ne quitte jamais cette boucle.
+	// These two counters are LOCAL to this goroutine: nobody else reads them, so
+	// no lock to take and nothing to add to the struct. Putting them in
+	// `SNMPCollector` would have opened a third piece of shared state for a need
+	// that never leaves this loop.
 	var saidAt time.Time
 	var saidDropped uint64
 	for {
@@ -382,21 +453,29 @@ func (c *SNMPCollector) flushLoop(ctx context.Context) {
 	}
 }
 
-// reportSaturation journalise une perte de points par SATURATION.
+// reportSaturation logs a loss of points caused by SATURATION.
 //
-// `flush` ne parlait que des pertes accompagnant un failure d'envoi, et ce n'est pas
-// le same symptome : un tampon qui deborde parce que la collecte produit plus vite
-// que la remontee n'evacue est le mode failure que la cadence a 5 s rend possible,
-// et il est parfaitement SILENCIEUX vu de l'exploitant — le tunnel est debout, les
-// requests reussissent, et il ne reste que des trous dans les courbes. C'est donc
-// la perte qu'il fallait nommer.
+// `flush` only spoke of losses accompanying a send failure, and that is not
+// the same symptom: a buffer overflowing because collection produces faster
+// than upstream drains is the failure mode the 5 s cadence makes possible, and
+// it is completely SILENT from the operator's point of view — the tunnel is
+// up, requests succeed, and all that is left is holes in the graphs. So that
+// is the loss that needed naming.
 //
-// Le compte annonce est celui de la PERIOD, pas le cumul depuis le demarrage :
-// « 42 000 points perdus depuis la last minute » se decide, « 3 200 000 depuis
-// le demarrage » se subit. Le rate soutenable accompagne la ligne, parce que la
-// first question de celui qui la lit est « combien puis-je en encaisser ? ».
+// IT IS NOT ONLY ABOUT SNMP, even though it lives on the SNMP collector. The
+// buffer is shared with the gNMI collector (see cmd/proxy/main.go), so lost
+// points may come from one, the other, or both — and that is precisely why
+// there is only one counter: two buffers would mean two counters, and a
+// saturation on the streaming side would be named nowhere. The sustainable rate
+// attached to the line reads against the SUM of both productions (see the
+// header of this file).
 //
-// Rend le nouveau couple (instant du dernier dit, cumul already dit).
+// The count announced is the PERIOD's, not the total since startup: "42,000
+// points lost in the last minute" can be acted on, "3,200,000 since startup"
+// can only be endured. The sustainable rate comes with the line, because the
+// first question of whoever reads it is "how much can I absorb?".
+//
+// Returns the new pair (instant of the last report, total already reported).
 func (c *SNMPCollector) reportSaturation(saidAt time.Time,
 	saidDropped uint64) (time.Time, uint64) {
 	var st = c.buf.Stats()
@@ -404,28 +483,28 @@ func (c *SNMPCollector) reportSaturation(saidAt time.Time,
 		return saidAt, saidDropped
 	}
 	var now = time.Now()
-	// `saidAt` nul = on n'a encore rien dit : la FIRST perte se dit tout de
-	// suite. L'amortissement ne doit pas retarder l'apparition du symptome, il
-	// doit seulement empecher sa repetition.
+	// `saidAt` zero = nothing said yet: the FIRST loss is reported right away.
+	// Throttling must not delay the symptom's appearance, it must only prevent its
+	// repetition.
 	if !saidAt.IsZero() && now.Sub(saidAt) < dropReportEvery {
 		return saidAt, saidDropped
 	}
-	slog.Warn("tampon de metriques sature : des points de mesure sont perdus",
-		"perdus_depuis", st.Dropped-saidDropped, "perdus_total", st.Dropped,
-		"en_attente", st.Queued, "capability", st.Cap,
-		"soutenable_par_s", sustainedSamplesPerSecond())
+	slog.Warn("metrics buffer saturated: measurement points are being lost",
+		"lost_since", st.Dropped-saidDropped, "lost_total", st.Dropped,
+		"queued", st.Queued, "capacity", st.Cap,
+		"sustainable_per_s", sustainedSamplesPerSecond())
 	return now, st.Dropped
 }
 
-// sustainedSamplesPerSecond rend le rate que la remontee evacue en regime
-// permanent. Calcule, jamais recopie : c'est le chiffre qui doit changer TOUT
-// SEUL quand on retouche `flushEvery`, `maxPerFlush` ou `maxFlushBurst`, sans quoi
-// le journal finirait par annoncer une capability qui n'existe plus.
+// sustainedSamplesPerSecond returns the rate upstream drains in steady state.
+// Computed, never copied: it is the figure that must change ON ITS OWN when
+// `flushEvery`, `maxPerFlush` or `maxFlushBurst` are touched, otherwise the
+// log would end up advertising a capacity that no longer exists.
 //
-// Le calcul passe par `time.Duration` (un int64) et non par un entier de
-// plateforme : le produit intermediaire vaut 1,2 × 10¹³ nanosecondes, ce qui
-// deborderait un `int` de 32 bits. La forme est aussi la seule qui reste juste si
-// `flushEvery` descendait sous la seconde.
+// The computation goes through `time.Duration` (an int64) and not a platform
+// integer: the intermediate product is 1.2 × 10¹³ nanoseconds, which would
+// overflow a 32-bit `int`. This form is also the only one that stays correct if
+// `flushEvery` dropped below one second.
 func sustainedSamplesPerSecond() int {
 	return int(time.Duration(maxFlushBurst*maxPerFlush) * time.Second / flushEvery)
 }
@@ -442,7 +521,7 @@ func (c *SNMPCollector) due(key string, now time.Time, every int) bool {
 	return true
 }
 
-// pollDue interroge les cibles dont la cadence est echue.
+// pollDue polls the targets whose cadence has elapsed.
 func (c *SNMPCollector) pollDue(ctx context.Context, now time.Time) {
 	c.mu.Lock()
 	var watches = append([]tunnel.SNMPWatch{}, c.watches...)
@@ -456,37 +535,42 @@ func (c *SNMPCollector) pollDue(ctx context.Context, now time.Time) {
 		if c.due(w.DeviceID+"|counters", now, w.CountersIntervalS) {
 			jobs = append(jobs, c.job(ctx, target, snmppoll.MetricIfCounters, triggerPoll, ""))
 		}
-		// Les deux jeux de CAPTEURS, et leur cadence peut valoir zero — auquel cas
-		// `due` rend faux et rien n'est interroge. Ce n'est pas un cas degrade mais le
-		// regime NORMAL d'un device dont le connecteur ne declares pas ces canaux :
-		// contrairement a state et aux compteurs, qui tiennent dans MIB-II et existent
-		// partout, la sante et le diagnostic optique reposent sur des branches
-		// proprietaires. Les interroger sur un device qui ne les sert pas ne
-		// rendrait que des « no such object », a chaque cycle et sur tout le parc.
+		// The two SENSOR sets, whose cadence may be zero — in which case `due`
+		// returns false and nothing is polled. That is not a degraded case but the
+		// NORMAL state of a device whose connector does not declare these channels:
+		// unlike state and counters, which fit in MIB-II and exist everywhere, health
+		// and optical diagnostics rely on proprietary branches. Polling them on a
+		// device that does not serve them would only return "no such object", every
+		// cycle and across the whole fleet.
 		//
-		// C'est le controleur qui decide de les allumer, parce qu'il est le seul a
-		// connaitre les capabilities du connecteur (cf. tunnel.SNMPWatch).
+		// The controller decides to turn them on, because it is the only one that
+		// knows the connector's capabilities (see tunnel.SNMPWatch).
 		if c.due(w.DeviceID+"|health", now, w.HealthIntervalS) {
 			jobs = append(jobs, c.job(ctx, target, snmppoll.MetricHealth, triggerPoll, ""))
 		}
 		if c.due(w.DeviceID+"|optical", now, w.OpticalIntervalS) {
 			jobs = append(jobs, c.job(ctx, target, snmppoll.MetricOptical, triggerPoll, ""))
 		}
-		// Le VOISINAGE, et son travail n'est pas de la same famille que les quatre
-		// autres : il ne rend pas d'samples et ne passe pas par le tampon. Il est
-		// ordonnance ici quand same — rather que dans une boucle a lui — parce que c'est
-		// la same consigne, la same cible et le same plafond de parallelisme qui doivent
-		// s'y appliquer. Deux ordonnanceurs sur la same liste de cibles finiraient par
-		// interroger un device retire de la surveillance par l'un et pas par l'autre.
+		// NEIGHBOURS, whose work is not of the same family as the other four: it
+		// returns no samples and does not go through the buffer. It is scheduled here
+		// anyway — rather than in a loop of its own — because the same instruction,
+		// the same target and the same parallelism cap must apply to it. Two schedulers
+		// on the same target list would end up polling a device removed from
+		// monitoring by one and not by the other.
 		if c.due(w.DeviceID+"|lldp", now, w.LLDPIntervalS) {
 			jobs = append(jobs, c.lldpJob(ctx, target))
+		}
+		// The FORWARDING TABLE, same family as neighbours: a snapshot, no samples, its
+		// own route — and the same scheduler, for the same reason (see the neighbour
+		// comment above).
+		if c.due(w.DeviceID+"|fdb", now, w.FDBIntervalS) {
+			jobs = append(jobs, c.fdbJob(ctx, target))
 		}
 	}
 	c.mu.Unlock()
 
-	// En parallele, mais borne : un parc de deux cents devices interroges
-	// tous en same temps saturerait la table NAT du proxy avant de saturer quoi
-	// que ce soit d'autre.
+	// In parallel, but bounded: a fleet of two hundred devices polled all at once
+	// would saturate the proxy's NAT table before saturating anything else.
 	var sem = make(chan struct{}, 16)
 	var wg sync.WaitGroup
 	var j func()
@@ -502,57 +586,70 @@ func (c *SNMPCollector) pollDue(ctx context.Context, now time.Time) {
 	wg.Wait()
 }
 
-// targetOf traduit une consigne du controleur en cible interrogeable. Un seul
-// endroit, pour que le poll ordinaire et le poll avance par un trap parlent au
-// same device avec les memes parameters.
+// targetOf translates a controller instruction into a pollable target. One
+// place, so that the ordinary poll and the poll brought forward by a trap talk
+// to the same device with the same parameters.
 func targetOf(w tunnel.SNMPWatch) snmppoll.Target {
-	return snmppoll.Target{
+	var t = snmppoll.Target{
 		DeviceID: w.DeviceID, IP: w.IP, Community: w.Community, Port: w.Port,
-		MaxIfIndex: w.MaxIfIndex,
+		MaxIfIndex: w.MaxIfIndex, FDBPerVLAN: w.FDBPerVLAN,
 	}
+	// A watch carrying a USM identity is a v3 device; the version flag is
+	// derived rather than shipped, so the two can never disagree.
+	if w.V3User != "" {
+		t.Version = "v3"
+		t.V3User, t.V3AuthAlg, t.V3AuthSecret = w.V3User, w.V3AuthAlg, w.V3AuthSecret
+	}
+	return t
 }
 
-// --- Ce que les jeux de capteurs changent au RATE, et ce qu'ils ne changent pas ---
+// --- What the sensor sets change in the RATE, and what they do not ---
 //
-// Le calcul de rate at the top de ce fichier reste juste, et il vaut mieux dire pourquoi
-// que de le laisser supposer : `health` et `optical_power` sont negligeables devant
-// `if_counters`, d'un facteur qui se mesure en centaines.
+// The rate arithmetic at the top of this file still holds, and it is better to
+// say why than to leave it assumed: `health` and `optical_power` are negligible
+// next to `if_counters`, by a factor measured in hundreds.
 //
-//	if_counters      52 ports × 4 series      toutes les 5 s     41,6 samples/s
-//	if_state         52 ports × 2 series      toutes les 30 s     3,5 samples/s
-//	health           ~8 series d'device   toutes les 300 s    0,03 sample/s
-//	optical_power    4 cages × 8 series       toutes les 60 s     0,53 sample/s
+//	if_counters      52 ports × 4 series      every 5 s          41.6 samples/s
+//	if_state         52 ports × 2 series      every 30 s          3.5 samples/s
+//	health           ~8 device series         every 300 s        0.03 sample/s
+//	optical_power    4 cages × 8 series       every 60 s         0.53 sample/s
 //
-// Autrement dit, les deux nouveaux jeux ajoutent moins de 1,3 % au rate d'un
-// device de 48 ports. Le plafond de 133 devices par proxy ne bouge pas, et il
-// n'y avait aucune raison de retoucher `maxPerFlush` ni `maxFlushBurst` pour ce lot.
+// `optical_power` has walked FIFTEEN branches since 2026-08-12, no longer nine:
+// the Cisco family (CISCO-ENTITY-SENSOR-MIB) adds six — four sensor columns and
+// the two ENTITY-MIB columns they must be JOINED with to know which port they
+// refer to. The rate does not move for all that: a switch serves one of the two
+// families, never both, and the empty walk of the other produces no sample.
 //
-// Ce qu'ils coutent est ailleurs, et c'est sur l'DEVICE : `health` demande seize
-// walks distincts parce que les capteurs de la MIKROTIK-MIB sont des scalaires d'une
-// same branche, qu'on ne peut donc pas parcourir d'un coup sans les ecraser les uns sur
-// les autres (cf. l'en-tete de internal/snmppoll/health.go). Seize requests toutes les
-// cinq minutes font un paquet toutes les vingt secondes : c'est deux ordres de grandeur
-// sous ce que costs already le trafic, et c'est ce qui rend la cadence de cinq minutes
-// confortable rather que prudente.
+// In other words, the two new sets add less than 1.3 % to the rate of a 48-port
+// device. The ceiling of 133 devices per proxy does not move, and there was no
+// reason to touch `maxPerFlush` or `maxFlushBurst` for this batch.
+//
+// What they cost is elsewhere, and it is on the DEVICE: `health` needs sixteen
+// separate walks because MIKROTIK-MIB sensors are scalars of a single branch,
+// which therefore cannot be walked in one go without overwriting each other
+// (see the header of internal/snmppoll/health.go). Sixteen requests every five
+// minutes make one packet every twenty seconds: two orders of magnitude below
+// what the traffic already costs, and that is what makes the five-minute
+// cadence comfortable rather than cautious.
 
-// job rend le travail d'une interrogation. `trigger` et `trapLabel` ne changent
-// rien a ce qui est LU — ils ne servent only qualifier les evenements qui en
-// sortent : ce qui nous a fait regarder maintenant, pas hence vient la verite.
+// job returns the work of one poll. `trigger` and `trapLabel` change nothing
+// in what is READ — they only qualify the events that come out of it: what
+// made us look now, not where the truth comes from.
 func (c *SNMPCollector) job(ctx context.Context, t snmppoll.Target,
 	metric, trigger, trapLabel string) func() {
 	return func() {
 		var p = &snmppoll.Poller{Target: t}
 		var samples, err = p.Poll(ctx, metric)
 		if err != nil {
-			// Un device muet est un fait d'exploitation ordinaire — il est
-			// off, ou SNMP n'y est pas encore configure. Le journaliser a chaque
-			// cycle noierait le reste : DEBUG, pas WARN.
+			// A silent device is an ordinary operating fact — it is off, or SNMP is not
+			// configured on it yet. Logging it every cycle would drown the rest: DEBUG,
+			// not WARN.
 			//
-			// Et surtout : on ne touche PAS aux etats de port. Un poll qui fails ne
-			// prouve rien sur les ports ; en conclure qu'ils sont tombes ferait
-			// clignoter une front panel entire a chaque paquet UDP perdu, alors que le
-			// suivi ICMP dit already, lui, si the device repond.
-			slog.Debug("SNMP sans response", "device", t.DeviceID, "ip", t.IP,
+			// And above all: port states are NOT touched. A failing poll proves nothing
+			// about the ports; concluding they are down would make an entire front panel
+			// blink on every lost UDP packet, while ICMP monitoring already says whether
+			// the device answers.
+			slog.Debug("SNMP no response", "device", t.DeviceID, "ip", t.IP,
 				"metric", metric, "err", err.Error())
 			// Reachability for if_state / if_counters only: those are MIB-II floors
 			// every agent answers. A failed optical walk on a copper switch must not
@@ -565,7 +662,7 @@ func (c *SNMPCollector) job(ctx context.Context, t snmppoll.Target,
 		if metric == snmppoll.MetricIfState || metric == snmppoll.MetricIfCounters {
 			c.noteSNMPReach(t.DeviceID, t.IP, true)
 		}
-		// La metrique continue son chemin habituel : le lot part au prochain flush.
+		// The metric continues on its usual path: the batch leaves on the next flush.
 		c.buf.AddAll(samples)
 		if metric == snmppoll.MetricIfState {
 			c.notePortStates(t.DeviceID, samples, trigger, trapLabel)
@@ -573,25 +670,26 @@ func (c *SNMPCollector) job(ctx context.Context, t snmppoll.Target,
 	}
 }
 
-// motifMaxBytes borne la lecture du motif de refus. Ces corps-there sont des responses
-// d'erreur JSON de quelques dizaines d'octets ; lire sans borne ce qu'un
-// intermediaire mal regle peut renvoyer (une page HTML d'erreur de plusieurs
-// centaines de kilooctets) ferait payer au proxy la memory de ce qu'il refuse already.
-const motifMaxBytes = 512
+// reasonMaxBytes bounds how much of the refusal reason is read. These bodies are
+// JSON error responses of a few dozen bytes; reading without a bound whatever a
+// misconfigured intermediary may send back (an HTML error page of several
+// hundred kilobytes) would make the proxy pay in memory for what it is already
+// refusing.
+const reasonMaxBytes = 512
 
-// refusalReason extrait ce que le controleur DIT de son refus.
+// refusalReason extracts what the controller SAYS about its refusal.
 //
-// Ne sert que sur le chemin d'ABANDON, et c'est deliberate. C'est le seul where des
-// points meurent : « 3000 points abandonnes, status 413 » laisse l'exploitant
-// deviner lequel de ses reglages est en cause, alors que la phrase du controleur la
-// nomme (cf. batchGeste, internal/api/proxymetrics_handlers.go). Sur le chemin du
-// rejeu, au contraire, la same ligne reviendrait toutes les deux secondes : rien a y
-// gagner, et un corps a lire a chaque tentative.
+// Used only on the DROP path, and deliberately so. It is the only one where
+// points die: "3000 points dropped, status 413" leaves the operator guessing
+// which of their settings is at fault, whereas the controller's sentence names
+// it (see batchRecovery, internal/api/proxymetrics_handlers.go). On the replay
+// path, by contrast, the same line would come back every two seconds: nothing
+// to gain, and a body to read on every attempt.
 //
-// Un corps tronque a motifMaxBytes n'est plus du JSON valide : le repli sur le texte
-// brut est donc la branche NORMALE de ce cas, pas un cas d'erreur.
+// A body truncated at reasonMaxBytes is no longer valid JSON: falling back to
+// the raw text is therefore the NORMAL branch of that case, not an error case.
 func refusalReason(r io.Reader) string {
-	var raw, err = io.ReadAll(io.LimitReader(r, motifMaxBytes))
+	var raw, err = io.ReadAll(io.LimitReader(r, reasonMaxBytes))
 	if err != nil || len(raw) == 0 {
 		return ""
 	}
@@ -604,96 +702,98 @@ func refusalReason(r io.Reader) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// refusDefinitif dit si un refus du controleur est DEFINITIF, i.e. si
-// rejouer le same lot ne peut pas en changer le verdict.
+// isPermanentRefusal says whether a controller refusal is PERMANENT, i.e. whether
+// replaying the same batch cannot change the verdict.
 //
-// C'est la frontiere la plus chargee de ce fichier, parce que les deux erreurs
-// possibles ne coutent pas le same prix :
+// This is the most loaded boundary in this file, because the two possible
+// mistakes do not cost the same price:
 //
-//   - croire definitif ce qui was passager PERD un lot qui serait passe dix
-//     secondes plus tard. Une perte bornee, visible, et de la valeur d'un lot ;
-//   - croire passager ce qui was definitif ARRETE la remontee. `Nack` rend le lot
-//     EN TETE de file, donc le `Take` suivant reprend exactement le same : un lot
-//     refused pour sa forme revient IDENTIQUE au flush suivant, et a tous les
-//     suivants. Le tampon ne se vide plus, il deborde par le haut, et ce sont les
-//     points les plus RECENTS que la collecte perd. Pas une perte partielle : la fin
-//     de la remontee pour ce proxy.
+//   - taking as permanent what was transient LOSES a batch that would have gone
+//     through ten seconds later. A bounded, visible loss worth one batch;
+//   - taking as transient what was permanent STOPS upstream. `Nack` puts the
+//     batch back at the HEAD of the queue, so the next `Take` picks up exactly
+//     the same one: a batch refused for its shape comes back IDENTICAL on the
+//     next flush, and on every one after. The buffer no longer drains, it
+//     overflows from the top, and the collection loses its MOST RECENT points.
+//     Not a partial loss: the end of upstream for this proxy.
 //
-// La seconde erreur est sans borne, la first non — et pourtant la liste des cas
-// definitifs est FERMEE : ce qu'on ne sait pas classer est traite comme PASSAGER,
-// donc du cote de l'erreur la plus chere. Ce n'est pas une contradiction, c'est un
-// arbitrage sur la REPARABILITE, et il faut le dire dans ce sens-there :
+// The second mistake is unbounded, the first is not — and yet the list of
+// permanent cases is CLOSED: what cannot be classified is treated as
+// TRANSIENT, i.e. on the side of the more expensive mistake. That is not a
+// contradiction, it is a trade-off on REPAIRABILITY, and it must be stated
+// that way round:
 //
-//   - un abandon est IRREVERSIBLE et discret. Les points sont detruits, et le seul
-//     temoin est une ligne de journal que personne ne lira peut-be jamais ;
-//   - un blocage est BRUYANT et reparable. Chaque refus se journalise, la saturation
-//     se crie chaque minute, et les points attendent dans le tampon. Un exploitant
-//     finit par voir le symptome, et le lot repart from que la cause est corrigee.
+//   - a drop is IRREVERSIBLE and quiet. The points are destroyed, and the only
+//     witness is a log line nobody may ever read;
+//   - a stall is NOISY and repairable. Every refusal is logged, saturation
+//     shouts every minute, and the points wait in the buffer. An operator ends
+//     up seeing the symptom, and the batch goes out as soon as the cause is fixed.
 //
-// Face a un code de retour qu'on n'a pas planned, on ne sait pas lequel des deux cas
-// on a sous la main. Choisir le blocage laisse une chance de comprendre et de
-// reparer ; choisir l'abandon detruit la data avant qu'on ait pu se poser la
-// question. Hence enumeration EXPLICITE des deux cotes : le repli ne rattrape que
-// des codes que cette route ne produit pas.
+// Faced with a status code nobody planned for, we do not know which of the two
+// cases we have in hand. Choosing the stall leaves a chance to understand and
+// repair; choosing the drop destroys the data before anyone could ask the
+// question. Hence EXPLICIT enumeration on both sides: the fallback only catches
+// codes this route does not produce.
 //
-// Cas par cas, et le raisonnement rather que le code :
+// Case by case, and the reasoning rather than the code:
 //
-//   - `Retry-After` present → PASSAGER, quel que soit le code. Un refus qui dit
-//     quand revenir est un refus qui attend qu'on revienne. Teste en PREMIER, parce
-//     que c'est exactement ce qu'un `>= 400` un peu large rangerait du mauvais cote :
-//     un 429 ou un 503 de maintenance sont des demandes de patience, pas des refus ;
-//   - 400 → DEFINITIF. Le controleur a lu le corps et n'en veut pas. Les memes
-//     octets rendront le same verdict, aussi longtemps qu'on les renverra. C'est le
-//     same raisonnement que le `Ack` sur un `json.Marshal` en failure, plus bas dans
-//     `flush` : illisible, le rejouer ne changerait rien ;
-//   - 413 → DEFINITIF. Corps au-dela de `maxProxyMetricsBody`, ou lot au-dela de
-//     `maxSamplesPerBatch`. Le contenu est bon, c'est le VOLUME qui ne passe pas — et
-//     rejouer a l'identique ne retrecit rien (sur le redecoupage, voir plus bas) ;
-//   - 415 → DEFINITIF. `flush` envoie toujours le same `Content-Type` ;
-//   - 422 → DEFINITIF. Le controleur a compris la request et refuse le fond.
+//   - `Retry-After` present → TRANSIENT, whatever the code. A refusal that says
+//     when to come back is a refusal waiting for you to come back. Tested FIRST,
+//     because it is exactly what a slightly broad `>= 400` would file on the
+//     wrong side: a 429 or a maintenance 503 asks for patience, it is not a refusal;
+//   - 400 → PERMANENT. The controller read the body and does not want it. The
+//     same bytes will get the same verdict for as long as they are resent. Same
+//     reasoning as the `Ack` on a failed `json.Marshal`, further down in
+//     `flush`: unreadable, replaying it would change nothing;
+//   - 413 → PERMANENT. Body over `maxProxyMetricsBody`, or batch over
+//     `maxSamplesPerBatch`. The content is fine, it is the VOLUME that does not
+//     fit — and replaying it identically shrinks nothing (on re-splitting, see below);
+//   - 415 → PERMANENT. `flush` always sends the same `Content-Type`;
+//   - 422 → PERMANENT. The controller understood the request and rejects its substance.
 //
-// Et les refus qu'on rejoue, ceux dont il faut dire POURQUOI ils ne sont pas dans
-// la liste :
+// And the refusals that are replayed, the ones for which we must say WHY they
+// are not on the list:
 //
-//   - 401 / 403 → PASSAGER, et c'est la decision la plus discutable du lot. Elle se
-//     tient sur un fait : ici le controleur ne reproche rien AU LOT — il ne l'a same
-//     pas regarde, l'authentification passant after la lecture du corps. Un secret se
-//     rotationne, une revocation s'annule, un controleur qui redemarre peut refuser
-//     une seconde avant d'accepter ; abandonner jetterait des points qu'un
-//     enrolement a jour aurait pris. L'objection est reelle — un proxy revoque rejoue
-//     pour toujours et ne remonte plus rien — mais elle ne se repare pas ici :
-//     abandonner sur 403 ne remonterait pas un point de plus, ca n'en effacerait que
-//     la trace. Le tampon est borne, il jette ses plus vieux, `reportSaturation` le
-//     dit toutes les minutes et chaque refus a sa ligne. Un proxy revoque n'a de
-//     toute way plus de destinataire pour ses metriques ;
-//   - 404 / 405 → PASSAGER. Route absente : controleur d'une version anterieure, ou
-//     URL mal reglee. Un deploiement ou une correction de configuration repare, et le
-//     lot repart alors tel quel — c'est precisely ce qu'un tampon existe pour
-//     couvrir ;
-//   - 408 / 429 → PASSAGER par definition, avec ou sans `Retry-After` ;
-//   - 5xx → PASSAGER, sans exception. Le controleur est en difficulte, pas en
-//     desaccord : 502 sur une write VictoriaMetrics en failure, 503 sur un stockage
-//     non configure (cf. handleProxyMetrics, qui repond ces deux-there precisely POUR
-//     que le proxy garde son lot).
+//   - 401 / 403 → TRANSIENT, and this is the most debatable decision of the lot.
+//     It rests on one fact: here the controller holds nothing against THE BATCH —
+//     it has not even looked at it, authentication happening after the body is
+//     read. A secret gets rotated, a revocation gets undone, a restarting
+//     controller may refuse for a second before accepting; dropping would throw
+//     away points that an up-to-date enrolment would have taken. The objection is
+//     real — a revoked proxy replays forever and ships nothing — but it is not
+//     fixed here: dropping on 403 would not ship one more point, it would only
+//     erase the trace. The buffer is bounded, it drops its oldest,
+//     `reportSaturation` says so every minute and every refusal has its line. A
+//     revoked proxy has no recipient for its metrics anyway;
+//   - 404 / 405 → TRANSIENT. Route missing: controller of an earlier version, or
+//     a misconfigured URL. A deployment or a configuration fix repairs it, and
+//     the batch then goes out as is — which is precisely what a buffer exists to
+//     cover;
+//   - 408 / 429 → TRANSIENT by definition, with or without `Retry-After`;
+//   - 5xx → TRANSIENT, without exception. The controller is in trouble, not in
+//     disagreement: 502 on a failed VictoriaMetrics write, 503 on unconfigured
+//     storage (see handleProxyMetrics, which answers those two precisely SO THAT
+//     the proxy keeps its batch).
 //
-// # Pourquoi un refus par la TAILLE s'abandonne aussi
+// # Why a refusal on SIZE is dropped too
 //
-// C'est le cas where l'abandon fait le plus mal : le contenu du lot est bon, seul son
-// volume ne passe pas, et le REDECOUPER serait mieux que le jeter. L'API de
-// `metricbuf` ne le permet pas naturellement. `Take` rend le lot reserve TEL QUEL en
-// ignorant son argument tant que ce lot n'est ni acquitte ni rendu ; il n'existe ni
-// acquittement partiel ni redimensionnement. Le seul chemin serait `Nack` — qui rend
-// le lot at the top — puis un `Take` plus petit au tour suivant, et il faudrait alors
-// memoriser la taille reduite dans le collecteur, decider quand la faire remonter, et
-// la faire cohabiter avec `maxFlushBurst`. Soit un etat supplementaire et une
-// politique de repli entire pour un cas que le controleur ne produit plus : a 8 MiB
-// de plafond, un lot de 3000 en fait 672 KiB. L'abandon journalise suffit, et il a
-// l'avantage de ne pas pouvoir boucler.
+// This is the case where dropping hurts most: the batch's content is fine,
+// only its volume does not fit, and RE-SPLITTING it would be better than
+// throwing it away. The `metricbuf` API does not naturally allow it. `Take`
+// returns the reserved batch AS IS, ignoring its argument, as long as that batch
+// is neither acknowledged nor returned; there is neither partial acknowledgement
+// nor resizing. The only path would be `Nack` — which puts the batch back at
+// the top — then a smaller `Take` on the next round, and the reduced size would
+// then have to be remembered in the collector, a decision made on when to raise
+// it again, and made to coexist with `maxFlushBurst`. That is extra state and a
+// whole fallback policy for a case the controller no longer produces: at an
+// 8 MiB ceiling, a 3000-sample batch is 672 KiB. A logged drop is enough, and it
+// has the advantage of being unable to loop.
 //
-// Prend le code et l'en-tete rather que la response entire : la frontiere est une
-// decision sur deux valeurs, et elle doit s'eprouver cas par cas sans fabriquer de
-// response HTTP (cf. TestFrontiereDuRefusDefinitif).
-func refusDefinitif(status int, retryAfter string) bool {
+// Takes the code and the header rather than the whole response: the boundary is
+// a decision on two values, and it must be tested case by case without
+// building an HTTP response (see TestPermanentRefusalBoundary).
+func isPermanentRefusal(status int, retryAfter string) bool {
 	if retryAfter != "" {
 		return false
 	}
@@ -705,35 +805,36 @@ func refusDefinitif(status int, retryAfter string) bool {
 	return false
 }
 
-// flush pousse un lot vers le controleur.
+// flush pushes one batch to the controller.
 //
-// Take/Ack/Nack : tant que le controleur n'a pas confirmed, le lot reste reserve
-// et revient dans le tampon si l'envoi fails. C'est ce qui fait qu'une coupure
-// de tunnel ne perd pas les minutes qu'elle dure — SAUF sur un refus definitif, where
-// le lot est abandonne pour que le tampon puisse avancer (voir refusDefinitif).
+// Take/Ack/Nack: until the controller has confirmed, the batch stays reserved
+// and returns to the buffer if sending fails. That is why a tunnel outage does
+// not lose the minutes it lasts — EXCEPT on a permanent refusal, where the
+// batch is dropped so the buffer can move on (see isPermanentRefusal).
 //
-// Un abandon se journalise toujours, avec le nombre de points sacrifies. Un abandon
-// silencieux serait pire que la boucle qu'il remplace : la boucle, elle, finit par
-// se voir.
+// A drop is always logged, with the number of points sacrificed. A silent drop
+// would be worse than the loop it replaces: the loop, at least, ends up being
+// seen.
 //
-// Rend vrai quand un lot PLEIN est parti : il reste alors probablement de quoi en
-// remplir un autre tout de suite, et c'est ce qui autorise l'appelant a enchainer
-// (cf. maxFlushBurst). Faux arrete la rafale, dans les cas where continuer serait
-// nuisible ou inutile : rien a envoyer, lot incomplet donc tampon vide, ou
-// controleur qui vient de refuser. Y COMPRIS sur un abandon, alors que le tampon a
-// pourtant avance : si le refus est systematique — un controleur qui refuse tout ce
-// que ce proxy lui envoie — enchainer la rafale sacrifierait quatre lots par wake
-// au lieu d'un. Perdre lentement laisse au journal le temps d'be lu.
+// Returns true when a FULL batch went out: there is then probably enough left to
+// fill another right away, and that is what lets the caller chain (see
+// maxFlushBurst). False stops the burst, in the cases where continuing would be
+// harmful or useless: nothing to send, an incomplete batch hence an empty
+// buffer, or a controller that has just refused. INCLUDING on a drop, even
+// though the buffer did move on: if the refusal is systematic — a controller
+// that refuses everything this proxy sends — chaining the burst would sacrifice
+// four batches per wake-up instead of one. Losing slowly gives the log time to
+// be read.
 func (c *SNMPCollector) flush(ctx context.Context) bool {
-	var lot = c.buf.Take(maxPerFlush)
-	if len(lot) == 0 {
+	var batch = c.buf.Take(maxPerFlush)
+	if len(batch) == 0 {
 		return false
 	}
 	var body, err = json.Marshal(map[string]any{
-		"proxy_id": c.proxyID, "secret": c.secret, "samples": lot,
+		"proxy_id": c.proxyID, "secret": c.secret, "samples": batch,
 	})
 	if err != nil {
-		c.buf.Ack() // illisible : le rejouer ne changerait rien
+		c.buf.Ack() // unreadable: replaying it would change nothing
 		return false
 	}
 	var req *http.Request
@@ -748,37 +849,37 @@ func (c *SNMPCollector) flush(ctx context.Context) bool {
 	if resp, err = c.client.Do(req); err != nil {
 		c.buf.Nack()
 		var st = c.buf.Stats()
-		slog.Warn("metriques non poussees, conservees en tampon",
-			"err", err.Error(), "en_attente", st.Queued, "perdues", st.Dropped)
+		slog.Warn("metrics not pushed, kept in buffer",
+			"err", err.Error(), "queued", st.Queued, "dropped", st.Dropped)
 		return false
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if refusDefinitif(resp.StatusCode, resp.Header.Get("Retry-After")) {
-			// Le motif se lit AVANT l'abandon, tant que le corps est encore ouvert.
-			var motif = refusalReason(resp.Body)
+		if isPermanentRefusal(resp.StatusCode, resp.Header.Get("Retry-After")) {
+			// The reason is read BEFORE the drop, while the body is still open.
+			var reason = refusalReason(resp.Body)
 			c.buf.Ack()
-			// « abandonnes » est le mot qui compte dans cette ligne : c'est un nombre
-			// de points de mesure qui n'existeront plus jamais, et il n'a pas d'autre
-			// endroit where se dire. La taille du lot l'accompagne parce que le refus le
-			// plus probable ici reste le refus par le VOLUME, et le diagnostic passe a
-			// cote sans ce chiffre.
-			slog.Warn("metriques ABANDONNEES : refus definitif du controleur, "+
-				"les rejouer ne changerait rien",
-				"status", resp.StatusCode, "abandonnes", len(lot),
-				"octets", len(body), "motif", motif,
-				"en_attente", c.buf.Stats().Queued)
+			// "dropped" is the word that matters in this line: it is a number of
+			// measurement points that will never exist again, and it has no other place to
+			// be said. The batch size comes with it because the most likely refusal here
+			// is still the refusal on VOLUME, and the diagnosis misses the point without
+			// that figure.
+			slog.Warn("metrics DROPPED: permanent refusal from the controller, "+
+				"replaying them would change nothing",
+				"status", resp.StatusCode, "dropped", len(batch),
+				"bytes", len(body), "reason", reason,
+				"queued", c.buf.Stats().Queued)
 			return false
 		}
 		c.buf.Nack()
-		// Rendu au tampon : ce lot repartira tel quel au prochain wake. Le dire —
-		// « conservees », pas « perdues » — evite de faire chercher une perte qui n'a
-		// pas eu lieu.
-		slog.Warn("metriques refusees par le controleur, conservees en tampon",
-			"status", resp.StatusCode, "samples", len(lot),
-			"octets", len(body), "en_attente", c.buf.Stats().Queued)
+		// Returned to the buffer: this batch will go out as is on the next wake-up.
+		// Saying so — "kept", not "lost" — avoids sending someone looking for a loss
+		// that did not happen.
+		slog.Warn("metrics refused by the controller, kept in buffer",
+			"status", resp.StatusCode, "samples", len(batch),
+			"bytes", len(body), "queued", c.buf.Stats().Queued)
 		return false
 	}
 	c.buf.Ack()
-	return len(lot) == maxPerFlush
+	return len(batch) == maxPerFlush
 }

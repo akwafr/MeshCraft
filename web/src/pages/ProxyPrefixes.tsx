@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { viewerDate } from "../ui/clock";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -9,7 +10,8 @@ import {
   type AddressDomain,
   type ScanPrefix,
 } from "../api";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal } from "../components";
+import { ActionButton, ErrorMsg, Field, Modal } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 
 /**
  * The ranges scanned BY A PROXY, managed from the proxies page.
@@ -17,7 +19,7 @@ import { ActionButton, DeleteButton, ErrorMsg, Field, Modal } from "../component
  * The screen already existed, but tucked into the "Add equipment" flow: it
  * could only be reached while already in the middle of adding a device. Yet
  * a range belongs to the PROXY that can reach it, never to a site
- * (see docs/01-Architecture/Discovery) — so it's while looking at a proxy
+ * (see docs/en/01-Architecture/Discovery) — so it's while looking at a proxy
  * that one wonders what it scans, and that's where it should be edited.
  *
  * The add-flow form remains: it suits someone discovering the product who
@@ -93,14 +95,14 @@ export function ProxyPrefixesModal({
       {(prefixes ?? []).length === 0 ? (
         <div className="empty">{t("proxyPrefixes.noneScanned")}</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div className="scroll-x scroll-cue">
           <table>
             <thead>
               <tr>
                 <th>{t("scanPrefixes.prefixCol")}</th>
                 <th>{t("scanPrefixes.networkCol")}</th>
                 <th>{t("scanPrefixes.lastScanCol")}</th>
-                <th />
+                <th className="col-actions" />
               </tr>
             </thead>
             <tbody>
@@ -115,18 +117,33 @@ export function ProxyPrefixesModal({
                   </td>
                   <td className="note">
                     {sp.last_run_at
-                      ? new Date(sp.last_run_at).toLocaleString(i18n.language)
+                      ? (viewerDate(sp.last_run_at) ?? new Date(sp.last_run_at)).toLocaleString(i18n.language)
                       : t("common.never")}
                     {sp.last_result && <div className="note">{sp.last_result}</div>}
                   </td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <ActionButton kind="scan" className="ghost" onClick={() => scan.mutate(sp)}>
-                      {t("proxyPrefixes.scanAction")}
-                    </ActionButton>
-                    <ActionButton kind="apply" className="ghost" onClick={() => toggle.mutate(sp)}>
-                      {sp.enabled ? t("proxyPrefixes.deactivate") : t("proxyPrefixes.activate")}
-                    </ActionButton>
-                    <DeleteButton onConfirm={() => remove.mutate(sp)} />
+                  <td className="col-actions">
+                    <div className="icon-actions">
+                      <IconAction
+                        kind="scan"
+                        label={t("proxyPrefixes.scanAction") as string}
+                        onClick={() => scan.mutate(sp)}
+                      />
+                      {/* A VERB, not a state — the row already says which it is
+                          by dimming. So it can be a glyph, as long as the glyph
+                          changes with the verb: a check to turn the range back
+                          on, a slashed circle to stop scanning it. The single
+                          `apply` tick it used to wear said neither. */}
+                      <IconAction
+                        kind={sp.enabled ? "ban" : "check"}
+                        label={
+                          (sp.enabled
+                            ? t("proxyPrefixes.deactivate")
+                            : t("proxyPrefixes.activate")) as string
+                        }
+                        onClick={() => toggle.mutate(sp)}
+                      />
+                      <IconDeleteButton onConfirm={() => remove.mutate(sp)} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -143,7 +160,7 @@ export function ProxyPrefixesModal({
               <input
                 className="mono"
                 value={prefix}
-                placeholder="10.99.0.0/16"
+                placeholder="192.0.2.0/24"
                 onChange={(e) => setPrefix(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && prefix.trim()) add.mutate();

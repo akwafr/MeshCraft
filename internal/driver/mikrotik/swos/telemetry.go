@@ -10,118 +10,123 @@ import (
 	"meshcraft/internal/metricbuf"
 )
 
-// La TELEMETRY d'un SwOS : ce que le scraping de pages sait rendre, et ce qu'il est
-// le SEUL a savoir rendre sur cette plateforme.
+// The TELEMETRY of a SwOS: what page scraping can return, and what it is the
+// ONLY one able to return on this platform.
 //
-// # Le scraping n'est plus le seul canal, et il reste le seul a tout rendre
+// # Scraping is no longer the only channel, and it remains the only one that returns everything
 //
-// Ce fichier a longtemps commence par « pourquoi le scraping, et PAS SNMP », et la
-// raison was dans le contrat : `SNMPVersions` was vide, donc `snmpprov.For`
-// concluait « SNMP non managed », donc `snmpWatchesFor` ne poussait aucune cible au
-// proxy. La page /snmp.b prouvait qu'un agent existait et was actif, sans dire a
-// quelle VERSION il repondait — et aucune request ne lui avait jamais been adressee.
+// This file long began with "why scraping, and NOT SNMP", and the reason was
+// in the contract: `SNMPVersions` was empty, so `snmpprov.For` concluded
+// "SNMP not managed", so `snmpWatchesFor` pushed no target to the proxy. The
+// /snmp.b page proved that an agent existed and was enabled, without saying
+// which VERSION it answered — and no request had ever been sent to it.
 //
-// Le walk du 29 juillet 2026 sur 10.99.0.36 a repondu. Le connecteur declares
-// now `v2c` et un canal `snmp` (cf. swos.go, et le vault
-// [[Telemetrie MikroTik]] § *Le SNMP du CSS326 : le verrou, et le observed qui l'a
-// leve*). `snmpprov.For` conclut « v2c, NON conforme au plancher de la politique »,
-// ce qui est la verite a afficher : supervise, et en clair.
+// The walk of 29 July 2026 on 192.0.2.36 answered. The connector now declares
+// `v2c` and an `snmp` channel (cf. swos.go, and the vault
+// [[MikroTik telemetry]] § *The CSS326's SNMP: the lock, and the survey that
+// lifted it*). `snmpprov.For` concludes "v2c, NOT compliant with the policy
+// floor", which is the truth to display: monitored, and in cleartext.
 //
-// Ce qui suit garde donc tout son sens, mais pour une autre raison qu'avant : le
-// scraping n'est plus un pis-aller, c'est le canal qui rend ce que l'agent NE rend
-// pas. Deux grandeurs n'existent que dans ces pages — les PUISSANCES optiques
-// (`tpw`, `rpw`), la table optique de l'agent s'arretant au courant de polarisation,
-// et les RATES snapshots computed par the device (`rrb`, `trb`), que SNMP
-// n'expose sous aucun OID. Aucun des deux canaux ne subsume l'autre.
+// What follows therefore keeps its full meaning, but for a different reason
+// than before: scraping is no longer a fallback, it is the channel that
+// returns what the agent does NOT. Two quantities exist only in these pages —
+// optical POWERS (`tpw`, `rpw`), the agent's optical table stopping at bias
+// current, and the snapshot RATES computed by the device (`rrb`, `trb`),
+// which SNMP exposes under no OID. Neither channel subsumes the other.
 //
-// # Ce que les quatre pages rendent, et ce que ca COSTS
+// # What the four pages return, and what it COSTS
 //
-//	/link.b   etat de lien, activation, duplex, rate negocie, noms de ports  2 026 o
-//	/stats.b  octets, paquets, RATES computed par the device, erreurs     12 694 o
-//	/sys.b    temperature de puce, temps de fonctionnement                      780 o
-//	/sfp.b    diagnostic optique complet des cages                             ~350 o
+//	/link.b   link state, enable, duplex, negotiated rate, port names      2,026 B
+//	/stats.b  octets, packets, RATES computed by the device, errors      12,694 B
+//	/sys.b    chip temperature, uptime                                       780 B
+//	/sfp.b    complete optical diagnostics of the cages                     ~350 B
 //
-// DEUX requests HTTP par page, toujours : SwOS n'a pas de session, le Digest se
-// renegocie a chaque fois. Une lecture de telemetry complete costs donc HUIT
-// allers-retours, et c'est ce qui fonde les planchers declares dans swos.go — 10 s
-// pour state, 15 s pour les compteurs, 30 s pour la sante et l'optique.
+// TWO HTTP requests per page, always: SwOS has no session, Digest is
+// renegotiated every time. A complete telemetry read therefore costs EIGHT
+// round trips, and that is what grounds the floors declared in swos.go —
+// 10 s for state, 15 s for counters, 30 s for health and optics.
 //
-// # Ce que cette plateforme donne MIEUX que ses voisines
+// # What this platform gives BETTER than its neighbours
 //
-// Deux choses, et elles ne sont pas anecdotiques :
+// Two things, and they are not anecdotal:
 //
-//   - LE RATE SNAPSHOT, calcule par the device (`rrb`, `trb`). meshcraft n'a donc
-//     pas besoin de deriver deux lectures de compteur pour tracer une courbe, ce qui
-//     est precisely ce qui rend un plancher de 15 s acceptable there where il ne le serait
-//     pas ailleurs ;
-//   - LE DIAGNOSTIC OPTIQUE, servi par une page de LECTURE ordinaire. Sur RouterOS il
-//     faut une commande (`monitor`, donc l'API binaire ou un POST) ; ici c'est un GET.
+//   - THE SNAPSHOT RATE, computed by the device (`rrb`, `trb`). meshcraft
+//     therefore does not need to derive two counter reads to plot a curve,
+//     which is precisely what makes a 15 s floor acceptable here where it
+//     would not be elsewhere;
+//   - OPTICAL DIAGNOSTICS, served by an ordinary READ page. On RouterOS it
+//     takes a command (`monitor`, hence the binary API or a POST); here it is
+//     a GET.
 //
-// # Ce que cette plateforme ne donne PAS, et qui ne se contourne pas
+// # What this platform does NOT give, and which cannot be worked around
 //
-// La liste est courte et elle est ESTABLISHED par enumeration de l'embedded interface,
-// pas supposee : ni CPU, ni memory, ni LLDP, ni PoE sur ce model, ni horloge — donc
-// aucun horodatage venant de the device. Les deux premieres manquent au point qu'il
-// faut le dire a the UI : un CSS326 n'a AUCUNE serial de charge processeur, et ce n'est
-// pas un lot de collecte qui manque, c'est le firmware qui ne publie pas la valeur.
+// The list is short and it is ESTABLISHED by enumerating the embedded UI,
+// not assumed: no CPU, no memory, no LLDP, no PoE on this model, no clock —
+// hence no timestamp coming from the device. The first two are missing to the
+// point that the UI must be told: a CSS326 has NO CPU load series, and it is
+// not a collection batch that is missing, it is the firmware that does not
+// publish the value.
 
-// PortTelemetry est ce que les pages disent d'un port.
+// PortTelemetry is what the pages say about a port.
 //
-// Les champs numeriques sont des POINTEURS pour ce qui peut manquer, exactement comme
-// dans le connecteur RouterOS voisin, et pour la same raison : sur un compteur, `0` et
-// « pas lu » se ressemblent et se lisent a l'oppose. Le rate en est l'exemple qui
-// compte — SwOS sert l'index 7, hors table, pour les ports SANS lien, et rendre « 10M »
-// pour ces ports-there serait inventer un lien qui n'existe pas.
+// The numeric fields are POINTERS for whatever can be missing, exactly as in
+// the neighbouring RouterOS connector, and for the same reason: on a counter,
+// `0` and "not read" look alike and read as opposites. The rate is the example
+// that matters — SwOS serves index 7, outside the table, for ports WITHOUT a
+// link, and returning "10M" for those ports would invent a link that does not
+// exist.
 type PortTelemetry struct {
 	Name string `json:"name"`
-	// DeviceName est le nom que l'DEVICE donne au port (/link.b `nm`), rendu pour
-	// le diagnostic et jamais employed comme clef de serial. Voir [foldLinkTelemetry].
+	// DeviceName is the name the DEVICE gives the port (/link.b `nm`),
+	// returned for diagnosis and never used as a series key. See
+	// [foldLinkTelemetry].
 	DeviceName string `json:"device_name,omitempty"`
-	// Enabled : le port est-il administrativement actif (/link.b `en`).
+	// Enabled: is the port administratively up (/link.b `en`).
 	Enabled bool `json:"enabled"`
-	// LinkUp : le port porte-t-il un lien (/link.b `lnk`).
+	// LinkUp: does the port carry a link (/link.b `lnk`).
 	LinkUp bool `json:"link_up"`
-	// FullDuplex : nil quand le port n'a pas de lien — le masque `dpx` n'a alors pas
-	// de sens.
+	// FullDuplex: nil when the port has no link — the `dpx` mask is then
+	// meaningless.
 	FullDuplex *bool `json:"full_duplex,omitempty"`
-	// SpeedMbps : le rate NEGOCIE. Nil sur un port sans lien, cf. le commentaire du
-	// type et celui de [FieldSpeed].
+	// SpeedMbps: the NEGOTIATED rate. Nil on a port without a link, cf. the
+	// type's comment and that of [FieldSpeed].
 	SpeedMbps *float64 `json:"speed_mbps,omitempty"`
 
 	InOctets   *float64 `json:"in_octets,omitempty"`
 	OutOctets  *float64 `json:"out_octets,omitempty"`
 	InPackets  *float64 `json:"in_packets,omitempty"`
 	OutPackets *float64 `json:"out_packets,omitempty"`
-	// InBitsPerSecond / OutBitsPerSecond : les rates que l'DEVICE calcule.
+	// InBitsPerSecond / OutBitsPerSecond: the rates the DEVICE computes.
 	InBitsPerSecond  *float64 `json:"in_bits_per_second,omitempty"`
 	OutBitsPerSecond *float64 `json:"out_bits_per_second,omitempty"`
-	// InErrors : le compteur d'erreurs de receive du MAC (/stats.b `rte`).
+	// InErrors: the MAC receive error counter (/stats.b `rte`).
 	InErrors *float64 `json:"in_errors,omitempty"`
-	// FCSErrors : les erreurs de sequence de control (/stats.b `rfcs`).
+	// FCSErrors: frame check sequence errors (/stats.b `rfcs`).
 	//
-	// PORTE ICI ET PAS ADDED A `InErrors`, et c'est une decision de prudence qu'il
-	// faut expliquer parce qu'elle prive the UI de la mesure la plus parlante d'un
-	// cable abime. Le observed de pages.go dit que `rte` porte « les erreurs de MAC en
-	// receive » : si c'est un TOTAL, les erreurs de sequence de control en font
-	// partie, et les ajouter compterait certaines trames deux fois. Une courbe d'erreurs
-	// exageree est pire qu'une courbe absente — elle fait remplacer une jarretiere
-	// saine. Le compteur reste donc visible au diagnostic, sans entrer dans la serial,
-	// jusqu'a ce qu'une injection de trafic ait tranche lequel des deux contient l'autre.
+	// CARRIED HERE AND NOT ADDED TO `InErrors`, and it is a cautious decision
+	// that needs explaining because it deprives the UI of the most telling
+	// measure of a damaged cable. The survey in pages.go says `rte` carries
+	// "MAC receive errors": if it is a TOTAL, frame check sequence errors are
+	// part of it, and adding them would count some frames twice. An
+	// exaggerated error curve is worse than a missing one — it gets a healthy
+	// patch cord replaced. The counter therefore stays visible for diagnosis,
+	// without entering the series, until a traffic injection has settled which
+	// of the two contains the other.
 	FCSErrors *float64 `json:"fcs_errors,omitempty"`
 }
 
-// OpticTelemetry est le diagnostic d'une cage SFP, tel que /sfp.b le rend.
+// OpticTelemetry is the diagnostics of an SFP cage, as /sfp.b returns them.
 type OpticTelemetry struct {
-	// Port est le nom de front panel de la cage, pas son rang dans /sfp.b.
+	// Port is the faceplate name of the cage, not its rank in /sfp.b.
 	//
-	// La distinction est essentielle : les tableaux de /sfp.b sont indexes par CAGE
-	// (deux entries sur un CSS326-24G-2S+), pas par port. La first cage est le port
-	// d'index `sfpo` — 24, donc le port 25. Confondre les deux indexations
-	// attribuerait le diagnostic optique de SFP1 au port 1, i.e. a un port
-	// cuivre, et the UI afficherait une puissance optique sur une prise RJ45.
+	// The distinction is essential: the /sfp.b arrays are indexed by CAGE (two
+	// entries on a CSS326-24G-2S+), not by port. The first cage is the port of
+	// index `sfpo` — 24, hence port 25. Confusing the two indexings would
+	// attribute SFP1's optical diagnostics to port 1, i.e. a copper port, and
+	// the UI would display an optical power on an RJ45 socket.
 	Port string `json:"port"`
-	// Present : la cage porte-t-elle un module. Reconnu a la sentinelle de temperature,
-	// que the device rend a -128 °C sur une cage vide.
+	// Present: does the cage hold a module. Recognised by the temperature
+	// sentinel, which the device returns as -128 °C on an empty cage.
 	Present      bool     `json:"present"`
 	Vendor       string   `json:"vendor,omitempty"`
 	Part         string   `json:"part,omitempty"`
@@ -134,53 +139,54 @@ type OpticTelemetry struct {
 	WavelengthNM *float64 `json:"wavelength_nm,omitempty"`
 }
 
-// Telemetry est the snapshot complet d'un SwOS.
+// Telemetry is the complete snapshot of a SwOS.
 type Telemetry struct {
 	At time.Time `json:"at"`
-	// TemperatureC : la temperature de puce (/sys.b `temp`), en degrees entiers.
+	// TemperatureC: the chip temperature (/sys.b `temp`), in whole degrees.
 	TemperatureC *float64 `json:"temperature_c,omitempty"`
-	// UptimeSeconds : /sys.b `upt`, qui est en HUNDREDTHS de seconde.
+	// UptimeSeconds: /sys.b `upt`, which is in HUNDREDTHS of a second.
 	UptimeSeconds *float64 `json:"uptime_seconds,omitempty"`
-	// Sensors : les capteurs OPTIONNELS de la carte — ventilateurs, tensions et
-	// courants d'alimentation. Vides sur ce model, cf. [foldSysSensors].
+	// Sensors: the board's OPTIONAL sensors — fans, supply voltages and
+	// currents. Empty on this model, cf. [foldSysSensors].
 	Sensors []Sensor `json:"sensors,omitempty"`
 
 	Ports  []PortTelemetry  `json:"ports,omitempty"`
 	Optics []OpticTelemetry `json:"optics,omitempty"`
 
-	// Notes dit ce que cet snapshot ne contient PAS et pourquoi. Des phrases, comme
-	// dans state : l'appelant les affiche et n'en tire aucune decision.
+	// Notes says what this snapshot does NOT contain and why. Sentences, as in
+	// the state: the caller displays them and draws no decision from them.
 	Notes []string `json:"notes,omitempty"`
 }
 
-// Sensor est un capteur named de la carte, avec son unite.
+// Sensor is a named board sensor, with its unit.
 //
-// La forme est celle du connecteur RouterOS voisin (`name` / `type` / `value`), et ce
-// n'est pas du mimetisme : c'est ce qui permet a un UI d'afficher la sante de deux
-// gammes du same constructeur sans les distinguer. SwOS n'a pas de table de capteurs
-// — ses champs sont fixes dans /sys.b — donc c'est ce connecteur qui NOMME, et il le
-// fait avec les noms des champs de la page pour qu'un diagnostic remonte jusqu'a la
-// source.
+// The shape is that of the neighbouring RouterOS connector (`name` / `type` /
+// `value`), and it is not mimicry: it is what lets a UI display the health of
+// two ranges from the same vendor without telling them apart. SwOS has no
+// sensor table — its fields are fixed in /sys.b — so this connector does the
+// NAMING, and it does so with the page's field names so a diagnosis can be
+// traced back to the source.
 type Sensor struct {
 	Name  string  `json:"name"`
 	Type  string  `json:"type"`
 	Value float64 `json:"value"`
 }
 
-// ReadTelemetry lit les quatre pages et rend the snapshot. LECTURE SEULE.
+// ReadTelemetry reads the four pages and returns the snapshot. READ ONLY.
 //
-// HUIT ALLERS-RETOURS HTTP, et c'est le cost reel : deux par page, le Digest se
-// renegociant a chaque fois. Les pages sont lues dans l'ordre du moins cher au plus
-// cher, ce qui n'accelere rien mais rend un failure plus lisible — si /stats.b est la
-// seule a manquer, c'est la page la plus lourde qui a expire, et le diagnostic n'est
-// pas le same que si tout fails.
+// EIGHT HTTP ROUND TRIPS, and that is the real cost: two per page, Digest
+// being renegotiated every time. The pages are read from the cheapest to the
+// most expensive, which speeds nothing up but makes a failure more readable —
+// if /stats.b is the only one missing, it is the heaviest page that timed
+// out, and the diagnosis is not the same as when everything fails.
 //
-// FAILURE N'INTERROMPT PAS TOUT : une temperature de carte ne depend pas des
-// compteurs. Seul /link.b est bloquant, et pour une raison de justesse et non de
-// commodite — c'est lui qui porte la GEOMETRY du model (`prt`, `sfp`, `sfpo`). Sans
-// elle, on ne sait ni combien de ports lire dans les tableaux de /stats.b, ni a quel
-// port de front panel rattacher la first cage optique. Deviner la geometry
-// attribuerait des compteurs au mauvais port, ce qui est pire qu'un trou.
+// A FAILURE DOES NOT STOP EVERYTHING: a board temperature does not depend on
+// the counters. Only /link.b is blocking, and for a reason of correctness,
+// not convenience — it carries the model's GEOMETRY (`prt`, `sfp`, `sfpo`).
+// Without it, we know neither how many ports to read in the /stats.b arrays,
+// nor which faceplate port to attach the first optical cage to. Guessing the
+// geometry would attribute counters to the wrong port, which is worse than a
+// gap.
 func (a *Admin) ReadTelemetry(ctx context.Context) (Telemetry, error) {
 	var out = Telemetry{At: time.Now()}
 	var failures []string
@@ -192,13 +198,13 @@ func (a *Admin) ReadTelemetry(ctx context.Context) (Telemetry, error) {
 	var ports, sfp, sfpFirst int
 	ports, sfp, sfpFirst, err = geometryOf(link)
 	if err != nil {
-		a.step(false, "geometry du model illisible", err.Error())
+		a.step(false, "model geometry unreadable", err.Error())
 		return out, err
 	}
-	// La geometry est retenue sur access comme le fait readAll : c'est elle qui NOMME
-	// les prises, et les series d'un same device doivent porter les memes noms que
-	// son etat lu — sans quoi un UI de diagnostic afficherait une courbe pour « SFP1 »
-	// a cote d'une configuration pour un port qu'il ne saurait pas y rattacher.
+	// The geometry is kept on the access as readAll does: it is what NAMES the
+	// sockets, and the series of a device must carry the same names as its
+	// read state — otherwise a diagnostic UI would display a curve for "SFP1"
+	// next to a configuration for a port it could not attach it to.
 	a.ports, a.sfp, a.sfpFirst = ports, sfp, sfpFirst
 	var facade = a.facade()
 	out.Ports = foldLinkTelemetry(link, facade)
@@ -206,8 +212,8 @@ func (a *Admin) ReadTelemetry(ctx context.Context) (Telemetry, error) {
 	var sys *Page
 	sys, err = a.Get(ctx, PageSys)
 	if err != nil {
-		failures = append(failures, "sante (/sys.b : "+err.Error()+
-			") — ni temperature de puce, ni temps de fonctionnement")
+		failures = append(failures, "health (/sys.b: "+err.Error()+
+			") — neither chip temperature nor uptime")
 	} else {
 		foldSys(sys, &out)
 	}
@@ -215,53 +221,55 @@ func (a *Admin) ReadTelemetry(ctx context.Context) (Telemetry, error) {
 	var stats *Page
 	stats, err = a.Get(ctx, PageStats)
 	if err != nil {
-		failures = append(failures, "compteurs (/stats.b : "+err.Error()+
-			") — ni octets, ni paquets, ni rates, ni erreurs")
+		failures = append(failures, "counters (/stats.b: "+err.Error()+
+			") — no octets, no packets, no rates, no errors")
 	} else {
 		foldStats(stats, out.Ports)
 	}
 
-	// La page optique n'est lue que s'il y a des cages. Sur un model sans SFP, la
-	// demander couterait deux requests pour recevoir l'interface web complete — un
-	// chemin inconnu de SwOS rend 44 807 octets de HTML en HTTP 200, jamais un 404.
+	// The optical page is read only if there are cages. On a model without
+	// SFP, asking for it would cost two requests to receive the complete web
+	// UI — an unknown SwOS path returns 44,807 bytes of HTML as HTTP 200,
+	// never a 404.
 	if sfp > 0 {
 		var optics *Page
 		optics, err = a.Get(ctx, PageSFP)
 		if err != nil {
-			failures = append(failures, "diagnostic optique (/sfp.b : "+err.Error()+")")
+			failures = append(failures, "optical diagnostics (/sfp.b: "+err.Error()+")")
 		} else {
 			out.Optics = foldOptics(optics, sfp, facade)
 		}
 	}
 
 	if len(failures) > 0 {
-		out.Notes = append(out.Notes, "LECTURE PARTIELLE — "+strconv.Itoa(len(failures))+
-			" page(s) did not respond : "+strings.Join(failures, " ; ")+". Ce qui est "+
-			"affiche est ce qui a pu be lu, et ne describes pas forcement the device.")
+		out.Notes = append(out.Notes, "PARTIAL READ — "+strconv.Itoa(len(failures))+
+			" page(s) did not respond: "+strings.Join(failures, "; ")+". What is "+
+			"displayed is what could be read, and does not necessarily describe the device.")
 	}
 	// Platform gaps (CPU, memory, …) are declared on Monitoring.Unavailable for the
 	// model — the UI localizes from that capability. Snapshot notes do not duplicate
 	// operator essays here.
-	a.step(true, "telemetry lue",
+	a.step(true, "telemetry read",
 		strconv.Itoa(len(out.Ports))+" port(s), "+strconv.Itoa(len(out.Optics))+" cage(s)")
 	return out, nil
 }
 
-// --- Les traductions, toutes PURES et verified sur les captures reelles ---
+// --- The translations, all PURE and verified on the real captures ---
 
-// foldLinkTelemetry lit state des ports depuis /link.b.
+// foldLinkTelemetry reads the port state from /link.b.
 //
-// LE RATE N'EST RENDU QUE POUR LES PORTS AVEC LIEN, et c'est le trap de cette page.
-// Releve sur l'reference device : les 25 ports sans lien portent l'index de
-// rate 7, qui est HORS de la table `SpeedLabels` (sept entries, indices 0 a 6), et le
-// seul port avec lien porte 3 — i.e. 10G, ce que confirme le transceiver
-// insere. Un index hors table n'est donc pas « 10M par default », c'est une ABSENCE, et
-// la rendre comme une valeur ferait afficher un rate sur vingt-cinq prises vides.
+// THE RATE IS RETURNED ONLY FOR PORTS WITH A LINK, and that is this page's
+// trap. Surveyed on the reference device: the 25 ports without a link carry
+// rate index 7, which is OUTSIDE the `SpeedLabels` table (seven entries,
+// indices 0 to 6), and the only port with a link carries 3 — i.e. 10G, which
+// the inserted transceiver confirms. An out-of-table index is therefore not
+// "10M by default", it is an ABSENCE, and returning it as a value would
+// display a rate on twenty-five empty sockets.
 //
-// Le duplex suit la same rule : le masque `dpx` n'a pas de sens sur un port sans
-// lien, donc il n'est pas rendu rather que rendu faux — « demi-duplex » sur un port
-// debranche est exactement le genre de valeur qui fait chercher un desaccord de
-// negociation.
+// Duplex follows the same rule: the `dpx` mask is meaningless on a port
+// without a link, so it is not returned rather than returned wrong —
+// "half-duplex" on an unplugged port is exactly the kind of value that sends
+// someone hunting for a negotiation mismatch.
 func foldLinkTelemetry(link *Page, f Facade) []PortTelemetry {
 	var ports = f.Ports()
 	var out = make([]PortTelemetry, 0, ports)
@@ -271,15 +279,16 @@ func foldLinkTelemetry(link *Page, f Facade) []PortTelemetry {
 	var i int
 	for i = 0; i < ports; i++ {
 		var pt = PortTelemetry{Name: f.Name(i)}
-		// Le nom OBSERVED dans `nm` est rendu a cote, jamais a la place — et ce n'est plus
-		// « GE1 » que porte l'autre champ, mais « Port1 », i.e. la CONVENTION de
-		// the device (cf. naming.go). Les deux se confondent donc sur un switch qu'on
-		// n'a pas renomme, et c'est le but ; ils divergent from qu'un exploitant renomme une
-		// prise, et c'est precisely pourquoi `nm` n'est pas la clef : c'est du texte
-		// libre, il collisionne, et il change sans que rien ne le suive — en faire la clef
-		// d'une serial ferait deux courbes d'un seul port au premier renommage. Il sert au
-		// DIAGNOSTIC — reconnaitre a the UI la prise dont l'exploitant parle — et c'est
-		// tout.
+		// The name OBSERVED in `nm` is returned alongside, never instead — and
+		// the other field no longer carries "GE1" but "Port1", i.e. the
+		// device's CONVENTION (cf. naming.go). The two therefore coincide on a
+		// switch nobody renamed, and that is the point; they diverge as soon as
+		// an operator renames a socket, and that is precisely why `nm` is not
+		// the key: it is free text, it collides, and it changes without
+		// anything following it — making it a series key would produce two
+		// curves for one port at the first rename. It serves DIAGNOSIS —
+		// recognising in the UI the socket the operator is talking about — and
+		// that is all.
 		if hasNames && i < len(names) {
 			pt.DeviceName = strings.TrimSpace(names[i])
 		}
@@ -310,13 +319,14 @@ func foldLinkTelemetry(link *Page, f Facade) []PortTelemetry {
 	return out
 }
 
-// speedMbps traduit un label de la table de the device en megabits par seconde.
+// speedMbps translates a label from the device's table into megabits per
+// second.
 //
-// La table de SwOS est `"10M 100M 1G 10G 5G 2.5G 40G"`, et son ordre n'est PAS
-// croissant — c'est already dit dans pages.go, et c'est la raison pour laquelle on
-// traduit le LABEL et non l'indice. Traduire l'indice par une table parallele
-// obligerait a tenir deux listes dans le same ordre, ce qui tient jusqu'au firmware
-// qui en ajoute une huitieme au milieu.
+// The SwOS table is `"10M 100M 1G 10G 5G 2.5G 40G"`, and its order is NOT
+// ascending — pages.go already says so, and that is why the LABEL is
+// translated and not the index. Translating the index through a parallel
+// table would require keeping two lists in the same order, which holds until
+// the firmware that adds an eighth one in the middle.
 func speedMbps(label string) (float64, bool) {
 	switch label {
 	case "10M":
@@ -337,17 +347,18 @@ func speedMbps(label string) (float64, bool) {
 	return 0, false
 }
 
-// foldSys lit la sante depuis /sys.b.
+// foldSys reads health from /sys.b.
 //
-// La temperature est en degrees Celsius ENTIERS, sans facteur d'echelle — observed a
-// 0x44 puis 0x45 (68 puis 69 °C) a quelques minutes d'intervalle sur the device de
-// reference, ce qui prouve un capteur vivant et non une constante de firmware.
+// The temperature is in WHOLE degrees Celsius, with no scale factor —
+// observed at 0x44 then 0x45 (68 then 69 °C) a few minutes apart on the
+// reference device, which proves a live sensor and not a firmware constant.
 //
-// L'uptime est en HUNDREDTHS de seconde (`scale:100` dans l'interface). Releve
-// 0x00e4cf41 = 14 995 265, soit 149 952 s — ce qui recoupe les deux valeurs notees
-// pendant la campagne d'exploration (149 281 puis 149 801 secondes). Lire ce champ
-// comme des secondes donnerait un temps de fonctionnement CENT FOIS trop grand, donc
-// un device debout depuis cinq mois there where il l'est depuis deux jours.
+// Uptime is in HUNDREDTHS of a second (`scale:100` in the UI). Surveyed
+// 0x00e4cf41 = 14,995,265, i.e. 149,952 s — which matches the two values
+// noted during the exploration campaign (149,281 then 149,801 seconds).
+// Reading this field as seconds would give an uptime A HUNDRED TIMES too
+// large, hence a device up for five months where it has been up for two
+// days.
 func foldSys(sys *Page, out *Telemetry) {
 	var temp, ok = sys.Num(FieldTemp)
 	if ok {
@@ -364,12 +375,12 @@ func foldSys(sys *Page, out *Telemetry) {
 	out.Sensors = foldSysSensors(sys)
 }
 
-// Les champs de capteurs OPTIONNELS de /sys.b, observed a ZERO sur le model de
-// reference.
+// The OPTIONAL sensor fields of /sys.b, observed at ZERO on the reference
+// model.
 //
-// Ils sont named ici rather que dans pages.go parce qu'ils ne servent only la
-// telemetry : pages.go documente ce que le connecteur LIT ou WRITES pour configurer, et
-// aucun de ceux-ci n'entre dans une write.
+// They are named here rather than in pages.go because they serve only
+// telemetry: pages.go documents what the connector READS or WRITES to
+// configure, and none of these enters a write.
 var sysSensors = []struct {
 	Field string
 	Name  string
@@ -380,43 +391,44 @@ var sysSensors = []struct {
 	{"fan2", "fan2", "RPM", 1},
 	{"fan3", "fan3", "RPM", 1},
 	{"fan4", "fan4", "RPM", 1},
-	// Les tensions et courants d'alimentation. Scale n'est PAS established — voir le
-	// commentaire de foldSysSensors, qui explique pourquoi ces capteurs ne produisent
-	// aucune serial sur cette gamme et pourquoi c'est sans consequence.
+	// Supply voltages and currents. Scale is NOT established — see the
+	// comment on foldSysSensors, which explains why these sensors produce no
+	// series on this range and why that has no consequence.
 	{"p1v", "psu1-voltage", "V", 1},
 	{"p2v", "psu2-voltage", "V", 1},
 	{"btm1", "board1", "C", 1},
 	{"btm2", "board2", "C", 1},
 }
 
-// foldSysSensors observes les capteurs optionnels, et n'en rend QUE les non nuls.
+// foldSysSensors reads the optional sensors, and returns ONLY the non-zero
+// ones.
 //
-// # Pourquoi filtrer sur zero, alors que c'est une heuristique
+// # Why filter on zero, even though it is a heuristic
 //
-// SwOS ne distingue pas « ce capteur n'existe pas » de « ce capteur vaut zero » : les
-// champs sont TOUJOURS present dans la page, a zero quand la carte n'a pas
-// l'electronique correspondante. Releve sur le CSS326-24G-2S+ : `fan1` a `fan4`, `p1v`,
-// `p2v`, `btm1`, `btm2` valent tous 0x00000000, et l'interface de the device
-// n'affiche aucun de ces champs.
+// SwOS does not distinguish "this sensor does not exist" from "this sensor
+// reads zero": the fields are ALWAYS present in the page, at zero when the
+// board lacks the corresponding electronics. Surveyed on the CSS326-24G-2S+:
+// `fan1` to `fan4`, `p1v`, `p2v`, `btm1`, `btm2` are all 0x00000000, and the
+// device's UI displays none of these fields.
 //
-// Publier ces zeros produirait, sur tout le parc SwOS sans ventilateur, quatre series
-// « ventilateur a 0 tr/min » et deux « alimentation a 0 V » — i.e. une alerte
-// permanente et fausse sur la majorite des devices. Les filtrer est donc le seul
-// comportement tenable.
+// Publishing those zeros would produce, across the whole fanless SwOS fleet,
+// four "fan at 0 RPM" series and two "power supply at 0 V" — i.e. a permanent
+// and false alert on most devices. Filtering them is therefore the only
+// tenable behaviour.
 //
-// # La limite que ce filtre creates, dite rather que masquee
+// # The limit this filter creates, stated rather than hidden
 //
-// Un ventilateur ACTUALLY STOPPED vaut zero lui aussi, et devient donc indiscernable
-// d'un ventilateur absent. Aucun code ne peut lever cette ambiguite : la page ne porte
-// pas l'information. Ce qui la contient partiellement, et qui reste disponible, c'est
-// la TEMPERATURE — une carte dont le ventilateur s'est stopped chauffe, et c'est ce
-// signal-there qu'il faut surveiller sur cette plateforme, pas la vitesse du ventilateur.
+// A fan that has ACTUALLY STOPPED reads zero too, and therefore becomes
+// indistinguishable from an absent fan. No code can lift that ambiguity: the
+// page does not carry the information. What partly holds it, and remains
+// available, is the TEMPERATURE — a board whose fan stopped heats up, and
+// that is the signal to watch on this platform, not the fan speed.
 //
-// Scale des tensions n'est pas established non plus, et c'est sans consequence
-// AUJOURD'HUI precisely a cause du filtre : aucun model observed ne sert de valeur non
-// nulle, donc aucune serial de tension n'est jamais produite. Le jour where un chassis CRS
-// sous SwOS en servirait une, the scale devra be established avant de croire le chiffre —
-// c'est written ici pour que ce soit lu a ce moment-there.
+// The voltage scale is not established either, and that has no consequence
+// TODAY precisely because of the filter: no observed model serves a non-zero
+// value, so no voltage series is ever produced. The day a CRS chassis running
+// SwOS serves one, the scale will have to be established before trusting the
+// figure — it is written here so that it gets read at that moment.
 func foldSysSensors(sys *Page) []Sensor {
 	var out []Sensor
 	var i int
@@ -434,43 +446,46 @@ func foldSysSensors(sys *Page) []Sensor {
 	return out
 }
 
-// rateScale est le diviseur des champs de rate de /stats.b.
+// rateScale is the divisor of the /stats.b rate fields.
 //
-// 100, et cette valeur n'est pas seulement observed dans l'interface (`scale:.01`) :
-// elle est CORROBORATED par les compteurs de la same capture, ce qui est plus solide
-// qu'une lecture de code JavaScript. Le calcul, sur le seul port qui porte un lien
-// (index 25, la cage SFP2) :
+// 100, and this value is not only observed in the UI (`scale:.01`): it is
+// CORROBORATED by the counters of the same capture, which is more solid than
+// reading JavaScript code. The calculation, on the only port carrying a link
+// (index 25, cage SFP2):
 //
-//	octets recus       rb  = 0x018f2a86 = 26 159 750
-//	temps de marche    upt = 0x00e4cf41 = 14 995 265 hundredths = 149 952 s
-//	rate MOYEN                          ≈ 1 396 bit/s
-//	rate snapshot   rrb = 0x0000145f = 5 215 → /100 = 52,15 bit/s
+//	octets received    rb  = 0x018f2a86 = 26,159,750
+//	uptime             upt = 0x00e4cf41 = 14,995,265 hundredths = 149,952 s
+//	AVERAGE rate                        ≈ 1,396 bit/s
+//	snapshot rate      rrb = 0x0000145f = 5,215 → /100 = 52.15 bit/s
 //
-// Snapshot est bien SOUS la moyenne, ce qui est consistent avec un lien de
-// laboratoire calme after une campagne d'adoption. L'autre hypothese — un facteur
-// ×100, donc 521 500 bit/s — impliquerait 9,8 Go transferes sur la duree de marche,
-// contre 26 Mo actually comptes : elle est ecartee par trois ordres de grandeur.
+// The snapshot is indeed BELOW the average, which is consistent with a quiet
+// lab link after an adoption campaign. The other hypothesis — a ×100 factor,
+// hence 521,500 bit/s — would imply 9.8 GB transferred over the uptime,
+// against 26 MB actually counted: it is ruled out by three orders of
+// magnitude.
 //
-// Ce qui n'est PAS established pour autant : que ce rate soit une moyenne sur la same
-// fenetre que celle de l'interface. Aucune injection de trafic n'a been faite. Ce
-// chiffre est donc bon a un facteur d'echelle pres et a une fenetre pres, et il ne faut
-// pas batir un seuil d'alerte serre dessus avant de l'avoir confronte a un rate connu.
+// What is NOT established for all that: that this rate is an average over
+// the same window as the UI's. No traffic injection has been done. This
+// figure is therefore right up to a scale factor and a window, and no tight
+// alert threshold should be built on it before it has been checked against a
+// known rate.
 const rateScale = 100
 
-// foldStats verse les compteurs de /stats.b dans la liste de ports.
+// foldStats pours the /stats.b counters into the port list.
 //
-// MODIFIE la tranche recue, rather que d'en rendre une seconde. C'est le seul endroit
-// du fichier qui le fait, et la raison est la clef d'indexation : les tableaux de
-// /stats.b sont indexes par RANG DE PORT, dans le same ordre que la geometry de
-// /link.b. Rendre une seconde liste obligerait a recoller les deux par leur nom, donc a
-// refabriquer une correspondance qui existe already par construction — et une
-// correspondance refabriquee est une correspondance qui peut se tromper.
+// It MODIFIES the slice it receives, rather than returning a second one. It
+// is the only place in the file that does so, and the reason is the indexing
+// key: the /stats.b arrays are indexed by PORT RANK, in the same order as the
+// /link.b geometry. Returning a second list would require stitching the two
+// back together by name, hence rebuilding a correspondence that already
+// exists by construction — and a rebuilt correspondence is one that can be
+// wrong.
 //
-// LES COMPTEURS D'OCTETS SONT SUR 64 BITS, en deux halves : `rb` porte les 32 bits
-// bas, `rbh` les 32 hauts. Lire `rb` seul ferait repasser le compteur a zero tous les
-// 4 Gio — sur un lien 10G, toutes les trois secondes et demie, ce qui produirait une
-// courbe de trafic entirely fausse. C'est [Counter64] qui les recompose, et ce n'est
-// pas une precaution theorique : ce connecteur supervise des cages 10G.
+// OCTET COUNTERS ARE 64-BIT, in two halves: `rb` carries the low 32 bits,
+// `rbh` the high 32. Reading `rb` alone would make the counter wrap to zero
+// every 4 GiB — on a 10G link, every three and a half seconds, which would
+// produce an entirely false traffic curve. [Counter64] recombines them, and
+// it is not a theoretical precaution: this connector monitors 10G cages.
 func foldStats(stats *Page, ports []PortTelemetry) {
 	var rb, hasRb = stats.Nums(FieldRxBytes)
 	var rbh, _ = stats.Nums(FieldRxBytesHigh)
@@ -512,12 +527,12 @@ func foldStats(stats *Page, ports []PortTelemetry) {
 	}
 }
 
-// assign64 recompose un compteur 64 bits depuis ses deux halves.
+// assign64 recombines a 64-bit counter from its two halves.
 //
-// Une half HAUTE plus courte que la basse n'est pas une erreur : elle est traitee
-// comme un zero, ce qui est exactement ce qu'un firmware qui n'aurait pas encore
-// depasse 4 Gio sur ce port rendrait. Refuser le compteur entier pour cette raison
-// priverait de trafic un device parfaitement lisible.
+// A HIGH half shorter than the low one is not an error: it is treated as
+// zero, which is exactly what a firmware that has not yet passed 4 GiB on
+// that port would return. Refusing the whole counter for that reason would
+// deprive a perfectly readable device of its traffic.
 func assign64(dst **float64, low, high []uint32, i int) {
 	if i >= len(low) {
 		return
@@ -530,7 +545,7 @@ func assign64(dst **float64, low, high []uint32, i int) {
 	*dst = &v
 }
 
-// assignAt pose la valeur d'un tableau a l'index donne, mise a the scale.
+// assignAt sets the value of an array at the given index, scaled.
 func assignAt(dst **float64, vals []uint32, i int, scale float64) {
 	if i >= len(vals) {
 		return
@@ -539,37 +554,39 @@ func assignAt(dst **float64, vals []uint32, i int, scale float64) {
 	*dst = &v
 }
 
-// foldOptics lit /sfp.b.
+// foldOptics reads /sfp.b.
 //
-// # L'INDEXATION est le seul vrai trap de cette page
+// # INDEXING is the only real trap of this page
 //
-// Ses tableaux sont indexes par CAGE et non par port : deux entries sur un
-// CSS326-24G-2S+, alors que /stats.b en porte vingt-six. La cage de rang `i` est le
-// port d'index `sfpFirst + i` — observed `sfpo: 0x18`, donc la first cage est le port
-// d'index 24, i.e. le port numerote 25. Recoller les deux indexations en
-// supposant qu'elles coincident attribuerait le diagnostic optique de SFP1 au port 1,
-// et the UI afficherait une puissance optique sur une prise cuivre.
+// Its arrays are indexed by CAGE and not by port: two entries on a
+// CSS326-24G-2S+, whereas /stats.b carries twenty-six. The cage of rank `i`
+// is the port of index `sfpFirst + i` — observed `sfpo: 0x18`, hence the
+// first cage is the port of index 24, i.e. the port numbered 25. Stitching
+// the two indexings together on the assumption that they coincide would
+// attribute SFP1's optical diagnostics to port 1, and the UI would display an
+// optical power on a copper socket.
 //
-// # Une cage vide se reconnait a sa TEMPERATURE
+// # An empty cage is recognised by its TEMPERATURE
 //
-// -128 °C, i.e. 0xffffff80 en complement a deux, est le « pas de module » de
-// l'interface (`u:-128`). Ce n'est PAS une temperature, et la traiter comme telle
-// ferait apparaitre deux capteurs a -128 °C sur tout switch dont les cages sont libres.
-// Releve sur l'reference device : `tmp:[0xffffff80,0x00000032]` — la cage 1 est
-// vide, la cage 2 porte un module a 50 °C.
+// -128 °C, i.e. 0xffffff80 in two's complement, is the UI's "no module"
+// (`u:-128`). It is NOT a temperature, and treating it as one would show two
+// sensors at -128 °C on every switch whose cages are free. Surveyed on the
+// reference device: `tmp:[0xffffff80,0x00000032]` — cage 1 is empty, cage 2
+// holds a module at 50 °C.
 //
-// # Les unites, toutes observed dans l'embedded interface
+// # The units, all observed in the embedded UI
 //
-//	tmp  °C entiers                       0x32   = 50 °C
-//	vcc  millivolts (scale:1E3)           0x0cbd = 3,261 V
-//	tbs  milliamperes                     0x22   = 34 mA
-//	wln  hundredths de nanometre (1E2)     0x0001f018 = 1 270 nm
-//	tpw  dixiemes de microwatt (1E4, ma:1) 0x12b6 = 4 790 → −3,1966 dBm
-//	rpw  idem                             0x0ad2 = 2 770 → −5,5752 dBm
+//	tmp  whole °C                              0x32       = 50 °C
+//	vcc  millivolts (scale:1E3)                0x0cbd     = 3.261 V
+//	tbs  milliamperes                          0x22       = 34 mA
+//	wln  hundredths of a nanometre (1E2)       0x0001f018 = 1,270 nm
+//	tpw  tenths of a microwatt (1E4, ma:1)     0x12b6     = 4,790 → −3.1966 dBm
+//	rpw  likewise                              0x0ad2     = 2,770 → −5.5752 dBm
 //
-// La longueur d'onde observed, 1 270 nm, recoupe le champ descriptif de la same page
-// (`typ: '1270nm & smf'`) et la reference du module (`SFP-10G-BX`). Ce n'est donc pas
-// une echelle supposee : deux champs independants de la same capture concordent.
+// The observed wavelength, 1,270 nm, matches the descriptive field of the
+// same page (`typ: '1270nm & smf'`) and the module reference (`SFP-10G-BX`).
+// It is therefore not an assumed scale: two independent fields of the same
+// capture agree.
 func foldOptics(page *Page, sfp int, f Facade) []OpticTelemetry {
 	var out = make([]OpticTelemetry, 0, sfp)
 	var temps, _ = page.Nums(FieldSFPTemp)
@@ -585,25 +602,26 @@ func foldOptics(page *Page, sfp int, f Facade) []OpticTelemetry {
 	var i int
 	for i = 0; i < sfp; i++ {
 		var o = OpticTelemetry{
-			// La cage de rang `i` est le port d'index `sfpFirst+i`, et c'est la front panel qui
-			// le NOMME : « SFP1 » sur l'reference device, there where la numerotation
-			// continue disait « GE25 ». Le nom passe par le same chemin que celui de state
-			// lu, sinon un diagnostic optique s'afficherait sur un port que the UI ne sait
-			// pas retrouver.
+			// The cage of rank `i` is the port of index `sfpFirst+i`, and the
+			// faceplate is what NAMES it: "SFP1" on the reference device, where
+			// the continuous numbering said "GE25". The name goes through the
+			// same path as the read state's, otherwise an optical diagnosis
+			// would display on a port the UI cannot find.
 			Port:   f.Name(f.SFPFirst() + i),
 			Vendor: textAt(vendor, i),
 			Part:   textAt(part, i),
 			Serial: textAt(serial, i),
 		}
 		if i < len(temps) && temps[i] != sfpNoModule {
-			var v = float64(int32(temps[i])) //nolint:gosec // complement a deux voulu, cf. ci-dessous
+			var v = float64(int32(temps[i])) //nolint:gosec // two's complement intended, cf. below
 			o.TemperatureC = &v
 			o.Present = true
 		}
 		if !o.Present {
-			// Une cage sans module ne produit ni mesure ni identity : les champs texte
-			// d'une cage vide sont des strings d'espaces (observed `vnd:['', …]`), et les
-			// publier ferait un transceiver fantome dans l'inventaire.
+			// A cage without a module produces neither measurement nor
+			// identity: the text fields of an empty cage are strings of spaces
+			// (observed `vnd:['', …]`), and publishing them would put a ghost
+			// transceiver in the inventory.
 			o.Vendor, o.Part, o.Serial = "", "", ""
 			out = append(out, o)
 			continue
@@ -618,13 +636,13 @@ func foldOptics(page *Page, sfp int, f Facade) []OpticTelemetry {
 	return out
 }
 
-// textAt rend une ingress de tableau de texte, ROGNEE de son remplissage.
+// textAt returns an entry of a text array, TRIMMED of its padding.
 //
-// Les champs identity d'un transceiver sont de taille fixe dans le SFF-8472 et
-// rembourres par des ESPACES — observed `'46532020202020202020202020202020'`, soit « FS »
-// suivi de quatorze espaces. Le rognage a lieu ICI, a l'affichage, et jamais a la
-// lecture de la page : rogner en lisant modifierait la longueur d'un champ que
-// writing doit rendre a l'identique.
+// A transceiver's identity fields are fixed-size in SFF-8472 and padded with
+// SPACES — observed `'46532020202020202020202020202020'`, i.e. "FS" followed
+// by fourteen spaces. The trimming happens HERE, for display, and never when
+// reading the page: trimming on read would change the length of a field the
+// write must return identically.
 func textAt(vals []string, i int) string {
 	if i >= len(vals) {
 		return ""
@@ -632,28 +650,28 @@ func textAt(vals []string, i int) string {
 	return strings.TrimSpace(vals[i])
 }
 
-// assignDBM convertit une puissance optique brute en dBm.
+// assignDBM converts a raw optical power into dBm.
 //
-// # Unit, et pourquoi la conversion vit ICI et pas dans le vocabulaire de series
+// # Unit, and why the conversion lives HERE and not in the series vocabulary
 //
-// Les trois canaux MikroTik servent la same grandeur physique dans TROIS echelles
-// differentes, et c'est ce qui interdit une conversion unique :
+// The three MikroTik channels serve the same physical quantity in THREE
+// different scales, and that is what rules out a single conversion:
 //
-//	SwOS            entier BRUT en dixiemes de microwatt → logarithme a faire
-//	RouterOS API    valeur already en dBm, servie telle quelle par `monitor`
-//	SNMP MikroTik   entier en THOUSANDTHS de dBm (mtxrOpticalTxPower)
+//	SwOS            RAW integer in tenths of a microwatt → logarithm to compute
+//	RouterOS API    value already in dBm, served as is by `monitor`
+//	SNMP MikroTik   integer in THOUSANDTHS of a dBm (mtxrOpticalTxPower)
 //
-// Le vocabulaire de series n'impose donc qu'une UNITE — le dBm, parce qu'un budget
-// optique s'written en dB et que les seuils d'un constructeur de transceiver sont donnes
-// ainsi — et laisse chaque canal faire son propre chemin pour y arriver.
+// The series vocabulary therefore imposes only a UNIT — dBm, because an
+// optical budget is written in dB and a transceiver vendor's thresholds are
+// given that way — and lets each channel take its own path to get there.
 //
-// # Zero n'a pas de valeur en dBm
+// # Zero has no value in dBm
 //
-// log₁₀(0) n'existe pas. Une cage sous tension mais sans lumiere — fibre debranchee,
-// device d'en face off — rend donc AUCUN sample rather que moins l'infini.
-// Ce n'est pas une coquetterie mathematique : un point a -Inf dans VictoriaMetrics
-// ecrase the scale du graphe entier, si bien qu'une seule fibre debranchee rendrait
-// illisibles les courbes de tous les liens qui fonctionnent.
+// log₁₀(0) does not exist. A cage powered but without light — fibre
+// unplugged, device on the far end off — therefore returns NO sample rather
+// than minus infinity. It is not mathematical fussiness: a point at -Inf in
+// VictoriaMetrics crushes the scale of the whole graph, so that a single
+// unplugged fibre would make the curves of every working link unreadable.
 func assignDBM(dst **float64, vals []uint32, i int) {
 	if i >= len(vals) || vals[i] == 0 {
 		return
@@ -662,21 +680,23 @@ func assignDBM(dst **float64, vals []uint32, i int) {
 	*dst = &v
 }
 
-// --- Le passage au vocabulaire de series ---
+// --- Translation into the series vocabulary ---
 
-// Samples traduit the snapshot dans le vocabulaire de series du projet.
+// Samples translates the snapshot into the project's series vocabulary.
 //
-// Fonction PURE. Comme celle du connecteur RouterOS, elle ne produit NI `ifindex` NI
-// `iftype` : ce canal n'a pas d'index d'interface a donner, et fabriquer un index
-// depuis un rang de port serait inventer une clef que rien ne garantit stable. La
-// consequence est celle qu'on veut — ces samples alimentent les courbes sans
-// jamais pouvoir modifier la front panel (« la telemetry ne CREATES jamais un port »).
+// A PURE function. Like the RouterOS connector's, it produces NEITHER
+// `ifindex` NOR `iftype`: this channel has no interface index to give, and
+// fabricating an index from a port rank would invent a key nothing
+// guarantees to be stable. The consequence is the desired one — these samples
+// feed the curves without ever being able to modify the faceplate
+// ("telemetry NEVER CREATES a port").
 //
-// Le rattachement au port se fait donc par le NOM, et il tombe ici dans le cas le plus
-// favorable : les noms sont ceux que meshcraft a COMPUTED depuis le prefix de la
-// cible, donc ils coincident already avec la front panel qu'il tient en base. Cette plateforme
-// numerote ses ports et ne les nomme pas — c'est justement pour cela que le prefix
-// vient de la cible et non de l'appel (cf. [Admin.ReadState]).
+// Attachment to the port is therefore by NAME, and it falls here in the most
+// favourable case: the names are the ones meshcraft COMPUTED from the
+// target's prefix, so they already coincide with the faceplate it holds in
+// the database. This platform numbers its ports and does not name them —
+// that is precisely why the prefix comes from the target and not from the
+// call (cf. [Admin.ReadState]).
 func (t Telemetry) Samples(deviceID string) []metricbuf.Sample {
 	var out []metricbuf.Sample
 	var at = t.At
@@ -693,10 +713,10 @@ func (t Telemetry) Samples(deviceID string) []metricbuf.Sample {
 
 	add(metricbuf.MetricUptime, t.UptimeSeconds, base)
 	if t.TemperatureC != nil {
-		// Le capteur est NOMME, same s'il est seul sur cette carte. Une serial de
-		// temperature sans tag `sensor` ne pourrait pas cohabiter avec celles des
-		// gammes qui en ont plusieurs, et il faudrait alors deux requests differentes
-		// pour tracer la same grandeur sur deux constructeurs.
+		// The sensor is NAMED, even if it is the only one on this board. A
+		// temperature series without a `sensor` tag could not coexist with
+		// those of ranges that have several, and two different queries would
+		// then be needed to plot the same quantity across two vendors.
 		add(metricbuf.MetricTemperature, t.TemperatureC,
 			map[string]string{"device": deviceID, "sensor": "chip"})
 	}
@@ -737,7 +757,7 @@ func (t Telemetry) Samples(deviceID string) []metricbuf.Sample {
 	var o OpticTelemetry
 	for _, o = range t.Optics {
 		if !o.Present {
-			continue // une cage vide ne produit rien, cf. foldOptics
+			continue // an empty cage produces nothing, cf. foldOptics
 		}
 		var labels = map[string]string{"device": deviceID, "port": o.Port}
 		add(metricbuf.MetricSFPTemperature, o.TemperatureC, labels)

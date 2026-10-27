@@ -26,7 +26,7 @@ func canalDe(t *testing.T, mon driver.MonitoringCapabilities,
 	return ch
 }
 
-func TestMonitoringCanauxSNMPChacunSonPlancher(t *testing.T) {
+func TestMonitoringSNMPChannelsEachTheirFloor(t *testing.T) {
 	var mon = (&Driver1930{}).Capabilities("JL686A 48G PoE").Monitoring
 
 	var counters = canalDe(t, mon, "if_counters")
@@ -71,7 +71,7 @@ func TestMonitoringCanauxSNMPChacunSonPlancher(t *testing.T) {
 }
 
 // Optical power does not exist on this product line, and the connector SAYS so.
-func TestPuissanceOptiqueDeclareeIndisponibleSurLaGamme(t *testing.T) {
+func TestOpticalPowerDeclaredUnavailableOnTheRange(t *testing.T) {
 	var model string
 	for _, model = range []string{"JL685A", "JL685A 48G 4SFP+", "JL686A 48G PoE", ""} {
 		var mon = (&Driver1930{}).Capabilities(model).Monitoring
@@ -97,7 +97,7 @@ func TestPuissanceOptiqueDeclareeIndisponibleSurLaGamme(t *testing.T) {
 	}
 }
 
-func TestPuissanceOptiqueJamaisAnnonceeDisponible(t *testing.T) {
+func TestOpticalPowerNeverAdvertisedAvailable(t *testing.T) {
 	var mon = (&Driver1930{}).Capabilities("JL685A 48G 4SFP+").Monitoring
 
 	var ch, ok = mon.Best("optical_power")

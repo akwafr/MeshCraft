@@ -11,7 +11,7 @@ import (
 )
 
 // Device tags and tagging rules.
-// See docs/01-Architecture/Etiquettes et portee des identifiants.
+// See docs/en/01-Architecture/Tags and credential scope.md.
 
 // DeviceTags returns a device's tags in stable order.
 func (s *Store) DeviceTags(ctx context.Context, deviceID string) ([]tagging.Tag, error) {
@@ -99,7 +99,19 @@ func (s *Store) SiteTagNames(ctx context.Context, siteID string) ([]string, erro
 // SetDeviceTag sets a tag. Setting an existing tag again updates its source — that
 // is how a derived tag becomes manual when the operator confirms it, and then
 // stops being removable by a rule.
+//
+// ONE TAG IS REFUSED HERE, AND IT IS REFUSED IN THE STORE ON PURPOSE.
+// [FallbackAdminTag] is a SCOPE KEY on a `site_credentials` row, never a device
+// filing. Setting it on a device would make [Store.CredentialsForDevice] rank the
+// fallback credential at specificity 3 against the site row's 1 — the emergency
+// door would become the credential every session opens with and every fleet
+// deployment writes to, while the account that actually governs the fleet went
+// untracked. That is one call away from anywhere, so the refusal sits at the only
+// place all of those calls pass through rather than in each of them.
 func (s *Store) SetDeviceTag(ctx context.Context, deviceID, tag, source string) error {
+	if IsFallbackAdminTag(tag) {
+		return ErrFallbackTagIsNotADeviceTag
+	}
 	var _, err = s.pool.Exec(ctx,
 		`insert into device_tags (device_id, tag, source) values ($1::uuid, $2, $3)
 		 on conflict (device_id, tag) do update set source = excluded.source`,
@@ -294,7 +306,7 @@ func (s *Store) CredentialsForDevice(ctx context.Context, deviceID, siteID, grou
 		var specificity int
 		if err = rows.Scan(&c.ID, &c.SiteID, &c.GroupName, &c.Kind, &c.Username,
 			&c.HasSecret, &c.HasSecret2, &c.Note, &c.RotatedAt, &c.CreatedAt, &c.PerDevice,
-			&c.Tag, &c.Priority, &specificity); err != nil {
+			&c.Tag, &c.Priority, &c.TransportTLS, &c.CAPEM, &specificity); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -354,7 +366,7 @@ func (s *Store) PreviousInstalls(ctx context.Context, deviceID,
 //
 // This is the core mechanism: between two rotations the fleet is never in a single
 // state, and connecting means trying what the device PROBABLY carries before what
-// we want it to carry (docs/03-Security/Identite de service et rotation section 13.3):
+// we want it to carry (docs/en/03-Security/Service identity and rotation.md section 13.3):
 //
 //  1. the generation it is KNOWN to carry (observed state);
 //  2. retiring generations, newest to oldest — the device may not have been cleaned up yet;

@@ -7,11 +7,11 @@ import (
 )
 
 func TestHostOfCIDRStripsPrefix(t *testing.T) {
-	if hostOfCIDR("10.99.0.36/24") != "10.99.0.36" {
-		t.Fatal(hostOfCIDR("10.99.0.36/24"))
+	if hostOfCIDR("192.0.2.36/24") != "192.0.2.36" {
+		t.Fatal(hostOfCIDR("192.0.2.36/24"))
 	}
-	if hostOfCIDR("10.99.0.36") != "10.99.0.36" {
-		t.Fatal(hostOfCIDR("10.99.0.36"))
+	if hostOfCIDR("192.0.2.36") != "192.0.2.36" {
+		t.Fatal(hostOfCIDR("192.0.2.36"))
 	}
 	if hostOfCIDR("") != "" {
 		t.Fatal("empty")
@@ -19,20 +19,20 @@ func TestHostOfCIDRStripsPrefix(t *testing.T) {
 }
 
 func TestPaintSysMgmtStatic(t *testing.T) {
-	var page, err = ParseObject("{avln:0x63,ip:0x2400630a,iptp:0x01,alla:0x00,allm:0x00,allp:0x03ffffff}")
+	var page, err = ParseObject("{avln:0x63,ip:0x240200c0,iptp:0x01,alla:0x00,allm:0x00,allp:0x03ffffff}")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = paintSysMgmt(page, driver.MgmtAddrIntent{
 		Mode:    driver.MgmtAddrModeStatic,
-		Address: "10.99.0.40/24",
+		Address: "192.0.2.40/24",
 	}, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	var ip, _ = page.Num(FieldIP)
 	var mode, _ = page.Num(FieldAddrMode)
 	var avln, _ = page.Num(FieldAllowVLAN)
-	if DecodeIPv4(ip) != "10.99.0.40" {
+	if DecodeIPv4(ip) != "192.0.2.40" {
 		t.Errorf("ip = %s", DecodeIPv4(ip))
 	}
 	if mode != AddrStatic {
@@ -44,7 +44,7 @@ func TestPaintSysMgmtStatic(t *testing.T) {
 }
 
 func TestPaintSysMgmtDHCPAndVLANJump(t *testing.T) {
-	var page, err = ParseObject("{avln:0x63,ip:0x2400630a,iptp:0x01}")
+	var page, err = ParseObject("{avln:0x63,ip:0x240200c0,iptp:0x01}")
 	if err != nil {
 		t.Fatal(err)
 	}

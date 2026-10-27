@@ -68,10 +68,10 @@ func TestMgmtVLANPathAcceptsAccessOrTrunk(t *testing.T) {
 	}
 }
 
-// TestMgmtPathAbsentSansLien: core safeguard. Management VLAN is configured on a
+// TestMgmtPathAbsentWithoutLink: core safeguard. Management VLAN is configured on a
 // port, but that port has no cable — it proves no path. Switching there would
 // silence the device.
-func TestMgmtPathAbsentSansLien(t *testing.T) {
+func TestMgmtPathAbsentWithoutLink(t *testing.T) {
 	var d = deviceObserving(t,
 		map[string]driver.PortState{
 			"GE1": {Mode: "trunk", PVID: 1, Tagged: []int{99}},
@@ -87,9 +87,9 @@ func TestMgmtPathAbsentSansLien(t *testing.T) {
 	}
 }
 
-// TestMgmtPathReadyAvecLien: an active uplink carrying the target VLAN is
+// TestMgmtPathReadyWithLink: an active uplink carrying the target VLAN is
 // exactly what we want.
-func TestMgmtPathReadyAvecLien(t *testing.T) {
+func TestMgmtPathReadyWithLink(t *testing.T) {
 	var d = deviceObserving(t,
 		map[string]driver.PortState{
 			"GE1":  {Mode: "access", PVID: 1},
@@ -103,9 +103,9 @@ func TestMgmtPathReadyAvecLien(t *testing.T) {
 	}
 }
 
-// TestMgmtPathNatif: a "native" plan expects the VLAN as PVID, not in tagged
+// TestMgmtPathNative: a "native" plan expects the VLAN as PVID, not in tagged
 // VLANs. Looking in the wrong place would refuse a perfectly safe switch.
-func TestMgmtPathNatif(t *testing.T) {
+func TestMgmtPathNative(t *testing.T) {
 	var plan = model.MgmtPlan{Configured: true, VlanID: 99, Untagged: true}
 	var d = deviceObserving(t,
 		map[string]driver.PortState{"GE48": {Mode: "access", PVID: 99}},
@@ -122,9 +122,9 @@ func TestMgmtPathNatif(t *testing.T) {
 	}
 }
 
-// TestMgmtPathInconnu: not knowing is not the same as knowing there is nothing.
+// TestMgmtPathUnknown: not knowing is not the same as knowing there is nothing.
 // Turning ignorance into a block would lock down an entire fleet not yet re-read.
-func TestMgmtPathInconnu(t *testing.T) {
+func TestMgmtPathUnknown(t *testing.T) {
 	var neverRead = model.Device{ID: "d1", SiteID: "s1", Status: "ok"}
 	var state, reason = mgmtPathOf(neverRead, planTagged, false)
 	if state != "unknown" || reason == "" {
@@ -140,10 +140,10 @@ func TestMgmtPathInconnu(t *testing.T) {
 	}
 }
 
-// TestMigratableSuitLeChemin: an ABSENT path removes the migration offer; an
+// TestMigratableFollowsThePath: an ABSENT path removes the migration offer; an
 // INDETERMINATE path leaves it. This is the boolean form of "certainty blocks,
 // ignorance does not".
-func TestMigratableSuitLeChemin(t *testing.T) {
+func TestMigratableFollowsThePath(t *testing.T) {
 	// Outside the plan subnet: the case that proposes migration.
 	var noPath = deviceObserving(t,
 		map[string]driver.PortState{"GE1": {Mode: "trunk", Tagged: []int{99}}},
@@ -211,11 +211,11 @@ func TestApplyStalled(t *testing.T) {
 	}
 }
 
-// TestFacadeOfFiltreLesIfIndex: filter that keeps SNMP telemetry from inventing ports.
+// TestFacadeOfFiltersIfIndexes: filter that keeps SNMP telemetry from inventing ports.
 //
 // Indexes 1000 and 100041 are real — seen on a 1930; they are VLAN interfaces and
 // aggregates. "GE" + index used to become ports.
-func TestFacadeOfFiltreLesIfIndex(t *testing.T) {
+func TestFacadeOfFiltersIfIndexes(t *testing.T) {
 	var d = model.Device{
 		PortGroups: []byte(`[{"prefix":"GE","from":1,"count":48},
 		                     {"prefix":"GE","from":49,"count":4}]`),
@@ -235,9 +235,9 @@ func TestFacadeOfFiltreLesIfIndex(t *testing.T) {
 	}
 }
 
-// TestFacadeOfSansFacade: unreadable facade falls back to known ports. Keep
+// TestFacadeOfWithoutFacade: unreadable facade falls back to known ports. Keep
 // refreshing what exists; never create new ports.
-func TestFacadeOfSansFacade(t *testing.T) {
+func TestFacadeOfWithoutFacade(t *testing.T) {
 	var d = model.Device{
 		PortGroups: []byte(`nimportequoi`),
 		Ports:      []byte(`{"GE1":{"mode":"access"},"GE2":{"mode":"libre"}}`),
@@ -251,9 +251,9 @@ func TestFacadeOfSansFacade(t *testing.T) {
 	}
 }
 
-// TestFacadeResolveParLibelle: SNMP label to front-panel port mapping, replacing
+// TestFacadeResolveByLabel: SNMP label to front-panel port mapping, replacing
 // "prefix + ifIndex" arithmetic.
-func TestFacadeResolveParLibelle(t *testing.T) {
+func TestFacadeResolveByLabel(t *testing.T) {
 	// Instant On: ifDescr is a bare number; the facade names "GE1".
 	var instantOn = facadeOf(model.Device{
 		PortGroups: []byte(`[{"prefix":"GE","from":1,"count":52}]`),
@@ -286,9 +286,9 @@ func TestFacadeResolveParLibelle(t *testing.T) {
 	}
 }
 
-// TestFacadeResolveAmbigu: two ports that normalization conflates can no longer
+// TestFacadeResolveAmbiguous: two ports that normalization conflates can no longer
 // be disambiguated. Random matching is worse than no match.
-func TestFacadeResolveAmbigu(t *testing.T) {
+func TestFacadeResolveAmbiguous(t *testing.T) {
 	var f = facadeOf(model.Device{
 		Ports: []byte(`{"ether-1":{"mode":"access"},"ether 1":{"mode":"access"}}`),
 	})
@@ -298,5 +298,45 @@ func TestFacadeResolveAmbigu(t *testing.T) {
 	// EXACT equality remains possible: it carries no risk.
 	if f.resolve("ether-1") != "ether-1" {
 		t.Error("exact equality must remain valid despite normalized ambiguity")
+	}
+}
+
+// --- the SUPER ROOT intent: the one field on this shelf nobody observed ---
+
+// Absent means FALSE, and everything unreadable means FALSE too. An unset flag
+// is a device nobody asked to be root; answering anything else would invent a
+// decision, and the decision in question writes priority 0 on a live tree.
+func TestSTPSuperRootOfDefaultsToFalse(t *testing.T) {
+	var cases = map[string]json.RawMessage{
+		"no extra":     nil,
+		"no key":       json.RawMessage(`{"driver":"arista-eos"}`),
+		"null value":   json.RawMessage(`{"stp_super_root":null}`),
+		"wrong type":   json.RawMessage(`{"stp_super_root":"yes"}`),
+		"broken extra": json.RawMessage(`{not json`),
+	}
+	var name string
+	var extra json.RawMessage
+	for name, extra = range cases {
+		if stpSuperRootOf(model.Device{Extra: extra}) {
+			t.Errorf("%s: came back true — an absent or unreadable flag must never read "+
+				"as \"this switch was asked to be the region root\"", name)
+		}
+	}
+}
+
+// The stored intent is read back VERBATIM and is never derived from the
+// observation next to it. A switch somebody set to priority 0 by hand years ago
+// must NOT tick the box: doing so would record a decision meshcraft never took,
+// and clearing it would then offer to restore a priority meshcraft never chose.
+func TestSTPSuperRootOfIsAnIntentAndNotADeduction(t *testing.T) {
+	var on = model.Device{Extra: json.RawMessage(`{"stp_super_root":true}`)}
+	if !stpSuperRootOf(on) {
+		t.Error("a stored true was lost")
+	}
+	var off = model.Device{Extra: json.RawMessage(`{"stp_super_root":false,
+		"stp_observed":{"enabled":true,"mode":"mstp","bridge_priority":0}}`)}
+	if stpSuperRootOf(off) {
+		t.Error("an OBSERVED priority of 0 was read as the operator's intent: the checkbox " +
+			"would claim a decision meshcraft never took")
 	}
 }

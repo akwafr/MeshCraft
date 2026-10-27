@@ -85,8 +85,8 @@ import (
 // memory is empty and the first packet from each proxy is refused until its
 // first `watchConfigFor`. That is the only case where we truly have entrusted
 // nothing; refusing is then the only just answer, and it is self-healing — the
-// push happens on connection, once per proxy per startup. Accepting « until it
-// gets set up » would not be a security fix.
+// push happens on connection, once per proxy per startup. Accepting "until it
+// gets set up" would not be a security fix.
 //
 // # Where this state lives
 //
@@ -122,9 +122,9 @@ const (
 // scopeVerdict: is this fact acceptable from this proxy, and if not why?
 //
 // Three refusals, not one, because they are not repaired the same way and above
-// all they do not WEIGH the same. A « no configuration yet » refusal is a startup
-// race that resolves itself; a « pinged but not collected » refusal is a proxy
-// overstepping its role; a « never entrusted » refusal is a proxy speaking about
+// all they do not WEIGH the same. A "no configuration yet" refusal is a startup
+// race that resolves itself; a "pinged but not collected" refusal is a proxy
+// overstepping its role; a "never entrusted" refusal is a proxy speaking about
 // a device from another site — the case this whole check exists to catch.
 // Flattening them into a boolean would make the journal unusable at the precise
 // moment one must decide defect or attack.
@@ -177,9 +177,9 @@ type proxyScope struct {
 // happened.
 //
 // The ORDER of lookups is the message. For a polling fact, look at `poll` first —
-// the only thing that decides — and `ping` second, ONLY to choose between « it
-// overstepped its role » and « it speaks about a device that does not concern
-// it ». Reversing would make the verdict depend on the larger set, which is
+// the only thing that decides — and `ping` second, ONLY to choose between "it
+// overstepped its role" and "it speaks about a device that does not concern
+// it". Reversing would make the verdict depend on the larger set, which is
 // exactly the hole we are closing.
 func judgeProxyScope(sc proxyScope, known bool, need proxyAuthority,
 	deviceID string) scopeVerdict {
@@ -215,6 +215,15 @@ func judgeProxyScope(sc proxyScope, known bool, need proxyAuthority,
 // `host.seen` is a `slog.Debug` that deliberately creates no candidate,
 // `sweep.done` an application journal line. There is no state to protect.
 //
+// `resync.done` is ungated for the FIRST of those reasons and not the second. It
+// carries no DeviceID and speaks only about the proxy that sent it — it cannot be
+// aimed at anyone — but it does write state: the session's resync flag, which a
+// reachability hold consults. That write is inherently scoped to the sender (the
+// hub marks the session the event arrived on, cf. tunnel.Hub.readEvents), so a
+// coverage check would have nothing left to decide. The worst a proxy can do with
+// it is declare ITSELF caught up early, which costs it its own hold and nobody
+// else's.
+//
 // An UNKNOWN type returns false too, and that opens nothing: `handleProxyEvent`
 // does not handle it. Refusing higher up an event nobody consumes would only add
 // a journal line per proxy version newer than the controller.
@@ -229,6 +238,20 @@ func authorityFor(evType string) (proxyAuthority, bool) {
 		// although it comes from a datagram not a poll: the proxy accepts a trap
 		// only from a source in its SNMP targets with THAT target's community
 		// (cf. classifyTrap), so the proof does derive from collection.
+		return authorityPoll, true
+	case tunnel.EventGNMIFailing, tunnel.EventGNMIRecovered:
+		// COLLECTION authority, and the same one, because `poll` is built from
+		// cfg.SNMP UNION cfg.GNMI (cf. record): the set answers "is this proxy the
+		// declared collector for this device?", which does not depend on the
+		// protocol it collects with. So a proxy may report a broken subscription
+		// only for a device it was actually told to subscribe to — and a proxy
+		// that merely PINGS a device gets `pinged_not_collected`, which is the
+		// right verdict: it has no subscription to that device and therefore
+		// cannot have watched one fail.
+		//
+		// The stakes are not decorative here. These two events write a line into
+		// another site's fleet log naming a credential problem, which is both a
+		// false alarm and a disclosure that a device exists at all.
 		return authorityPoll, true
 	}
 	return authorityPing, false
@@ -251,8 +274,8 @@ type scopeRefusals struct {
 	// saidAt: when we last said it. Zero = never.
 	saidAt time.Time
 	// since: refusals since the last line. This count goes to the journal, never
-	// the cumulative total: « 4,200 refusals since the last minute » is actionable;
-	// « 3,100,000 since startup » is endured (cf. reportSaturation).
+	// the cumulative total: "4,200 refusals since the last minute" is actionable;
+	// "3,100,000 since startup" is endured (cf. reportSaturation).
 	since uint64
 	// total: cumulative, for the same line. It says how long this has been going on,
 	// which the period count does not.
@@ -272,7 +295,7 @@ func scopeSaysNow(saidAt, now time.Time, every time.Duration) bool {
 
 // scopeRefusalPhrase says what the refusal means, and the GESTURE that fixes it.
 //
-// One sentence per verdict, like `trapDestRefusal`: « fact refused » would fit all
+// One sentence per verdict, like `trapDestRefusal`: "fact refused" would fit all
 // three and help in none. They are repaired by gestures that have nothing in
 // common — wait a few seconds, fix an attachment, or investigate why a proxy
 // speaks about a site it does not cover.
@@ -343,8 +366,8 @@ func newProxyScopes() *proxyScopes {
 // what was there before.
 //
 // Total replacement is what makes the set unable to go stale: a `WatchConfig` is
-// complete by construction (cf. Hub.PushWatch, « a complete config replaces the
-// previous one — no delta to reconcile »), so a device removed from supervision
+// complete by construction (cf. Hub.PushWatch, "a complete config replaces the
+// previous one — no delta to reconcile"), so a device removed from supervision
 // disappears from here at the same instant it disappears from the proxy. Retaining
 // deltas would reopen the hole in another form: a detached device would stay
 // authorized.
@@ -371,11 +394,31 @@ func (r *proxyScopes) record(proxyID string, cfg tunnel.WatchConfig, now time.Ti
 			ping[t.DeviceID] = true
 		}
 	}
-	var poll = make(map[string]bool, len(cfg.SNMP))
+	// The COLLECTION authority set is built from BOTH collector lists.
+	//
+	// `poll` answers one question — "is this proxy the declared collector for this
+	// device?" — and the answer does not depend on which protocol it collects
+	// with. Built from cfg.SNMP alone, as it was, every device carried on gNMI
+	// would fall outside the set: `/api/proxy/metrics` would refuse every sample,
+	// `/api/proxy/lldp` every snapshot, and port transitions would be dropped as
+	// unauthorised. A gNMI collector working perfectly would produce nothing at
+	// all, with a rate-limited refusal line as the only witness.
+	//
+	// The two lists are exclusive per device (cf. watchConfigFor), so this is a
+	// union of disjoint sets rather than a merge — but it is written as a union
+	// anyway, because a future overlap must not silently drop authority for the
+	// devices in it.
+	var poll = make(map[string]bool, len(cfg.SNMP)+len(cfg.GNMI))
 	var w tunnel.SNMPWatch
 	for _, w = range cfg.SNMP {
 		if w.DeviceID != "" {
 			poll[w.DeviceID] = true
+		}
+	}
+	var g tunnel.GNMIWatch
+	for _, g = range cfg.GNMI {
+		if g.DeviceID != "" {
+			poll[g.DeviceID] = true
 		}
 	}
 
@@ -486,7 +529,7 @@ func (r *proxyScopes) refuse(proxyID string, verdict scopeVerdict, need proxyAut
 
 // authorityLabel / verdictLabel: the two journal labels.
 //
-// Words, not integers. A « verdict: 2 » would force opening this file to read a
+// Words, not integers. A "verdict: 2" would force opening this file to read a
 // journal line, which is exactly what one does not do at three in the morning.
 func authorityLabel(need proxyAuthority) string {
 	if need == authorityPoll {
@@ -548,7 +591,7 @@ func (s *Server) recordProxyScope(proxyID string, cfg tunnel.WatchConfig) {
 // batch, make twenty thousand passes through `refuse` — therefore twenty thousand
 // promotions from shared to exclusive lock on the hot path, and a refusal counter
 // counting measurements where the journal announces facts. A FALSE entry is
-// therefore a result we keep, not « not decided yet »: that bounds the journal to
+// therefore a result we keep, not "not decided yet": that bounds the journal to
 // one line per refused device per batch.
 //
 // Carries its `Server` and proxy: scope is that of a (controller, proxy) pair,
@@ -589,7 +632,7 @@ func (b *scopeBatch) allows(deviceID string) bool {
 	return allowed
 }
 
-// tunnelLive returns the « does this proxy still have a tunnel? » predicate, or
+// tunnelLive returns the "does this proxy still have a tunnel?" predicate, or
 // nil when there is no Hub — a `Server` built by hand in a test. Nil purges
 // nothing, which is the right default: better one extra inert entry than memory
 // emptied under a live proxy's feet.

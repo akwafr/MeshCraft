@@ -1,0 +1,23 @@
+show storm-control all
+
+       Bcast   Bcast    Bcast      Mcast   Mcast    Mcast      Ucast   Ucast    Ucast      Flow
+ Intf  Mode    Level    Action     Mode    Level    Action     Mode    Level    Action     Mode
+------ ------- -------- ---------- ------- -------- ---------- ------- -------- ---------- ------
+0/1    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/2    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/3    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/4    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/5    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/6    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/7    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/8    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/9    Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/10   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/11   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/12   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/13   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/14   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/15   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/16   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/17   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable
+0/18   Disable 5%       None       Disable 5%       None       Disable 5%       None       Disable

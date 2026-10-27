@@ -2,10 +2,66 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f1218" />
+    <!-- `viewport-fit=cover` is what lets the glass bars run edge to edge
+         behind a notch and a home indicator; without it iOS letterboxes the
+         page and the safe-area insets all read 0. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <!-- Dark is the DEFAULT theme, not merely one of two, so the pre-script
+         browser chrome is dark unconditionally. ui/theme.ts rewrites this
+         the moment it knows the real choice; the only window it covers is
+         the first paint of someone who picked light. Keep in step with --bg
+         in tokens.css. -->
+    <meta name="theme-color" content="#0d1014" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Preloaded because they are the first thing the eye lands on and the
+         last thing the bundler learns about: the @font-face lives inside the
+         hashed CSS, so without this the fonts are a third round trip. -->
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-sans-latin-wght-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-mono-latin-400-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <title>meshcraft</title>
+    <script>
+      // Theme, before first paint.
+      //
+      // DARK IS THE DEFAULT, so the attribute is stamped for everyone except
+      // the people who explicitly chose "Auto" — those are the only ones who
+      // fall through to light-dark() and prefers-color-scheme.
+      //
+      // Inline and synchronous on purpose: a deferred module runs after the
+      // first paint, so anyone whose theme differs from their OS would get a
+      // full-screen flash of the wrong colour on every load. Kept to the
+      // attribute alone; ui/theme.ts owns everything else (the meta tag, the
+      // live system-preference listener) and re-applies on mount.
+      //
+      // Keep the default in step with DEFAULT in ui/theme.ts.
+      try {
+        var t = localStorage.getItem("meshcraft.theme");
+        if (t !== "system") {
+          document.documentElement.setAttribute(
+            "data-theme",
+            t === "light" ? "light" : "dark",
+          );
+        }
+      } catch (e) {
+        /* blocked storage: fall back to the default theme */
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

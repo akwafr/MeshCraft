@@ -15,7 +15,7 @@ import (
 // 15:35:39 — 3.7 seconds later, three missed pings at one per second — four
 // devices of another site were marked unreachable. Every one of them was alive:
 // their own collector was polling them successfully at that instant, and LLDP
-// snapshots kept arriving throughout. The new proxy sat on 172.16.99.0/24, was
+// snapshots kept arriving throughout. The new proxy sat on 203.0.113.0/24, was
 // handed the whole inventory because an instance proxy covers every site, and
 // pinged addresses that simply do not exist on its network.
 //
@@ -99,7 +99,7 @@ type reachVerdict struct {
 //
 // Verdicts persist in the database, and a proxy that loses its tunnel leaves its
 // last one behind. Read as current, that produces the most misleading state the
-// product can show: a device reported GREEN, "seen by proxy-zezombini", by a
+// product can show: a device reported GREEN, "seen by proxy-site2", by a
 // proxy that has been gone for twelve minutes. Nobody is looking, and the screen
 // says everything is fine.
 //
@@ -118,8 +118,8 @@ func judgeReach(obs []model.ProxyReach, live func(proxyID string) bool) reachVer
 		// evidence when that proxy has never once seen the device.
 		//
 		// A proxy is credible for a device if it has EVER proven its identity or
-		// EVER reached it. Observed 2026-08-02: proxy-akwalan, live and unable to
-		// route to 172.16.99.0/24, turned a device red the moment its real
+		// EVER reached it. Observed 2026-08-02: proxy-lab, live and unable to
+		// route to 203.0.113.0/24, turned a device red the moment its real
 		// observer went offline — which is the same lie as the stale green, told
 		// the other way round.
 		var credible = func(o model.ProxyReach) bool { return o.Confirmed() || o.Up() }
@@ -221,6 +221,146 @@ func judgeReach(obs []model.ProxyReach, live func(proxyID string) bool) reachVer
 		Note:    "no longer responds to ping (" + proxyNames(obs) + ")",
 		Decider: obs[0].ProxyName,
 	}
+}
+
+// --- The startup hold: waiting for the witnesses, for a bounded moment ---
+
+const (
+	// reachStartupWindow: how long after controller start a status write may be
+	// deferred while the witnesses of a device finish restating what they know.
+	//
+	// THE BOUND IS THE SAFETY PROPERTY, not a tuning knob. Past this age the hold
+	// stops existing and reachability behaves exactly as it did before this code was
+	// written — a proxy that never resyncs, a proxy decommissioned with rows still in
+	// `proxy_reach`, a burst that dies mid-flight, all end in today's answer rather
+	// than in a device frozen on a stale colour.
+	//
+	// 30 seconds, from two measurements and one bet. The window this closes was
+	// measured at ~9 s (cf. TODO, "Reachability"): proxy reconnect after a controller
+	// restart plus the burst itself. Proxy reconnect backoff is 0.5-1 s at the first
+	// attempt and grows to 60 s only for a proxy that was ALREADY failing before the
+	// restart (cf. cmd/proxy.tunnelBackoff) — that one is not a witness worth waiting
+	// for, and 30 s deliberately does not cover it. The bet is that 30 s is short
+	// compared with how long a real outage stays interesting and long compared with a
+	// healthy fleet's reconnect, and it is a bet: cf. WHAT IS NOT PROVEN below.
+	reachStartupWindow = 30 * time.Second
+	// reachHoldRetry: how often a held device is re-judged while the hold lasts.
+	//
+	// A hold SKIPS a write, and proxies emit on transition only — so without a clock
+	// nothing would ever come back to write the verdict that was withheld, and the
+	// device would keep the colour it had before the controller restarted. That is the
+	// freeze this fix must not introduce, and one second is what keeps the cost of
+	// being right small: a device whose witnesses settle at t=4 s is written at t≤5 s,
+	// not at the end of the window.
+	reachHoldRetry = time.Second
+)
+
+// holdReach reports whether writing this verdict must wait for a witness to finish
+// resyncing, and names what it is waiting for.
+//
+// # The failure this answers
+//
+// Measured at controller startup: proxies come back one at a time, each replaying what
+// it knows (cf. tunnel.Event.Resync). A proxy that has reconnected, confirmed the
+// device's identity and can no longer reach it produces a CONFIRMED DOWN, rule 2 of
+// judgeReach answers "off", and the proxy that would have contradicted it — the one
+// that actually reaches the device — is either not back yet or still restating. Nine
+// seconds later it lands and the device goes green again. The verdict was never wrong
+// on the evidence available; the evidence was incomplete, and nothing said so.
+//
+// # WHY THIS IS NOT THE FIX THE HEADER REFUSES
+//
+// The cheap fix — let a credible witness that is ABSENT veto a "down" — is refused at
+// the top of this file, and rightly: a genuinely dead switch would then read "unknown"
+// for as long as any other credible observer stayed offline, which is a light that
+// never turns red as long as something else is broken too. The difference here is not
+// the rule, it is the CLOCK. This hold:
+//
+//   - never changes a verdict. It delays a WRITE, and the verdict that is eventually
+//     written is whatever judgeReach says at that moment, unmodified;
+//   - only exists during the first reachStartupWindow of a controller's life, i.e.
+//     exactly when the witness set is known to be assembling. After that, absence is
+//     absence, and judgeReach's own answer stands;
+//   - only ever delays BAD news. A verdict of "ok" is written immediately, so the hold
+//     cannot hide a device coming back, and it cannot make a screen greener than the
+//     evidence.
+//
+// # Why "off" and not "unknown"
+//
+// "unknown" is judgeReach saying nobody can see this device — a PROXY outage, and the
+// one thing an operator must be told immediately at startup, because it is the state
+// that says "your monitoring is not working" rather than "your switch is not working".
+// Holding it would suppress that signal for the sake of a prettier restart. Only "off",
+// which asserts something about the DEVICE, can be premature in the way this fixes.
+//
+// # What "settled" must mean, and the old-proxy contract
+//
+// `settled` answers, for one proxy: has it nothing left to restate? The caller builds
+// it from tunnel.Hub.Resync, and BOTH ResyncDone and ResyncUnsupported are settled. The
+// second is the whole compatibility story: a proxy that never announced
+// FeatureResyncDone at the handshake is recognised the instant it connects, will never
+// send an end-of-burst marker, and is therefore treated as having nothing pending — a
+// fleet of old proxies produces `settled` true everywhere and reaches the `return
+// false` below on every call, which is byte for byte today's behaviour.
+//
+// The one case the header cannot decide is a credible observer that is NOT CONNECTED at
+// all: it has announced nothing, so an old proxy and a new one still reconnecting look
+// identical, and both hold. That is deliberate — it is the case the measured window is
+// actually made of — and it is the reason the bound is not optional. An all-old fleet's
+// entire exposure is therefore the reconnect race at controller start, capped at
+// reachStartupWindow and ending in today's answer.
+//
+// # WHAT IS NOT PROVEN, and the measurement that would settle it
+//
+// This is written and unit-tested. It is NOT proven that it does not delay a TRUE
+// outage by the same nine seconds it saves, because that cannot be measured in this
+// repository: it needs a fleet where at least two proxies watch one device, one of them
+// genuinely dead hardware. The measurement is the one that found the window in the
+// first place — restart the controller and read `devices.status` transitions from the
+// journal:
+//
+//  1. with a live fleet: no device may pass through "off" at all (today: some do,
+//     for ~9 s);
+//  2. with one device genuinely powered off: compare the timestamp of its
+//     `device.unreachable` journal line against the same restart with the hold
+//     disabled. The delay must be the time its witnesses take to settle — seconds —
+//     and NOT reachStartupWindow. If it is the full window, the hold is waiting on
+//     observers that will never answer, and the fix costs more than the bug.
+//
+// Nothing in this file can distinguish those two outcomes; only that fleet can.
+func holdReach(v reachVerdict, obs []model.ProxyReach, settled func(proxyID string) bool,
+	sinceStart time.Duration) (bool, string) {
+	if settled == nil || sinceStart >= reachStartupWindow {
+		// THE BOUND. Also the answer for a Server with no start time recorded, whose
+		// age reads as enormous: an unknown clock must fall back to today's behaviour,
+		// never to an indefinite hold.
+		return false, ""
+	}
+	if v.Status != "off" {
+		return false, ""
+	}
+	// EVERY credible observer counts, including the one whose observation just
+	// produced this verdict. A proxy in the middle of its own burst is a proxy whose
+	// view of the fleet the controller does not yet hold whole, and its "off" is worth
+	// exactly as little as anyone else's until the burst closes.
+	var waiting []model.ProxyReach
+	var o model.ProxyReach
+	for _, o = range obs {
+		// Same credibility test as judgeReach, and it must stay the same: waiting on a
+		// proxy whose opinion would be discarded anyway would delay a verdict for an
+		// observer that could not change it.
+		if !o.Confirmed() && !o.Up() {
+			continue
+		}
+		if !settled(o.ProxyID) {
+			waiting = append(waiting, o)
+		}
+	}
+	if len(waiting) == 0 {
+		return false, ""
+	}
+	return true, "held: " + proxyNames(waiting) + " has seen this device before and has " +
+		"not finished restating what it knows since the controller started"
 }
 
 // downNote explains a confirmed outage, and says when identity was last proven.

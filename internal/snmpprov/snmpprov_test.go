@@ -52,7 +52,7 @@ func TestWithoutV3FallsBackToV2c(t *testing.T) {
 }
 
 func TestV3AdvertisedButUnusable(t *testing.T) {
-	var p = For(caps([]string{"v2c", "v3"}, []string{"kangourou"}, nil), DefaultPolicy())
+	var p = For(caps([]string{"v2c", "v3"}, []string{"kangaroo"}, nil), DefaultPolicy())
 	if p.Version != "v2c" {
 		t.Fatalf("fallback expected: %+v", p)
 	}

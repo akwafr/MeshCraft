@@ -60,6 +60,8 @@ var (
 	_ driver.MgmtAddrReader   = (*Client)(nil)
 	_ driver.MgmtAddrWriter   = (*Client)(nil)
 	_ driver.FaceplateReader  = (*Client)(nil)
+	// Read proven on the lab S3900-24T4S, FSOS 1.7.7 (2026-08-05) — cf. stp.go.
+	_ driver.SpanningTreeReader = (*Client)(nil)
 )
 
 // CLI dialects.
@@ -89,6 +91,11 @@ type Client struct {
 	facts versionFacts
 	// dialect: the recognized CLI. Empty = unknown, writes refused.
 	dialect string
+	// sysName: the device's OWN name, as the last PLAIN `show run` on this
+	// access read it. Filled by ReadState, cleared by SetHostname, reported by
+	// ReadIdentity — the whole policy, including why a write must never feed it,
+	// is on identityread.go.
+	sysName string
 }
 
 func (c *Client) step(ok bool, what string, detail ...string) {
@@ -119,7 +126,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 		}
 		var key = cand.Username + "\x00" + cand.Secret
 		if tried[key] {
-			c.step(true, "duplicate candidate skipped: « "+cand.Why+" »",
+			c.step(true, "duplicate candidate skipped: \""+cand.Why+"\"",
 				"same username and secret as an earlier attempt — the try budget is not spent twice")
 			continue
 		}
@@ -128,8 +135,8 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 		var client, err = dialSSH(ctx, tgt, cand.Username, cand.Secret)
 		if err != nil {
 			if isSSHAuthFailure(err) {
-				refusals = append(refusals, fmt.Sprintf("« %s » refused", cand.Why))
-				c.step(false, "credential refused: « "+cand.Why+" »", firstLine(err.Error()))
+				refusals = append(refusals, fmt.Sprintf("\"%s\" refused", cand.Why))
+				c.step(false, "credential refused: \""+cand.Why+"\"", firstLine(err.Error()))
 				continue
 			}
 			// Dead transport or impossible negotiation: further attempts would
@@ -149,7 +156,7 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 		c.cli = cli
 		c.User = cand.Username
 		c.accepted = cand
-		c.step(true, "connected as « "+cand.Username+" » ("+cand.Why+")",
+		c.step(true, "connected as \""+cand.Username+"\" ("+cand.Why+")",
 			"interactive shell opened, prompt seen")
 
 		c.postLogin(ctx)
@@ -192,7 +199,7 @@ func (c *Client) postLogin(ctx context.Context) {
 	}
 	c.dialect = dialectUnknown
 	c.step(false, "CLI dialect not recognized",
-		"« show version » does not carry « Operation Code Version » — this is not the "+
+		"\"show version\" does not carry \"Operation Code Version\" — this is not the "+
 			"CLI the command set was verified on (possibly the post-upgrade S3900-R CLI). "+
 			"Reads stay best-effort; writes are refused until the new CLI is surveyed.")
 }
@@ -203,14 +210,100 @@ func (c *Client) requireWritableDialect() error {
 		return nil
 	}
 	return driver.NotSupported("fs-s3900", "write to this device",
-		"the CLI dialect was not recognized at login (« show version » without "+
-			"« Operation Code Version »). The verified command set targets FSOS 1.7; "+
+		"the CLI dialect was not recognized at login (\"show version\" without "+
+			"\"Operation Code Version\"). The verified command set targets FSOS 1.7; "+
 			"a device upgraded to the S3900-R CLI needs its command set surveyed and "+
 			"added before meshcraft writes anything to it")
 }
 
-// WritesExtra: nothing is written beyond VLAN membership.
-func (d *Driver) WritesExtra(name string) bool { return false }
+// WritesExtra: the shut / un-shut gesture, and nothing else beyond VLAN
+// membership.
+//
+// # `port_admin` — "shutdown" / "no shutdown", TYPED ONCE on 2026-08-10, on a
+// # firmware that is about to move
+//
+// Declared 2026-08-06 on an operator decision, when this was the THINNEST
+// evidence of the eight connectors. A hand exercise on 2026-08-10 moved two of
+// the three bullets below, and the note keeps them rather than borrowing the
+// confidence of the others:
+//
+//   - "shutdown" / "no shutdown" inside "interface ethernet 1/N" is the
+//     Accton-family form, and it HAD never been typed on this hardware — the lab
+//     survey (OpCode 1.7.0) and the post-upgrade capture (1.7.7) proved "vlan
+//     database", "vlan N name X [media ethernet]", "switchport mode trunk",
+//     "switchport trunk allowed vlan add/remove" and the save sequence, nothing
+//     about administrative state. On 2026-08-10 it was typed, on the lab
+//     S3900-24T4S, on a dark port, and accepted ("conf t" is the config-mode
+//     word; plain "configure" is refused);
+//   - the admin-down ROW came with it — "Eth 1/ 1 … Down Down" where the port
+//     beside it read "Up Down" — where every line of the earlier lab capture
+//     read "Up" in the Admin column. Both are replayed in
+//     portadmin_live_test.go. What was NOT exercised is [Client.ApplyPortAdmin]
+//     itself: the commands were hand-typed, so the guardrail, the idempotence
+//     skip and the post-write verification are still constructed tests only;
+//   - and this package has already been bitten on this exact firmware boundary —
+//     "media ethernet" is REQUIRED on 1.7.0 and REFUSED on 1.7.7 (apply.go's
+//     vlanCreateCmds carries the capture, caret included). The pending fleet
+//     upgrade may swap the CLI for the BDCOM-lineage S3900-R dialect entirely, on
+//     which [Client.requireWritableDialect] refuses every write.
+//
+// WHAT MAKES THAT DECLARABLE is that the two dialects fail in DIFFERENT and both
+// loud ways. On an unrecognised CLI nothing is sent at all — the dialect check
+// refuses before the first command. On the verified CLI a rejected verb comes back
+// as a caret line that [Client.runConfigBlock] reads, and the port is reported in
+// [driver.ApplyResult.Skipped] naming the firmware the command set was surveyed
+// on. There is only ONE spelling of "shutdown" in either lineage, so unlike
+// apply.go's ordered candidates there is nothing to fall back to — and nothing to
+// try blindly either.
+//
+// AND THE GUARDRAIL is the real safety net: portadmin.go will not shut a port
+// carrying a LIVE LINK in the management VLAN without [driver.PortAdminPlan.Force],
+// spares every linked port when the running configuration names no SVI with an
+// address, and deliberately does not "copy running-config startup-config" — so a
+// reboot brings the port back. There is a console port too.
+//
+// What is left to close is an exercise of the APPLIER on hardware, and re-verifying
+// the forms after the pending upgrade — the 2026-08-10 capture was hand-typed, and
+// says nothing about the post-upgrade CLI.
+//
+// # `dhcp_snooping` — EARNED ON HARDWARE 2026-08-11, applier and all
+//
+// This one is declared on the bar this feature sets for every range and not on
+// the strength of the fields existing: [Client.ApplyDHCPSnooping] was driven end
+// to end against the lab S3900-24T4S on FSOS 1.7.7, through
+// live_snoop_test.go, over the controller's SOCKS route. What the run measured,
+// in the applier's own order:
+//
+//   - the global enable took and was confirmed by a re-read — "dhcp snooping",
+//     the spelling captured on 2026-08-10, with no "ip" prefix;
+//   - `GE26` — the port `show lldp neighbor` shows facing core01-lab on
+//     Ethernet48, i.e. the real uplink — came back in
+//     [driver.ApplyResult.PortsWritten], which on this contract means CONFIRMED
+//     by re-read and not merely sent;
+//   - an INDEPENDENT [Client.ReadDHCPSnooping] then reported the feature on,
+//     VLAN 777 armed and GE26 trusted — the applier's own verification was not
+//     asked to vouch for itself;
+//   - a SECOND identical apply wrote NOTHING, which is what makes this callable
+//     from a reconciler;
+//   - the teardown restored the opening state and "show dhcp snooping config"
+//     came back byte-for-byte identical, re-proved afterwards from a separate
+//     SSH session.
+//
+// TWO LIMITS, named rather than left to be discovered. Inspection was armed on
+// VLAN 777, which is undefined on that switch, so the run proves the applier and
+// does NOT observe a DHCP frame being dropped — watching that needs a VLAN
+// carrying clients, which is an outage on a live path. And the per-port trust
+// flag was exercised on the UPLINK only; a plan that untrusts a port has never
+// been run here.
+func (d *Driver) WritesExtra(name string) bool {
+	return name == "port_admin" || name == "dhcp_snooping"
+}
+
+// Supports: the optional gestures of this platform, computed from the method
+// sets and never listed by hand — see driver.GesturesOf.
+func (d *Driver) Supports() []driver.Gesture {
+	return driver.GesturesOf(d, (*Client)(nil))
+}
 
 // Identify: WHICH device answers at this address. Like RouterOS, NOTHING is
 // read without a credential: the CLI sits behind SSH authentication.
@@ -304,9 +397,9 @@ func orUnknown(s string) string {
 }
 
 // bannerModel pulls the product reference out of the login banner. On this
-// platform « show version » carries NO model line — the name appears only in the
-// banner (« CLI session with the S3900-24T4S is opened ») and in sysDescr — which
-// is why discovery, keyed on a « Model: » pattern, left the field empty. Matches
+// platform "show version" carries NO model line — the name appears only in the
+// banner ("CLI session with the S3900-24T4S is opened") and in sysDescr — which
+// is why discovery, keyed on a "Model:" pattern, left the field empty. Matches
 // an S3900 / S3900-R product code; empty when the banner does not carry one, so a
 // firmware that changes the wording simply yields no model rather than a wrong one.
 func bannerModel(banner string) string {

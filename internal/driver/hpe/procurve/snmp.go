@@ -6,12 +6,12 @@ package procurve
 //
 // The reference unit already carried one when it was surveyed (2026-08-02):
 //
-//	snmp-server contact "technique@lyon-esport.fr"
+//	snmp-server contact "noc@example.org"
 //	snmp-server location "InTheKitchen"
-//	snmp-server community "les" Operator
+//	snmp-server community "ops" Operator
 //
 // On this platform the running-config IS the command language — what it prints
-// back is what it accepts — so « snmp-server community "<name>" Operator » is an
+// back is what it accepts — so "snmp-server community "<name>" Operator" is an
 // observed form rather than a deduced one. `Operator` is the READ-ONLY access
 // level; `Manager` is read-write.
 //

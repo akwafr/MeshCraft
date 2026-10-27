@@ -11,7 +11,7 @@ import (
 
 // The two LLDP neighborhood routes: proxy push and screen read.
 //
-// See docs/01-Architecture/Voisinage LLDP.md. The decisions — recognize a neighbor,
+// See docs/en/01-Architecture/LLDP neighbours.md. The decisions — recognize a neighbor,
 // conclude that a link is seen from both sides — live in lldp.go, pure and tested; this
 // file only handles rights, scope, facade resolution, and storage.
 
@@ -38,10 +38,10 @@ import (
 // fleet, here it is one device's table.
 const maxProxyLLDPBody = 1 << 20
 
-// lldpGeste: the recovery to announce when the body was refused. Like `batchGeste`, it
+// lldpRecovery: the recovery to announce when the body was refused. Like `batchRecovery`, it
 // names the sender and its setting, because on this route there is no human to read the
 // message — it will end up in a proxy log, and must be sufficient there.
-const lldpGeste = " ; this proxy's neighborhood snapshot is too large, which" +
+const lldpRecovery = "; this proxy's neighborhood snapshot is too large, which" +
 	" is not a content problem — a device sees an unexpected number of" +
 	" neighbors, probably through a switch that floods LLDP frames"
 
@@ -81,7 +81,7 @@ func (s *Server) handleProxyLLDP(w http.ResponseWriter, r *http.Request) {
 	var in proxyLLDPPush
 	var err = readJSON(w, r, &in, maxProxyLLDPBody)
 	if err != nil {
-		failJSON(w, err, lldpGeste)
+		failJSON(w, err, lldpRecovery)
 		return
 	}
 	var _, _, authErr = s.Store.AuthProxy(r.Context(), in.ProxyID, auth.HashToken(in.Secret))
@@ -133,7 +133,24 @@ func (s *Server) handleProxyLLDP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ARBITRATION with the CLI collection path (migration 0037): a snapshot
+	// from an agent that serves NOTHING under 1.0.8802 must not erase what
+	// the read-state gesture observed over the admin session — on the FS
+	// S3400 the poller would otherwise wipe the CLI rows thirty seconds
+	// after every read-state, forever. The decision is pure and tested
+	// (snmpSnapshotOverrides); a snapshot WITH LLDP content always takes
+	// over, so SNMP-only devices behave exactly as before. 200 and not an
+	// error: the proxy did its job, the controller simply holds a better
+	// witness for this device right now.
+	var prior, priorErr = s.Store.GetLLDPSelf(r.Context(), d.ID)
+	if priorErr == nil && !snmpSnapshotOverrides(prior, in.Report) {
+		respond(w, http.StatusOK, map[string]any{"accepted": 0, "served": in.Report.Served,
+			"kept": lldpSourceCLI})
+		return
+	}
+
 	var self, neighbors, dropped = lldpRowsFor(d, in.Report)
+	self.Source = lldpSourceSNMP
 	if err = s.Store.ReplaceLLDP(r.Context(), self, neighbors); err != nil {
 		// An error reaches the proxy, as on the metrics path — but with no replay
 		// consequence: it kept nothing, and the next cycle will remake the snapshot.
@@ -247,10 +264,26 @@ func (s *Server) handleListSiteLLDP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var view = buildLLDPView(neighbors, selves, devices)
+	// Refuted observations are counted apart, and counted at all, because they are the one
+	// case where `neighbors` and `links` legitimately disagree: the row is listed, the edge
+	// is not drawn. Without the number, a support read of this response looks like a
+	// derivation bug (cf. markRefutedObservations).
+	var refuted int
+	var i int
+	for i = range view.Neighbors {
+		if view.Neighbors[i].Refuted {
+			refuted++
+		}
+	}
 	respond(w, http.StatusOK, map[string]any{
 		"neighbors": view.Neighbors,
 		"links":     view.Links,
 		"silent":    view.Silent,
+		// Notes travel WITH the counts they explain, for the same reason as
+		// `silent_help`: the one below that can rise while `refuted` also rises is
+		// unreadable without its sentence, and a sentence kept out of the payload is a
+		// sentence the screen has to reinvent. Absent on almost every read.
+		"notes": view.Notes,
 		// The legend goes WITH the data. The screen must be able to explain "zero
 		// neighbors" without a developer recopying the nuance into a component, where it
 		// would diverge from the backend at the first rewording.
@@ -259,6 +292,7 @@ func (s *Server) handleListSiteLLDP(w http.ResponseWriter, r *http.Request) {
 			"neighbors": len(view.Neighbors),
 			"links":     len(view.Links),
 			"silent":    len(view.Silent),
+			"refuted":   refuted,
 		},
 	})
 }

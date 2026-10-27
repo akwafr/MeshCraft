@@ -32,12 +32,12 @@ func deviceForTest(driverName, modelName string) model.Device {
 	return d
 }
 
-// TestFicheDitPourquoiLaPuissanceOptiqueManque: first real case and reason this
+// TestSheetSaysWhyOpticalPowerIsMissing: first real case and reason this
 // batch exists. The 1930 line publishes no optical sensor; the reason is
 // established by SNMP observation on hardware, and must reach the UI with the
 // three things that make it usable — metric named as in the standard model, a
 // clear reason, and the fact that it was OBSERVED.
-func TestFicheDitPourquoiLaPuissanceOptiqueManque(t *testing.T) {
+func TestSheetSaysWhyOpticalPowerIsMissing(t *testing.T) {
 	var gaps = unavailableMetricsOf(deviceForTest("aruba-instant-on-1930", "JL686A 48G PoE"))
 	if len(gaps) != 1 {
 		t.Fatalf("1930 record must carry connector declaration, got %d", len(gaps))
@@ -56,11 +56,11 @@ func TestFicheDitPourquoiLaPuissanceOptiqueManque(t *testing.T) {
 	}
 }
 
-// TestAbsenceDeDeclarationNEstPasUneDisponibilite: trap of the whole batch. A
+// TestAbsentDeclarationIsNotAvailability: trap of the whole batch. A
 // model whose connector declares nothing must carry NOTHING — not an empty array,
 // not a key. Missing key keeps the UI silent; a key with zero elements invites
 // showing "no limitation", i.e. asserting availability nobody verified.
-func TestAbsenceDeDeclarationNEstPasUneDisponibilite(t *testing.T) {
+func TestAbsentDeclarationIsNotAvailability(t *testing.T) {
 	// Manually entered device: no connector, therefore no knowledge.
 	var gaps = unavailableMetricsOf(model.Device{Model: "SW-24G"})
 	if len(gaps) != 0 {
@@ -76,11 +76,11 @@ func TestAbsenceDeDeclarationNEstPasUneDisponibilite(t *testing.T) {
 	}
 }
 
-// TestConnecteurInconnuNeCassePasLaLecture: record must remain readable
+// TestUnknownConnectorDoesNotBreakTheRead: record must remain readable
 // regardless. extra.driver naming a removed connector, unreadable or missing
 // extra: three kinds of ignorance, none is a crash — and none authorizes any
 // conclusion about monitoring.
-func TestConnecteurInconnuNeCassePasLaLecture(t *testing.T) {
+func TestUnknownConnectorDoesNotBreakTheRead(t *testing.T) {
 	var cas = []struct {
 		name string
 		d    model.Device
@@ -100,12 +100,12 @@ func TestConnecteurInconnuNeCassePasLaLecture(t *testing.T) {
 	}
 }
 
-// TestLaDeclarationVoyageAvecLeResteDeLaFiche: added layer must cost NOTHING
+// TestTheDeclarationTravelsWithTheRestOfTheSheet: added layer must cost NOTHING
 // in the existing payload. Reason is served by the same object as management plan
 // conformity and sync state — avoiding a second round trip and a UI that flashes
 // blank first — and bad nesting would bury it in a sub-object the UI never reads,
 // or hide mgmt in passing.
-func TestLaDeclarationVoyageAvecLeResteDeLaFiche(t *testing.T) {
+func TestTheDeclarationTravelsWithTheRestOfTheSheet(t *testing.T) {
 	var views = []deviceView{
 		{Device: deviceForTest("aruba-instant-on-1930", "JL686A 48G PoE")},
 		{Device: model.Device{ID: "manual", Model: "SW-24G"}},

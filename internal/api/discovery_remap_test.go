@@ -30,10 +30,12 @@ func TestRemapPortsToStandardModel_FSDriverTranslatesToGE(t *testing.T) {
 	if len(outGroups) != 1 || outGroups[0].Prefix != "GE" || outGroups[0].From != 1 || outGroups[0].To != 28 {
 		t.Fatalf("groups=%v", outGroups)
 	}
-	if _, ok := outPorts["GE1"]; !ok {
+	var _, ok = outPorts["GE1"]
+	if !ok {
 		t.Error("GE1 missing after remap")
 	}
-	if _, ok := outPorts["GE25"]; !ok {
+	_, ok = outPorts["GE25"]
+	if !ok {
 		t.Error("GE25 missing after remap")
 	}
 	if outPorts["GE25"].Mode != "trunk" {
@@ -41,7 +43,8 @@ func TestRemapPortsToStandardModel_FSDriverTranslatesToGE(t *testing.T) {
 	}
 	// A port present in the group but with no explicit block in the pasted
 	// config (e.g. GE2..GE24) must still exist, at the factory default.
-	if _, ok := outPorts["GE2"]; !ok {
+	_, ok = outPorts["GE2"]
+	if !ok {
 		t.Error("GE2 (implicit, no block in the pasted config) must still be created")
 	}
 }
@@ -54,7 +57,8 @@ func TestRemapPortsToStandardModel_UnknownDriverPassesThrough(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
-	if _, ok := outPorts["ether3"]; !ok {
+	var _, ok = outPorts["ether3"]
+	if !ok {
 		t.Error("a driver without PortNamer must pass the input through unchanged")
 	}
 	if len(outGroups) != 1 || outGroups[0].Prefix != "ether" {

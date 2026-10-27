@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { post, type Device } from "../api";
 import { ActionButton, ErrorMsg, Field, Modal } from "../components";
+import { Banner } from "../ui/Banner";
 import { vlanPathPreview } from "../network";
 
 /** What a migration step renders. `ok` false is not an API failure: the device refused, and its reason is in `error`. */
@@ -130,30 +131,19 @@ export function MgmtMigrateModal({
       </div>
 
       {pathState && pathState !== "ready" && (
-        <div
-          className="drift-banner"
-          style={
-            pathState === "absent" ? undefined : { borderColor: "var(--border)" }
-          }
+        <Banner
+          tone="act"
+          className={pathState === "absent" ? undefined : "neutral"}
+          title={t(pathState === "absent" ? "mgmtMigrate.noUplinkVlan" : "mgmtMigrate.uplinkIndeterminate")}
+          note={pathReason}
         >
-          <div className="drift-text">
-            <div
-              className="drift-title"
-              style={pathState === "absent" ? undefined : { color: "var(--text)" }}
-            >
-              {pathState === "absent"
-                ? t("mgmtMigrate.noUplinkVlan")
-                : t("mgmtMigrate.uplinkIndeterminate")}
-            </div>
-            <div className="note">{pathReason}</div>
-            <div className="note" style={{ marginTop: 6 }}>
-              {t("mgmtMigrate.uplinkHint", {
-                vlan: vlan,
-                mode: m?.target_tagged ? t("mgmtMigrate.taggedMode") : t("mgmtMigrate.nativeMode"),
-              })}
-            </div>
+          <div className="note">
+            {t("mgmtMigrate.uplinkHint", {
+              vlan: vlan,
+              mode: m?.target_tagged ? t("mgmtMigrate.taggedMode") : t("mgmtMigrate.nativeMode"),
+            })}
           </div>
-        </div>
+        </Banner>
       )}
 
       <div className="card">

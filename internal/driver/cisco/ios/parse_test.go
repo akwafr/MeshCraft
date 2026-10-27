@@ -6,7 +6,12 @@ package ios
 // constants is the whole migration, and anything the connector got wrong shows
 // up here rather than on a customer's switch.
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"meshcraft/internal/driver"
+)
 
 const labVersion = `Cisco IOS Software, C2960X Software (C2960X-UNIVERSALK9-M), Version 15.2(7)E3, RELEASE SOFTWARE (fc2)
 Technical Support: http://www.cisco.com/techsupport
@@ -96,9 +101,9 @@ interface Vlan1
  shutdown
 !
 interface Vlan99
- ip address 10.99.0.240 255.255.0.0
+ ip address 192.0.2.240 255.255.0.0
 !
-ip default-gateway 10.99.0.1
+ip default-gateway 192.0.2.1
 ip ssh version 2
 !
 snmp-server community public RO
@@ -290,7 +295,7 @@ Gi1/0/28  poste 7            connected    10           a-full a-1000 10/100/1000
 		t.Error("Gi1/0/25 was shut by the switch, not left empty")
 	}
 	if ports[0].errDisabled() {
-		t.Error("« notconnect » is an empty port, not one the switch shut")
+		t.Error("\"notconnect\" is an empty port, not one the switch shut")
 	}
 	// And the cage is still a cage: the faceplate must not change shape.
 	if !isSFPCage(ports[1].StdPrefix, ports[1].Type) {
@@ -368,7 +373,7 @@ func TestParseVlanBrief(t *testing.T) {
 }
 
 func TestParseRunningConfig(t *testing.T) {
-	var rc = parseRunningConfig(labRun)
+	var rc = parseRunningConfig(labRun, "192.0.2.240")
 	if rc.Hostname != "lab-cat2960x" {
 		t.Errorf("hostname=%q", rc.Hostname)
 	}
@@ -385,7 +390,7 @@ func TestParseRunningConfig(t *testing.T) {
 
 	// THE IOS TRAP: a trunk with no allowed-vlan line carries EVERYTHING.
 	if !rc.AllowedAll["GE3"] {
-		t.Error("a trunk without « switchport trunk allowed vlan » must be marked AllowedAll")
+		t.Error("a trunk without \"switchport trunk allowed vlan\" must be marked AllowedAll")
 	}
 	if rc.AllowedAll["GE28"] {
 		t.Error("a trunk WITH an explicit allowed list must not be marked AllowedAll")
@@ -402,15 +407,23 @@ func TestParseRunningConfig(t *testing.T) {
 		t.Errorf("tagged=%v, want [1 100] (native 99 excluded, sorted)", trunk.Tagged)
 	}
 
-	// A SHUTDOWN SVI carries an address that answers nothing: Vlan1 must not be
-	// taken for the management path just because it appears first.
+	// The ordinary shape: ONE addressed SVI, and it carries the address the
+	// session arrived on.
+	//
+	// This assertion used to claim it proved that "a SHUTDOWN SVI carries an
+	// address that answers nothing", on the strength of the Vlan1 block above
+	// it. It proved no such thing, twice over: that block says "no ip address",
+	// so there was never an address to take, and the parser was last-wins anyway,
+	// so a disqualified FIRST block could not have won even if it had one. The
+	// real guard — "shutdown" printed where IOS actually prints it, after the
+	// address — is in mgmtsvi_test.go, and it failed until resolveMgmtSVI existed.
 	if rc.MgmtVLAN != 99 {
 		t.Errorf("mgmt vlan=%d", rc.MgmtVLAN)
 	}
-	if rc.Mgmt.Mode != "static" || rc.Mgmt.Address != "10.99.0.240/16" {
+	if rc.Mgmt.Mode != "static" || rc.Mgmt.Address != "192.0.2.240/16" {
 		t.Errorf("mgmt=%+v", rc.Mgmt)
 	}
-	if rc.Mgmt.Gateway != "10.99.0.1" {
+	if rc.Mgmt.Gateway != "192.0.2.1" {
 		t.Errorf("gateway=%q", rc.Mgmt.Gateway)
 	}
 	// IOS puts every resolver on one line.
@@ -421,14 +434,70 @@ func TestParseRunningConfig(t *testing.T) {
 	if rc.Communities["public"] != "ro" || rc.Communities["private"] != "rw" {
 		t.Errorf("communities=%v", rc.Communities)
 	}
-	if len(rc.Accounts) != 1 || rc.Accounts[0] != "mcadmin" {
+	if len(rc.Accounts) != 1 || rc.Accounts[0].Name != "mcadmin" {
 		t.Errorf("accounts=%v", rc.Accounts)
 	}
+	// "username mcadmin privilege 15 secret 5 $1$…" — the privilege is on the
+	// line this parser was already reading, and it must travel: without it the
+	// audit cannot tell this account from a read-only one.
+	if rc.Accounts[0].Privilege != 15 ||
+		rc.Accounts[0].Authority != driver.AuthorityFull {
+		t.Errorf("account = %+v, want privilege 15 / full administrator", rc.Accounts[0])
+	}
 	if !rc.LLDPRun {
-		t.Error("« lldp run » present and not seen: the LLDP screen would blame the wrong thing")
+		t.Error("\"lldp run\" present and not seen: the LLDP screen would blame the wrong thing")
 	}
 	if !rc.SSHReady {
 		t.Error("domain name + ssh version 2 present: SSHReady must be true")
+	}
+}
+
+// TestUsernameWithoutPrivilegeReadsUnknown — the honest half of the widened
+// contract.
+//
+// IOS writes "privilege N" only when it is not the default, so a plain
+// "username X secret …" states nothing. The documented default is 1, and this
+// parser still answers UNKNOWN: the level an account really ends up with also
+// depends on `privilege exec level` remappings and on `aaa authorization exec`,
+// neither of which is on this line. Reporting 1 would look like an observation
+// and be a guess — and reporting 0 would be worse still, since 0 is a real IOS
+// level.
+func TestUsernameWithoutPrivilegeReadsUnknown(t *testing.T) {
+	var rc = parseRunningConfig(strings.Join([]string{
+		"hostname sw1",
+		"username mcadmin privilege 15 secret 5 $1$efgh$JIHGFEDCBA9876543210l.",
+		"username lecteur secret 5 $1$abcd$0123456789ABCDEFGHIJk.",
+		"username zero privilege 0 secret 5 $1$abcd$0123456789ABCDEFGHIJk.",
+		"end",
+	}, "\n"), "")
+	if len(rc.Accounts) != 3 {
+		t.Fatalf("accounts = %+v", rc.Accounts)
+	}
+	if rc.Accounts[0].Privilege != 15 || rc.Accounts[0].Authority != driver.AuthorityFull {
+		t.Errorf("mcadmin = %+v, want the stated privilege 15", rc.Accounts[0])
+	}
+	if rc.Accounts[1].Privilege != driver.PrivilegeUnknown ||
+		rc.Accounts[1].Authority != driver.AuthorityUnknown {
+		t.Errorf("lecteur = %+v: the line states no privilege, so NOT STATED — "+
+			"not 0, and not IOS's documented default either", rc.Accounts[1])
+	}
+	// And the one that makes the -1 worth having: a stated 0 is an observation.
+	if rc.Accounts[2].Privilege != 0 || rc.Accounts[2].Authority != driver.AuthorityLimited {
+		t.Errorf("zero = %+v: \"privilege 0\" is a real, stated level and must not "+
+			"read like an absence", rc.Accounts[2])
+	}
+}
+
+// TestPrivilegeIsNotReadOutOfTheHASH.
+//
+// The secret on a "username" line is attacker-influenced text that this
+// parser walks over. A type-5 blob containing the words "privilege 15" must
+// not promote its own account.
+func TestPrivilegeIsNotReadOutOfTheHash(t *testing.T) {
+	var got = parseRunUsername(`username piege secret 5 $1$aa$privilege 15 zzz`)
+	if got.Privilege != driver.PrivilegeUnknown {
+		t.Errorf("%+v — the privilege must be read from the line's HEAD, never from "+
+			"the hash the device echoes back", got)
 	}
 }
 
@@ -479,16 +548,170 @@ func TestMaskConversions(t *testing.T) {
 		mask   string
 	}
 	for _, c = range cases {
-		if got := MaskFromPrefix(c.prefix); got != c.mask {
-			t.Errorf("MaskFromPrefix(%d) = %q, want %q", c.prefix, got, c.mask)
+		var gotMask = MaskFromPrefix(c.prefix)
+		if gotMask != c.mask {
+			t.Errorf("MaskFromPrefix(%d) = %q, want %q", c.prefix, gotMask, c.mask)
 		}
-		if got := PrefixFromMask(c.mask); got != c.prefix {
-			t.Errorf("PrefixFromMask(%q) = %d, want %d", c.mask, got, c.prefix)
+		var gotPrefix = PrefixFromMask(c.mask)
+		if gotPrefix != c.prefix {
+			t.Errorf("PrefixFromMask(%q) = %d, want %d", c.mask, gotPrefix, c.prefix)
 		}
 	}
 	// An unreadable mask reports 0 rather than assuming /24: the caller then
 	// says it could not read the prefix instead of writing down a wrong one.
 	if PrefixFromMask("not-a-mask") != 0 {
 		t.Error("an unreadable mask must report 0, never a default")
+	}
+}
+
+// A trunk→access switch leaves the "switchport trunk allowed vlan" line in the
+// running config, inert. An access port has NO tagged VLANs, and reading the
+// stale line as membership drifts the port forever (observed 2026-08-03, GE6).
+func TestAccessPortIgnoresStaleTrunkAllowed(t *testing.T) {
+	var cfg = "interface GigabitEthernet1/0/6\n" +
+		" switchport trunk allowed vlan 1,42,98,99\n" +
+		" switchport access vlan 100\n" +
+		" switchport mode access\n" +
+		"!\n"
+	var rc = parseRunningConfig(cfg, "")
+	var p = rc.Ports["GE6"]
+	if p.Mode != "access" || p.PVID != 100 {
+		t.Fatalf("GE6=%+v, want access/100", p)
+	}
+	if len(p.Tagged) != 0 {
+		t.Errorf("tagged=%v, want empty: an access port carries no tagged VLANs, "+
+			"the stale trunk line is inert", p.Tagged)
+	}
+}
+
+// --- the interface-name stem: "Gi0/24" is not "Gi1/0/24" ---------------
+
+// A NON-STACKABLE Catalyst as it prints itself. Not a lab capture — the lab
+// 2960-X is a stackable and cannot produce this shape — but the documented
+// naming of the 2960 classic / 3560 / 3550 ranges this connector claims (cf.
+// the package doc's own 3560/3750 trunk-encapsulation fallback).
+const flatStatus = `Port      Name               Status       Vlan       Duplex  Speed Type
+Gi0/1                        notconnect   1            auto   auto 10/100/1000BaseTX
+Gi0/2     poste-accueil      connected    10           a-full a-1000 10/100/1000BaseTX
+Gi0/23                       notconnect   1            auto   auto 10/100/1000BaseTX
+Gi0/24    uplink-core        connected    trunk        full   1000 1000BaseSX SFP
+`
+
+// THE BUG THIS GUARDS. splitIOSName has always ACCEPTED "Gi0/24" — reads on a
+// 3560 were correct — while every write was rendered "GigabitEthernet1/0/24",
+// an interface that chassis does not have. It failed loudly (`% Invalid input`,
+// one Skipped line per port) and it failed for the connector's whole write
+// path on every non-stackable Catalyst.
+func TestWritesUseTheStemTheDevicePrinted(t *testing.T) {
+	// Nothing read yet: the stacked default, which is the calibrated 2960-X.
+	var fresh = &Client{}
+	if fresh.portName("GE24") != "GigabitEthernet1/0/24" {
+		t.Errorf("default stem = %q, want the stacked form a 2960-X answers to",
+			fresh.portName("GE24"))
+	}
+
+	// A stackable's own output must not change anything.
+	var stacked = &Client{}
+	stacked.learnPortStem(labStatus)
+	if stacked.portStem != stackedStem {
+		t.Errorf("stem from a stacked table = %q, want %q", stacked.portStem, stackedStem)
+	}
+	if stacked.portName("GE24") != "GigabitEthernet1/0/24" {
+		t.Errorf("stacked write name = %q", stacked.portName("GE24"))
+	}
+
+	// A non-stackable's output must move every write off "1/0/".
+	var flat = &Client{}
+	flat.learnPortStem(flatStatus)
+	if flat.portStem != flatStem {
+		t.Fatalf("stem from a flat table = %q, want %q", flat.portStem, flatStem)
+	}
+	if flat.portName("GE24") != "GigabitEthernet0/24" {
+		t.Errorf("flat write name = %q, want GigabitEthernet0/24 — \"1/0/24\" is "+
+			"\"%% Invalid input\" on this chassis", flat.portName("GE24"))
+	}
+	if flat.portName("XG2") != "TenGigabitEthernet0/2" {
+		t.Errorf("flat XG write name = %q", flat.portName("XG2"))
+	}
+	// The operator has to be able to see it in the transcript: the commands do
+	// not look like the documentation any more.
+	var seen = false
+	var s Step
+	for _, s = range flat.Steps {
+		if strings.Contains(s.What, "no stack member") {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Error("a chassis without a stack member must say so in the transcript: " +
+			"every interface name of the session is spelled differently")
+	}
+}
+
+// A running configuration names interfaces too, and it is the read
+// ReadStormControl and ApplyPortAdmin already perform.
+func TestStemIsLearnedFromARunningConfigToo(t *testing.T) {
+	var c = &Client{}
+	c.learnPortStem("!\nversion 15.0\n!\ninterface GigabitEthernet0/1\n" +
+		" switchport mode access\n!\n")
+	if c.portStem != flatStem {
+		t.Errorf("stem = %q, want %q from \"interface GigabitEthernet0/1\"",
+			c.portStem, flatStem)
+	}
+	// An output that names no faceplate port leaves the default alone rather
+	// than guessing.
+	var quiet = &Client{}
+	quiet.learnPortStem("!\ninterface Vlan99\n ip address 192.0.2.2 255.255.255.0\n!\n")
+	if quiet.portStem != "" {
+		t.Errorf("stem = %q from a text with no faceplate port: it must stay unlearned",
+			quiet.portStem)
+	}
+	if quiet.portName("GE1") != "GigabitEthernet1/0/1" {
+		t.Errorf("unlearned client must fall back to the stacked form, got %q",
+			quiet.portName("GE1"))
+	}
+	// A stack member other than 1 must NOT teach a stem: those ports have no
+	// standard name at all (cf. the header), and reading one as "flat" would
+	// re-spell the whole session.
+	var stack2 = &Client{}
+	stack2.learnPortStem("interface GigabitEthernet2/0/5\n")
+	if stack2.portStem != "" {
+		t.Errorf("a member-2 port taught the stem %q", stack2.portStem)
+	}
+}
+
+// The faceplate and the re-read must carry the same spelling as the write: a
+// silk label of "Gi1/0/11" on a box with "Gi0/11" printed next to the jack
+// sends an operator looking for a port number that is nowhere on the chassis.
+func TestFaceplateAndCLINameFollowTheStem(t *testing.T) {
+	var ports = parseInterfacesStatus(flatStatus)
+	if len(ports) != 4 {
+		t.Fatalf("ports=%d (%v)", len(ports), ports)
+	}
+	if ports[0].Name != "GE1" || ports[0].CLIName != "GigabitEthernet0/1" {
+		t.Errorf("port[0]=%+v: the standard name is stem-free, the CLI name is not",
+			ports[0])
+	}
+	if ports[0].Stem != flatStem {
+		t.Errorf("stem=%q", ports[0].Stem)
+	}
+	var groups = portGroupsOf(ports)
+	if len(groups) == 0 {
+		t.Fatal("no port group")
+	}
+	if groups[0]["silk"] != "Gi0/" {
+		t.Errorf("silk=%v, want Gi0/ — what is written next to the jack", groups[0]["silk"])
+	}
+	// And the stacked table keeps the silk it always had.
+	var stackedGroups = portGroupsOf(parseInterfacesStatus(labStatus))
+	if stackedGroups[0]["silk"] != "Gi1/0/" {
+		t.Errorf("stacked silk=%v", stackedGroups[0]["silk"])
+	}
+	// ParseUpPorts feeds the Web Serial soft reset the interface it will push
+	// the management VLAN onto: a wrong stem there is a provisioning run that
+	// ends with an unreachable switch.
+	var up = ParseUpPorts(flatStatus)
+	if len(up) != 2 || up[1] != "GigabitEthernet0/24" {
+		t.Errorf("up ports = %v, want the flat spelling", up)
 	}
 }

@@ -1,0 +1,86 @@
+ Multiple Spanning Tree (MST) Information
+
+  STP Enabled   : Yes
+  Force Version : RSTP-operation
+  IST Mapped VLANs : 1-4094
+  Switch MAC Address : 001ffe-007980
+  Switch Priority    : 32768
+  Max Age  : 20
+  Max Hops : 20
+  Forward Delay : 15
+
+  Topology Change Count  : 1           
+  Time Since Last Change : 9 hours     
+
+  CST Root MAC Address : 001ffe-007980
+  CST Root Priority    : 32768       
+  CST Root Path Cost   : 0           
+  CST Root Port        : This switch is root
+
+  IST Regional Root MAC Address : 001ffe-007980
+  IST Regional Root Priority    : 32768       
+  IST Regional Root Path Cost   : 0           
+  IST Remaining Hops            : 20          
+
+  Root Guard Ports : 
+  Loop Guard Ports : 
+  TCN Guard Ports  : 
+  Protected Ports : 1-44                                                     
+  Filtered Ports :                                                          
+
+                  |           Prio               | Designated    Hello         
+  Port  Type      | Cost      rity  State        | Bridge        Time  PtP Edge
+  ----- --------- + --------- ----- ------------ + ------------- ----- --- ----
+  1     10/100TX  | Auto      128   Disabled     |
+  2     10/100TX  | Auto      128   Disabled     |
+  3     10/100TX  | Auto      128   Disabled     |
+  4     10/100TX  | Auto      128   Disabled     |
+  5     10/100TX  | Auto      128   Disabled     |
+  6     10/100TX  | Auto      128   Disabled     |
+  7     10/100TX  | Auto      128   Disabled     |
+  8     10/100TX  | Auto      128   Disabled     |
+  9     10/100TX  | Auto      128   Disabled     |
+  10    10/100TX  | Auto      128   Disabled     |
+  11    10/100TX  | Auto      128   Disabled     |
+  12    10/100TX  | Auto      128   Disabled     |
+  13    10/100TX  | Auto      128   Disabled     |
+  14    10/100TX  | Auto      128   Disabled     |
+  15    10/100TX  | Auto      128   Disabled     |
+  16    10/100TX  | Auto      128   Disabled     |
+  17    10/100TX  | Auto      128   Disabled     |
+  18    10/100TX  | Auto      128   Disabled     |
+  19    10/100TX  | Auto      128   Disabled     |
+  20    10/100TX  | Auto      128   Disabled     |
+  21    10/100TX  | Auto      128   Disabled     |
+  22    10/100TX  | Auto      128   Disabled     |
+  23    10/100TX  | Auto      128   Disabled     |
+  24    10/100TX  | Auto      128   Disabled     |
+  25    10/100TX  | Auto      128   Disabled     |
+  26    10/100TX  | Auto      128   Disabled     |
+  27    10/100TX  | Auto      128   Disabled     |
+  28    10/100TX  | Auto      128   Disabled     |
+  29    10/100TX  | Auto      128   Disabled     |
+  30    10/100TX  | Auto      128   Disabled     |
+  31    10/100TX  | Auto      128   Disabled     |
+  32    10/100TX  | Auto      128   Disabled     |
+  33    10/100TX  | Auto      128   Disabled     |
+  34    10/100TX  | Auto      128   Disabled     |
+  35    10/100TX  | Auto      128   Disabled     |
+  36    10/100TX  | Auto      128   Disabled     |
+  37    10/100TX  | Auto      128   Disabled     |
+  38    10/100TX  | Auto      128   Disabled     |
+  39    10/100TX  | Auto      128   Disabled     |
+  40    10/100TX  | Auto      128   Disabled     |
+  41    10/100TX  | Auto      128   Disabled     |
+  42    10/100TX  | Auto      128   Disabled     |
+  43    10/100TX  | Auto      128   Disabled     |
+  44    10/100TX  | Auto      128   Disabled     |
+  45    10/100TX  | Auto      128   Disabled     |
+  46    10/100TX  | Auto      128   Disabled     |
+  47    10/100TX  | 200000    128   Forwarding   | 001ffe-007980 2     Yes No  
+  48    10/100TX  | Auto      128   Disabled     |
+  49    100/1000T | Auto      128   Disabled     |
+  50    100/1000T | Auto      128   Disabled     |
+  51              | Auto      128   Disabled     |
+  52              | Auto      128   Disabled     |
+ 

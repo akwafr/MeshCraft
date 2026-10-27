@@ -1,0 +1,7 @@
+ LLDP Remote Devices Information
+
+  LocalPort | ChassisId                 PortId PortDescr SysName               
+  --------- + ------------------------- ------ --------- ----------------------
+  47        | 44 f4 77 b5 a7 80         521    ge-0/0... salon-sw01            
+ 
+

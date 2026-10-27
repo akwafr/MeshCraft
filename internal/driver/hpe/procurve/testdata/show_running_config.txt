@@ -1,0 +1,143 @@
+Running configuration:
+
+; J9088A Configuration Editor; Created on release #R.11.121
+
+hostname "SW-PLAYER-79" 
+snmp-server contact "noc@example.org" 
+snmp-server location "InTheKitchen" 
+max-vlans 30 
+time timezone 1 
+time daylight-time-rule Western-Europe 
+interface 1 
+   disable
+exit
+ip default-gateway 203.0.113.1 
+timesync sntp 
+snmp-server community "ops" Operator 
+snmp-server community "meshcraft-ro" Operator 
+vlan 1 
+   name "Default" 
+   ip address dhcp-bootp 
+   no untagged 1-52 
+   exit 
+vlan 3 
+   name "staff" 
+   untagged 1 
+   tagged 45-52 
+   exit 
+vlan 101 
+   name "ZONE1" 
+   tagged 45-52 
+   exit 
+vlan 102 
+   name "ZONE2" 
+   tagged 45-52 
+   exit 
+vlan 103 
+   name "ZONE3" 
+   tagged 45-52 
+   exit 
+vlan 104 
+   name "ZONE4" 
+   tagged 45-52 
+   exit 
+vlan 9 
+   name "wifi-guest" 
+   tagged 45-52 
+   exit 
+vlan 10 
+   name "streaming" 
+   tagged 45-52 
+   exit 
+vlan 99 
+   name "LAN_Management" 
+   ip address 203.0.113.79 255.255.255.0 
+   tagged 45-52 
+   exit 
+vlan 200 
+   name "joueurs" 
+   untagged 2-52 
+   exit 
+no dhcp-relay 
+dhcp-snooping
+banner motd "     *********************Authorized access only!******************
+*****
+     *                   @@@@   LYON ESPORT   @@@@                     *
+     *********************Authorized access only!***********************
+"
+sntp unicast
+sntp server 172.16.2.20
+interface 45
+   dhcp-snooping trust
+   exit
+interface 46
+   dhcp-snooping trust
+   exit
+interface 47
+   dhcp-snooping trust
+   exit
+interface 48
+   dhcp-snooping trust
+   exit
+interface 49
+   dhcp-snooping trust
+   exit
+interface 50
+   dhcp-snooping trust
+   exit
+interface 51
+   dhcp-snooping trust
+   exit
+interface 52
+   dhcp-snooping trust
+   exit
+spanning-tree
+spanning-tree 1 bpdu-protection
+spanning-tree 2 bpdu-protection
+spanning-tree 3 bpdu-protection
+spanning-tree 4 bpdu-protection
+spanning-tree 5 bpdu-protection
+spanning-tree 6 bpdu-protection
+spanning-tree 7 bpdu-protection
+spanning-tree 8 bpdu-protection
+spanning-tree 9 bpdu-protection
+spanning-tree 10 bpdu-protection
+spanning-tree 11 bpdu-protection
+spanning-tree 12 bpdu-protection
+spanning-tree 13 bpdu-protection
+spanning-tree 14 bpdu-protection
+spanning-tree 15 bpdu-protection
+spanning-tree 16 bpdu-protection
+spanning-tree 17 bpdu-protection
+spanning-tree 18 bpdu-protection
+spanning-tree 19 bpdu-protection
+spanning-tree 20 bpdu-protection
+spanning-tree 21 bpdu-protection
+spanning-tree 22 bpdu-protection
+spanning-tree 23 bpdu-protection
+spanning-tree 24 bpdu-protection
+spanning-tree 25 bpdu-protection
+spanning-tree 26 bpdu-protection
+spanning-tree 27 bpdu-protection
+spanning-tree 28 bpdu-protection
+spanning-tree 29 bpdu-protection
+spanning-tree 30 bpdu-protection
+spanning-tree 31 bpdu-protection
+spanning-tree 32 bpdu-protection
+spanning-tree 33 bpdu-protection
+spanning-tree 34 bpdu-protection
+spanning-tree 35 bpdu-protection
+spanning-tree 36 bpdu-protection
+spanning-tree 37 bpdu-protection
+spanning-tree 38 bpdu-protection
+spanning-tree 39 bpdu-protection
+spanning-tree 40 bpdu-protection
+spanning-tree 41 bpdu-protection
+spanning-tree 42 bpdu-protection
+spanning-tree 43 bpdu-protection
+spanning-tree 44 bpdu-protection
+spanning-tree bpdu-protection-timeout 10 force-version rstp-operation
+ip ssh
+no dhcp config-file-update
+password manager
+

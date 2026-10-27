@@ -6,6 +6,15 @@ import App from "./App";
 import { AuthProvider } from "./auth";
 import "./i18n";
 import "./styles.css";
+// AFTER styles.css, and that order is load-bearing: tokens.css is the
+// palette and must win over anything the sheet declared before it.
+import "./ui/tokens.css";
+import { applyStored } from "./ui/theme";
+
+// Before the first render: re-applies the attribute the inline script in
+// index.html already set, and sets the <meta name="theme-color"> that the
+// inline script deliberately leaves alone.
+applyStored();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },

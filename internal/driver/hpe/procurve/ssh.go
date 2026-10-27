@@ -8,15 +8,15 @@ package procurve
 // back EMPTY while an authentication attempt failed. Three explanations fit and
 // this connector does not pretend to know which:
 //
-//   - SSH is not actually enabled. On this range it stays off until « crypto key
-//     generate ssh » and « ip ssh » are run, and a listening socket is not proof
+//   - SSH is not actually enabled. On this range it stays off until "crypto key
+//     generate ssh" and "ip ssh" are run, and a listening socket is not proof
 //     that the server behind it will negotiate;
 //   - the ALGORITHMS did not overlap. A 2007-era ProCurve offers
 //     diffie-hellman-group1-sha1, ssh-dss host keys and 3des-cbc — every one of
 //     which a current client refuses by default. The prober that failed carries a
 //     legacy list, so this is not the likeliest cause, but it is not excluded;
 //   - the credential is wrong for the level. This range has TWO levels, and an
-//     `operator` login lands on « > » with no ability to configure. A password
+//     `operator` login lands on ">" with no ability to configure. A password
 //     accepted at the wrong level is not the same as a password refused.
 //
 // Recording that as unknown is the point. Guessing would put a fact in the
@@ -46,7 +46,7 @@ const (
 	// showRunTimeout: this range prints its whole configuration in one go and a
 	// 48-port unit takes seconds over a WAN-side tunnel.
 	showRunTimeout = 45 * time.Second
-	// saveTimeout: « write memory » writes flash and answers nothing meanwhile.
+	// saveTimeout: "write memory" writes flash and answers nothing meanwhile.
 	saveTimeout = 60 * time.Second
 )
 

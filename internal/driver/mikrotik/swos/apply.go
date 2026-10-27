@@ -18,7 +18,7 @@ import (
 // │ readable for what isn't.                                                   │
 // │                                                                            │
 // │ WHAT IS VERIFIED: setting VLAN membership and native VLAN on the          │
-// │ fleet's CSS326-24G-2S+ (10.99.0.36). Twenty-four ports written, no        │
+// │ fleet's CSS326-24G-2S+ (192.0.2.36). Twenty-four ports written, no        │
 // │ refusal, the VLAN 99 mask goes from 26 members to 2, device still         │
 // │ reachable, zero drift on re-read. The /vlan.b table and the /fwd.b page   │
 // │ do therefore accept the body this file composes.                          │
@@ -484,10 +484,10 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 		var effectivePVID = now.PVID
 		var nativeFrozen bool
 		if !in.Force && linked && want.PVID != now.PVID {
-			var refus = whyNativeChangeIsUnsafe(canon, now.PVID, want.PVID,
+			var refusal = whyNativeChangeIsUnsafe(canon, now.PVID, want.PVID,
 				in.Protected, mgmtUnknown)
-			if refus != "" {
-				out.Skipped = append(out.Skipped, refus)
+			if refusal != "" {
+				out.Skipped = append(out.Skipped, refusal)
 				// THE PORT IS FROZEN ENTIRELY, not just its native VLAN.
 				//
 				// A version that refused only the native-VLAN change and continued with
@@ -527,14 +527,14 @@ func PlanPorts(in PortsInput) (PortsPlan, error) {
 					"%s: VLAN %d is not in the table — membership not applied", canon, vid))
 				continue
 			}
-			var deja, lisible = row.Bit(FieldVLANMembers, index)
-			if !lisible {
+			var already, readable = row.Bit(FieldVLANMembers, index)
+			if !readable {
 				return PortsPlan{}, fmt.Errorf("/vlan.b: the member mask of VLAN %d "+
 					"is not readable at this port's rank %s (field %q absent or of an "+
 					"unexpected shape) — membership would be guessed", vid, canon, FieldVLANMembers)
 			}
 			members[vid] = true
-			if !deja {
+			if !already {
 				ch.Join = append(ch.Join, vid)
 			}
 		}
@@ -660,12 +660,12 @@ func whyNativeChangeIsUnsafe(port string, nowPVID, wantPVID int,
 	sort.Ints(vlans)
 
 	for _, v = range vlans {
-		var nonTagueAvant = nowPVID == v
-		var nonTagueApres = wantPVID == v
-		if nonTagueAvant == nonTagueApres {
+		var untaggedBefore = nowPVID == v
+		var untaggedAfter = wantPVID == v
+		if untaggedBefore == untaggedAfter {
 			continue // the tagging of this management VLAN doesn't change
 		}
-		if nonTagueAvant {
+		if untaggedBefore {
 			return fmt.Sprintf(
 				"%s not modified: it carries an ACTIVE link and administration arrives "+
 					"UNTAGGED there on VLAN %d (%s). Giving it native VLAN %d would make "+
@@ -683,51 +683,53 @@ func whyNativeChangeIsUnsafe(port string, nowPVID, wantPVID int,
 	return ""
 }
 
-// removalPolicy — ce que la pose retire, et ce qu'elle refuse de retirer.
+// removalPolicy — what the write removes, and what it refuses to remove.
 //
-// ELLE RETIRE, MAINTENANT, et il faut dire pourquoi ca a changed. La first
-// livraison ne retirait rien : sur SwOS, appartenance et tagging sont la SAME
-// data — retirer un port de la liste des membres d'un VLAN, c'est couper ce VLAN sur
-// ce port, sans demi-mesure — le VLAN de management vit dans la same table que les
-// autres, et il n'existe aucun filet, writing etant persistante d'office. Ne rien
-// retirer was donc le choix prudent, et il was DIT a the UI.
+// IT REMOVES, NOW, and it must be said why that changed. The first delivery
+// removed nothing: on SwOS, membership and tagging are the SAME data —
+// removing a port from a VLAN's member list cuts that VLAN on that port, with
+// no half measure — the management VLAN lives in the same table as the
+// others, and there is no safety net, the write being persistent by default.
+// Removing nothing was therefore the cautious choice, and it was SAID in the
+// UI.
 //
-// Ce qu'il coutait, en revanche, ne se voyait pas : un device pouvait be annonce
-// « conforme » en transportant depuis des mois un VLAN que le plan avait retire. Une
-// segmentation qui fuit ne se remarque pas ; quand elle se remarque, c'est en
-// cherchant autre chose. « Ajout seulement » n'est pas une prudence neutre — c'est un
-// parc qui derive dans le sens le plus couteux.
+// What it cost, on the other hand, was not visible: a device could be
+// announced "conforming" while carrying, for months, a VLAN the plan had
+// removed. A leaking segmentation goes unnoticed; when it is noticed, it is
+// while looking for something else. "Add only" is not a neutral caution — it
+// is a fleet drifting in the most expensive direction.
 //
-// Le retrait est donc fait, avec QUATRE refus qui couvrent chacun une way documentee
-// de se couper la main (voir [planLeaves]) : jamais un VLAN de management, jamais le
-// VLAN natif effectif, jamais rien sur un port a plancher (« all »), et rien du tout
-// sur un port actif quand the device accepte l'administration depuis n'importe quel
-// VLAN. Chaque refus est rendu a l'exploitant avec son motif — c'est ce qui remplace
-// l'ancienne phrase general, et c'est plus utile : elle disait « la pose ne retire
-// rien », les nouvelles disent « ce retrait-there n'a pas been fait, et voici pourquoi ».
+// Removal is therefore done, with FOUR refusals that each cover a documented
+// way of locking yourself out (see [planLeaves]): never a management VLAN,
+// never the effective native VLAN, never anything on a trunk-all port
+// ("all"), and nothing at all on an active port when the device accepts
+// administration from any VLAN. Each refusal is returned to the operator with
+// its reason — that is what replaces the old general sentence, and it is more
+// useful: it said "the write removes nothing", the new ones say "this removal
+// was not made, and here is why".
 func removalPolicy() string {
-	return "retrait calcule, sauf sur les ports en « all » et sur les VLAN de management " +
-		"des ports qui portent un LIEN — un port sans lien perd bien son appartenance au " +
-		"VLAN d'administration, faute de quoi un access port ne pourrait jamais en " +
-		"devenir un : chaque retrait refused est rendu avec son motif"
+	return "removal computed, except on \"all\" ports and on the management VLANs " +
+		"of ports that carry a LINK — a port without a link does lose its membership of the " +
+		"administration VLAN, otherwise an access port could never become " +
+		"one: every refused removal is returned with its reason"
 }
 
-// wantedVLANs rassemble les VLAN qu'il faut voir dans la table : ceux du plan du
-// site, ceux qu'un port reclame, et ceux qui portent l'ADMINISTRATION.
+// wantedVLANs gathers the VLANs that must appear in the table: those of the
+// site plan, those a port asks for, and those carrying ADMINISTRATION.
 //
-// LES VLAN DE MANAGEMENT EN TETE, et ce n'est pas une preference d'ordre. Un VLAN de
-// management absent de la table est un VLAN de management ORPHELIN : le plan du site
-// est cense le declare, mais rien ne le garantit — un site importe d'un fichier
-// fabrique, un device dont `avln` designe un VLAN que personne n'a modelise, et
-// l'appartenance du port d'uplink n'a plus aucune ligne where s'write. La pose posait
-// alors tout le reste et laissait precisely le VLAN par lequel elle est arrivee hors
-// de la table.
+// MANAGEMENT VLANS FIRST, and it is not an ordering preference. A management
+// VLAN missing from the table is an ORPHANED management VLAN: the site plan is
+// supposed to declare it, but nothing guarantees it — a site imported from a
+// hand-made file, a device whose `avln` designates a VLAN nobody modelled, and
+// the uplink port's membership no longer has any row to be written in. The
+// write then set everything else and left out of the table precisely the VLAN
+// it arrived through.
 //
-// Ils sont ajoutes SANS NOM : `protected` porte un motif destine a l'exploitant
-// (« VLAN de management du plan du site »), pas un label d'device, et l'write
-// dans le champ `nm` de /vlan.b — 16 octets — donnerait un nom que personne n'a
-// choisi. Quand le plan du site nomme ce same VLAN, c'est son nom qui gagne, parce
-// qu'il est ajoute avant.
+// They are added WITHOUT A NAME: `protected` carries a reason meant for the
+// operator ("management VLAN from the site plan"), not a device label, and
+// writing it into the `nm` field of /vlan.b — 16 bytes — would give a name
+// nobody chose. When the site plan names that same VLAN, its name wins,
+// because it is added first.
 func wantedVLANs(desired map[string]PortState, siteVLANs []VLAN,
 	protected map[int]string) []VLAN {
 	var byID = map[int]string{}
@@ -740,8 +742,8 @@ func wantedVLANs(desired map[string]PortState, siteVLANs []VLAN,
 		if !seen {
 			order = append(order, id)
 		}
-		// Un nom already connu n'est pas ecrase par un vide : le plan du site nomme,
-		// l'intention de port ne nomme pas.
+		// A name already known is not overwritten by an empty one: the site
+		// plan names, the port intent does not.
 		if byID[id] == "" {
 			byID[id] = name
 		}
@@ -773,33 +775,35 @@ func wantedVLANs(desired map[string]PortState, siteVLANs []VLAN,
 	return out
 }
 
-// mgmtSeed dit, pour chaque VLAN de management ABSENT de la table, quels ports la
-// ligne a create doit compter parmi ses membres.
+// mgmtSeed says, for each management VLAN ABSENT from the table, which ports
+// the row to be created must count among its members.
 //
-// # LE TRAP QUE CETTE FONCTION EXISTE POUR DESAMORCER
+// # THE TRAP THIS FUNCTION EXISTS TO DEFUSE
 //
-// Create une ligne de VLAN sur SwOS n'est pas un geste neutre : c'est ce qui fait
-// PASSER ce VLAN du regime « inconnu de la table » au regime « declared, donc filtre ».
-// Sur un port en mode `optional` — le default d'usine, et state des 26 ports de
-// l'reference device — un VLAN que la table ne declares pas circule librement ;
-// le declare avec un masque de membres VIDE le fait tomber partout, instantanement.
+// Creating a VLAN row on SwOS is not a neutral gesture: it is what MOVES that
+// VLAN from the "unknown to the table" regime to the "declared, hence
+// filtered" regime. On a port in `optional` mode — the factory default, and
+// the state of all 26 ports of the reference device — a VLAN the table does
+// not declare flows freely; declaring it with an EMPTY member mask drops it
+// everywhere, instantly.
 //
-// Autrement dit : la way la plus rapide de rendre un CSS muet est de create
-// proprement la ligne de son VLAN de management. C'est contre-intuitif, ca ressemble a
-// une mise en ordre, et c'est une coupure.
+// In other words: the quickest way to make a CSS mute is to neatly create the
+// row of its management VLAN. It is counter-intuitive, it looks like tidying
+// up, and it is an outage.
 //
-// # CE QU'ON RETIENT, ET POURQUOI C'EST LARGE
+// # WHAT IS KEPT, AND WHY IT IS BROAD
 //
-// Tous les ports qui portent un LIEN. Faute de savoir lequel porte la session — SwOS
-// ne le dit pas, et `avln` ne nomme qu'un VLAN, pas un port — la seule alternative
-// serait de n'en retenir aucun, i.e. de choisir la coupure. Un port actif de
-// plus dans un VLAN de management est un exces de portee que l'exploitant peut
-// corriger ; un port actif de moins est un deplacement sur site.
+// Every port that carries a LINK. For lack of knowing which one carries the
+// session — SwOS does not say, and `avln` names only a VLAN, not a port — the
+// only alternative would be to keep none, i.e. to choose the outage. One
+// active port too many in a management VLAN is an excess of scope the
+// operator can correct; one active port too few is a site visit.
 //
-// Les VLAN de management ALREADY present dans la table ne sont pas concernes : leur
-// appartenance est celle que l'exploitant a applied, et [planLeaves] refuse d'y toucher.
+// Management VLANs ALREADY present in the table are not affected: their
+// membership is the one the operator set, and [planLeaves] refuses to touch
+// it.
 //
-// Fonction PURE, verifiable sur les captures.
+// A PURE function, verifiable on the captures.
 func mgmtSeed(current State, protected map[int]string, rows []*Page,
 	f Facade) map[int][]int {
 	var out = map[int][]int{}
@@ -822,22 +826,22 @@ func mgmtSeed(current State, protected map[int]string, rows []*Page,
 	return out
 }
 
-// withVLANs complete la table lue des VLAN manquants, et rend la liste A WRITE.
+// withVLANs completes the read table with the missing VLANs, and returns the
+// list TO WRITE.
 //
-// Les lignes existantes sont conservees TELLES QUELLES, champ pour champ. C'est la
-// rule : cette table s'written entire, et on n'y touche pas a ce qu'on ne comprend
-// pas — l'isolation par VLAN (`piso`), l'apprentissage (`lrn`), le miroir (`mrr`) et
-// le snooping IGMP (`igmp`) sont regles par l'exploitant et ne sont pas a nous.
+// Existing rows are kept AS THEY ARE, field for field. That is the rule: this
+// table is written whole, and what we do not understand is not touched —
+// per-VLAN isolation (`piso`), learning (`lrn`), mirroring (`mrr`) and IGMP
+// snooping (`igmp`) are set by the operator and are not ours.
 //
-// Les lignes CREEES reprennent les valeurs par default de l'interface de
-// the device, observed dans ses definitions de champs, et NON des zeros : `piso`
-// et `lrn` valent 1 par default (`u:1`), et un VLAN created avec apprentissage disabled
-// inonderait tout son trafic.
+// CREATED rows take the default values of the device's UI, observed in its
+// field definitions, and NOT zeros: `piso` and `lrn` default to 1 (`u:1`),
+// and a VLAN created with learning disabled would flood all its traffic.
 //
-// `seed` associe a un VLAN les index de ports dont la ligne CREEE doit d'emblee
-// compter les membres. Il ne sert qu'aux VLAN de management (cf. [mgmtSeed]), pour la
-// raison la moins intuitive de ce fichier : create proprement la ligne d'un VLAN de
-// management avec un masque vide est ce qui coupe access.
+// `seed` maps a VLAN to the port indices whose CREATED row must count as
+// members from the outset. It only serves management VLANs (cf. [mgmtSeed]),
+// for the least intuitive reason in this file: neatly creating a management
+// VLAN's row with an empty mask is what cuts access.
 func withVLANs(rows []*Page, wanted []VLAN, ports int,
 	seed map[int][]int) ([]*Page, []int, error) {
 	var out = append([]*Page{}, rows...)
@@ -846,11 +850,11 @@ func withVLANs(rows []*Page, wanted []VLAN, ports int,
 	var w VLAN
 	for _, w = range wanted {
 		if w.ID < 1 || w.ID > 4094 {
-			return nil, nil, fmt.Errorf("VLAN %d hors des bornes de la table de SwOS "+
-				"(1 a 4094)", w.ID)
+			return nil, nil, fmt.Errorf("VLAN %d outside the bounds of the SwOS table "+
+				"(1 to 4094)", w.ID)
 		}
-		// Le VLAN 1 n'entre JAMAIS dans la table : le create changerait le comportement
-		// de tout le trafic untagged de the device (cf. implicitVLAN).
+		// VLAN 1 NEVER enters the table: creating it would change the behaviour
+		// of all the device's untagged traffic (cf. implicitVLAN).
 		if w.ID == implicitVLAN {
 			continue
 		}
@@ -858,24 +862,24 @@ func withVLANs(rows []*Page, wanted []VLAN, ports int,
 			continue
 		}
 		if len(out) >= 250 {
-			return nil, nil, fmt.Errorf("la table des VLAN de SwOS est limitee a 250 "+
-				"entries et en porte already %d : le VLAN %d ne peut pas be ajoute",
+			return nil, nil, fmt.Errorf("the SwOS VLAN table is limited to 250 "+
+				"entries and already holds %d: VLAN %d cannot be added",
 				len(out), w.ID)
 		}
 		var row = newVLANRow(w, ports)
 		var index int
 		for _, index = range seed[w.ID] {
 			if !row.SetBit(FieldVLANMembers, index, true) {
-				return nil, nil, fmt.Errorf("VLAN %d : le masque de membres de la ligne a "+
-					"create n'accepte pas le port de rang %d — la ligne serait created SANS "+
-					"membre, ce qui sur un VLAN de management coupe access", w.ID, index)
+				return nil, nil, fmt.Errorf("VLAN %d: the member mask of the row to "+
+					"create does not accept the port of rank %d — the row would be created WITHOUT "+
+					"members, which on a management VLAN cuts access", w.ID, index)
 			}
 		}
 		out = append(out, row)
 		created = append(created, w.ID)
 	}
-	// Ordre stable : deux executions doivent produire exactement le same corps,
-	// sinon comparer deux transcripts ne veut plus rien dire.
+	// Stable order: two runs must produce exactly the same body, otherwise
+	// comparing two transcripts no longer means anything.
 	sort.SliceStable(out, func(i, j int) bool {
 		var a, aOK = out[i].Num(FieldVLANID)
 		var b, bOK = out[j].Num(FieldVLANID)
@@ -888,18 +892,18 @@ func withVLANs(rows []*Page, wanted []VLAN, ports int,
 	return out, created, nil
 }
 
-// newVLANRow construit une ligne de table pour un VLAN a create.
+// newVLANRow builds a table row for a VLAN to be created.
 //
-// L'ordre des champs et les valeurs par default reproduisent ce que l'interface de
-// the device engendre. Le masque de membres part VIDE : c'est ApplyPorts qui y
-// pose les ports, et un VLAN created avec tous les ports membres — ce que fait le
-// default de l'interface (`u:268435455`) — ferait passer tout le trafic partout.
+// The field order and the default values reproduce what the device's UI
+// generates. The member mask starts EMPTY: ApplyPorts is what puts the ports
+// in it, and a VLAN created with every port a member — which is the UI's
+// default (`u:268435455`) — would let all traffic through everywhere.
 func newVLANRow(v VLAN, ports int) *Page {
 	var row = NewPage()
 	row.SetText(FieldVLANName, v.Name)
-	// Le masque prend la FORME que the device emploie pour ce nombre de ports :
-	// scalaire jusqu'a 32, tableau de mots au-dela. Sans quoi SetBit refuserait, et
-	// l'appartenance ne serait pas posable.
+	// The mask takes the SHAPE the device uses for this number of ports:
+	// scalar up to 32, array of words beyond. Otherwise SetBit would refuse,
+	// and membership could not be set.
 	if ports <= 32 {
 		row.SetNum(FieldVLANMembers, 0)
 	} else {
@@ -907,8 +911,8 @@ func newVLANRow(v VLAN, ports int) *Page {
 		row.SetNums(FieldVLANMembers, words)
 	}
 	row.SetNum(FieldVLANID, uint32(v.ID))
-	// Defauts de l'interface de the device : isolation de ports et apprentissage
-	// actifs, miroir et snooping IGMP inactifs.
+	// The device UI's defaults: port isolation and learning enabled, mirroring
+	// and IGMP snooping disabled.
 	row.SetNum("piso", 1)
 	row.SetNum("lrn", 1)
 	row.SetNum("mrr", 0)
@@ -916,7 +920,7 @@ func newVLANRow(v VLAN, ports int) *Page {
 	return row
 }
 
-// rowFor retrouve la ligne d'un VLAN dans la table.
+// rowFor finds a VLAN's row in the table.
 func rowFor(rows []*Page, vid int) *Page {
 	var r *Page
 	for _, r = range rows {
@@ -940,12 +944,12 @@ func sortedNames(m map[string]PortState) []string {
 
 func createdSummary(created []int) string {
 	if len(created) == 0 {
-		return "aucun VLAN created"
+		return "no VLAN created"
 	}
 	var parts = make([]string, 0, len(created))
 	var v int
 	for _, v = range created {
 		parts = append(parts, strconv.Itoa(v))
 	}
-	return "VLAN created(s) : " + joinComma(parts)
+	return "VLAN(s) created: " + joinComma(parts)
 }

@@ -872,7 +872,7 @@ func (s *Store) AdoptDiscovered(ctx context.Context, discoveredID string, d mode
 
 // ListDiscoveryProxies: proxies usable as a discovery source FOR THIS SITE — those that
 // cover it, plus instance proxies. What they discover remains a site-less candidate
-// (cf. docs/01-Architecture/Discovery): coverage says who may use it, not what scan produces.
+// (cf. docs/en/01-Architecture/Discovery.md): coverage says who may use it, not what scan produces.
 func (s *Store) ListDiscoveryProxies(ctx context.Context, siteID string) ([]model.Proxy, error) {
 	var rows, err = s.pool.Query(ctx,
 		`select `+proxyCols+` from proxies p

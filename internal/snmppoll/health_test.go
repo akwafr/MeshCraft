@@ -458,8 +458,13 @@ func TestSensorSetsHaveDistinctOIDs(t *testing.T) {
 		t.Errorf("%d branch(es) in health set, 22 documented in health.go and "+
 			"cmd/proxy/snmp.go: one of them is wrong", len(health))
 	}
-	if len(optical) != 9 {
-		t.Errorf("%d optical column(s), 9 expected (name plus eight measurements)",
+	// 15 = the MikroTik family (name + eight measurements) plus the SIX branches
+	// the Cisco family needs: four sensor columns and the two ENTITY-MIB columns
+	// its readings are JOINED to (see the Cisco DOM block in health.go). The cost
+	// note in cmd/proxy/snmp.go carries the same arithmetic; if this number moves,
+	// that note lies.
+	if len(optical) != 15 {
+		t.Errorf("%d optical column(s), 15 expected (nine MikroTik + six Cisco)",
 			len(optical))
 	}
 
@@ -474,5 +479,109 @@ func TestSensorSetsHaveDistinctOIDs(t *testing.T) {
 		if seen[o] {
 			t.Errorf("OID %s is in two sets: it would be walked twice per cycle", o)
 		}
+	}
+}
+
+// THE CISCO DOM JOIN, against the values CiscoLabFirst1 actually returned
+// (2026-08-12, WS-C2960X-24TD-L). Every number below is from that walk.
+//
+// What this guards is the pair of mistakes that produce a CREDIBLE FALSE GRAPH
+// rather than an error: transmit and receive swapped, and a scale or precision
+// ignored. Neither shows up as a failure anywhere — a -3.9 dBm reading rendered
+// as -39, or TX drawn as RX, looks exactly like a measurement.
+func TestCiscoDOMJoinsSensorsToTheirPort(t *testing.T) {
+	var tables = map[string]map[string]gosnmp.SnmpPDU{
+		oidEntPhysicalName: {
+			"1039": {Value: []byte("TenGigabitEthernet1/0/2")},
+			"1040": {Value: []byte("Te1/0/2 Module Temperature Sensor")},
+			"1041": {Value: []byte("Te1/0/2 Supply Voltage Sensor")},
+			"1042": {Value: []byte("Te1/0/2 Bias Current Sensor")},
+			"1043": {Value: []byte("Te1/0/2 Transmit Power Sensor")},
+			"1044": {Value: []byte("Te1/0/2 Receive Power Sensor")},
+			// A chassis thermometer: type 8 like the module's, and NOT a cage.
+			"1008": {Value: []byte("SW#1, Sensor#1, GREEN")},
+		},
+		oidEntPhysicalContainedIn: {
+			"1040": {Type: gosnmp.Integer, Value: 1039}, "1041": {Type: gosnmp.Integer, Value: 1039}, "1042": {Type: gosnmp.Integer, Value: 1039},
+			"1043": {Type: gosnmp.Integer, Value: 1039}, "1044": {Type: gosnmp.Integer, Value: 1039}, "1008": {Type: gosnmp.Integer, Value: 1},
+		},
+		oidCiscoSensorType: {
+			"1040": {Type: gosnmp.Integer, Value: 8}, "1041": {Type: gosnmp.Integer, Value: 4}, "1042": {Type: gosnmp.Integer, Value: 5},
+			"1043": {Type: gosnmp.Integer, Value: 14}, "1044": {Type: gosnmp.Integer, Value: 14}, "1008": {Type: gosnmp.Integer, Value: 8},
+		},
+		oidCiscoSensorScale: {
+			"1040": {Type: gosnmp.Integer, Value: 9}, "1041": {Type: gosnmp.Integer, Value: 9}, "1042": {Type: gosnmp.Integer, Value: 8},
+			"1043": {Type: gosnmp.Integer, Value: 9}, "1044": {Type: gosnmp.Integer, Value: 9}, "1008": {Type: gosnmp.Integer, Value: 9},
+		},
+		oidCiscoSensorPrecision: {
+			"1040": {Type: gosnmp.Integer, Value: 1}, "1041": {Type: gosnmp.Integer, Value: 2}, "1042": {Type: gosnmp.Integer, Value: 1},
+			"1043": {Type: gosnmp.Integer, Value: 1}, "1044": {Type: gosnmp.Integer, Value: 1}, "1008": {Type: gosnmp.Integer, Value: 0},
+		},
+		oidCiscoSensorValue: {
+			"1040": {Type: gosnmp.Integer, Value: 505}, "1041": {Type: gosnmp.Integer, Value: 325}, "1042": {Type: gosnmp.Integer, Value: 444},
+			"1043": {Type: gosnmp.Integer, Value: -39}, "1044": {Type: gosnmp.Integer, Value: -27}, "1008": {Type: gosnmp.Integer, Value: 43},
+		},
+	}
+	var got = ciscoOpticalSamples("dev-1", tables, time.Now())
+
+	var by = map[string]metricbuf.Sample{}
+	var s metricbuf.Sample
+	for _, s = range got {
+		by[s.Name] = s
+		if s.Labels["port"] != "TenGigabitEthernet1/0/2" {
+			t.Errorf("%s landed on port %q — the port is the sensor's PARENT entity",
+				s.Name, s.Labels["port"])
+		}
+		if s.Labels["ifindex"] != "" {
+			t.Errorf("%s carries an ifindex: an entPhysicalIndex is not an "+
+				"interface index and must never be published as one", s.Name)
+		}
+	}
+	// The chassis thermometer must NOT have become an SFP temperature.
+	if len(got) != 5 {
+		t.Fatalf("%d samples, want 5 — the chassis sensor (type 8, parent 1) must "+
+			"not be read as module temperature: %+v", len(got), got)
+	}
+	// scale 9 / precision 1 → raw/10. THE DIRECTION COMES FROM THE NAME.
+	if by[metricbuf.MetricSFPTxPowerDBM].Value != -3.9 {
+		t.Errorf("TX = %v, want -3.9 dBm", by[metricbuf.MetricSFPTxPowerDBM].Value)
+	}
+	if by[metricbuf.MetricSFPRxPowerDBM].Value != -2.7 {
+		t.Errorf("RX = %v, want -2.7 dBm", by[metricbuf.MetricSFPRxPowerDBM].Value)
+	}
+	// scale 8 (milli) — the one sensor that does not declare units, and the
+	// reason the exponent is applied rather than assumed.
+	// The agent declares scale 8 (milli) and the series IS milliamps, so the two
+	// agree and only the precision applies: 44.4 mA, not 0.0444 A.
+	var bias = by[metricbuf.MetricSFPTxBiasMilliamps].Value
+	if bias < 44.39 || bias > 44.41 {
+		t.Errorf("bias = %v, want 44.4 mA", bias)
+	}
+	// precision 2 — likewise the one that does not declare a single decimal.
+	if by[metricbuf.MetricSFPSupplyVolts].Value != 3.25 {
+		t.Errorf("voltage = %v, want 3.25 V", by[metricbuf.MetricSFPSupplyVolts].Value)
+	}
+	if by[metricbuf.MetricSFPTemperature].Value != 50.5 {
+		t.Errorf("temperature = %v, want 50.5 C", by[metricbuf.MetricSFPTemperature].Value)
+	}
+}
+
+// A power sensor the agent does not call dBm is REFUSED. The series' whole
+// meaning is its unit, and a name alone is not evidence of one.
+func TestCiscoDOMRefusesAPowerSensorWithoutTheDBmType(t *testing.T) {
+	var tables = map[string]map[string]gosnmp.SnmpPDU{
+		oidEntPhysicalName: {
+			"9":  {Value: []byte("Gi1/0/1")},
+			"10": {Value: []byte("Gi1/0/1 Receive Power Sensor")},
+		},
+		oidEntPhysicalContainedIn: {"10": {Type: gosnmp.Integer, Value: 9}},
+		oidCiscoSensorType:        {"10": {Type: gosnmp.Integer, Value: 6}}, // watts, not dBm
+		oidCiscoSensorScale:       {"10": {Type: gosnmp.Integer, Value: 9}},
+		oidCiscoSensorPrecision:   {"10": {Type: gosnmp.Integer, Value: 1}},
+		oidCiscoSensorValue:       {"10": {Type: gosnmp.Integer, Value: -27}},
+	}
+	var got = ciscoOpticalSamples("dev-1", tables, time.Now())
+	if len(got) != 0 {
+		t.Errorf("published %+v for a sensor the agent does not call dBm", got)
 	}
 }

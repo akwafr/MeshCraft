@@ -1,0 +1,449 @@
+# Meshcraft Driver Protocol v1 — the REST contract a driver container serves.
+#
+# The Go types in meshcraft/wire/mdpv1 are the SOURCE OF TRUTH; schemas.json
+# beside this file is GENERATED from them (tools/mdpschema, drift-checked in
+# CI). This document is the paths, their semantics, and the rules a non-Go
+# author cannot read out of a Go compiler.
+#
+# The four rules everything below restates:
+#   1. ONE AUTHENTICATION PER SESSION. Devices hand out five slots and lock
+#      accounts out. Candidates are tried in the order given, never replayed,
+#      never invented.
+#   2. THE DEVICE IS REACHED THROUGH SOCKS5 ONLY (RFC 1929 auth), with the
+#      credential the session request carries — scoped by the controller to
+#      that one host. A driver holds no route of its own.
+#   3. EVERY refusal is an ErrorEnvelope. `error.because` is shown VERBATIM
+#      to operators; dropping it turns every refusal into "it failed".
+#   4. Versions are UTC build stamps (yyyymmdd.HHMMSS). "dev" sorts before
+#      every real build and is never offered an update; the conformance
+#      examiner fails it.
+openapi: 3.1.0
+info:
+  title: Meshcraft Driver Protocol
+  version: "1.2.0"
+  description: >
+    Serve this under /mdp/v1 from your driver container, in any language.
+    `conformance -endpoint http://…` (from the meshcraft-drivers repository)
+    is the examiner: it must pass 10/10 with no device behind you.
+  license:
+    name: AGPL-3.0-only
+
+paths:
+  /mdp/v1/protocol:
+    get:
+      summary: Protocol handshake
+      description: >
+        The controller refuses a mismatched major — refuse, never degrade.
+        `driver.version` MUST be a UTC build stamp (yyyymmdd.HHMMSS).
+      responses:
+        "200":
+          description: Handshake.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/ProtocolInfo"}
+
+  /mdp/v1/healthz:
+    get:
+      summary: Readiness
+      responses:
+        "200": {description: "The container is ready to serve sessions."}
+
+  /mdp/v1/supports:
+    get:
+      summary: Static capability declaration
+      description: >
+        Cached by the controller at load. There is no type assertion across a
+        wire — this list is the ONLY capability answer an external driver
+        has. Gesture names are the fixed wire vocabulary (see the Gesture
+        constants in wire/mdpv1); a name you invent is a capability nobody
+        will ever call.
+
+
+        Most gestures name an op. A few QUALIFY one — `lag-fallback` adds no
+        path, it declares that your `lags` op honours LAGState.fallback (see
+        the note above the session-ops table). Declaring the op without the
+        qualifier is a complete, valid driver: the controller hides what you
+        did not promise instead of offering it and failing.
+      responses:
+        "200":
+          description: Declaration.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/SupportsResponse"}
+
+  /mdp/v1/info:
+    get:
+      summary: Connector identity
+      parameters: [{$ref: "#/components/parameters/connector"}]
+      responses:
+        "200":
+          description: Identity.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/Info"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/capabilities:
+    get:
+      summary: Model-dependent capabilities
+      parameters:
+        - {$ref: "#/components/parameters/connector"}
+        - {name: model, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Capabilities for this exact model.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/Capabilities"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/reset-procedure:
+    get:
+      summary: Factory-reset procedure for a model
+      parameters:
+        - {$ref: "#/components/parameters/connector"}
+        - {name: model, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Procedure, with its confirmation status.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/ResetProcedure"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/writes-extra:
+    get:
+      summary: Is this extra intent proven writable on hardware?
+      parameters:
+        - {$ref: "#/components/parameters/connector"}
+        - {name: name, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The declaration (false for anything not proven).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: {ok: {type: boolean}}
+        default: {$ref: "#/components/responses/error"}
+
+  # STORM CONTROL — the rules a schema cannot state.
+  #
+  # 1. EVERY RATE CARRIES ITS UNIT, AND NO DRIVER EVER CONVERTS. `percent`,
+  #    `pps` and `bps` are five orders of magnitude apart on the same digits
+  #    ("level 10" on IOS is ten percent, "level pps 10" ten packets a
+  #    second). A driver accepts the units its platform speaks natively and
+  #    refuses the others, naming what it does take. percent↔pps needs a frame
+  #    size that does not exist; percent↔bps needs a line rate that changes
+  #    under the configuration. The one arithmetic allowed is an EXACT change
+  #    of multiple inside one unit (bps → kbps), and it REFUSES rather than
+  #    rounds.
+  # 2. A CLASS ABSENT FROM A PLAN IS NOT MANAGED. A class present with
+  #    `enabled: false` is a REMOVAL, and it is "no storm-control <class>",
+  #    never "level 0" — zero drops every frame of the class, which on
+  #    broadcast takes ARP with it. An enabled limit with rate 0 is refused.
+  # 3. A DRIVER IMPLEMENTS A CLASS ONLY WHEN ITS PLATFORM'S KEYWORD DENOTES
+  #    THE SAME SET OF FRAMES. `unknown_unicast` is the flooded class, NOT all
+  #    unicast; `multicast` is every group, registered or not. A platform
+  #    whose keyword is broader or narrower refuses that class per port and
+  #    still writes the others.
+  # 4. `storm_caps.units` IS THE WRITE SURFACE ONLY. A driver may READ and
+  #    report a unit absent from that list — a port can carry a form the
+  #    driver will not write — and reporting it truthfully beats either lying
+  #    about the port or saying nothing about it.
+  # 5. A STATEMENT OBSERVED AND NOT UNDERSTOOD IS REPORTED, NEVER DROPPED
+  #    (StormControlPortState.foreign). On a CLI that prints only non-default
+  #    lines, a skipped line becomes a positive claim that the port carries
+  #    nothing: the silence rule — "no statement inside a block that was read
+  #    means no limiter" — holds ONLY for a block every statement of which was
+  #    understood. `foreign[].spelling` is the device's own line, VERBATIM;
+  #    `foreign[].class` is set only when the statement touches exactly one of
+  #    the three classes, and is empty when it touches more (Arista's
+  #    "storm-control all" polices every frame on the port). A class whose
+  #    only observation is foreign is NOT READ, which is not "no limiter":
+  #    an applier that confused the two would silently replace a limiter an
+  #    operator installed.
+  /mdp/v1/storm-caps:
+    get:
+      summary: What the PLATFORM can express in storm control (no session)
+      parameters: [{$ref: "#/components/parameters/connector"}]
+      responses:
+        "200":
+          description: Classes and units the platform expresses — see the rules above.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/StormControlCaps"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/webui:
+    get:
+      summary: Where the vendor web UI answers for a host
+      parameters:
+        - {$ref: "#/components/parameters/connector"}
+        - {name: host, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Base URL and authentication mode.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/WebUIResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/standard-port-name:
+    post:
+      summary: Translate a device port name to the standard model
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/PortNameRequest"}
+      responses:
+        "200":
+          description: The translation, or ok=false when the name is foreign.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/PortNameResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/fingerprint:
+    post:
+      summary: Is this device yours? (0–100)
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/FingerprintRequest"}
+      responses:
+        "200":
+          description: The score, same scale as in-process fingerprinting.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/FingerprintResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/identify:
+    post:
+      summary: Which device answers at this address (sessionless)
+      description: >
+        Partial-identity rule — what was established travels WITH the reason
+        the driver stopped: `{identity, error?}` with 200, or an ErrorEnvelope
+        when nothing at all was learned. Candidates may be empty; a platform
+        whose `identify.needs_credentials` is true then answers immediately
+        with its own explanation and no packet sent.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/SessionlessRequest"}
+      responses:
+        "200":
+          description: What was learned, possibly partial.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [identity]
+                properties:
+                  identity: {$ref: "./schemas.json#/components/schemas/Identity"}
+                  error: {type: string}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/onboard:
+    post:
+      summary: Switch the device to local administration (a lasting write)
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/SessionlessRequest"}
+      responses:
+        "200":
+          description: Before/after management mode, and whether it changed.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/OnboardResult"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/sessions:
+    post:
+      summary: Open a pinned session (ONE authentication)
+      description: >
+        Exactly one authentication attempt sequence per call, candidates in
+        the order given. The lease bounds an orphaned session; every op
+        implicitly renews it. On refusal the ErrorEnvelope carries the
+        transcript — on half the fleet it is the only diagnostic there is.
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/SessionRequest"}
+      responses:
+        "201":
+          description: The opened session.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/SessionResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/sessions/{id}/renew:
+    post:
+      summary: Extend the lease without an op
+      parameters: [{$ref: "#/components/parameters/sessionId"}]
+      responses:
+        "200":
+          description: The refreshed lease.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/SessionResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/sessions/{id}:
+    delete:
+      summary: Close (idempotent — 204 even for a session already gone)
+      parameters: [{$ref: "#/components/parameters/sessionId"}]
+      responses:
+        "204": {description: "Closed, or already gone: same answer."}
+
+  /mdp/v1/sessions/{id}/transcript:
+    get:
+      summary: Everything this session did, in order
+      parameters: [{$ref: "#/components/parameters/sessionId"}]
+      responses:
+        "200":
+          description: The record, exactly as shown to operators.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transcript:
+                    type: array
+                    items: {$ref: "./schemas.json#/components/schemas/Step"}
+        default: {$ref: "#/components/responses/error"}
+
+  /mdp/v1/sessions/{id}/read:
+    post:
+      summary: The composite read — several parts, one wire call
+      description: >
+        Parts run SEQUENTIALLY on the pinned session (two concurrent reads on
+        one CLI transport would interleave two pagers). One missing part is a
+        per-part error, never the death of the parts beside it. Part names:
+        state, identity, faceplate, mgmt-addr, spanning-tree, poe, optics,
+        lldp, fdb.
+      parameters: [{$ref: "#/components/parameters/sessionId"}]
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "./schemas.json#/components/schemas/ReadRequest"}
+      responses:
+        "200":
+          description: Per-part results and per-part errors.
+          content:
+            application/json:
+              schema: {$ref: "./schemas.json#/components/schemas/ReadResponse"}
+        default: {$ref: "#/components/responses/error"}
+
+  # --- Session ops. All POST /mdp/v1/sessions/{id}/<op>; every one renews the
+  # lease, answers 200 with the schema named below or an ErrorEnvelope, and a
+  # gesture the connector did not declare in /supports answers 501
+  # not_implemented. Body → response:
+  #
+  #   state                      (none)              → State
+  #   apply-ports                PortPlan            → ApplyResult
+  #   set-secret                 SetSecretRequest    → {ok}
+  #   persist                    (none)              → {ok}
+  #   accounts                   (none)              → Account[]
+  #   ensure-account             AccountRequest      → {ok}
+  #   delete-account             AccountRequest      → {ok}
+  #   snmp-config                SNMPIdentity        → SNMPResult
+  #   trap-receiver              TrapDestination     → TrapResult
+  #   mgmt-prepare               MgmtVLANRequest     → {ok}
+  #   mgmt-addressed             MgmtVLANRequest     → MgmtAddressedResponse
+  #   mgmt-commit                MgmtVLANRequest     → {ok}
+  #   mgmt-jump                  MgmtJumpRequest     → MgmtJumpResponse
+  #   mgmt-static-owner-probe    StaticOwnerProbeRequest → StaticOwnerProbeResponse
+  #   raw-read                   RawReadRequest      → RawReadResponse
+  #   hostname                   HostnameRequest     → {ok}
+  #   lags                       LAGsRequest         → ApplyResult   (see LACP fallback)
+  #   identity                   (none)              → Identity
+  #   faceplate                  (none)              → array of objects
+  #   dhcp-snooping-read         (none)              → DHCPSnoopState
+  #   dhcp-snooping-apply        DHCPSnoopPlan       → ApplyResult
+  #   storm-control-read         (none)              → StormControlState  (see /storm-caps)
+  #   storm-control-apply        StormControlPlan    → ApplyResult        (see /storm-caps)
+  #   spanning-tree-read         (none)              → SpanningTreeState
+  #   spanning-tree-apply        SpanningTreePlan    → ApplyResult
+  #   poe-read                   (none)              → PoEState
+  #   poe-apply                  PoEPlan             → ApplyResult
+  #   port-admin                 PortAdminPlan       → ApplyResult
+  #   port-power-cycle           PortCyclePlan       → ApplyResult
+  #   lldp                       (none)              → LLDPObservation
+  #   fdb                        (none)              → FDBObservation
+  #   optics                     (none)              → OpticsState
+  #   mgmt-addr-read             (none)              → MgmtAddrState
+  #   mgmt-addr-apply            MgmtAddrIntent      → MgmtAddrResult
+  #
+  # --- LACP fallback: a gesture that QUALIFIES an op, not a new op.
+  #
+  # `lag-fallback` adds no path. It declares that this driver's `lags` op
+  # honours LAGState.fallback — the untagged VLAN a member forwards in while
+  # LACP has NOT converged — and it is declared SEPARATELY from `lags` because
+  # most platforms cannot do it at all. The controller's screen reads the two
+  # gestures as three states, and the third is not the second: supported and
+  # set, supported and off, and NOT SUPPORTED — in which case the control is
+  # absent, not greyed out.
+  #
+  # The field is an integer VLAN id (1..4094), not a boolean, because the two
+  # deployments that want fallback want opposite VLANs: a server whose bond is
+  # not configured yet must land in the SAME VLAN the aggregate carries, and a
+  # port an installer may plug anything into must land in a DIFFERENT,
+  # quarantined one. 0 (absent) is no fallback. It is meaningful only with
+  # mode "lacp": a static aggregate never negotiates, so "while LACP is down"
+  # names nothing there, and such an intent is refused.
+  #
+  # THE RULE A NON-GO AUTHOR MUST READ HERE: a driver that does not declare
+  # `lag-fallback` and receives an aggregate carrying a non-zero `fallback`
+  # REFUSES THE WHOLE `lags` CALL — 422 with error.code `unsupported`,
+  # error.gesture naming the fallback, error.because giving the platform's own
+  # reason verbatim. It does NOT write the aggregate without the fallback and
+  # it does NOT ignore the field. Both silent outcomes leave the device
+  # holding a configuration the operator's screen does not show, and the
+  # operator believing a member forwards while LACP is down — which is the
+  # exact failure fallback was asked for. The controller refuses such an intent
+  # before spending a session; this rule is the second lock, for the driver
+  # reached by anything else.
+  /mdp/v1/sessions/{id}/{op}:
+    post:
+      summary: One operation on the pinned session (see the table above)
+      description: >
+        Serialization is the driver's duty — one op at a time per session. An
+        op cancelled mid-conversation POISONS the session: every later call
+        answers 409 session_poisoned, and the only correct move is DELETE.
+        Long ops are legitimate (a paged identity read takes 90 seconds on
+        one supported range): clients set per-op timeouts accordingly.
+      parameters:
+        - {$ref: "#/components/parameters/sessionId"}
+        - {name: op, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: "The op's result — see the table."}
+        default: {$ref: "#/components/responses/error"}
+
+components:
+  parameters:
+    connector:
+      name: connector
+      in: query
+      required: true
+      schema: {type: string}
+      description: A name from /supports — one image may carry several.
+    sessionId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+  responses:
+    error:
+      description: >
+        Every non-2xx answer. Status carries the class — 400 bad_request,
+        409 session_poisoned/protocol_mismatch, 410 session_expired,
+        422 unsupported, 429 busy (Retry-After), 501 not_implemented,
+        502 auth_failed/device_error — and error.code is normative; the
+        status is a hint for middleboxes.
+      content:
+        application/json:
+          schema: {$ref: "./schemas.json#/components/schemas/ErrorEnvelope"}

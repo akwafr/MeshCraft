@@ -1,22 +1,96 @@
-/* meshcraft — dark theme, mobile-first */
-:root {
-  --bg: #0f1218;
-  --bg-panel: #161b24;
-  --bg-hover: #1d2430;
-  --border: #2a3342;
-  --text: #dbe2ee;
-  --text-dim: #8b96a8;
-  --accent: #4f7cff;
-  --accent-hover: #6890ff;
-  --danger: #e5484d;
-  --ok: #46a758;
-  --warn: #f5a623;
-  /* --indeterminate: "nobody can see this device right now".
-     Deliberately a YELLOW distinct from the orange of --warn: an alert says the
-     device has a problem, this says meshcraft has lost the vantage point and the
-     device may be perfectly fine. Conflating them sends people to the wrong rack. */
-  --indeterminate: #e8d44d;
-  --radius: 8px;
+/* meshcraft — mobile-first, two themes.
+ *
+ * THE PALETTE IS NOT HERE ANY MORE. It moved, whole, to `ui/tokens.css`,
+ * which is imported after this file and is the authority on every colour,
+ * radius, shadow, duration and type size. This sheet CONSUMES tokens and
+ * declares none. If you came here looking for `--bg`, that is why.
+ *
+ * The move was not tidying: a second theme cannot be expressed in a single
+ * `:root` block, and leaving half a palette here would have guaranteed the
+ * two drifted. See UI-GUIDE §1.
+ */
+
+/* ---- type ---------------------------------------------------------------
+ * IBM Plex, self-hosted from web/public/fonts. Self-hosted and not a CDN
+ * because the controller is a single binary that must come up on a network
+ * with no route to the internet — the whole product is for people standing
+ * in front of a rack, and a webfont that 404s there would leave the UI in a
+ * fallback nobody tested.
+ *
+ * Sans is the VARIABLE cut (one file, 100..700). Mono is static at the two
+ * weights it is actually used in, because the variable mono is larger than
+ * both put together. `unicode-range` means a latin reader downloads ~60 KB
+ * and never touches the cyrillic or latin-ext files.
+ */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-latin-ext-wght-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-sans-cyrillic-wght-normal.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
 }
 
 * {
@@ -54,29 +128,270 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  /* Plex has real small-text hinting; let the browser use it. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+/* THE GROUND WASH. Two very large, very faint radial pools — see tokens §2.
+   They exist so the glass chrome has something to refract: a translucent bar
+   over a flat fill is just a lighter flat fill. `fixed` so they stay put
+   while content scrolls underneath the bars, which is what makes the glass
+   look like it is in front of the page rather than part of it.
+
+   Painted on a pseudo-element rather than as a background on `body` because
+   `body` is the scroll container's parent in some of these layouts and a
+   background-attachment: fixed there is a known compositing cost on mobile
+   Safari. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(70rem 50rem at 12% -10%, var(--wash-a), transparent 60%),
+    radial-gradient(60rem 45rem at 95% 108%, var(--wash-b), transparent 60%);
 }
 a {
   color: var(--accent);
   text-decoration: none;
 }
 
-/* Layout */
+/* ---- the technical register ---------------------------------------------
+ * Every identifier an operator could TYPE INTO A SWITCH is set in Plex Mono
+ * with tabular figures: port names, addresses, MACs, rates, VLAN ids, build
+ * stamps, serial numbers. Prose about them stays in Plex Sans.
+ *
+ * This is the typographic half of "this is instrumentation, not a brochure".
+ * It is also functional: `tabular-nums` is what stops a column of rates from
+ * jittering as the live stream updates it, and `GE1` beside `GE11` only
+ * aligns in a monospace.
+ */
+.mono,
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1; /* slashed zero — 0 vs O on a MAC */
+}
+/* Figures that are compared down a column or watched as they tick, without
+   the full mono treatment: a count, a rate, a big tile number. */
+.tnum,
+td,
+.tile-value,
+.chart-ymax,
+.chart-ymin {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ======================================================================
+ * MATERIAL — the glass layer.                              (UI-GUIDE §10)
+ * ======================================================================
+ *
+ * ONE RULE, AND IT IS THE WHOLE RULE: **glass is chrome, never content.**
+ *
+ * Top bar, tab bar, sidebar, drawer, modal, popover, sticky toolbar. Never
+ * a card, never a table, never a faceplate. The reason is not taste: a port
+ * square seen through `blur(20px)` at 68% opacity is no longer `--ok` green,
+ * it is some green, and this product spent a whole section of its guide
+ * making sure two greens never mean two things. Content is opaque so that
+ * colour keeps meaning what `network.ts` said it means.
+ *
+ * What makes it read as glass rather than as "a card with opacity" is the
+ * THIRD layer, the specular rim: a hairline of light along the top edge,
+ * where a real bevelled pane catches the room. Blur alone looks like fog.
+ */
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-edge);
+}
+/* The rim. `inset 0 1px 0` rather than a border-top so it sits INSIDE the
+   radius and follows the corner instead of cutting across it. */
+.glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+
+/* Two fallbacks, and they matter more than the effect does.
+ *
+ * 1. No `backdrop-filter` (older WebKit, some embedded browsers): the bar
+ *    becomes OPAQUE. A 68%-transparent bar with no blur behind it is
+ *    unreadable — text from the page shows straight through the nav.
+ * 2. `prefers-reduced-transparency`: a user has asked the OS for opaque
+ *    surfaces, usually for a reason that applies here more than most, since
+ *    this interface is read under bad light in technical rooms.
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass {
+    background: var(--bg-panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* Forced-colours mode replaces the palette entirely; a blur over it only
+   smears the two colours the user asked for. */
+@media (forced-colors: active) {
+  .glass {
+    background: Canvas;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .glass::after {
+    display: none;
+  }
+}
+
+/* ======================================================================
+ * SHELL
+ * ====================================================================== */
+
 .app {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* `dvh` tracks the mobile URL bar as it collapses; without it the bottom
+     tab bar sits under the browser chrome for the first scroll of every
+     session. The `vh` line is the fallback for browsers without `dvh`. */
+  height: 100vh;
+  height: 100dvh;
 }
+
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+  gap: var(--sp-4);
+  flex: 0 0 auto;
+  height: calc(var(--topbar-h) + var(--safe-top));
+  padding: var(--safe-top) calc(var(--sp-6) + var(--safe-right)) 0
+    calc(var(--sp-6) + var(--safe-left));
+  /* The bar is glass over the page, so the page must be allowed to pass
+     under it — that is the whole illusion. z-index keeps it above the
+     content's own stacking contexts. */
+  position: relative;
+  z-index: 30;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-bottom: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .topbar {
+    background: var(--bg-panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .topbar {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ---- the bottom tab bar (narrow only) -----------------------------------
+ * The five day-to-day destinations, at the bottom, where a thumb is. The
+ * top bar used to carry them and on a 393px phone it wrapped onto three
+ * rows and still clipped the last tab — 280px of chrome before the first
+ * pixel of content, on the screens people open while standing in front of
+ * the rack they are debugging.
+ *
+ * It is `fixed`, not `sticky`: the content scroller is an inner element
+ * (`.content-scroll`), so there is no page scroll for `sticky` to stick to.
+ */
+.tabbar {
+  display: none;
+}
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .tabbar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 40;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    align-items: stretch;
+    height: calc(var(--tabbar-h) + var(--safe-bottom));
+    padding-bottom: var(--safe-bottom);
+    padding-inline: var(--safe-left) var(--safe-right);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    border-top: 1px solid var(--glass-edge);
+    box-shadow: inset 0 1px 0 var(--glass-rim);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .tabbar {
+      background: var(--bg-panel);
+    }
+  }
+}
+.tabbar a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: var(--touch);
+  padding: var(--sp-1) var(--sp-0);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  line-height: 1;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tabbar a svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.75;
+}
+.tabbar a.active {
+  color: var(--accent);
+}
+/* The active pill sits BEHIND the icon, inset from the touch target: the
+   whole cell stays tappable while the lit area stays the size of the label.
+   Transform-only transition, so it composites on the GPU beside a blur. */
+/* THE ACTIVE MARKER SITS AT THE TOP EDGE, not under the label.
+   It used to float 6px above the safe area, which on every phone put it
+   directly against the descenders of the word it was marking — two things
+   touching that have nothing to do with each other. At the bar's own top
+   edge it reads as what it is: which of the five columns you are in. */
+.tabbar a.active::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto auto;
+  width: 28px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.tabbar a {
+  position: relative;
+}
+.tabbar a[aria-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
 }
 /* The brand mark replaces the written name: the document title and the SVG
-   aria-label carry « meshcraft ». Zero line-height, otherwise the inline SVG
+   aria-label carry "meshcraft". Zero line-height, otherwise the inline SVG
    shifts the top bar by a few pixels. */
 .brand {
   display: flex;
@@ -88,6 +403,72 @@ a {
 }
 .topbar .spacer {
   flex: 1;
+}
+/* THE SITE NAME IS THE ONE THING IN THIS BAR THAT MAY TRUNCATE.
+ *
+ * The bar grew a sixth child when the mode selector landed on the mark
+ * (ADR-0013), and it does not fit at every width: measured, it wants 1029px
+ * at `wide` and 831px at `mid`, so a 1000px laptop and anything from 721 to
+ * 830 scrolled sideways — the second of which was already true before the
+ * selector, by 36px.
+ *
+ * So the shrink is made EXPLICIT instead of being distributed by the flex
+ * algorithm: the tabs, the selector, the gear and the account control are
+ * frozen (they are words and glyphs that mean nothing clipped), and the site
+ * selector gives up width down to 112px, where `.sitesel-name` already
+ * ellipsises. A site called "Head office — Douala" reading "Head offi…"
+ * beside its own dropdown is a cost; five navigation tabs disappearing off
+ * the right edge of the window is not a cost, it is a broken bar.
+ *
+ * 2026-10-25, ADR-0019 — AND THE FREEZE STAYS, which is the part worth
+ * writing down. Taking the two mode words out of the selector gave 134px
+ * back (the pill went 208 → 74 in French), and the bar's intrinsic width at
+ * `wide` went 1314 → 1180 in the switching bar, 1208 → 1075 in the routing
+ * one. Measured over 721…1440 in 4px steps: the routing bar now overflows
+ * nowhere at all (21 of 120 sample widths before), the switching bar only
+ * from 721 to 773 and by at most 53px (74 of 120 before).
+ *
+ * So there is room, and it is still not enough room to give anything back.
+ * Each relaxation was TRIED — injected over this stylesheet and swept at
+ * 8px over 721…1440, French, switching bar, which is the worst case:
+ *
+ *   nothing relaxed   10 of 90 widths overflow
+ *   display name back 31 of 90 — it reopens the whole 968…1152 band
+ *                     (and 968…1048 in the routing bar, which is clean now)
+ *   `mid` gap back    12 of 90, and 721 goes from 50px short to 70px
+ *   flex-shrink: 1    10 of 90, IDENTICAL, which is the surprise
+ *
+ * The last line is the one to keep. Un-freezing the children changes
+ * nothing at all, because a flex item's automatic minimum is its min-content
+ * width and every child here is words that do not wrap — the tabs cannot
+ * shrink whatever `flex-shrink` says. The freeze is therefore a statement of
+ * INTENT, not the mechanism; the mechanism is the site selector's 112px
+ * floor, and it is already spent. Which is also why the 134px ADR-0019 gave
+ * back pays off a deficit that predates the selector rather than buying
+ * room for a seventh child. */
+.topbar .tabs,
+.topbar .modesw,
+.topbar .quicktip-inline,
+.topbar .accountmenu {
+  flex-shrink: 0;
+}
+.topbar .sitesel {
+  /* An explicit basis, because the button inside is now 100% of this box and
+     `auto` would be asking the child how wide the parent is. */
+  flex: 0 1 210px;
+  min-width: 112px;
+}
+.topbar .sitesel-btn {
+  width: 100%;
+}
+@media (max-width: 960px) {
+  /* bp:mid — the last twelve pixels. With the selector compacted and the site
+     name down to its floor, 721px (one pixel above `narrow`, where the tabs
+     are still in the bar) still wanted 733. The gap between six children is
+     where it comes from, and 6px is the step the narrow bar already uses. */
+  .topbar {
+    gap: var(--sp-2);
+  }
 }
 .main {
   display: flex;
@@ -139,7 +520,13 @@ a {
   background: var(--bg-hover);
 }
 .sidebar {
-  width: 200px;
+  /* 224px, not 200. At 200 the longest fr labels ("Réinitialiser un
+     équipement", "Réglages de la découverte") had no room left once the
+     ACTIVE row went bold, so selecting one reflowed it onto two lines and
+     the row height jumped. The entries are one line each by contract now
+     (`.nav-label`, end of this file); the extra 24px is what keeps the
+     ellipsis from ever being reached in en/fr. */
+  width: 224px;
   padding: 12px 8px;
   border-inline-end: 1px solid var(--border);
   background: var(--bg-panel);
@@ -151,8 +538,12 @@ a {
   transition: width 0.18s ease, padding 0.18s ease, opacity 0.15s ease;
 }
 .sidebar a {
-  display: block;
-  padding: 8px 12px;
+  /* flex, not block: the label is its own item so it can clip while the ↗ of
+     a section-leaving entry stays whole. */
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
   border-radius: var(--radius);
   color: var(--text-dim);
 }
@@ -166,12 +557,28 @@ button.rename {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 4px;
-  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  /* The padding is pulled straight back out by the margin, so the hover chip
+     renders 4px wider and 6px taller than the text while the row's geometry
+     is bit-for-bit what it was. Horizontally this is the 2px it always had
+     (6 − 4): the "instance" badge beside the name must not shift on hover. */
+  padding: 3px 6px;
+  margin: -3px -4px;
+  transition:
+    background 0.12s ease,
+    box-shadow 0.12s ease;
 }
 button.rename:hover,
 button.rename:focus-visible {
-  color: var(--accent);
+  /* The INK IS NEVER TOUCHED. This used to set `color: var(--accent)`, which
+     measured 4.40:1 against a hovered row (--accent #4f7cff on --bg-hover
+     #1a1f2e) — under AA for the proxy version, which is 11px mono. It also
+     recoloured whatever the button wraps, and the version cell wraps a
+     status badge that carries its own palette. The affordance moves to the
+     BOX: a tinted chip with an accent rim says "control" without spending
+     any contrast the content needs to stay readable. */
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
   outline: none;
 }
 /* Only the EDIT AFFORDANCE (the ✎, marked aria-hidden) is revealed on hover.
@@ -181,11 +588,18 @@ button.rename:focus-visible {
 button.rename span[aria-hidden] {
   opacity: 0;
   font-size: 11px;
-  transition: opacity 0.1s;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease;
 }
 button.rename:hover span[aria-hidden],
 button.rename:focus-visible span[aria-hidden] {
-  opacity: 0.9;
+  /* The accent lands HERE instead of on the label: the pencil is the only
+     part of the button that is pure affordance, so it is the only part that
+     can afford to be coloured. No contrast rule applies to a glyph nobody
+     has to read. */
+  opacity: 1;
+  color: var(--accent);
 }
 
 /* VLAN selector with search: the list floats above the form so fields do not
@@ -217,7 +631,8 @@ button.rename:focus-visible span[aria-hidden] {
   padding: 7px 10px;
   font: inherit;
 }
-.vlan-combo-list button:hover {
+.vlan-combo-list button:hover,
+.vlan-combo-list button.cursor {
   background: var(--bg-hover);
 }
 .vlan-combo-list button.sel {
@@ -226,6 +641,9 @@ button.rename:focus-visible span[aria-hidden] {
 .vlan-combo-list button.free {
   color: var(--warn);
   border-top: 1px solid var(--border);
+}
+.vlan-combo-list .note.empty {
+  padding: var(--sp-3) var(--sp-4);
 }
 
 /* Search progress bar: understated and honest — it tracks the number of
@@ -280,11 +698,19 @@ button.rename:focus-visible span[aria-hidden] {
   letter-spacing: 1px;
   color: var(--text-dim);
 }
+/* NO PADDING HERE, AND THAT IS THE POINT. The page's scroll surface is the
+   inner `.content-scroll`, and a scrollbar is drawn at the edge of the box
+   that scrolls. While this element held the 20px, that box stopped 20px short
+   of the window and the page's scrollbar floated inside the frame instead of
+   sitting against the edge of the screen. The padding moved one level in, onto
+   the scroller itself, where it insets the CONTENT from the scrollbar — which
+   is what it was ever for — and leaves the scroller free to reach the edge.
+   Done this way rather than with `::-webkit-scrollbar`, which would have
+   restyled every scrollbar in the product to move one of them. */
 .content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 20px;
   display: flex;
   flex-direction: column;
 }
@@ -295,6 +721,7 @@ button.rename:focus-visible span[aria-hidden] {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  padding: var(--sp-7);
 }
 /* Two-pane pages: fill the content viewport; columns scroll, not the wrapper. */
 .content-scroll:has(> .page2col),
@@ -310,56 +737,167 @@ button.rename:focus-visible span[aria-hidden] {
 }
 
 @media (max-width: 720px) {
-  .main {
-    flex-direction: column;
-  }
+  /* bp:narrow — THE SIDEBAR BECOMES A DRAWER.
+   *
+   * It used to become a wrapped row of links with its section headings
+   * hidden: eighteen configuration destinations, in two or three columns of
+   * unlabelled text, with "VLANs" and "Users" sitting side by side as if
+   * they were the same kind of thing. The drawer gives the groups back, and
+   * costs one tap.
+   *
+   * It slides from the inline-start edge, which is where the collapse
+   * control already lived, and it is the one piece of chrome allowed to
+   * cover content — so it is glass, and the page stays legible behind it.
+   */
   .sidebar-shell {
+    position: fixed;
+    inset: calc(var(--topbar-h) + var(--safe-top)) auto
+      calc(var(--tabbar-h) + var(--safe-bottom)) 0;
+    z-index: 35;
     flex-direction: column;
+    width: min(82vw, 320px);
+    border-inline-end: 1px solid var(--glass-edge);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    box-shadow: var(--shadow-3);
+    transition: transform var(--dur) var(--ease-out);
   }
+  .sidebar-shell.collapsed {
+    /* Off-canvas, not `display:none`: the links stay in the DOM so the
+       transition has something to animate, and `visibility` on the nav
+       below takes them out of the tab order while they are off screen. */
+    transform: translateX(-100%);
+    background: var(--glass-bg);
+    box-shadow: none;
+  }
+  /* The WIDE collapse squeezes the nav to `width: 0; opacity: 0` — that is
+     how a column disappears when the layout has to close over it. A drawer
+     does not close over anything: it leaves. Keeping the squeeze here made
+     the links 24px wide while off-canvas, so every open animated the text
+     reflowing out of a sliver instead of sliding in finished.
+
+     Only the transform hides it; `visibility` takes the links out of the
+     tab order while they are off screen. */
   .sidebar-shell.collapsed .sidebar {
+    visibility: hidden;
     width: auto;
-    max-height: 0;
-    padding-block: 0;
-  }
-  .sidebar-edge-toggle {
-    position: static;
-    transform: none;
-    align-self: center;
-    width: auto;
-    height: 28px;
-    padding: 0 10px;
-    margin: 4px 0;
-    border-radius: var(--radius);
+    padding-inline: var(--sp-3);
+    opacity: 1;
   }
   .sidebar {
     width: auto;
-    flex-direction: row;
-    flex-wrap: wrap;
+    height: 100%;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     border-inline-end: none;
-    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--sp-7);
   }
   .sidebar .section {
-    display: none;
+    display: block;
+  }
+  .sidebar a {
+    min-height: var(--touch);
+    display: flex;
+    align-items: center;
+  }
+  /* The handle rides the drawer's outer edge, so the same control opens and
+     closes it and its position always says which way the drawer will go. */
+  .sidebar-edge-toggle {
+    position: absolute;
+    inset-inline-start: 100%;
+    inset-block-start: var(--sp-6);
+    transform: none;
+    width: 30px;
+    height: var(--touch);
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+    border-start-end-radius: var(--radius);
+    border-end-end-radius: var(--radius);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
+    box-shadow: var(--shadow-2);
+  }
+  /* Tapping the page behind the open drawer closes it (Layout.tsx). */
+  .sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    background: rgba(0, 0, 0, 0.4);
+    -webkit-backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px);
+  }
+
+  /* Tighter gutters on a phone, and room for the tab bar — both on the
+     SCROLLER, for the reason the `.content` rule above explains: the padding
+     belongs to the box whose scrollbar must stay at the edge of the screen.
+     The tab bar is `fixed` and reserves no space of its own, so without the
+     bottom inset the last row of every list sits under the glass.
+
+     The safe-area insets ride here too: they keep text off a notch and out of
+     a rounded corner, which is a statement about the CONTENT, not about where
+     the scrollbar goes. */
+  .content-scroll {
+    padding: var(--sp-5);
+    padding-inline: calc(var(--sp-5) + var(--safe-left))
+      calc(var(--sp-5) + var(--safe-right));
+    /* Twice the gutter, and deliberately: one is the page's own bottom
+       margin, the other is the clearance the glass bar needs. It is the sum
+       the two nested paddings used to add up to, kept identical so that
+       collapsing them onto one element moved no list. */
+    padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--sp-5) * 2);
   }
 }
 
 /* Composants */
 h1 {
-  font-size: 20px;
-  margin: 0 0 16px;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.015em; /* Plex opens up at display sizes; pull it back */
+  margin: 0 0 var(--sp-6);
 }
+/* The page subtitle. It used to sit INLINE after the title, which is what
+   produced "Dashboard   Site overview — arranged the way you want it" as one
+   run-on line. Below the title, at text-dim, it reads as a caption and stops
+   competing with the heading it describes. */
 h1 .sub {
-  font-size: 13px;
+  display: block;
+  font-size: var(--fs-sm);
   font-weight: 400;
   color: var(--text-dim);
-  margin-inline-start: 10px;
+  letter-spacing: normal;
+  margin-block-start: var(--sp-1);
+  margin-inline-start: 0;
 }
+@media (max-width: 720px) {
+  /* bp:narrow */
+  h1 {
+    font-size: var(--fs-lg);
+    margin-bottom: var(--sp-5);
+  }
+}
+
+/* A card is a RAISED surface, and from here on it says so with elevation
+   rather than by drawing a line around itself. The 1px border on every box
+   is what made a page of cards read as a wireframe of a page of cards; the
+   shadow puts them on the ground instead. The hairline survives only where
+   there is no elevation to read (forced colours, reduced transparency). */
 .card {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-6);
+  margin-bottom: var(--sp-6);
+}
+@media (forced-colors: active) {
+  .card {
+    border-color: var(--border);
+  }
 }
 table {
   width: 100%;
@@ -382,52 +920,156 @@ tr:hover td {
   background: var(--bg-hover);
 }
 
+/* ---- controls -----------------------------------------------------------
+ *
+ * CAPSULES, NOT RECTANGLES. The old control was a 8px-radius solid rectangle
+ * — the shape every CSS framework has shipped by default for a decade, and
+ * the single loudest "assembled from a kit" signal on the page. A capsule
+ * costs nothing, reads as deliberate, and matches the pills the navigation
+ * already uses.
+ *
+ * GLASS APPLIES TO CONTROLS, and that extends UI-GUIDE §10's "chrome, never
+ * content" rather than contradicting it. The rule's reason was legibility of
+ * DATA seen through a blur: a port square at 68% opacity is no longer the
+ * green `network.ts` chose. A button has no data behind it — it sits on the
+ * page ground — so the secondary and ghost variants can be real glass, and
+ * they gain the depth the flat grey fill never had.
+ *
+ * The primary stays OPAQUE. A call to action that you can see the page
+ * through is a weaker call to action, and `--accent-fill` is carrying the
+ * 5.49:1 that makes its label readable.
+ */
 button,
 .btn {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius);
-  padding: 8px 14px;
+  /* --accent-fill, not --accent: white on the bright blue is 3.71:1, under
+     the 4.5:1 body text owes its background. The fill is the darker blue
+     that clears it in both themes; --accent keeps the brightness it needs
+     to be legible AS ink on a near-black ground. tokens.css §1. */
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: var(--sp-3) var(--sp-6);
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
+  position: relative;
+  /* The specular rim, same idea as the glass panes: a hairline of light on
+     the top edge. It is what separates a filled capsule from a coloured
+     rectangle. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 button:hover,
 .btn:hover {
-  background: var(--accent-hover);
+  background: var(--accent-fill-hover);
   /* A blue fill ALWAYS carries white text. Without this the blanket hover
      turned any button blue while leaving grey (--text-dim) text on it —
      unreadable on the serial and proxy pages. Ghost/danger/secondary override
      this below with their own hover, so only genuinely blue-filled buttons are
      forced white. Part of the rule "a colour and its text travel together". */
   color: #fff;
+  /* A 1px lift and a coloured glow — the press is the inverse. Transform and
+     shadow only, so the whole gesture composites on the GPU. */
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 4px 14px color-mix(in srgb, var(--accent-fill) 45%, transparent);
 }
+button:active,
+.btn:active {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+button:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Secondary — the glass one. Everything that is an action but not THE
+   action: cancel, close, a toolbar control, the gear. */
 button.secondary {
-  background: var(--bg-hover);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  backdrop-filter: blur(12px) saturate(var(--glass-saturate));
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    var(--shadow-1);
 }
+button.secondary:hover {
+  background: color-mix(in srgb, var(--text) 10%, var(--glass-bg));
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-edge));
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    var(--shadow-2);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  button.secondary {
+    background: var(--bg-hover);
+  }
+}
+
 button.danger {
-  background: transparent;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
-  border: 1px solid var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  box-shadow: none;
 }
 button.danger:hover {
   background: var(--danger);
   color: #fff;
+  border-color: var(--danger);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--danger) 40%, transparent);
 }
+
 button.ghost {
   background: transparent;
   color: var(--text-dim);
-  padding: 4px 8px;
+  padding: var(--sp-1) var(--sp-3);
+  border-color: transparent;
+  box-shadow: none;
 }
 button.ghost:hover {
   color: var(--text);
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  transform: none;
+  box-shadow: none;
 }
+
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+button:disabled:hover {
+  transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* An icon-only control is a CIRCLE, not a rounded square — the capsule taken
+   to its square case. */
+.icon-btn {
+  border-radius: 50%;
+  padding: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:hover,
+  .btn:hover,
+  button:active,
+  .btn:active {
+    transform: none;
+  }
 }
 
 input,
@@ -437,7 +1079,7 @@ textarea {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: var(--sp-3) var(--sp-4);
   font: inherit;
   width: 100%;
 }
@@ -446,6 +1088,41 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+  /* The border alone is a 1px cue that a colour-blind or low-vision user can
+     miss entirely; the ring is the part that survives both. */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* iOS SAFARI ZOOMS THE PAGE WHEN A FIELD UNDER 16px TAKES FOCUS.
+ *
+ * Every input in this product was 14px, so every tap on a field on an
+ * iPhone zoomed the viewport and left the operator scrolled sideways on a
+ * page that had been fitting a moment earlier. It reads as the layout
+ * breaking on touch, and it is the single most common way a desktop-first
+ * interface feels broken on a phone.
+ *
+ * 16px is the threshold, not a preference — Safari compares against it
+ * exactly. Scoped to coarse pointers so the dense desktop forms keep their
+ * size. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, var(--fs-base));
+    min-height: var(--touch);
+  }
+  /* A finger needs a target; the guide's 30px icon buttons are a mouse
+     measurement. Hit area grows, painted size does not. */
+  button,
+  .btn,
+  .icon-btn,
+  summary,
+  [role="button"] {
+    min-height: var(--touch);
+  }
+  .icon-btn {
+    min-width: var(--touch);
+  }
 }
 input[type="color"] {
   padding: 2px;
@@ -480,31 +1157,102 @@ label .lbl {
   gap: 10px;
   flex-wrap: wrap;
 }
+/* A toolbar whose page heading was removed, and that is therefore left with
+   its actions alone. `space-between` puts a lone child at the START, which
+   would walk the page's buttons across to the left edge on exactly the
+   screens that lost their title; they stay where the operator last saw them. */
+.toolbar--actions-end {
+  justify-content: flex-end;
+}
 
 /* Modal */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: var(--sp-6);
   z-index: 50;
 }
 .modal {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  padding: var(--sp-7);
   width: 100%;
   max-width: 480px;
   max-height: 90vh;
   overflow: auto;
 }
+/* A MODAL BECOMES A SHEET ON A PHONE.
+ *
+ * A centred 480px box on a 393px screen is a box with 16px of backdrop
+ * showing on each side — all of the cost of a modal and none of the point.
+ * Anchored to the bottom it is reachable, it rounds only where it leaves
+ * the screen, and it matches what every other application on the device
+ * does with the same gesture.
+ *
+ * `dvh` again, and `--safe-bottom`: a sheet whose confirm button sits under
+ * the home indicator is a sheet you cannot confirm. */
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal,
+  .modal.modal-wide {
+    max-width: 100%;
+    max-height: 88dvh;
+    border-start-start-radius: var(--radius-xl);
+    border-start-end-radius: var(--radius-xl);
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+    border-bottom: none;
+    padding-bottom: calc(var(--sp-7) + var(--safe-bottom));
+  }
+  /* The grab handle. It is decoration in the sense that nothing is bound to
+     it, and it is not decoration in the sense that it is how a person knows
+     this panel came from the bottom and will go back there. */
+  .modal::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto var(--sp-5);
+    border-radius: var(--radius-pill);
+    background: var(--border);
+  }
+}
+/* A modal that REPORTS instead of asking (cf. the `wide` prop on Modal): the
+   fleet credential deployment lists devices with the reason each one was
+   declined, and at 480px every one of those sentences wraps three times. */
+.modal.modal-wide {
+  max-width: 720px;
+}
 .modal h2 {
   margin: 0 0 16px;
   font-size: 16px;
+}
+/* Device rows in the deployment report. A list, not a table: each row carries a
+   sentence of prose under it, and a table cell would make that sentence share
+   a column width with a device name. */
+.deploy-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.deploy-list > li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.deploy-list > li:last-child {
+  border-bottom: none;
 }
 .modal .actions {
   display: flex;
@@ -557,6 +1305,20 @@ label .lbl {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+/* Observed once, and nobody can see it now — or no proxy watches it at all.
+   Yellow, not the muted ink below: --indeterminate is a general rule and not a
+   device-dot special case (2026-08-08, UI-GUIDE §2). The pill said "unknown"
+   for both this and "never observed yet", which is the one conflation the
+   palette exists to prevent. */
+.badge.proto-blind {
+  color: var(--indeterminate);
+  border-color: var(--indeterminate);
+  background: color-mix(in srgb, var(--indeterminate) 14%, transparent);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* Never observed: no colour claim at all, deliberately. */
 .badge.proto-unknown {
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -614,7 +1376,7 @@ pre.code {
   font-weight: 700;
   line-height: 1;
   /* `all: unset` inherits inheritable properties: without these two lines,
-     the « ? » picks up the letter-spacing and forced case from `.kicker`. */
+     the "?" picks up the letter-spacing and forced case from `.kicker`. */
   letter-spacing: normal;
   text-transform: none;
   /* Touch target is 15 px visually and 26×31 px for the finger: a pseudo-element
@@ -659,6 +1421,13 @@ pre.code {
   text-align: start;
   white-space: normal;
 }
+/* The hover tip is a label, not an explanation: most of them are one to five
+   words. The HelpTip padding above is sized for paragraphs and, around a
+   single word, it made a bubble that was mostly frame. */
+.quicktip-bubble {
+  padding: var(--sp-1) var(--sp-3);
+  line-height: var(--lh-tight);
+}
 .helptip-bubble > p {
   margin: 0 0 8px;
 }
@@ -684,69 +1453,114 @@ pre.code {
 .helptip-bubble span {
   display: inline;
 }
-/* Light theme: the bubble background must stay DETACHED from the page, otherwise
-   a floating bubble reads as just another text block. */
-@media (prefers-color-scheme: light) {
-  .helptip-bubble {
-    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  }
-}
+/* NO LIGHT THEME IS PLANNED, and the file now says so by having nothing
+   (decided 2026-08-09, UI-GUIDE §7).
+   A `@media (prefers-color-scheme: light)` block used to sit here. It adjusted
+   one shadow on one tooltip and touched no token, so the page it produced in a
+   light browser was the dark page with a slightly different bubble — the file
+   ADVERTISED theme-awareness it did not have, which is worse than either
+   answer. A real light theme is the thirteen tokens at the top of this file
+   plus every inline colour literal in the pages, and nobody has asked for one.
+   Deleting the block asserts the honest state; re-introducing one means doing
+   the tokens, not one shadow. */
 
 /* --- Main tabs --- */
+/* The desktop tabs. They used to be 12.5px, weight 700, uppercase, with a
+   2px underline — the shape every admin template has shipped since 2014, and
+   the single loudest "generic dashboard" signal in the top bar. They are now
+   a segmented group: sentence case, medium weight, the active one lit by a
+   soft pill rather than by shouting. Same hit areas, same semantics. */
 .tabs {
   display: flex;
-  align-items: stretch;
-  align-self: stretch;
-  margin-inline-start: 8px;
+  align-items: center;
+  gap: var(--sp-0);
+  margin-inline-start: var(--sp-2);
 }
 .tabs .tab {
   display: flex;
   align-items: center;
-  padding: 0 15px;
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  height: 32px;
+  padding: 0 var(--sp-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  font-weight: 500;
   color: var(--text-dim);
-  border-bottom: 2px solid transparent;
   text-decoration: none;
   white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease);
 }
 .tabs .tab:hover {
   color: var(--text);
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 .tabs .tab.active {
   color: var(--text);
-  border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-weight: 600;
 }
 .tabs .tab[aria-disabled="true"] {
   opacity: 0.35;
   cursor: default;
 }
-.topbar {
-  padding: 0 16px;
-  height: 52px;
-  gap: 10px;
-}
 .topbar .brand {
-  padding-inline-end: 6px;
+  padding-inline-end: var(--sp-2);
 }
-@media (max-width: 820px) {
+
+/* THE IDENTITY CLUSTER IS GONE, at every width. Who is logged in, their
+   role, language, appearance and sign-out were five controls spending 398px
+   of the bar to answer questions asked once a session; they are one glyph
+   now (`.accountmenu`, ui/AccountMenu.tsx), and the panel behind it is the
+   same panel the narrow bar already used. The phone layout and the desktop
+   layout therefore agree, which is why the rules below are shorter than
+   they were and why the ≤1140px name-dropping fallback no longer exists. */
+
+@media (max-width: 720px) {
+  /* bp:narrow — the top bar keeps ONE row and three jobs: where am I, go to
+     configuration, everything else. The tabs moved to `.tabbar` at the
+     bottom; see the note there for why. */
   .topbar {
-    height: auto;
-    flex-wrap: wrap;
-    padding: 8px 12px;
+    gap: var(--sp-2);
+    padding-inline: calc(var(--sp-5) + var(--safe-left))
+      calc(var(--sp-5) + var(--safe-right));
   }
   .tabs {
-    order: 3;
+    display: none;
+  }
+  .topbar .spacer {
+    display: none;
+  }
+  /* The site selector takes the room the tabs gave up — it is the control
+     that answers "which site am I about to change?". */
+  .topbar .sitesel {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* …and the trigger has to take it. The 210px is a measurement of the bar's
+     desktop layout; on a phone the control IS the remaining width. */
+  .topbar .sitesel-btn {
     width: 100%;
-    overflow-x: auto;
-    margin-inline-start: 0;
   }
-  .tabs .tab {
-    padding: 8px 12px;
+  /* THE POPOVER STOPS HANGING OFF THE LEFT EDGE. Anchored to the trigger's
+     end with a fixed 300px, it starts 300px to the left of a trigger that
+     begins at x≈10 — so at 393px it opened sixty pixels off screen with its
+     first column of text cut away. On a phone it takes the trigger's own
+     width instead, which is what `.searchsel-pop` does for the same reason:
+     a layer wider than the control it hangs from has nowhere to go. */
+  .topbar .sitesel-pop {
+    inset-inline: 0;
+    width: auto;
   }
+}
+
+/* Same cause as `.accountmenu-pop`: a glass popover hanging from the glass
+   top bar has no page to blur (a nested backdrop-filter samples only its
+   parent), so the page showed through sharp at 18 %. Opaque, rim kept —
+   ADR-0002's own fallback for a blur that does not happen. */
+.topbar .sitesel-pop.glass {
+  background: var(--bg-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* --- Counter tiles --- */
@@ -758,29 +1572,56 @@ pre.code {
 }
 .tile {
   background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--sp-5) var(--sp-6);
 }
+@media (forced-colors: active) {
+  .tile {
+    border-color: var(--border);
+  }
+}
+/* A tile exists to show ONE number. The hierarchy here was 10px uppercase
+   tracked-out label over a 24px bold value — a label shouting as loudly as
+   the figure it labels, which is the house style of every generated
+   dashboard. The label steps back to sentence case; the figure takes the
+   space that frees and the tabular mono it should always have had. */
 .tile-label {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--text-dim);
 }
 .tile-value {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 24px;
-  font-weight: 700;
-  line-height: 1.25;
-  margin-top: 4px;
+  align-items: baseline;
+  gap: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-display);
+  font-weight: 500;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+  margin-top: var(--sp-1);
   font-variant-numeric: tabular-nums;
 }
 .tile-sub {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-dim);
+}
+@media (max-width: 720px) {
+  /* bp:narrow — two tiles per row rather than one wide one each. Six
+     full-width tiles is six screens of scrolling before the first card. */
+  .tile-row {
+    grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+    gap: var(--sp-3);
+  }
+  .tile {
+    padding: var(--sp-4) var(--sp-5);
+  }
+  .tile-value {
+    font-size: var(--fs-lg);
+  }
 }
 
 /* --- Dashboard card grid --- */
@@ -789,7 +1630,7 @@ pre.code {
   grid-template-columns: 1.4fr 1fr;
   gap: 16px;
   /* stretch, not start: two side-by-side cards where one extends lower than the
-     other would leave a column that « floats », and we read imbalance where
+     other would leave a column that "floats", and we read imbalance where
      there is only a content difference. */
   align-items: stretch;
 }
@@ -979,79 +1820,181 @@ pre.code {
   flex: none;
   font-variant-numeric: tabular-nums;
 }
-/* --- Site selector with search --- */
+/* ======================================================================
+ * THE SITE SELECTOR                                        (ui/SiteSelect.tsx)
+ * ======================================================================
+ * Harmonised with `.searchsel` (ui/SearchSelect.tsx), which was written later
+ * and carries the current material: glass popover, token spacing, concentric
+ * radii, the shared focus ring. This one kept a flat `--bg-panel` box with a
+ * hardcoded `rgba(0,0,0,0.5)` shadow and pixel paddings, floating under a
+ * glass bar it visibly did not belong to.
+ *
+ * It is NOT merged with `.searchsel`: the trigger is sized for the top bar
+ * (a fixed 210px that becomes the full remaining width on a phone, where the
+ * tabs have moved to the thumb bar), and the popover hangs from the bar's
+ * right edge rather than filling a form field's width. Those two measurements
+ * are the whole difference, and they are why the rules are separate. */
+
 .sitesel {
   position: relative;
 }
 .sitesel-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: var(--sp-3);
   width: 210px;
+  min-height: 34px;
+  padding: 0 var(--sp-4);
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 7px 10px;
-  font-size: 13px;
+  box-shadow: none;
+  font: inherit;
+  font-size: var(--fs-sm);
   text-align: start;
 }
 .sitesel-btn:hover {
-  border-color: var(--accent);
   background: var(--bg);
+  border-color: var(--accent);
+  color: var(--text);
+  transform: none;
+  box-shadow: none;
+}
+/* Open is a STATE, and it gets the same ring the form control gets: the bar
+   is glass, so a popover with no visible tie to its trigger reads as a layer
+   that arrived from somewhere else. */
+.sitesel-btn.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .sitesel-name {
-  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sitesel-name.is-empty {
+  color: var(--text-dim);
+}
+.sitesel-chevron {
+  flex: none;
+  color: var(--text-dim);
+}
 .sitesel-pop {
   position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  width: 280px;
+  top: calc(100% + var(--sp-1));
+  inset-inline-end: 0;
+  width: 300px;
+  max-width: calc(100vw - var(--sp-7));
   z-index: 70;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  padding: 8px;
+  padding: var(--sp-3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
 }
 .sitesel-search {
-  margin-bottom: 6px;
+  width: 100%;
+  margin-bottom: var(--sp-2);
 }
 .sitesel-list {
-  max-height: 300px;
-  overflow: auto;
+  max-height: 290px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .sitesel-opt {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: 42px;
+  padding: var(--sp-3) var(--sp-4);
   background: transparent;
   border: none;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 13px;
-  padding: 7px 9px;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 400;
   text-align: start;
 }
-.sitesel-opt .note {
-  margin-inline-start: auto;
-}
+.sitesel-opt:hover,
 .sitesel-opt.cursor {
   background: var(--bg-hover);
+  color: var(--text);
+  transform: none;
+  box-shadow: none;
 }
+/* SELECTION MUST NOT CHANGE THE LAYOUT — the same rule, and the same reason,
+   as `.searchsel-opt.sel`: the weight change is scoped to the single-line
+   name, and a min-height absorbs what is left. */
 .sitesel-opt.sel {
   color: var(--accent);
+}
+.sitesel-opt.sel .sitesel-opt-label {
   font-weight: 600;
 }
+.sitesel-opt-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+.sitesel-opt-label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* The slug is the site's URL identity — a value you could type into an
+   address bar, so it is mono like every other technical identifier. */
+.sitesel-opt-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.sitesel-opt.sel .sitesel-opt-detail {
+  color: var(--text-dim);
+}
+/* "current", as a capsule rather than a bare word: the row is already
+   accented, and the pill is what says the accent means "this is the one you
+   are on" instead of "this one is under the cursor". */
+/* The selected row's tick. A ROUND badge and no longer a lozenge: it held an
+   icon plus the word "current", and once the word went the old
+   `2px var(--sp-2)` left a stretched pill around a 14px glyph. Symmetric
+   padding is the shape a single mark wants. */
+.sitesel-opt-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-1);
+  border-radius: var(--radius-pill);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
 .sitesel-empty {
-  padding: 10px 9px;
+  padding: var(--sp-5);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+/* A CLASS WITH A min-height BEATS THE GLOBAL COARSE RULE, and that is a trap
+   worth naming: `@media (pointer: coarse) { button { min-height: var(--touch) } }`
+   loses to `.sitesel-btn` on specificity, so declaring 34px here silently
+   opted this control out of the 44px finger target — on the exact screen
+   where it matters, since below 720px this IS the widest control on the bar.
+   The 34px is a MOUSE measurement and stays one; a finger gets the floor. */
+@media (pointer: coarse) {
+  .sitesel-btn,
+  .sitesel-opt {
+    min-height: var(--touch);
+  }
 }
 
 /* --- Ports table --- */
@@ -1078,11 +2021,6 @@ pre.code {
   border-color: var(--accent);
 }
 
-.icon-btn {
-  padding: 7px 9px;
-  display: inline-flex;
-  align-items: center;
-}
 .action-btn {
   display: inline-flex;
   align-items: center;
@@ -1092,24 +2030,16 @@ pre.code {
   flex-shrink: 0;
 }
 /* Credentials table: stack row actions so the other columns keep width. */
+/* `vertical-align: top` lived here to pin a five-deep column of labelled
+   buttons to the top of a tall row; the glyph row is one or two lines and
+   belongs on the row's own line. */
 .cred-actions-cell {
   width: 1%;
-  vertical-align: top;
+  vertical-align: middle;
 }
-.cred-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-}
-.cred-actions .action-btn,
-.cred-actions .badge {
-  justify-content: flex-start;
-  white-space: nowrap;
-}
-.cred-actions .row {
-  flex-wrap: wrap;
-}
+/* `.cred-actions` stacked the labelled buttons into a column; the row now
+   carries `.icon-actions` instead (see the CONFIG ICON ACTIONS block at the
+   end of this file) and the stack has no users left. */
 .creds-table {
   table-layout: fixed;
   width: 100%;
@@ -1137,8 +2067,13 @@ pre.code {
   width: auto;
   min-width: 12rem;
 }
+/* 9rem while the four verbs were spelled out and stacked. 8rem is not a
+   guess: the column is `table-layout: fixed`, so it is the only width the
+   glyphs ever get, and 8rem (128 px, 108 px of content) is the narrowest
+   that still fits THREE 30 px icons on a line — 7rem fits two and puts a
+   five-action credential back on three rows. Measured in Chrome. */
 .creds-col-actions {
-  width: 9rem;
+  width: 8rem;
 }
 
 .title-input {
@@ -1164,8 +2099,10 @@ pre.code {
   gap: 4px;
 }
 .chip {
-  font-size: 11px;
-  padding: 2px 8px;
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
   border-radius: 999px;
   background: var(--bg-hover);
   border: 1px solid var(--border);
@@ -1264,8 +2201,99 @@ pre.code {
   word-break: break-word;
 }
 @media (max-width: 960px) {
+  /* bp:mid */
   .side-panel {
     border-inline-start: none;
+    padding-inline-start: 0;
+  }
+}
+/* A side panel with a FOOT (Devices). Three bands: the site's counts cap it,
+   the VLAN plan grows in the middle, and the page's one gesture sits on the
+   bottom edge. */
+.side-panel--footed {
+  display: flex;
+  flex-direction: column;
+}
+.side-panel-summary {
+  flex: none;
+  margin-bottom: var(--sp-4);
+}
+/* THE FOOT IS A GLASS BAND; THE BUTTON INSIDE IT STAYS OPAQUE (ADR-0002).
+ *
+ * It used to be `background: var(--bg)` behind a `--border` hairline — an
+ * opaque cut the same colour as the ground it was cutting, which is to say
+ * no separator at all, with an inline-flex pill parked in its left corner.
+ * The button had been transplanted out of a page header, where it was one
+ * item on a horizontal row; at the foot of a 300px column that shape means
+ * nothing, so it read as forgotten there rather than as the page's one
+ * creating gesture.
+ *
+ * A sticky foot that the VLAN plan scrolls beneath is the exact case the
+ * glass material is for, and it is chrome, not a data surface, so ADR-0002
+ * allows it. The specular rim (`inset 0 1px 0`) is the layer that makes the
+ * top edge read as an EDGE rather than a line someone drew: blur and tint
+ * alone give fog. The button keeps `--accent-fill` — the primary action is
+ * the one surface the ADR explicitly keeps opaque. */
+.side-panel-foot {
+  flex: none;
+  margin-block-start: auto;
+  /* Bleed back over the panel's 16px inset so the band spans the whole
+     column. A band that stops short of its own panel border reads as a card
+     that failed to fit, not as the floor of the column. The padding puts it
+     back for the button, so the button's left edge lines up with the VLAN
+     rows above it and its right edge ends where they end. */
+  margin-inline-start: calc(var(--sp-6) * -1);
+  padding: var(--sp-5) 0 var(--sp-5) var(--sp-6);
+  position: sticky;
+  bottom: 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-top: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+/* The two fallbacks every hand-rolled glass surface in this sheet carries
+   (.topbar, .tabbar, .sidebar-shell): no backdrop-filter, or a user who
+   asked the OS for opaque surfaces — in both cases the band goes solid.
+   A translucent bar with nothing blurring behind it is worse than a plain
+   one, because the VLAN colours show straight through it. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .side-panel-foot {
+    background: var(--bg-panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .side-panel-foot {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+/* Sized to the column instead of to its own label: full width, label
+   centred. This is what makes it a destination at the bottom of the panel
+   rather than a control that happens to be there — it is the only gesture
+   on this page that creates anything, and it is alone in its band, so the
+   words stay (UI-GUIDE §5: the page's primary gesture never goes iconic). */
+.side-panel-foot .action-btn {
+  width: 100%;
+  justify-content: center;
+  padding-block: var(--sp-4);
+  font-weight: 600;
+}
+@media (max-width: 960px) {
+  /* bp:mid */
+  /* Stacked under the device grid, the panel is no longer its own scroller:
+     the page is. `sticky` then measures against the PAGE, which would park
+     the button over the content and under the glass tab bar. It rides in
+     normal flow instead — last thing on the page, which is where the panel
+     itself now is. */
+  /* The panel drops its 16px inset at this width, so the bleed that paid for
+     that inset has nothing left to cancel and would hang the band off the
+     left edge of the column. */
+  .side-panel-foot {
+    position: static;
+    margin-block-start: 0;
+    margin-inline-start: 0;
     padding-inline-start: 0;
   }
 }
@@ -1363,12 +2391,12 @@ pre.code {
 .meter > div {
   height: 100%;
 }
-.spark {
-  display: block;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-}
+/* `.spark` USED TO BE DECLARED HERE, with a border, a radius and a panel
+   background, and it had no consumer in any .tsx since the initial public
+   release — dead CSS. It is gone rather than renamed around, because the
+   next person to reach for the obvious name for a sparkline would have
+   inherited the same framed box this one silently drew. The live `.spark`
+   is with the other traffic rules, further down. */
 
 .alert-list {
   display: flex;
@@ -1591,14 +2619,26 @@ pre.code {
   background: color-mix(in srgb, var(--ok) 55%, var(--text-dim));
   flex: none;
 }
+/* The plan is a raised surface like any other, and says so the way the rest
+   of the sheet does: elevation plus the surface ladder (UI-GUIDE §10.5). It
+   kept a literal `1px solid var(--border)` from before that pass — the last
+   drawn hairline on a full-width container — which made the topology the one
+   screen that looked like a wireframe of itself. The line comes back only
+   under forced colours, where there is no shadow to read. */
 .plan-wrap {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
   background: var(--bg-panel);
+}
+@media (forced-colors: active) {
+  .plan-wrap {
+    border-color: var(--border);
+  }
 }
 /* Outer layer carries the zoomed size (and therefore scrolling); the canvas
    keeps plan coordinates and carries transform: scale(). */
@@ -1714,6 +2754,34 @@ pre.code {
   padding: 0 4px;
   flex: none;
 }
+
+/* A device drawn with NO observed link: the plan says why, in the space a
+   plan has. Same chip geometry as .plan-stp-root so the two read as one
+   vocabulary; the tone is what differs.
+
+   Two tones and not one, and the split is the message (UI-GUIDE §1): a
+   PERMANENT platform limit is stated in the muted note colour because there
+   is nothing to do about it, while a device that refused LLDP — or an agent
+   that serves none — gets --warn, because a human can lift it. Orange on an
+   unfixable limit is exactly what the palette rule forbids. */
+.plan-node-isolated {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+  white-space: nowrap;
+}
+.plan-node-isolated.tone-act {
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-wash);
+}
+.plan-node-isolated.tone-info {
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
 button.secondary.on {
   color: var(--accent);
   border-color: var(--accent);
@@ -1813,25 +2881,63 @@ button.secondary.on {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: var(--sp-6);
+  /* The backdrop sits at z-index -1 INSIDE this stacking context, so it
+     paints behind the card without escaping under the page itself. */
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
 }
 .login-card {
   width: 100%;
   max-width: 360px;
+  /* Lifted off the rain: shadow-1 is drawn for a card on a flat page. */
+  box-shadow: var(--shadow-3);
+  padding: var(--sp-8) var(--sp-8) var(--sp-7);
+  margin-bottom: 0;
+  /* A hairline in the accent: the card is the one solid thing on a moving
+     page, and its edge should not dissolve into the rain behind it. */
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.login-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: var(--sp-3);
+}
+/* LoginBackdrop.tsx — the one decorative animation (UI-GUIDE §4). */
+.login-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.login-backdrop canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+@media (forced-colors: active) {
+  .login-backdrop {
+    display: none;
+  }
 }
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-8);
 }
 .login-brand h1 {
   margin: 0;
   font-size: 22px;
   letter-spacing: 0.5px;
 }
+.login-brand-accent {
+  color: var(--accent);
+}
 .login-lang {
-  margin-top: 16px;
+  margin-top: var(--sp-6);
   display: flex;
   justify-content: center;
 }
@@ -1893,9 +2999,19 @@ button.secondary.on {
   font-size: 13px;
   text-align: start;
 }
-.langsel-opt:hover,
+/* The base `button` rule's rim shadow and hover lift made every option a
+   little floating card; a list row is flat. */
+button.langsel-opt,
+button.langsel-opt:hover,
+button.langsel-opt:active {
+  box-shadow: none;
+  transform: none;
+  font-weight: 400;
+}
+button.langsel-opt:hover,
 .langsel-opt.cursor {
   background: var(--bg-hover);
+  color: var(--text);
 }
 .langsel-opt.sel {
   color: var(--accent);
@@ -1922,16 +3038,6 @@ button.secondary.on {
   gap: 4px;
   align-items: center;
 }
-.chip {
-  display: inline-block;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
 .warn-text {
   color: var(--warn);
 }
@@ -1941,6 +3047,45 @@ button.secondary.on {
   font-size: 11px;
   line-height: 1.6;
   color: var(--warn);
+}
+/* SiteSelect: the slug beside the name in an option row. */
+
+/* The Drivers page (config/drivers). Its own classes rather than inline
+   styles — the reference screen must pass its own ratchet. */
+.drivers-badges {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-block: var(--sp-3);
+}
+.drivers-log {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+/* The pullable reference of a built agent image, next to its copy button
+   (Agents page). The code element takes the room; the button stays its size. */
+.agents-pullref {
+  gap: var(--sp-3);
+  align-items: center;
+  margin-block: var(--sp-3);
+}
+.agents-pullref code {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+/* Semantic badge tones (UI-GUIDE §2): ok = confirmed by observation,
+   danger = failed and stated. Introduced with the Drivers page. */
+.badge.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.badge.danger {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 .badge.warn {
   border-color: var(--warn);
@@ -2105,7 +3250,7 @@ button.secondary.on {
 }
 /* cols-2: two FIXED columns for forms whose fields go in pairs
    (subnet / gateway). With auto-fit, the pair would split by width, and
-   « IPv6 gateway » would end up under « IPv4 subnet ». */
+   "IPv6 gateway" would end up under "IPv4 subnet". */
 .form-grid.cols-2 {
   grid-template-columns: repeat(2, minmax(200px, 1fr));
 }
@@ -2124,7 +3269,7 @@ button.secondary.on {
 }
 
 /* --- Configuration drift: what meshcraft believes vs what the fleet carries ---
-   See docs/01-Architecture/Reconciliation §6.
+   See docs/en/01-Architecture/Reconciliation §6.
 
    Fade rather than harsh blink: a 48-port facade pulsing on and off is unreadable
    and quickly becomes something people disable. The fade draws the eye without
@@ -2213,6 +3358,18 @@ button.secondary.on {
   font-size: 12px;
 }
 
+/* PillPicker input mode: the anchor the suggestion list floats under, and
+   the compact input that fits the key/value summary grid it lives in. */
+.pill-anchor {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+}
+.pill-input {
+  min-height: 28px;
+  font-size: 12px;
+}
+
 /* PillPicker suggestion list (single-pill field).
    Overlaid so it does not push the key/value summary grid on every keystroke. */
 .pill-suggest {
@@ -2246,6 +3403,25 @@ button.secondary.on {
   background: var(--bg-hover);
 }
 
+/* The banner action column (ui/Banner.tsx). */
+.banner-actions {
+  gap: var(--sp-3);
+}
+/* A banner's second note spaces itself off the first — the sites used to
+   carry the margin inline, each with its own number. */
+.drift-text .note + .note,
+.drift-text ul + .note {
+  margin-top: var(--sp-2);
+}
+/* Neutral variant: same layout, no alarm color — for a banner that states a
+   condition (an indeterminate uplink) rather than a fault. */
+.drift-banner.neutral {
+  border-color: var(--border);
+}
+.drift-banner.neutral .drift-title {
+  color: var(--text);
+}
+
 /* INFORMATION banner: what the platform cannot write.
    Same layout as the drift banner, neutral tone — it calls for no action, and
    painting it orange would teach people to ignore orange. */
@@ -2273,7 +3449,7 @@ button.secondary.on {
 }
 
 /* Device tags (device detail page).
-   See docs/01-Architecture/Tags and identifier scope.
+   See docs/en/01-Architecture/Tags and credential scope.
 
    Dashed border marks a tag INFERRED from a rule. Two different strokes for two
    different behaviors: manual tags stay, inferred tags are recalculated and return
@@ -2305,8 +3481,8 @@ button.secondary.on {
 .badge.tag-technical {
   border-style: solid;
   border-color: var(--accent);
-  /* Accent tint at 14%: hard-coded rather than `color-mix`, which is not used
-     anywhere else in this stylesheet. */
+  /* Accent tint at 14%, hard-coded. `color-mix` is used 18 other times in this
+     stylesheet, including three at this exact ratio — prefer it here too. */
   background: rgba(79, 124, 255, 0.14);
   cursor: help;
 }
@@ -2431,31 +3607,7 @@ button.secondary.on {
   color: var(--text-dim);
 }
 
-/* --- « Outside management plan » warning on a device card ---
-   Subtle but present: operational information, not an outage.
-   Alert color without the weight of a full banner. */
-.mgmt-warn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  margin: 2px 0 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--warn);
-  background: rgba(245, 166, 35, 0.1);
-  border: 1px solid rgba(245, 166, 35, 0.45);
-  border-radius: 999px;
-  cursor: pointer;
-}
-.mgmt-warn:hover {
-  background: rgba(245, 166, 35, 0.2);
-}
-.mgmt-warn-cta {
-  opacity: 0.8;
-}
-
-/* « Outside management plan » banner fades like drift dots: it is a problem, not
+/* "Outside management plan" banner fades like drift dots: it is a problem, not
    a footnote. Same visual code for the same kind of question — the operator
    does not have to learn two languages. */
 @keyframes mgmt-warn-fade {
@@ -2818,4 +3970,3474 @@ button.chip.on {
 }
 .port-errdisabled {
   animation: port-errdisabled-pulse 1s ease-in-out infinite;
+}
+
+/* --- Stylised checkbox ---
+   Replaces the browser's control, which is the one form element no vendor
+   renders the same way and the only one in this product that cannot be made to
+   match the surrounding density. The NATIVE input stays in the DOM and stays
+   focusable — it carries the state, the keyboard behaviour and the accessibility
+   tree; only its painting is replaced. Hiding it with `display:none` would take
+   all three away, which is why it is clipped rather than removed. Same approach
+   the toggle switch above already uses. */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.check input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+.check .box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .12s, border-color .12s;
+}
+/* The tick is drawn, not a glyph: a font character shifts by a pixel or two
+   between platforms and lands off-centre in an 18px box. */
+.check .box::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid var(--bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+  opacity: 0;
+  transition: opacity .12s;
+}
+.check input:checked + .box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.check input:checked + .box::after {
+  opacity: 1;
+}
+/* Focus lands on the BOX, because the input it belongs to is invisible.
+   Without this a keyboard user tabs through the form with no indication of
+   where they are — the exact accessibility the clipped-not-hidden input was
+   preserved to keep. */
+.check input:focus-visible + .box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.check input:disabled + .box {
+  opacity: .45;
+}
+.check input:disabled ~ span {
+  opacity: .45;
+}
+
+/* --- Option categories in an edit overlay ---
+   A flat list of a dozen controls makes an operator read all of them to find
+   one. Grouping is not decoration here: VLAN, power, spanning tree and storm
+   control are answered by different people at different moments. */
+.optgroup {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+.optgroup > .optgroup-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.optgroup .row {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* --- Multi-select field with pills inside the input ---
+   A control for choosing SEVERAL of something from a list, where the chosen
+   ones stay visible in the field. Built on `.chip` rather than a new pill shape,
+   and on the `.pill-suggest` dropdown already used by PillPicker, so the product
+   has one pill and one suggestion list rather than three. */
+.pillbox {
+  position: relative;
+}
+.pillbox-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: text;
+}
+.pillbox-field:focus-within {
+  border-color: var(--accent);
+}
+/* The chosen ones. Interactive, so a button and not a span: each carries its own
+   removal, which is the only way out of the field for a keyboard user. */
+.pillbox .chip.sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text);
+  padding: 2px 4px 2px 8px;
+}
+.pillbox .chip.sel button {
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  min-height: 0;
+  cursor: pointer;
+}
+.pillbox .chip.sel button:hover {
+  color: var(--danger);
+}
+/* The typing area grows with its content and never wraps the field on its own:
+   a fixed-width input would push the pills onto a second line the moment there
+   were two of them. */
+.pillbox-field input {
+  flex: 1 1 80px;
+  min-width: 80px;
+  border: 0;
+  background: none;
+  padding: 2px;
+  height: auto;
+  min-height: 0;
+}
+.pillbox-field input:focus {
+  outline: none;
+}
+
+/* Clients page. The vendor badge is a MARK plus its NAME — the name is the
+   datum, the mark the recognition shortcut (cf. vendorBadge.tsx). */
+.vendor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.vendor-logo {
+  flex: none;
+}
+.vendor-mono {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.03em;
+}
+.vendor-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+.clients-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 12px;
+}
+/* One labelled typing filter (kicker + PillMultiSelect). The field gets a
+   floor so an empty filter still reads as a field, and a ceiling via flex so
+   two of them share a row on a laptop and stack on a phone. */
+.clients-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+}
+.clients-filter .pillbox {
+  min-width: 200px;
+}
+.clients-filter .kicker {
+  margin-right: 0;
+}
+.clients-table td {
+  vertical-align: middle;
+}
+
+/* Link aggregation: the swatch that repeats the exact colour the faceplate
+   overline paints — one palette, lags.ts. The rest of the aggregates'
+   dressing moved to the LAG FACEPLATE section at the end of this file when
+   the separate tile became a block of the facade (ADR-0007). */
+.lag-swatch {
+  width: 14px;
+  height: 6px;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* The configuration gear beside the site selector. NavLink renders an <a>,
+   so it needs the button box the logout <button> gets from `.icon-btn` plus
+   an explicit lit state for "you are in configuration". */
+/* The gear is an <a>, and `.secondary` only dresses <button>s — so the coat
+   has to be copied by hand. It had drifted: the buttons became glass capsules
+   and circular icon-btns, while this anchor kept the old flat `--bg-hover`
+   square. Beside the sign-out button it read as a different KIND of control,
+   which it is not. Same glass, same circle, same rim. */
+a.gear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    var(--shadow-1);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  a.gear-btn {
+    background: var(--bg-hover);
+  }
+}
+a.gear-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+a.gear-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Assisted hardware reset: the staged operator instruction. The two stages
+   that need HANDS (hold MODE / release MODE) get the loud variant — this is
+   the one moment the wizard's timing depends on a human. */
+.hard-stage {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+}
+.hard-stage-act {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  font-size: 15px;
+}
+.hard-stage-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+/* The hardware-reset live checklist. States are painted, not just glyphed:
+   done greys out, active carries the accent, the operator's gestures pulse. */
+.hard-steps {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hard-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.hard-step.pending {
+  color: var(--text-dim);
+}
+.hard-step.done {
+  color: var(--text-dim);
+}
+.hard-step.done .hard-step-dot {
+  color: var(--ok);
+}
+.hard-step.active {
+  color: var(--text);
+  font-weight: 600;
+}
+.hard-step.active .hard-step-dot {
+  color: var(--accent);
+}
+.hard-step.loud {
+  color: var(--warn);
+  font-size: 15px;
+}
+.hard-step.loud .hard-step-dot {
+  color: var(--warn);
+  animation: hardpulse 1s ease-in-out infinite;
+}
+@keyframes hardpulse {
+  50% { opacity: 0.25; }
+}
+.hard-step-dot {
+  flex: none;
+  width: 16px;
+  text-align: center;
+}
+/* The step NUMBER, printed because .hard-steps suppresses the list marker:
+   the number says where in the run a step sits, the dot says what state it is
+   in. Tabular figures so the dots stay in one column past step 9, and a
+   logical text-align so it still reads right in `ar`. */
+/* "About this run" — the single line of explanation the Junos reset screen
+   keeps next to its checklist, and it is a HelpTip rather than prose. */
+.hard-steps-about {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.hard-step-n {
+  flex: none;
+  min-width: 1.6em;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* ======================================================================
+ * THE ACCOUNT MENU AND THE APPEARANCE CONTROL          (ui/AccountMenu.tsx)
+ * ====================================================================== */
+
+.accountmenu {
+  position: relative;
+}
+/* The trigger is the LAST thing on the bar — the slot the sign-out button
+   used to hold, which is where a hand already goes looking for "me". It is
+   an `.icon-btn`, so it inherits the 30px mouse circle here and the 44px
+   finger target from the global `pointer: coarse` rule. */
+.accountmenu-btn {
+  flex: none;
+}
+/* OPAQUE, NOT GLASS. ADR-0002 puts popovers under glass, but this one hangs
+   from the top bar, which is glass itself, and a `backdrop-filter` inside
+   another one samples only its parent: the panel blurred the bar and let the
+   page show through SHARP at 18 % (a "Create a VLAN" button read straight
+   through the name, measured in production). ADR-0002's own fallback for a
+   blur that does not happen is opacity, and that is what this is. The rim
+   stays, so it still reads as chrome. */
+.accountmenu-pop {
+  position: absolute;
+  inset-block-start: calc(100% + var(--sp-2));
+  inset-inline-end: 0;
+  z-index: 60;
+  width: 272px;
+  max-width: calc(100vw - var(--sp-6));
+  padding: var(--sp-2);
+  background: var(--bg-panel);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3), inset 0 1px 0 var(--glass-rim);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+/* THE BRIDGE OVER THE GAP — the one defect every hover menu ships with.
+   The panel hangs `--sp-2` below the trigger, and a pointer crossing those
+   six pixels is over neither, so `pointerleave` fires and the panel the user
+   was reaching for vanishes under their hand. This covers the air with the
+   panel's own hit area: a pseudo-element is hit-tested as its originating
+   element, so the crossing registers as "still inside the panel". Invisible,
+   and `inset-inline: 0` makes it as wide as the panel, which is wider than
+   the trigger — so a diagonal approach is caught too. */
+.accountmenu-pop::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: calc(var(--sp-2) * -1);
+  height: var(--sp-2);
+}
+
+/* The panel's rows share one geometry — inset, radius, hover — so the
+   identity, the two settings and sign-out read as one list rather than four
+   unrelated widgets stacked. */
+.accountmenu-who,
+.accountmenu-row,
+.accountmenu-out {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius);
+}
+.accountmenu-who {
+  color: var(--text);
+  text-decoration: none;
+}
+.accountmenu-who:hover {
+  background: var(--bg-hover);
+}
+.accountmenu-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+}
+.accountmenu-id {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.accountmenu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.accountmenu-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  font-size: var(--fs-micro);
+}
+.accountmenu-go {
+  color: var(--text-dim);
+}
+.accountmenu-who:hover .accountmenu-go {
+  color: var(--accent);
+}
+.accountmenu-sep {
+  margin: var(--sp-1) var(--sp-3);
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.accountmenu-row {
+  justify-content: space-between;
+  padding-block: var(--sp-2);
+}
+.accountmenu-lbl {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+/* `button.` on purpose: the base `button:hover` (0,1,1) would otherwise
+   win and turn the row into a lifted blue capsule with a rim shadow. */
+button.accountmenu-out,
+button.accountmenu-out:hover,
+button.accountmenu-out:active {
+  width: 100%;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: start;
+  cursor: pointer;
+}
+button.accountmenu-out:hover {
+  background: var(--bg-hover);
+}
+.accountmenu-out svg {
+  color: var(--text-dim);
+}
+button.accountmenu-out:hover,
+button.accountmenu-out:hover svg {
+  color: var(--danger);
+}
+.accountmenu-who:focus-visible,
+.accountmenu-out:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The language trigger in its labelled form: the row's control, flag + name
+   + chevron, sized like the appearance segments beside it. */
+.langsel-btn--labelled {
+  gap: var(--sp-2);
+  width: auto;
+  height: 30px;
+  padding: 0 var(--sp-3);
+  font-size: 13px;
+  border-radius: var(--radius-pill);
+}
+.langsel-btn--labelled .langsel-caret {
+  color: var(--text-dim);
+}
+
+/* The three-state appearance control. A segment group, not a dropdown:
+   three options, all three worth seeing at once. */
+.themectl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+}
+.themectl-seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-width: 28px;
+  height: 26px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.themectl-seg svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.themectl-seg:hover {
+  color: var(--text);
+  background: transparent;
+}
+.themectl-seg.on {
+  background: var(--bg-panel);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+.themectl-seg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The labelled variant fills the width of the account menu, where there is
+   room for the words and no surrounding context to name the control. */
+.themectl--labelled {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  width: 100%;
+  border-radius: var(--radius);
+}
+.themectl--labelled .themectl-seg {
+  height: 32px;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: var(--fs-sm);
+}
+
+/* ======================================================================
+ * SIDEBAR — chrome, therefore glass.                        (UI-GUIDE §10)
+ * ====================================================================== */
+
+.sidebar-shell {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-inline-end-color: var(--glass-edge);
+}
+.sidebar {
+  background: transparent;
+  border-inline-end-color: var(--glass-edge);
+}
+.sidebar a {
+  font-size: var(--fs-sm);
+  border-radius: var(--radius);
+  transition: background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.sidebar a.active {
+  /* The active destination is filled, not merely hovered: `--bg-hover` was
+     doing both jobs, so the item under the pointer and the page you are on
+     looked identical. */
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+.sidebar a:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.sidebar .section {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sidebar-shell {
+    background: var(--bg-panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar-shell {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ======================================================================
+ * THE FACEPLATE                        (pages/switchdetail/Faceplate.tsx)
+ * ======================================================================
+ * The rows are the physical rows of the box. They scroll; they never wrap.
+ * See the comment on FacadeBlockRows for what wrapping did to them.
+ */
+
+.facade-block {
+  margin-bottom: var(--sp-7);
+}
+.facade-label {
+  margin-bottom: var(--sp-2);
+}
+.facade-rows {
+  /* The scroller. Padding on the block edges so a selected port's ring and
+     a LAG overline are not clipped by the scroll box. */
+  padding: 3px 0 var(--sp-1);
+}
+.facade-rows-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  /* Without `max-content` the inner column takes the SCROLLER's width and
+     the rows wrap again inside it — the bug this whole structure exists to
+     prevent, reintroduced one level down. */
+  width: max-content;
+}
+.facade-row {
+  display: flex;
+  gap: var(--sp-1);
+  flex-wrap: nowrap;
+}
+
+/* ======================================================================
+ * TYPOGRAPHIC CORRECTIONS
+ * ====================================================================== */
+
+/* `.kicker` was 10px, uppercase, tracked out a tenth of an em — a caption
+   shouting. It labels things like "1–48" and "Telemetry", where the job is
+   to be found, not to be loud. Same ink, sentence spacing, one step up in
+   size so it is actually legible at arm's length in a technical room. */
+.kicker {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-dim);
+}
+/* The faceplate's block labels are port RANGES — "1–48", "SFP+". Those are
+   identifiers, so they take the technical register. */
+.facade-label {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Table headers keep their small caps: in a dense table a column head is a
+   genuine heading over a column, and the case change is what separates it
+   from the first row of data. Only the shout comes down. */
+th {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+
+/* ======================================================================
+ * NARROW CORRECTIONS                                        (bp:narrow)
+ * ====================================================================== */
+
+@media (max-width: 720px) {
+  /* bp:narrow */
+
+  /* The device header's statistics were right-aligned against a wide
+     column that no longer exists; on a phone they ended up floating in the
+     middle of the line with their labels above them. Left, in a row, in
+     reading order. */
+  .sw-stats,
+  .dev-stats {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--sp-5);
+  }
+
+  /* A legend that wraps to five lines pushes the thing it explains off the
+     screen. It scrolls with the faceplate it belongs to instead. */
+  .port-legend {
+    flex-wrap: wrap;
+    row-gap: var(--sp-2);
+    font-size: var(--fs-micro);
+  }
+
+  /* Toolbars put their actions on their own line rather than squeezing a
+     title and three buttons into 393px. */
+  .toolbar {
+    align-items: stretch;
+  }
+
+  /* Cards give back the gutter they do not need at this width. */
+  .card {
+    padding: var(--sp-5);
+    margin-bottom: var(--sp-5);
+    border-radius: var(--radius);
+  }
+}
+
+/* The side-panel key/value labels — "State", "Location", "Address". They
+   were 9px, uppercase, tracked a tenth of an em: too small to read
+   comfortably and shouting while it was at it. The key of a key/value pair
+   is a label, and a label's job is to be scanned past. Sentence case, two
+   sizes up, and the contrast carried by colour and weight instead. */
+.kv .k {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+/* A tile's figure is set in mono, and mono is MUCH wider than sans at the
+   same size. At --fs-display a 150px telemetry tile could not hold "3 h 25
+   min" or "0,00 /s" — both wrapped and the second line was clipped by the
+   row. The figure steps down one rung and is allowed to wrap; the tiles
+   that hold a bare number look no different, and the ones that hold a
+   formatted duration stop breaking. */
+.tile-value {
+  font-size: var(--fs-xl);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* A tile whose "value" is a SENTENCE — "no measurement", "never seen" — is
+   not showing a figure, and setting prose in a tabular mono display face
+   makes it look like a code dump. It falls back to the body face. */
+.tile-value.tile-value--prose {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
+/* ======================================================================
+ * WIDE CONTENT — saying that it scrolls                    (UI-GUIDE §9.2)
+ * ======================================================================
+ *
+ * `.scroll-cue` paints scroll shadows with NO JavaScript, using the one
+ * trick CSS has for this: two pairs of gradients, one pair attached
+ * `local` (scrolls with the content) and one `scroll` (pinned to the box).
+ * The local pair is a swatch of the surface colour that slides away as you
+ * scroll, uncovering the pinned shadow underneath. The effect is that a
+ * shadow appears on an edge exactly when there is content past it, and
+ * nowhere else — so the cue can never claim there is more when there is not.
+ *
+ * It replaces ten hand-written `style={{overflowX:"auto"}}` wrappers, which
+ * is also ten inline styles off the ratchet. A desktop got a scrollbar for
+ * free and never needed this; a phone shows no scrollbar until you are
+ * already scrolling, so a table clipped at the right edge and a table that
+ * ends there looked identical.
+ */
+.scroll-cue {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  background:
+    linear-gradient(to right, var(--bg-panel) 30%, transparent) left center / 28px 100% no-repeat local,
+    linear-gradient(to left, var(--bg-panel) 30%, transparent) right center / 28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.26), transparent) left center / 16px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.26), transparent) right center / 16px 100% no-repeat scroll;
+}
+/* A card that exists only to frame a table gives up its padding, or the
+   table's own cell padding doubles up against it. */
+.card-flush {
+  padding: 0;
+}
+
+@media (max-width: 720px) {
+  /* bp:narrow
+   *
+   * THE WIDE TABLES KEEP THEIR WIDTH AND SCROLL. Letting the browser squeeze
+   * eight fixed columns into 345px is what produced three-line VLAN cells and
+   * seven visible ports per screen on a table of 820. At their real width the
+   * rows are one line each and the screen holds twenty.
+   *
+   * And the first column STICKS. Scrolling right to read the neighbour on a
+   * phone otherwise leaves you in a column of values with no port name in
+   * sight — the question "which port is this?" is the one the screen exists
+   * to answer, so its answer does not scroll away.
+   */
+  .ports-table {
+    min-width: 860px;
+  }
+  .clients-table {
+    min-width: 900px;
+  }
+  .ports-table th:nth-child(-n + 2),
+  .ports-table td:nth-child(-n + 2) {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    /* A sticky cell is transparent by default and the rows underneath slide
+       through it. It has to carry the surface it sits on, hover included. */
+    background: var(--bg-panel);
+  }
+  .ports-table th:nth-child(2),
+  .ports-table td:nth-child(2) {
+    left: 40px;
+    box-shadow: 1px 0 0 var(--border);
+  }
+  .ports-table tr:hover td:nth-child(-n + 2) {
+    background: var(--bg-hover);
+  }
+}
+
+/* ======================================================================
+ * THE DEVICE CARD FACADE                          (pages/Equipements.tsx)
+ * ====================================================================== */
+
+.card-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+/* On a phone the card shows only the ports that have something to say, at a
+   size where the NUMBER is legible — 26px, over the 24px `showNum` floor in
+   netui.tsx. One row, in physical order, scrolling if the device has many
+   configured ports. It is explicitly not a facade any more: a facade shows
+   every jack, and this shows a selection, so it does not owe the reader the
+   shape of the box — only the identity of each port it draws. */
+.card-ports--mobile {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-1);
+  padding-bottom: var(--sp-1);
+}
+
+
+/* ======================================================================
+ * DASHBOARD TILES — fitting the cell                  (dashboardGrid.tsx)
+ * ======================================================================
+ *
+ * A tile lives in a grid row of ROW_HEIGHT = 84px and is clipped by a
+ * wrapper with `overflow: hidden`. The content measured 94px: label 16.5 +
+ * value 35 + sub 16.5 + 24 of padding. It overflowed BEFORE this pass too
+ * (~89px), but at `--radius` 8px with a visible border the missing corner
+ * read as a design choice. At `--radius-lg` 14px it reads as a bug, which
+ * is what it always was.
+ *
+ * Fixed on both sides, because either alone is a half-fix:
+ *   - the content is tightened to fit 84px, so nothing is actually cut;
+ *   - the clipper gets the tile's radius, so anything that DOES overflow
+ *     later is clipped along the curve instead of squared off.
+ */
+.dash-grid-tile-clip {
+  border-radius: var(--radius-lg);
+}
+.dash-grid-tile-clip > .card,
+.dash-grid-tile-clip > .tile {
+  /* The card already paints the corner; without this the clip and the fill
+     disagree by a pixel on the diagonal and leave a light fringe. */
+  border-radius: var(--radius-lg);
+}
+.dash-grid-tile-clip .tile {
+  padding: var(--sp-4) var(--sp-6);
+  height: 100%;
+}
+.dash-grid-tile-clip .tile-label,
+.dash-grid-tile-clip .tile-sub {
+  line-height: 1.3;
+}
+.dash-grid-tile-clip .tile-value {
+  margin-top: var(--sp-1);
+}
+
+/* "Show more" inside the compact event list: a row of the list, not a
+   control floating over it. Full width so the tap target spans the tile. */
+.ev-compact-more {
+  width: 100%;
+  justify-content: center;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+/* The brand mark used to be a link (home → this site's dashboard) and needed
+   its own rules against the link colour, the underline and the focus ring.
+   ADR-0031 took the dashboard off the mark: it is the knob of the mode
+   selector and nothing else, it is not an anchor and it is not focusable, so
+   those rules are gone rather than left behind to confuse the next reader.
+   The zero line-height that stops the inline SVG shifting the bar lives where
+   it always did, on `.brand` itself. */
+
+/* ======================================================================
+ * THE PILL — a segmented selector                        (pages/Dashboard)
+ * ======================================================================
+ * The dashboard bar used `.chip`: 10px type, 2px of padding, a control
+ * built to sit INSIDE a table row pressed into service as the page's main
+ * navigation. Beside it, "New dashboard" was a full-size button, so the
+ * thing that creates a dashboard outweighed the things that select one.
+ *
+ * `.pill` is the selector, sized to be read and tapped, and the add control
+ * is the same shape in a quieter register — it belongs to the row rather
+ * than competing with it.
+ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 30px;
+  padding: 0 var(--sp-5);
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--text-dim);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+  transition:
+    color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.pill:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 9%, var(--glass-bg));
+  transform: none;
+  box-shadow: inset 0 1px 0 var(--glass-rim);
+}
+.pill.on {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+.pill:disabled {
+  opacity: 0.4;
+}
+/* The add control: same capsule, no fill, dashed edge — the universal
+   "there could be one more here". */
+.pill--add {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-style: dashed;
+  border-color: var(--border);
+  box-shadow: none;
+}
+.pill--add:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  border-style: dashed;
+  color: var(--text);
+  box-shadow: none;
+}
+.pill--add svg {
+  width: 13px;
+  height: 13px;
+}
+/* Reorder arrows in edit mode: the same capsule, square. */
+.pill--icon {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.pill .note {
+  color: inherit;
+  opacity: 0.75;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pill {
+    background: var(--bg-hover);
+  }
+}
+
+/* ======================================================================
+ * INLINE TRAFFIC — a rate and its shape, inside a table row
+ * ======================================================================
+ * The rate is set in the traffic ramp's colour, the curve under it in the
+ * same ramp as a gradient. Two readings from one glyph: HEIGHT says what
+ * the link did, COLOUR says how much of the link that was.
+ */
+.spark-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.1;
+}
+.spark-rate {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.spark {
+  display: block;
+  overflow: visible;
+}
+.spark-empty {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.ports-traffic-cell {
+  padding-block: var(--sp-1);
+}
+
+/* Visually hidden, still read aloud. A sparkline is `aria-hidden`; the
+   number beside it is what a screen reader should get. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A metric the platform has never reported: a question mark, not a
+   paragraph. The ink is --text-dim and NOT --indeterminate — see UI-GUIDE
+   §2: yellow means a vantage point was lost, grey means there was never
+   one. */
+.tile-unknown {
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+/* The legend's direction marker, used when the curves carry the traffic
+   ramp instead of a per-series colour. Same glyph as the axis labels. */
+.chart-legend-dir {
+  background: none;
+  width: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1;
+}
+
+/* ======================================================================
+ * ===== THE MODE SELECTOR =====                        (ui/ModeSwitch.tsx)
+ * ======================================================================
+ * Switching ↔ Routing, carried by the brand mark — ADR-0013, narrowed by
+ * ADR-0019, turned into a plain toggle by ADR-0031.
+ *
+ * A TRACK OF TWO HALVES, WITH THE MARK ON THE ACTIVE ONE. The pill holds two
+ * equal positions and the mark sits exactly on top of the one you are in, so
+ * the drawing is a switch: a knob at one end, an empty well at the other,
+ * and the knob slides when you press. Nothing else paints until a pointer or
+ * a Tab key approaches it — the pill used to hold the two words as well,
+ * "Switching" before the mark and "Routing" after it, which made it the
+ * widest object in the most contended bar of the product (208px in French,
+ * where they read "Commutation" / "Routage").
+ * ADR-0019's gain is not spent here, it grows slightly: two halves of 34px
+ * replace 34 + 16 + 16 plus two gutters, so the pill goes 74 → 72px, and the
+ * French switching bar overflows 6 of 90 sampled widths over 721…1440 where
+ * ADR-0019 left 10.
+ *
+ * THE MARK IS ABSOLUTE, AND THAT IS THE WHOLE POINT. It used to be a third
+ * flex child parked at the ACTIVE END by `order`, which left the active
+ * position as a 16px blank strip BETWEEN the mark and the live well: aiming
+ * at the logo and landing beside it did nothing at all, on the one control
+ * whose entire job is to change state. Overlaying the mark instead means the
+ * only two surfaces a pointer can reach are the mark and the half you are
+ * NOT in — and both of them toggle. No dead zone.
+ *
+ * The arithmetic is exact, not approximate. The box has no padding and is
+ * two halves wide; each half is SHORTER than the mark, so the knob is not a
+ * half but a mark-sized box parked at the active END (`0`, or
+ * `100% - mark`). It covers the active half and spills a few pixels over
+ * the other one, which still toggles — so there is still no dead zone. The
+ * visible pill is not the box: it is a thinner rail (`::before`) inset at
+ * both ends, which the mark overhangs; the box, and so the hit surface,
+ * keeps the mark's full height (44 × 26px). Give the box padding and this
+ * has to be redone.
+ *
+ * THE COLOUR STILL NEVER CARRIES THE MODE ALONE (ADR-0013 §5, kept by
+ * ADR-0019 §1). What carries it is no longer two words glued to a button: it
+ * is the TAB BAR, whose entire content changes with the mode — Devices,
+ * Ports, Topology, Clients, Wi-Fi on one side; Routing, Firewall, DNS, DHCP
+ * on the other (navMode.ts). That is read in the clear, with no pointer, on
+ * a 1440px desktop and in the thumb bar of a 393px phone alike — which the
+ * two words never were on the phone, because hover does not exist at the
+ * end of a finger.
+ */
+.modesw {
+  /* THE TRACK IS SIZED FROM THE MARK, not from a magic number: 26px is
+     Logo's default size, and the half is a little shorter so the switch stays
+     barely wider than the mark it carries — the travel is 18px. A bigger logo
+     widens its own seat. */
+  --modesw-mark: 26px;
+  --modesw-half: calc(var(--modesw-mark) - var(--sp-1));
+  /* THE MARK IS BIGGER THAN THE RAIL IT RIDES. The pill is a thin rail drawn
+     by `::before`, inset from the box by `--modesw-overhang` at both ends, so
+     the mark — parked at the OUTER end of its half — sticks out past the rail
+     on the left in switching and on the right in routing: the side it spills
+     over is the mode. The box itself keeps the mark's full height and width,
+     so the hit surface does not shrink with the drawing. */
+  --modesw-rail: var(--sp-5);
+  --modesw-overhang: var(--sp-1);
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  /* ONE PRESS, NO DELAY. Every surface a pointer can reach in here toggles
+     the mode, so the container may as well say so. `manipulation` refuses the
+     double-tap-to-zoom wait a thumb would otherwise pay. And the horizontal
+     axis is NOT claimed any more: the drag is gone (ADR-0031), so ADR-0009's
+     exception for this control goes with it and a thumb starting on the mark
+     scrolls the page like anywhere else. */
+  cursor: pointer;
+  touch-action: manipulation;
+}
+/* The rail. Painted under everything and never hit-tested: the two positions
+   and the mark tile the box above it and own every press. */
+.modesw::before {
+  content: "";
+  position: absolute;
+  inset-inline: var(--modesw-overhang);
+  inset-block: calc((var(--modesw-mark) - var(--modesw-rail)) / 2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  pointer-events: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+/* HOVER REVEALS THE AFFORDANCE — UI-GUIDE §3, AND IT IS ONE SIGNAL FOR ONE
+   CONTROL. Every surface in the box does the same thing, so the whole switch
+   answers together — the rail darkens and the mark runs its packet — wherever
+   the pointer enters. There used to be a round tint on the inactive position
+   alone, which read as a second, smaller button beside the switch. */
+.modesw:hover::before {
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+/* THE KNOB: the mark, and nothing else now. The tip wrapper IS the positioned
+   box — QuickTip's wrapper is the layout element and `display: contents`
+   would break its anchoring (components.tsx) — so the geometry lives here and
+   the inner `.modesw-knob` only centres the SVG in it. */
+.modesw-knob-tip {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--modesw-mark);
+  display: flex;
+  /* THE SLIDE IS THE INFORMATION, not a decoration to be tidied away: the
+     request was "a simple switcher where the logo moves from right to
+     left", and the movement is what makes the pill read as a switch rather
+     than as a logo that teleports. A logical inset, so `dir=rtl` mirrors it
+     with no arithmetic. `prefers-reduced-motion` already pins `--dur-fast` at
+     0ms (tokens.css), which makes it snap there instead. */
+  transition: inset-inline-start var(--dur-fast) var(--ease);
+}
+.modesw[data-mode="routing"] .modesw-knob-tip {
+  inset-inline-start: calc(100% - var(--modesw-mark));
+}
+.modesw-knob {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+/* Scoped past `.topbar .brand`, which the knob also matches and whose end
+   padding would push the mark off the end of its half. */
+.topbar .modesw-knob {
+  padding-inline: 0;
+}
+.modesw[data-mode="routing"] .modesw-knob {
+  /* The mark's own gradient stops (Logo.tsx) — the ONE place in the product
+     allowed to set them. */
+  --logo-from: var(--mode-routing-lit);
+  --logo-to: var(--mode-routing);
+}
+
+/* The two positions, in document order and never reordered: LEFT IS ALWAYS
+   SWITCHING AND RIGHT IS ALWAYS ROUTING, in both modes. So the side the mark
+   sits on names the mode without a word, and the empty well is always the
+   position you are not in — which is also the only one a pointer can reach.
+   THEY CARRY THE WHOLE SIZE OF THE PILL, and they have to say so with real
+   dimensions. The mark used to be an in-flow child and gave the pill its
+   height; now that it is absolute, these two are the only children left in
+   flow. Measured on Chrome 124: sizing them with `flex: 0 0 <basis>` instead
+   leaves the flex container's own content size at ZERO — `width: max-content`
+   on the pill reports 0 too — so the pill collapses to its 4px of padding and
+   the positions overflow it. An explicit `inline-size`/`block-size` is not a
+   style preference here, it is the thing that makes the control exist. */
+.modesw-tip {
+  inline-size: var(--modesw-half);
+  block-size: var(--modesw-mark);
+  flex: none;
+  display: flex;
+  align-items: stretch;
+}
+
+/* A POSITION HAS A SIZE BUT NO INK. It needs the size because it is the hover
+   surface that reveals its own label, the focus ring that proves it is a
+   control, and the half the mark has to cover exactly; it has no ink because
+   ADR-0019 leaves the mark alone in the pill. Only the INACTIVE one is ever
+   hovered or pressed — the mark covers its sibling — which is why a
+   position's tip and the mark's tip always agree about what a press does. */
+.modesw-seg {
+  appearance: none;
+  border: 0;
+  background: none;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+/* THE CAPSULE HAS TO BE TURNED OFF EXPLICITLY. The blanket `button` rule
+   gives every button the specular rim and the 1px lift that make a filled
+   capsule read as a capsule (`button` / `button:hover` / `button:active`
+   above) — and with the labels gone those shadows were the only thing left
+   painting in the pill: two empty capsules beside the mark, which is exactly
+   what ADR-0019 says must not be there. `background: none` never removed
+   them, because they are box-shadow and transform, not background. */
+.modesw-seg,
+.modesw-seg:hover,
+.modesw-seg:active {
+  box-shadow: none;
+  transform: none;
+}
+.modesw-seg:hover {
+  background: none;
+}
+/* ABOVE THE MARK WHEN FOCUSED. The checked radio is the one the mark covers,
+   and a positioned sibling paints over a static one — so without this, Tab
+   onto the active position draws its ring behind the logo and the keyboard
+   loses the only thing telling it where it is. */
+.modesw-seg:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (forced-colors: active) {
+  /* No fill and no tint survive forced colours, and the mark's own crimson
+     goes with them. What still carries the mode is the mark's POSITION in the
+     track, so the track and the knob are what get a border. Bordering the
+     checked position instead — which is what this did before ADR-0031 — now
+     draws it underneath the mark, where nobody sees it. Fallback of a
+     fallback: the tab bar is still the primary reading of the mode. */
+  .modesw::before {
+    border: 1px solid currentColor;
+  }
+  .modesw-knob .mc-logo {
+    border: 1px solid currentColor;
+    border-radius: var(--radius-pill);
+  }
+}
+
+@media (max-width: 720px) {
+  /* bp:narrow — A THUMB AIMS AT THE WHOLE PILL. §9.5's 44px floor is for what
+     a thumb aims at in a page, and this sits in the chrome beside a 36px site
+     selector, so it does not get 44; but the bar has room here that it does
+     not have at `mid` (the tabs have left for the thumb bar). The halves go
+     to the mark's own width, so the pill — mark included, since every press
+     toggles — is one 52px target. It was 84px, and read as too wide. */
+  .modesw {
+    --modesw-half: var(--modesw-mark);
+  }
+}
+
+/* The routing bar's honest shells (pages/routing/Placeholder.tsx). One
+   paragraph, measured for reading rather than stretched to the card: a page
+   that exists to say "not yet" should not also look like a layout. */
+.soon-blurb {
+  margin: 0;
+  max-width: 64ch;
+  color: var(--text-dim);
+  line-height: var(--lh-base);
+}
+
+/* ===== LOGO ===== */
+/* The brand mark (web/src/Logo.tsx) moves in exactly two moments, and never on
+   its own: it is pinned in the corner of a screen an operator keeps open all
+   day, and a mark that keeps moving there is the first thing people turn off.
+
+   1. On mount — the three nodes settle in, then the three links are traced
+      between them: a mesh converging, which is what the controller is doing
+      at that instant. One pass, under a second, then still.
+   2. On hover (or keyboard focus on the brand link) — one packet runs the
+      triangle circuit, passing behind each node. It says the links are live.
+
+   Geometry comes from the drawing: each link is 11.78 viewBox units long, the
+   closed circuit 35.34. Those are the dash lengths below — change the paths in
+   Logo.tsx and these numbers must change with them.
+   Durations sit in the same family as the rest of the UI (~400 ms for a state
+   settling, ~1.5 s for a slow cycle), and all colour is intrinsic to the mark
+   (brand gradient + its own near-white), so the animation reads identically
+   whatever the page theme. */
+
+/* 1. Mount: nodes first, then the links drawn from node to node. Both
+      animations end on the state the markup already describes, so cancelling
+      them (reduced motion, or an old browser) leaves the finished logo. */
+.mc-logo .mc-node {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mc-node-settle 280ms ease-out both;
+}
+.mc-logo .mc-node:nth-of-type(2) {
+  animation-delay: 70ms;
+}
+.mc-logo .mc-node:nth-of-type(3) {
+  animation-delay: 140ms;
+}
+@keyframes mc-node-settle {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.mc-logo .mc-link {
+  stroke-dasharray: 11.8;
+  animation: mc-link-draw 360ms 240ms ease-out both;
+}
+.mc-logo .mc-link:nth-of-type(2) {
+  animation-delay: 340ms;
+}
+.mc-logo .mc-link:nth-of-type(3) {
+  animation-delay: 440ms;
+}
+@keyframes mc-link-draw {
+  from {
+    stroke-dashoffset: 11.8;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 2. Hover: a single short dash on the circuit. Invisible at rest — the fade
+      is a transition, so leaving the mark never re-triggers a full pass. */
+.mc-logo .mc-packet {
+  stroke-dasharray: 3.2 32.14;
+  stroke-opacity: 0;
+  transition: stroke-opacity 160ms ease-out;
+}
+.brand:hover .mc-logo .mc-packet,
+.brand:focus-visible .mc-logo .mc-packet,
+.modesw:hover .mc-logo .mc-packet,
+.mc-logo:hover .mc-packet {
+  stroke-opacity: 0.9;
+  animation: mc-packet-run 1.5s linear infinite;
+}
+@keyframes mc-packet-run {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -35.34;
+  }
+}
+
+/* Reduced motion freezes the mark: the logo is simply drawn, and hovering it
+   does nothing at all — a packet appearing without travelling would be a
+   flash, which is worse than no cue. */
+@media (prefers-reduced-motion: reduce) {
+  .mc-logo .mc-node,
+  .mc-logo .mc-link,
+  .brand:hover .mc-logo .mc-packet,
+  .brand:focus-visible .mc-logo .mc-packet,
+  .modesw:hover .mc-logo .mc-packet,
+  .mc-logo:hover .mc-packet {
+    animation: none;
+  }
+  .brand:hover .mc-logo .mc-packet,
+  .brand:focus-visible .mc-logo .mc-packet,
+  .modesw:hover .mc-logo .mc-packet,
+  .mc-logo:hover .mc-packet {
+    stroke-opacity: 0;
+    transition: none;
+  }
+}
+/* ======================================================================
+ * ===== CLIENTS =====                                  (pages/Clients.tsx)
+ * ======================================================================
+ * Three additions to a table that already existed: the MAC search field,
+ * the traffic column's header, and the broom's modal. Everything here is
+ * tokens only — the page is read in both themes, in a technical room, and a
+ * hard colour would be right in exactly one of them.
+ */
+
+/* THE MAC SEARCH. Mono, because what it holds is an identifier and nothing
+   else (UI-GUIDE §10.6) — and because the grouping of a pasted address only
+   stays legible in a monospace. The width is bounded on both sides: the floor
+   keeps a full 17-character address from scrolling inside its own field, the
+   ceiling stops a lone field from eating the filter row's wrap. */
+.clients-mac-search {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  min-width: 15ch;
+  max-width: 22ch;
+}
+/* The native clear cross of `type="search"`, which WebKit paints in its own
+   ink. Tinted to the text colour so it does not read as a warning. */
+.clients-mac-search::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+/* The broom goes to the far end of the control row, away from the filters:
+   one is a view, the other destroys rows. On a phone the row has already
+   wrapped and `auto` simply means "start of its own line". */
+.clients-broom {
+  margin-left: auto;
+}
+
+/* The one column that does not sort (the curve is fetched per device by the
+   cell, so the page holds no key to sort on). It must therefore NOT offer a
+   pointer, which is the only cue the others carry. */
+.clients-th-flat {
+  width: 120px;
+  cursor: default;
+}
+
+/* THE BROOM'S WINDOWS. A radio group laid out as a wrapping row of pills:
+   five mutually exclusive answers read faster side by side than as a stack,
+   and a <select> would hide four of the five behind a click — on a gesture
+   whose whole risk is picking the wrong one. */
+.clients-clean-windows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-5) 0;
+}
+.clients-clean-window {
+  /* `label` is block with a bottom margin by default; both are wrong here. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  cursor: pointer;
+}
+.clients-clean-window:hover {
+  border-color: var(--accent);
+}
+/* The radio itself stays visible — it is the only thing that says "one of
+   these", and a custom dot would re-implement a control the platform already
+   makes accessible. Only its stretched width (the global `input` rule) is
+   undone. */
+.clients-clean-window input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.clients-clean-window:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.clients-clean-window:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+@media (max-width: 720px) {
+  /* bp:narrow
+   *
+   * The table keeps its width and scrolls (as decreed above for every wide
+   * table); the traffic column adds about 120px to what has to fit, so the
+   * floor moves with it — otherwise the browser squeezes eleven columns into
+   * 345px and the sparkline is the first thing to become a smear.
+   */
+  .clients-table {
+    min-width: 1020px;
+  }
+  /* The field goes full width once the row has wrapped: at 393px the ceiling
+     above would leave two thirds of a line empty beside it. */
+  .clients-mac-search {
+    max-width: none;
+    flex: 1 1 auto;
+  }
+  .clients-filter {
+    flex: 1 1 100%;
+  }
+  /* And the broom stops being pushed to a far edge that no longer exists. */
+  .clients-broom {
+    margin-left: 0;
+  }
+}
+
+/* ======================================================================
+ * ===== SERIAL BRAND / MODEL PICKER =====          (ui/SearchSelect.tsx)
+ * ======================================================================
+ * Two large fields side by side, stacking under bp:narrow. They are the
+ * main thing on this step of the wizard, so they are sized to be — a 30px
+ * control would read as a filter over a list that is no longer there.
+ */
+.serialpick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-6);
+  margin-top: var(--sp-5);
+  align-items: end;
+}
+.serialpick-detail {
+  margin-top: var(--sp-5);
+  color: var(--text);
+}
+.serialpick-note {
+  margin-top: var(--sp-3);
+}
+
+.searchsel {
+  position: relative;
+  min-width: 0;
+}
+.searchsel-label {
+  display: block;
+  margin-bottom: var(--sp-1);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+.searchsel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  min-height: 46px;
+  padding: 0 var(--sp-5);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font: inherit;
+  text-align: start;
+}
+.searchsel-btn:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+  color: var(--text);
+  transform: none;
+  box-shadow: none;
+}
+.searchsel-btn.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.searchsel-btn:disabled:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+.searchsel-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.searchsel-value.is-empty {
+  color: var(--text-dim);
+}
+.searchsel-chevron {
+  flex: none;
+  color: var(--text-dim);
+}
+.searchsel-pop {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + var(--sp-1));
+  z-index: 60;
+  padding: var(--sp-3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+.searchsel-search {
+  width: 100%;
+  margin-bottom: var(--sp-2);
+}
+.searchsel-list {
+  max-height: 290px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.searchsel-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  font: inherit;
+  font-weight: 400;
+  text-align: start;
+  min-height: 42px;
+  justify-content: center;
+}
+.searchsel-opt:hover,
+.searchsel-opt.cursor {
+  background: var(--bg-hover);
+  color: var(--text);
+  transform: none;
+  box-shadow: none;
+}
+/* SELECTION MUST NOT CHANGE THE LAYOUT.
+   This used to bold the whole option, detail line included — and the detail
+   wraps (`white-space: normal`), so going bold re-broke it onto another line
+   and the whole popup grew taller the moment you picked something. A list
+   that jumps under the pointer as you choose is the one thing a list must
+   not do.
+   The weight change is scoped to the single-line label, the detail is pinned
+   to normal, and a min-height absorbs what is left. */
+.searchsel-opt.sel {
+  color: var(--accent);
+}
+.searchsel-opt.sel .searchsel-opt-label {
+  font-weight: 600;
+}
+.searchsel-opt.sel .searchsel-opt-detail {
+  font-weight: 400;
+}
+.searchsel-opt-label {
+  font-weight: 500;
+}
+.searchsel-opt-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  white-space: normal;
+}
+.searchsel-opt.sel .searchsel-opt-detail {
+  color: var(--text-dim);
+}
+.searchsel-empty {
+  padding: var(--sp-5);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* The clock-disagreement banner sits above every page: it invalidates every
+   age on all of them. Spaced like a page's first block, not like a toast. */
+.clockskew-banner {
+  margin-bottom: var(--sp-6);
+}
+
+/* ======================================================================
+ * ===== ADD SCREENS =====
+ * ======================================================================
+ * The /add/* pages (manual IP, virtual switch, reset procedures). Most of
+ * what is here REPLACES inline styles those screens carried — the ratchet
+ * goes down, not up — and the rest is the automatic sweep's rows.
+ */
+
+/* The brand → model pair, ADR-0005. Same shape as the serial wizard's
+ * `.serialpick`, deliberately a separate name: that one belongs to a step of
+ * a wizard owned by another file, and a shared class would couple two
+ * screens through their stylesheet. Sharing the SELECTOR
+ * (ui/SearchSelect.tsx) is the part that mattered. */
+.addpick {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-6);
+  align-items: end;
+}
+.addpick-card {
+  margin-bottom: var(--sp-5);
+}
+.addpick-search {
+  width: 100%;
+  margin-top: var(--sp-5);
+}
+.addpick-note {
+  margin-top: var(--sp-3);
+}
+
+/* A reset procedure's header line: family, vendor, driver, then the
+ * verified / to-confirm badge pushed to the end — logically, so `ar` flips
+ * it with the rest of the page. */
+.reset-head {
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.reset-family {
+  font-weight: 700;
+  font-size: var(--fs-base);
+}
+.reset-state {
+  margin-inline-start: auto;
+}
+.reset-erases,
+.reset-aliases {
+  margin-top: var(--sp-3);
+}
+
+/* Manual-add form geometry, ex-inline. */
+.addfield {
+  flex: 1;
+  min-width: 0;
+}
+.addfield-sm {
+  width: 220px;
+}
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .addfield-sm {
+    width: 100%;
+  }
+}
+.addcheck {
+  gap: var(--sp-2);
+}
+.addtable,
+.addraw {
+  margin-top: var(--sp-3);
+}
+.addrow-label {
+  width: 200px;
+}
+.addrow-value {
+  word-break: break-word;
+}
+.addcard-gap {
+  margin-top: var(--sp-5);
+}
+
+/* The automatic sweep's answers, one block per path tried. The accent border
+ * marks a path that answered, and it is never the only thing that says so:
+ * every row spells its outcome out in words. */
+.sweep-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+.sweep-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-4);
+}
+.sweep-row.ok {
+  border-color: var(--accent);
+}
+.sweep-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.sweep-proxy {
+  font-weight: 600;
+}
+.sweep-facts {
+  margin-top: var(--sp-2);
+}
+
+/* ======================================================================
+ * ===== SWIPE NAV =====                                      (ADR-0009)
+ * ======================================================================
+ *
+ * Two pieces: the one-line sidebar entry the swipe order is read from, and
+ * the cue pill that says where releasing the finger goes.
+ *
+ * Nothing here owns `touch-action`, and nothing here moves the page. The
+ * recogniser (ui/swipe.ts) never calls preventDefault, so the horizontal
+ * scrollers this interface is made of — the faceplate, the 860px ports
+ * table — keep their gesture in every case.
+ */
+
+/* ---- a sidebar entry is ONE LINE, selected or not ---------------------- */
+.sidebar .nav-label {
+  /* `min-width: 0` is the half people forget: without it a flex item refuses
+     to shrink below its content and the ellipsis never appears. */
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The ↗ of an entry that LEAVES the section. In the markup rather than in the
+   translated string (Layout.tsx says why), pushed to the far edge with a
+   logical margin, and mirrored in RTL where "out" points the other way. */
+.sidebar .nav-away {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  font-size: var(--fs-micro);
+  line-height: 1;
+  opacity: 0.7;
+}
+.sidebar a:hover .nav-away,
+.sidebar a.active .nav-away {
+  opacity: 1;
+}
+[dir="rtl"] .sidebar .nav-away {
+  transform: scaleX(-1);
+}
+
+/* ---- the cue --------------------------------------------------------- */
+/* Glass, because it is chrome over content (UI-GUIDE §10.1). It carries TEXT,
+   not an arrow: its position on the edge already says the direction, and a
+   directional glyph would have to be mirrored for RTL — the defect this
+   commit removes from the sidebar in the first place. */
+.swipe-cue {
+  position: fixed;
+  z-index: 45;
+  max-width: min(60vw, 280px);
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Never in the way of the gesture that summoned it. */
+  pointer-events: none;
+  animation: swipecuein var(--dur-fast) var(--ease-out);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .swipe-cue {
+    background: var(--bg-panel);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .swipe-cue {
+    background: var(--bg-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@keyframes swipecuein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* Non-negotiable (UI-GUIDE §4): the motion goes, the information stays. The
+   pill is a label, so there is nothing to lose by appearing instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .swipe-cue {
+    animation: none;
+  }
+}
+
+/* The four edges, in logical properties so start/end follow the writing
+   direction. Horizontal cues sit at mid-height on the edge the destination
+   lies towards; vertical cues sit centred, clear of the two bars. */
+.swipe-cue-start,
+.swipe-cue-end {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.swipe-cue-start {
+  inset-inline-start: var(--sp-6);
+}
+.swipe-cue-end {
+  inset-inline-end: var(--sp-6);
+}
+.swipe-cue-top,
+.swipe-cue-bottom {
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+}
+.swipe-cue-top {
+  top: calc(var(--topbar-h) + var(--safe-top) + var(--sp-7));
+}
+.swipe-cue-bottom {
+  bottom: calc(var(--safe-bottom) + var(--sp-7));
+}
+@media (max-width: 720px) {
+  /* bp:narrow — the thumb bar is fixed at the bottom and reserves no space,
+     so the bottom cue has to clear it the way `.content-scroll` does. */
+  .swipe-cue-bottom {
+    bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--sp-6));
+  }
+}
+
+/* ===== CONFIG ICON ACTIONS ===== */
+
+/* A /config row's actions, as glyphs (ui/IconAction.tsx, UI-GUIDE §3): the
+   row of icons, and the cell that stops being the widest thing in the table.
+   NOWRAP is not a style choice here — it is what makes `width: 1%` below
+   mean "as wide as the icons". A wrapping flex container's min-content width
+   is ONE item, so `wrap` + `width: 1%` collapse the cell into a single
+   vertical column of glyphs: measured, in Chrome, 50 px wide and 118 px tall
+   for three icons. The two rules only work together. */
+.icon-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* THE WHOLE POINT, and it is a column rule rather than a button rule.
+   Spelling the verbs out forced these cells to 200-300 px of fixed width
+   (`style={{ width: 300 }}` on the proxies header), so the columns that
+   genuinely vary — a proxy's site chips, a credential's rotation date —
+   wrapped twice while the action column sat half empty. `width: 1%` asks the
+   table for the MINIMUM: the cell now measures its icons and the slack goes
+   back where the content is. */
+.col-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* `button.ghost` (0,1,1) outranks `.icon-btn` (0,1,0), so a ghost icon
+   button inherits the labelled button's 12 px of side padding and stops
+   being a circle. Pinned back once, here, for the three skins a row uses. */
+button.icon-btn.ghost,
+button.icon-btn.danger,
+button.icon-btn.secondary {
+  padding: 0;
+}
+
+/* Same arithmetic, the other direction: the one LABELLED action left in the
+   /config device rows ("bring into compliance") has to stay orange, and
+   `button.ghost`'s dim colour outranks a lone `.warn-text`. */
+button.ghost.warn-text {
+  color: var(--warn);
+}
+
+/* The QuickTip wrapper IS the interactive surface (§3), and it wraps the
+   button: left to `inline-flex` defaults it shrinks to the 30 px glyph box
+   and clips the 44 px touch target the coarse-pointer rule grants the button
+   inside it. Grown to match, so the finger and the paint agree. */
+@media (pointer: coarse) {
+  .icon-actions {
+    gap: var(--sp-3);
+  }
+  .icon-actions > .quicktip-inline {
+    min-width: var(--touch);
+    min-height: var(--touch);
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* The credentials table is the one exception, and it is the exception for a
+   reason: `.creds-table` is `table-layout: fixed`, so its action column is a
+   declared 8rem rather than a measured minimum and `width: 1%` never
+   applies. Wrapping is therefore safe there — and necessary, since an admin
+   credential can carry five glyphs. */
+.cred-actions-cell .icon-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+/* The connector's remarks on an UNREACHABLE device: folded, not dropped.
+   They are the last thing anyone read off the hardware, so they stay
+   available for diagnosis — but on a device nobody can reach they must not
+   be the first block on screen, above the sentence that says so. Styled as
+   the info banner it still is; the summary carries the count AND says the
+   reading is old, because a fold that does not name what it hides is just a
+   missing banner. */
+details.connector-notes-fold {
+  display: block;
+}
+.connector-notes-sum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-3);
+  cursor: pointer;
+  list-style: none;
+}
+.connector-notes-sum::-webkit-details-marker {
+  display: none;
+}
+/* The chevron leads, it does not trail. Put after the text it lands beyond
+   the wrapped second line, a dozen words from the thing it opens, and the
+   block stops reading as a disclosure at all. */
+.connector-notes-sum::before {
+  content: "▸";
+  color: var(--text-dim);
+  /* `--dur-fast` is already 0ms under prefers-reduced-motion (tokens.css),
+     so this needs no media block of its own. */
+  transition: transform var(--dur-fast) var(--ease);
+  display: inline-block;
+}
+details.connector-notes-fold[open] > .connector-notes-sum::before {
+  transform: rotate(90deg);
+}
+.connector-notes-sum:hover .info-title {
+  color: var(--accent);
+}
+.connector-notes-sum:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+.connector-notes-fold > .drift-text {
+  margin-top: var(--sp-3);
+}
+
+/* ===== LOW BANDWIDTH TILE ===== */
+
+/* The "behind this port" half of the tile's floating row tip
+   (LowBandwidthTip.tsx). The tip's frame, placement and shadow are
+   `.plan-link-traffic`, shared with the faceplate and topology tips; only this
+   list is its own.
+
+   This margin used to be 28px and used to carry a long explanation: `.chart`
+   was a fixed-height box whose legend rendered INSIDE it, so every legend on
+   every page overflowed onto whatever followed, and two call sites cleared
+   the collision with hand-measured gaps instead of naming the bug.
+
+   The bug is fixed at the source now — the legend moved into a `.chart-block`
+   wrapper and the plot kept its exact height — so what is left here is an
+   ordinary separation between a chart and the line under it. */
+.lowbw-behind {
+  margin-top: var(--sp-5);
+}
+.lowbw-clients {
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  font-size: var(--fs-sm);
+}
+.lowbw-clients > li + li {
+  margin-top: var(--sp-1);
+}
+.lowbw-client-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* The identity gives way, the address never does: a truncated hostname is
+   still recognisable, half a MAC is not an identifier at all. */
+.lowbw-client-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lowbw-client-mac {
+  flex: 0 0 auto;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.lowbw-client-hedge {
+  margin-inline-start: var(--sp-2);
+}
+
+/* ===== LAG FACEPLATE =====
+ *
+ * ADR-0007: an aggregate is an interface, so it is drawn as a cell on the
+ * facade — after the physical blocks, in its own labelled block, exactly as
+ * "SFP+" is. Everything here exists to make that cell read as a SECOND
+ * REGISTER rather than as a jack somebody forgot to align: it is wider than a
+ * port square, it carries a name instead of a number, and its only painted
+ * colour is the aggregate's own — the same hue its overline draws across each
+ * member.
+ */
+.lag-cells {
+  align-items: stretch;
+  gap: var(--sp-3);
+}
+
+/* The cell. Taller than wide on purpose NOT: a port square is 38px and this
+   is 64 — the width is what says "this is not a socket", without a second
+   colour or a second border style doing the saying. */
+.lag-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  flex: none;
+  width: 64px;
+  height: 35px;
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  /* A ⇧-click on the facade must not highlight the page's text — the same
+     reason PortSquare carries it. */
+  user-select: none;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.lag-cell:hover {
+  border-color: var(--accent);
+}
+.lag-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lag-cell.on {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* NOT CONVERGED is a frame, not a fill. The fill of a cell says nothing yet,
+   and painting an unconverged aggregate orange would put it in the same
+   vocabulary as configuration drift, which it is not: LACP that has not come
+   up is a fact about the far end. */
+.lag-cell-down {
+  border-color: var(--warn);
+}
+/* READ ON THE DEVICE, NOT YET AN INTENT: a dashed frame, the same grammar as
+   the "add" cell below — both mean "this is not something meshcraft wrote". */
+.lag-cell-imported {
+  border-style: dashed;
+}
+.lag-cell-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-start-start-radius: var(--radius);
+  border-start-end-radius: var(--radius);
+}
+.lag-cell-name {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+.lag-cell-meta {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-dim);
+}
+
+/* THE DASHED "+" CELL (decision 2). An ActionButton, so it carries the add
+   glyph and the keyboard contract for free; these rules only undo the pill
+   shape it comes with so it sits in the row as a cell. */
+.lag-cell-add {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: auto;
+  min-width: 64px;
+  border-style: dashed;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.lag-cell-add:hover {
+  color: var(--accent);
+}
+
+/* THE BUILDER. The whole facade has to fit, which is exactly why the ADR
+   rejected a side panel — so this modal is wider than both standard widths.
+   Scoped by `:has()` rather than by a prop on Modal: the width is a fact
+   about this content, and Modal has no business growing a third size for it. */
+.modal:has(.lag-builder) {
+  max-width: min(1100px, 94vw);
+}
+.lag-builder {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-6);
+}
+.lag-builder-face {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.lag-builder-side {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.lag-builder-name {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+/* A refusal, stated where the click happened. `--warn` and not `--danger`:
+   nothing broke, a gesture was declined. */
+.lag-refusal {
+  color: var(--warn);
+}
+
+/* THE SELECTED AGGREGATE in the side panel — the diagnostic the deleted tile
+   used to carry (members, mode, converged or not), where a port's panel is. */
+.lag-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.lag-side-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.lag-side-members {
+  display: inline-flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.lag-side-actions {
+  display: flex;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-top: var(--sp-3);
+}
+
+/* THE BUILDER BECOMES ONE COLUMN ON A PHONE, facade first.
+ *
+ * The side column is 240px and the facade needs every pixel it can get; at
+ * 393px they cannot share a row. Stacked, the facade keeps its own sideways
+ * scroller (`.scroll-x`, which is what stops a 48-port block from wrapping
+ * into something that is no longer a picture of the switch) and the options
+ * follow underneath, in the order the gesture is performed: pick the members,
+ * then say what the aggregate is. */
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .lag-builder {
+    flex-direction: column;
+    gap: var(--sp-4);
+  }
+  .lag-builder-side {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}
+
+/* ======================================================================
+ * ===== CLIENTS NARROW =====                          (pages/Clients.tsx)
+ * ======================================================================
+ * The ten-column client table, below 720px, is a list of cards — the rule
+ * UI-GUIDE §9.1 has carried since it was written, and this is the screen
+ * that finally honours it.
+ *
+ * What it replaces: `.clients-table` kept a 1020px floor under bp:narrow
+ * and scrolled inside `.scroll-x`. On a 393px phone that showed "Vendor",
+ * "MAC address" and the left third of "Announced name" — two columns of
+ * ten, with the eight that answer "where is this plugged in" past the right
+ * edge. The floor is withdrawn below (the table is not rendered at that
+ * width at all), and nothing in this block scrolls sideways.
+ *
+ * Everything is tokens: the card is read in a wiring closet, on both
+ * themes, and a hard colour would be right in exactly one of them.
+ */
+
+/* The same auto-fill grid the device inventory uses, for the same reason: a
+   phone gets one column, a tablet held at 720px gets two instead of one
+   stretched card with half its width empty. The floor is the width below
+   which a card's "switch · port · VLAN" line starts wrapping. */
+.clients-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-4);
+}
+/* The "nothing to show" line is a sentence, not a card: it spans. */
+.clients-cards > .note {
+  grid-column: 1 / -1;
+}
+
+/* The card itself is NOT `.card`: this list already lives inside one, and a
+   panel inside a panel on a 393px screen spends two borders and two
+   paddings to say nothing. A hairline and a radius are the whole chrome. */
+.clients-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  /* The last defence against the defect this block exists to remove: should
+     a future field refuse to wrap, it is clipped here rather than pushing a
+     scrollbar under the whole page. */
+  overflow: hidden;
+}
+
+/* IDENTITY, and whether it is still there — the two facts that let a card
+   be skipped without reading the rest of it. Opposite ends of one line,
+   because that is how they are read: one eye on the badge, one on the age. */
+.clients-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+/* `.vendor-name` carries a 150px ceiling for the table's VENDOR column,
+   where it shares the row with nine other cells. A card's first line has
+   the whole width and only the age to its right, so the ceiling is lifted
+   and the badge ellipsises against the flex boundary instead — "Micro-Star
+   INTL CO., L…" was being cut with 180px of empty line beside it. */
+.clients-card-head .vendor-badge {
+  min-width: 0;
+}
+.clients-card-head .vendor-name {
+  max-width: none;
+}
+.clients-card-seen {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex: none;
+}
+/* The presence dot as a CLASS and not an inline style: the table's version
+   paints `--ok` / `--border` through `style={{…}}`, which is one of the
+   ratchet's counted defects and would have been two more over here. */
+.clients-card-dot {
+  background: var(--border);
+}
+.clients-card-dot.is-on {
+  background: var(--ok);
+}
+
+/* THE IDENTIFIER, on its own line and never truncated. It is what the
+   operator arrived with in the clipboard, and an ellipsised MAC reads as a
+   different address — worse than a line that wraps. */
+.clients-card-mac {
+  font-size: var(--fs-base);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+/* The name the client announced over LLDP, when it announces one. Most do
+   not, and the line is then absent rather than holding an em dash. */
+.clients-card-name {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* THE ANSWER: switch · port · VLAN, one line, one fact. It WRAPS rather
+   than scrolls — these are three independent values, not a port facade
+   whose physical order wrapping would destroy (the case that earned
+   `card-ports--mobile` its sideways scroll in Equipements.tsx). */
+.clients-card-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-base);
+  /* It is the line the eye should land on, so it is the only one given a
+     separating rule above it. */
+  border-block-start: 1px solid var(--border);
+  padding-block-start: var(--sp-3);
+  margin-block-start: var(--sp-1);
+}
+.clients-card-port {
+  font-size: var(--fs-sm);
+}
+/* The VLAN stays PACKED against the port and is not pushed to the far end
+   of the line. Switch, port and VLAN are one answer; spacing them apart
+   invites them to be read as three separate columns again, which is the
+   habit this card exists to break. */
+.clients-card-vlan {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+/* THE NUMBERS. The sparkline keeps its full 104px — it is the one thing
+   here that reads as well small as large — and the three scalars wrap
+   beside it. */
+.clients-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2) var(--sp-3);
+}
+.clients-card-nums {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* THE SORT MENU, which is what the ten sortable headers become. Full width
+   of its filter row like the other three controls; the global
+   `pointer: coarse` rule already gives it the 44px target and the 16px text
+   that stops iOS zooming the page when it takes focus. */
+.clients-sort {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  /* bp:narrow
+   *
+   * The table's width floor is withdrawn. The table no longer renders at
+   * this width — Clients.tsx branches on `useBreakpoint()` — but leaving a
+   * 1020px floor behind would re-arm the horizontal scroll the first time
+   * anybody put a table back here for a landscape phone.
+   */
+  .clients-table {
+    min-width: 0;
+  }
+  /* The filter row's labels sit ABOVE their controls once each filter owns
+     a whole line: a leading kicker at this width makes every field start a
+     third of the way in, and three fields each beginning at a different
+     offset read as a broken grid rather than as a form. */
+  .clients-filter {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-1);
+  }
+  .clients-filter .pillbox {
+    min-width: 0;
+  }
+  /* `.pill-suggest` shrink-wraps to its longest option and floors at 180px,
+     which is right beside a 200px desktop field and wrong under a field
+     that now spans the screen: the menu landed as a narrow column against
+     the left edge with two thirds of the field above it unclickable. */
+  .clients-filter .pill-suggest {
+    min-width: 100%;
+  }
+}
+
+/* A SUGGESTION IS A TOUCH TARGET. `.pill-suggest button` carries
+   `min-height: 0`, which is declared after the global `pointer: coarse`
+   rule and therefore beats it — 28px rows under a thumb, on the control
+   this page is filtered with. Restored here only, rather than in the
+   shared rule: the picker serves dense desktop panels too, and this is the
+   screen whose filters have to survive being used one-handed. */
+@media (pointer: coarse) {
+  .clients-filter .pill-suggest button {
+    min-height: var(--touch);
+  }
+}
+
+/* ===== CLIENTS NARROW, DENSITY ===== */
+
+/* FOUR STACKED FULL-WIDTH FIELDS ATE THE SCREEN. Labels above their
+   controls is right — a leading kicker makes every field start at a
+   different offset and the row reads as a broken grid — but one field per
+   line put 700px of filter above the first card on an 852px phone, so the
+   page opened on its own controls.
+
+   Switch and VLAN share a line: both hold a short value ("all", a name, a
+   number), both are the same KIND of question — which slice of the fleet —
+   and side by side they still clear the 44px touch floor. The MAC field
+   and the ordering keep the full width, because one holds seventeen
+   monospaced characters and the other a sentence. */
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .clients-filters {
+    gap: var(--sp-4);
+  }
+  .clients-filter--half {
+    flex: 1 1 calc(50% - var(--sp-4));
+    min-width: 0;
+  }
+}
+
+/* ======================================================================
+ * DASHBOARD NARROW — the plane becomes a stack            (UI-GUIDE §9.1)
+ * ======================================================================
+ *
+ * The reasoning is at the top of dashboardGrid.tsx; what follows is the
+ * mechanism. Two things are worth knowing before reading it.
+ *
+ * The placement is carried by CUSTOM PROPERTIES (`--dg-x`, `--dg-w`, …)
+ * set from TSX rather than by `grid-column` written inline. Inline
+ * placement cannot be overridden from a stylesheet without `!important`,
+ * and the stack has to override it on every tile.
+ *
+ * The stack is switched by a CLASS, not a media query. `useBreakpoint`
+ * already has to read the viewport — the reading order of the stack is
+ * computed in JS — and a media query reading it a second time would
+ * disagree with it by a scrollbar width at exactly 720px, which is the one
+ * place a disagreement is certain to be seen. One source. The breakpoint
+ * is still 720 (bp:narrow); it lives in ui/breakpoint.ts.
+ */
+.dash-grid-canvas {
+  display: grid;
+  grid-template-columns: repeat(var(--dg-cols), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--dg-rows), var(--dg-row-h));
+  grid-auto-rows: var(--dg-row-h);
+  gap: var(--dg-gap);
+  align-items: stretch;
+}
+.dash-grid-tile {
+  grid-column: var(--dg-x) / span var(--dg-w);
+  grid-row: var(--dg-y) / span var(--dg-h);
+  position: relative;
+  /* Both zeros are load-bearing: a grid item's automatic minimum is its
+     content, so a tile holding a wide table would refuse to be as narrow
+     as its own cell and push the whole row past the viewport. */
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius);
+}
+.dash-grid-tile--editing {
+  outline: 1px dashed var(--border);
+  outline-offset: 2px;
+}
+.dash-grid-tile--arrangeable {
+  cursor: grab;
+}
+/* The tile being dragged rides above its neighbours, so it stays visible
+   while it passes over them. */
+.dash-grid-tile--dragging {
+  z-index: 2;
+}
+.dash-grid-tile-clip {
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+}
+/* Edit mode on the plane: the content stops taking pointer events so the
+   whole tile is one drag target. Scoped to --arrangeable, so stacked —
+   where there is no drag — the traffic chips and the fleet links still
+   work while the arrangement is being edited. */
+.dash-grid-tile--arrangeable .dash-grid-tile-clip {
+  pointer-events: none;
+}
+/* …WITH ONE DECLARED EXCEPTION — ADR-0032, dashboardTileEdit.tsx.
+
+   A tile's edit-mode SETTINGS take their pointer events back. `auto` on a
+   descendant of a `none` ancestor is a local cancellation, not inheritance,
+   so nothing else in the tile becomes live: the curve above this panel is as
+   inert as it was, and the reason the rule exists is not reopened.
+   Pointer events are only one of the three things the panel needs — the drag
+   and the keyboard are handled in TSX, where the handlers are. */
+.dash-grid-tile--arrangeable .dash-grid-tile-clip .dash-tile-live {
+  pointer-events: auto;
+}
+.dash-grid-tile-clip > .card {
+  margin: 0;
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+/* The per-tile edit controls — rename, then remove. Inline-end rather than
+   `right` so the pair follows the writing direction under `ar`. */
+.dash-grid-tile-tools {
+  position: absolute;
+  top: var(--sp-2);
+  inset-inline-end: var(--sp-2);
+  z-index: 3;
+  display: flex;
+  gap: var(--sp-1);
+}
+.dash-grid-tile-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  z-index: 3;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--text-dim) 50%);
+  opacity: 0.7;
+}
+
+/* --- Stacked: one full-width column, in reading order --- */
+.dash-grid-canvas--stacked {
+  grid-template-columns: 1fr;
+  grid-template-rows: none;
+  grid-auto-rows: auto;
+  gap: var(--sp-4);
+}
+.dash-grid-canvas--stacked .dash-grid-tile {
+  grid-column: 1 / -1;
+  /* `auto`, not the arrangement's row: DOM order is the layout now, and the
+     component hands the tiles over already in reading order. */
+  grid-row: auto;
+  /* THE HEIGHT RULE. A cell is 84px of a plane that is no longer drawn, so
+     the cell arithmetic is dropped entirely: a tile is as tall as its
+     content — a chart carries its own pixel height, a list its own rows.
+     The floor is one cell, so a tile whose content is an empty state is
+     still a tile and not a line of text. The ceiling is on the card below
+     and not here, so a tile that reaches it SCROLLS instead of being cut. */
+  min-height: var(--dg-row-h);
+}
+/* Nothing is clipped stacked. The clipper exists to keep content inside a
+   fixed cell; with no fixed cell there is nothing to keep it inside, and
+   leaving it on is what shaved the corner off a tile whose content was
+   94px tall in an 84px cell. */
+.dash-grid-canvas--stacked .dash-grid-tile-clip {
+  height: auto;
+  overflow: visible;
+}
+.dash-grid-canvas--stacked .dash-grid-tile-clip > .card {
+  height: auto;
+  /* The ceiling: 80vh, past which the card scrolls inside itself exactly as
+     it does in a desktop cell. Without it one `table.event-log` — five cells
+     on the plane, a window of hundreds of rows — would BE the page. */
+  max-height: 80vh;
+}
+/* A stat tile stacked is sized by its content. `height: 100%` of an
+   auto-height parent resolves to auto anyway, but saying it stops the
+   padding rule it shares a selector with from reading as a fixed height. */
+.dash-grid-canvas--stacked .dash-grid-tile-clip .tile {
+  height: auto;
+}
+
+/* --- Alert rows: the text that printed on top of itself ---
+ *
+ * Found on a 393px dashboard: in "Active alerts", three sentences were
+ * painted in the same place. Not narrowness — a flexbox squash, and it is
+ * worth writing down because the rule that causes it is a correct one.
+ *
+ * `.alert-list` is a column flex container, and it is itself a flex item
+ * inside a `.card` whose height the dashboard cell fixes. A flex item's
+ * default `min-height: auto` resolves to its CONTENT minimum, and that is
+ * precisely what normally stops a row being shrunk below its own text. The
+ * coarse-pointer tap-target rule replaces that `auto` with a hard
+ * `min-height: var(--touch)` on every `button` — a rule that is right about
+ * tap targets and has a side effect nobody could see coming: it removes the
+ * protection. So on a touch screen, where the sentences also wrap to three
+ * lines, flexbox squashed every 112px row to 44px; `.alert-row` has visible
+ * overflow, so each row's text spilled over the rows beneath it.
+ *
+ * The fix says what was meant: the rows do not shrink, the LIST scrolls.
+ * That is what a fixed-height tile holding more rows than it can show is
+ * supposed to do, and it was never true — it is wrong on the desktop too,
+ * only invisible there because a one-line row is already 44px tall. */
+.alert-row {
+  flex: 0 0 auto;
+}
+.alert-list {
+  /* min-height so the list is what gives when the card is short, rather
+     than the rows; overflow-y so what no longer fits scrolls. */
+  min-height: 0;
+  overflow-y: auto;
+}
+/* The sentence is the flex item that has to give when the row is narrow: a
+   flex item that cannot go below its longest word would push the "view"
+   affordance off the right edge. The dot and the affordance are excluded —
+   they are fixed furniture, and a shrinkable "view →" wraps to two
+   lines on a phone. */
+.alert-row > span:not(.dot):not(.note) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.alert-row > .note {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* --- The chart legend, back inside the layout ---
+ *
+ * `.chart-block` wraps the fixed-height `.chart` and its legend (viz.tsx has
+ * the reasoning). It carries no painting of its own; it exists so a chart is
+ * as tall in the layout as it is on screen. Declared so the class is not a
+ * name with nothing behind it, and so `.chart-bipolar` — which moved up here
+ * with it — still finds its legend. */
+.chart-block {
+  width: 100%;
+}
+
+
+/* ===== TOPBAR FIT =====
+ *
+ * THERE IS NO LONGER A RULE HERE, and that is the result worth recording.
+ * The bar used to drop the display name below 1140px — an unexplained
+ * breakpoint between `mid` and the desktop, carried only because the
+ * identity cluster did not fit on a laptop. The cluster is one glyph now
+ * (ui/AccountMenu.tsx): the bar's intrinsic requirement fell from 1180px to
+ * 782px in French, it stops overflowing at 487px instead of 774px, and the
+ * person glyph — the only door to the profile screen, ADR-0011 — is on the
+ * bar at EVERY width rather than being the one piece a fallback had to keep
+ * alive. A responsive rule deleted outright beats a responsive rule tuned. */
+
+/* The optical-levels block under the bandwidth chart in a port tip. An
+   ordinary gap between two stacked charts — it was 24px of inline style
+   working around the `.chart` legend overflow, which is fixed at source. */
+.porttip-levels {
+  margin-top: var(--sp-6);
+}
+
+/* WHAT THE PORT IS CONFIGURED TO CARRY, between the port's name and the time
+   window: the VLANs and the profile it follows.
+
+   Not `.note`, which is the dim ink this tip already spends on "last 24
+   hours" and on its failure sentences. These lines are the answer, not a
+   caption, so they take body ink one notch below the title — dimming them
+   would put the configuration below the window it is read against. */
+.porttip-facts {
+  margin-top: var(--sp-1);
+  /* And a gap BELOW, because the next line is "last 24 hours" — the chart's
+     caption, not a fourth fact about the port. Without it the configuration
+     and the caption read as one five-line paragraph. */
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-micro);
+  line-height: 1.35;
+  color: var(--text);
+}
+
+/* ======================================================================
+ * ===== THE IDENTITY DOOR, THE PROFILE, AND THE API REFERENCE =====
+ * ======================================================================
+ * ADR-0011. Three surfaces, one subject: a token authenticates and does not
+ * authorise. The door on the bar (ui/AccountMenu.tsx), the screen where a
+ * person mints and revokes their own (pages/Profile.tsx), and the reference
+ * a script author reads (pages/ApiDocs.tsx).
+ *
+ * The door used to be the display NAME, sitting in the bar as a link. It is
+ * now the first row of the account panel, behind the person glyph — the name
+ * is still what you click, it is just no longer renting 170px of the bar to
+ * be clickable. */
+
+
+/* --- the profile screen ------------------------------------------------ */
+
+/* A definition list, not a table: three facts about one subject. The grid
+   keeps the terms in a column that does not move when a value is long. */
+.profile-facts {
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) 1fr;
+  gap: var(--sp-2) var(--sp-6);
+  align-items: baseline;
+  margin: 0 0 var(--sp-5);
+}
+.profile-facts dt {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+.profile-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  /* bp:narrow — a label above its value: two columns at 393px leaves the
+     value four characters wide. */
+  .profile-facts {
+    grid-template-columns: 1fr;
+    gap: var(--sp-0) var(--sp-3);
+  }
+  .profile-facts dd {
+    margin-bottom: var(--sp-3);
+  }
+}
+.profile-roles,
+.profile-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+/* FOUR COLUMNS THAT MUST NOT BE SQUEEZED. At 393px a `width: 100%` table
+   compresses "read only" onto two lines and puts a timestamp on three — the
+   scope capsules stop reading as capsules, which is the one thing this column
+   exists to do. The floor makes `.scroll-x` do its job and the table scrolls
+   inside its own container, which is what the responsive contract asks of
+   wide content (UI-GUIDE §9.2). */
+.profile-tokens {
+  min-width: 46rem;
+}
+.profile-tok-name {
+  display: block;
+  font-weight: 500;
+}
+/* The visible head of the value. NOT a credential — it cannot authenticate —
+   and it is what lets somebody match a row against a 401, a CI secret or a
+   log line. Mono, like every other technical identifier, and dimmer than the
+   name because the name is what you read first and the prefix is what you
+   check second. */
+.profile-tok-prefix {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.profile-tok-sub {
+  display: block;
+}
+/* An expired token stays in the list — it is still something to revoke and
+   still evidence of what somebody built. It recedes rather than vanishing. */
+tr.is-expired > td {
+  opacity: 0.6;
+}
+
+/* The live reading of the scope under the create form. Framed, because it is
+   not another field: it is what the fields just said. */
+.profile-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  margin: var(--sp-5) 0;
+  padding: var(--sp-4);
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.profile-preview-lbl {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+/* THE ONE SIGHTING OF THE CLEAR VALUE. It is the largest thing in the dialog
+   and it is monospaced, because the reader may have to transcribe it by hand
+   when the clipboard is unavailable. */
+.profile-secret {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: var(--sp-5) 0;
+  flex-wrap: wrap;
+}
+/* IT WRAPS, IT DOES NOT SCROLL — and that is the opposite of what this sheet
+   does with every other long value. A real token is ~100 characters
+   (`mct_` + a 32-hex selector + a 64-hex secret), so `white-space: pre` in a
+   480px dialog showed about two thirds of it and hid the rest behind a
+   horizontal drag. Every other long value in this product can be scrolled to
+   because it can also be read again later; this one cannot. The person who
+   has no clipboard — no permission, no secure context — is copying it by
+   hand, and they must be able to see all of it at once. */
+.profile-secret > code {
+  flex: 1 1 18rem;
+  min-width: 0;
+  padding: var(--sp-4);
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.profile-curl {
+  margin-top: var(--sp-3);
+  padding: var(--sp-4);
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  white-space: pre;
+}
+
+/* --- the API reference ------------------------------------------------- */
+
+/* The section index. Capsules, like every other set of peers in this UI. */
+.api-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-6);
+}
+.api-toc a {
+  padding: var(--sp-2) var(--sp-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+.api-toc a:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--bg-hover);
+}
+/* An anchor is not a button, so the global coarse rule does not reach it —
+   and this index is the one thing on the page a thumb uses. */
+@media (pointer: coarse) {
+  .api-toc a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch);
+  }
+}
+
+.api-sub {
+  margin: var(--sp-6) 0 var(--sp-2);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.api-list,
+.api-dont,
+.api-errs {
+  margin: 0;
+  padding-inline-start: var(--sp-7);
+  line-height: var(--lh-base);
+}
+.api-list > li,
+.api-dont > li,
+.api-errs > li {
+  margin-bottom: var(--sp-2);
+}
+/* The things not to do. A red marker and nothing else red: the sentences are
+   body text and have to stay readable, and a block of danger-coloured prose
+   is a block nobody finishes. */
+.api-dont > li::marker {
+  color: var(--danger);
+}
+.api-security .drift-banner {
+  margin-top: var(--sp-6);
+}
+
+.api-facts {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--sp-2) var(--sp-6);
+  align-items: baseline;
+  margin: 0;
+}
+.api-facts dt {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+.api-facts dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+@media (max-width: 720px) {
+  /* bp:narrow */
+  .api-facts {
+    grid-template-columns: 1fr;
+    gap: var(--sp-0);
+  }
+  .api-facts dd {
+    margin-bottom: var(--sp-3);
+  }
+}
+
+.api-code {
+  margin: 0;
+  padding: var(--sp-4);
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  white-space: pre;
+}
+
+.api-routes-bar {
+  margin-top: var(--sp-8);
+}
+.api-search {
+  flex: 1 1 14rem;
+  min-width: 0;
+  max-width: 24rem;
+}
+.api-group {
+  scroll-margin-top: calc(var(--topbar-h) + var(--sp-6));
+}
+.api-routes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+
+/* One route, one row. The row is the same whether or not it expands, so the
+   list does not jump between a flat row and a foldable one. */
+.api-route {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.api-route-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  cursor: pointer;
+  list-style: none;
+}
+.api-route-flat > .api-route-head {
+  cursor: default;
+}
+.api-route-head::-webkit-details-marker {
+  display: none;
+}
+details.api-route[open] > .api-route-head {
+  border-bottom: 1px solid var(--border);
+}
+details.api-route > .api-route-head:hover {
+  background: var(--bg-hover);
+}
+.api-route-body {
+  padding: var(--sp-4);
+}
+.api-route-body .api-sub:first-child {
+  margin-top: 0;
+}
+.api-route-flat > .api-desc {
+  padding: 0 var(--sp-4) var(--sp-3);
+  margin: 0;
+}
+
+/* The verb. THREE TONES, NOT THE STATUS SPINE — see the note on `verbTone`
+   in ApiDocs.tsx: a read is quiet, a write is the product's blue, a delete
+   is the one that does not come back. Fixed width so the paths align into a
+   column the eye can scan. */
+.api-verb {
+  flex: none;
+  min-width: 4.5rem;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+.api-verb-read {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+.api-verb-write {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.api-verb-drop {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+.api-path {
+  flex: 1 1 14rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.api-gate {
+  flex: none;
+}
+.api-desc {
+  margin: var(--sp-1) 0 0;
+  line-height: var(--lh-base);
+}
+.api-assumed {
+  margin-inline-start: var(--sp-3);
+}
+.api-param-on {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+/* A refusal sentence, exactly as the server sends it — so it wraps BETWEEN
+   words and never inside one. `anywhere`, which is right for the token value
+   two hundred lines up, is wrong here for two reasons: it offers the layout a
+   break opportunity mid-word, so the column collapses to almost nothing at
+   393px, and the break it then takes makes "administrati/on" look like part
+   of the string the reader is supposed to match on. `break-word` keeps the
+   longest word as the column's floor, which is wide enough to read and which
+   the enclosing `.scroll-x` already knows how to handle. */
+.api-refusal {
+  font-size: var(--fs-sm);
+  overflow-wrap: break-word;
+}
+
+/* A row of independent checkboxes inside a Field — the alert classes of a
+   notification channel (ADR-0024). A class rather than the inline-styled
+   `.row` + `<label style>` shape the older profile screens use: that one is
+   on the inline-style ratchet, and a new screen must not add to it.
+
+   Wraps, because three labels in a modal at 393px do not fit on one line, and
+   logical properties so the `ar` locale flips with the rest of the UI. */
+.check-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-7);
+}
+.check-group label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: 0;
+}
+
+/* ===================================================================
+   TRAFFIC BY DESTINATION CLASS — the port overlay's stacked pps graph
+   (ADR-0028). Shared by the hover tip, the port panel and the port
+   action overlay, so the three cannot drift apart visually.
+   =================================================================== */
+
+/* The block wrapping the kicker and the chart, wherever it is hosted. The
+   separation from whatever precedes it is the same step the panel's own
+   traffic block carries, so the two charts read as a pair rather than as a
+   chart and an afterthought. */
+.portclass-block {
+  margin-top: var(--sp-5);
+}
+/* Kickers in these hosts would otherwise carry an inline `marginBottom: 4`;
+   this is that gap, in the sheet, where the ratchet wants it. */
+.portclass-kicker,
+.porttip-kicker {
+  margin-bottom: var(--sp-1);
+}
+
+.portclass-gaps {
+  margin-top: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-0);
+}
+
+/* ONE LINE PER CLASS THAT HAS NOTHING TO DRAW, and the ink carries WHICH of
+   the three silences it is (UI-GUIDE §2).
+
+   The default here is the DIM register — "we were never told": the class is
+   declared and no sample has landed yet, or no connector resolved so we
+   cannot even say which. Both may change on the next poll, and neither is a
+   statement about the hardware. */
+.portclass-gap {
+  display: flex;
+  align-items: baseline;
+  /* WRAPS AS A WHOLE, so the reason drops to its own line in the 320 px
+     floating tip instead of the class NAME breaking mid-phrase. Measured in a
+     browser: without this, "Unknown unicast" split across two lines and the
+     sentence beside it started level with the second half of its own
+     subject. */
+  flex-wrap: wrap;
+  gap: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+.portclass-gap-name {
+  font-weight: 600;
+  /* The name is the subject of the sentence and never breaks. */
+  white-space: nowrap;
+}
+.portclass-gap-why {
+  /* Wraps rather than truncating: this sentence is the whole content of the
+     line, and a clipped "does not report this cl…" would leave the reader
+     guessing at exactly the claim the line exists to make. */
+  min-width: 0;
+}
+
+/* A PLATFORM LIMIT, which is a different claim and takes the neutral INFO
+   treatment rather than the dim one: the class will never arrive here, no
+   amount of waiting or looking at the switch changes it, and it calls for no
+   action. Same reasoning as `.info-banner` far above — body ink, a quiet rule
+   marking it as a stated fact, and emphatically NOT orange, which would teach
+   people to ignore orange. */
+.portclass-gap-limit {
+  color: var(--text);
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: var(--sp-2);
+}
+
+/* The total row the stacked tooltip adds under the bands, separated by a rule
+   because it is a different KIND of number — the sum of the rows above, which
+   the stack's top edge already draws. */
+.chart-tip-total {
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-1);
+}
+/* The total has no band and therefore no ink of its own. A hollow dot keeps
+   the rows aligned without inventing a fourth series colour. */
+.chart-tip-total .dot-hollow {
+  background: transparent;
+  border: 1px solid var(--text-dim);
+}
+
+/* ======================================================================
+   Dashboard tiles: the Port-traffic target, and the rename dialog's footer
+   ====================================================================== */
+
+/* A modal footer's buttons, pushed to the end. The same three declarations
+   were an inline `style={{ gap: 8, justifyContent: "flex-end" }}` at every
+   call site; the rename dialog uses the class so it adds none. */
+.dash-rename-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+}
+
+/* The two pickers that aim the Port-traffic tile.
+   `minmax(0, 1fr)` and not `1fr`: a SearchSelect's trigger holds a device
+   name, and with a `1fr` minimum of `auto` the longest name sets the column
+   width — which pushes the second picker off a six-cell tile. */
+.ptt-target {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+/* …and the same collapse driven by the TILE's own width rather than the
+   viewport's, which is the one that actually matters on a resizable plane: a
+   three-column tile on a 4K wall display is 300px wide while the viewport is
+   3840. The class comes from `chartFit` (dashboardTiles.tsx). */
+.ptt-set--narrow .ptt-target {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 720px) { /* bp:narrow */
+  /* Stacked, the tile is the full width of a phone and the two pickers have
+     room one above the other. Side by side at 393px each is 170px, which is
+     narrower than "core01-arena" plus a chevron. */
+  .ptt-target {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The target, in the tile's head. It truncates rather than wrapping: the head
+   is one line, and a device name that wrapped would push the title's row
+   taller than the chart it sits above. */
+.ptt-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+  max-width: 50%;
+}
+
+/* "We were never told" — the question mark of the telemetry panel, beside
+   the sentence that says which of the target's three absences this is.
+   --text-dim and not --indeterminate, per UI-GUIDE §2: grey means there was
+   never a vantage point, yellow means one was lost. */
+.ptt-missing {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+}
+.ptt-missing-glyph {
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+/* The settings panel — edit mode only (ADR-0032). It sits between the head and
+   the plot, never on the right edge or the bottom-right corner, which belong
+   to the tile's own tools and to the resize handle: a panel over the handle
+   would take resizing away from the mouse, silently. */
+.ptt-set {
+  flex: none;
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  /* A rule rather than a box. The panel is already inside a card inside a
+     dashed edit-mode outline; a third frame around it would read as a fourth
+     tile. The line says "these are controls, the measurement starts below". */
+  border-bottom: 1px solid var(--border);
+}
+.ptt-set-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-5);
+  align-items: flex-start;
+}
+.ptt-set-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+/* Same ink and weight as `.searchsel-label` above it — the four settings are
+   one form, so they carry one label style. */
+.ptt-set-lbl {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+.ptt-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+/* The window's four values and the direction toggle. Harmonised with
+   `.clients-clean-window`, which answers the same shape of question (one of N
+   fixed windows) and which this deliberately does not try to share: that one
+   is a row inside a modal, sized for a sentence; this one has to survive in a
+   two-column tile. */
+.ptt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ptt-pill:hover {
+  border-color: var(--accent);
+}
+/* The control stays visible, as on the clients screen: it is the only thing
+   that says "one of these" (or "on/off"), and a custom dot would
+   re-implement a widget the platform already makes accessible. Only the global
+   `input` stretch is undone. */
+.ptt-pill input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.ptt-pill:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.ptt-pill:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* THE PLOT'S REGION, AND WHY IT IS A FLEX ITEM WITH A ZERO BASIS.
+ *
+ * `flex: 1 1 0` means its height is whatever the card has left after the head,
+ * the settings panel and the caption — and, crucially, NOT a function of what
+ * it contains. That is what lets `chartFit` measure this box and hand the
+ * answer back to the chart inside it without the measurement chasing its own
+ * result one frame at a time.
+ *
+ * The 60px floor is where the card starts scrolling instead of the curve
+ * continuing to shrink; the same ceiling-then-scroll behaviour a table too long
+ * for its cell has always had. `min-width: 0` for the usual flex reason: an
+ * SVG's intrinsic width would otherwise stop the tile narrowing to its cell. */
+.ptt-plot {
+  flex: 1 1 0;
+  min-height: 60px;
+  min-width: 0;
+  overflow: hidden;
+}
+/* `.chart-block` has to become the plot's full height for the chart inside it
+   to be able to use it. It carries no painting (viz.tsx), so this is layout
+   only. */
+.ptt-plot .chart-block {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.ptt-plot .chart {
+  flex: none;
+}
+/* `.chart-ymin` is anchored 18px off the bottom, which matches the viewBox's
+   14-of-150 bottom pad only at LineChart's 170px default. A fluid plot needs
+   the anchor to be the same ratio instead of the same pixels, or the "↑ 1 Gb/s"
+   drifts into the curve on a short tile and floats below the baseline on a tall
+   one. 9.33% is 14/150. */
+.ptt-plot .chart-ymin {
+  bottom: 9.33%;
+}
+/* TOO CRAMPED FOR A LEGEND — a tile too short for it to be worth 20px of a
+   40px plot, or too narrow for its two entries to sit on one line (and
+   `.chart-legend` is a flex row with no wrap, so "does not fit" means
+   "overflows", not "wraps"). `chartFit` decides; this only obeys.
+
+   Honest rather than merely convenient: the ↓ and ↑ on the two axis labels
+   still name the directions, so nothing is hidden that is not said elsewhere
+   on the same picture. */
+.ptt-plot--nolegend .chart-legend {
+  display: none;
+}
+
+/* SWAP IN/OUT — a MIRROR of the plot, not a sign change on the samples.
+ *
+ * LineChart derives its direction arrows from the sign of each series: the
+ * positive one is the one it marks ↓, both on the axis label and in the
+ * legend. Feeding outgoing positive would therefore draw "↓ Outgoing", so
+ * the swap flips the GEOMETRY and leaves every arrow attached to the direction
+ * it names. The scale is symmetric (same magnitude both ways), which is what
+ * makes a vertical mirror an exact operation here rather than an illusion.
+ *
+ * The two magnitude labels trade ends with it, because they are outside the
+ * SVG and so are not mirrored: after the flip the upper half is the ↑ one.
+ * Their anchors are the viewBox's own pads — 14/150 at the bottom, 4/150 at
+ * the top — which is why the numbers below are percentages of this box. */
+.ptt-plot--swap .chart svg {
+  transform: scaleY(-1);
+}
+.ptt-plot--swap .chart-ymax {
+  top: auto;
+  bottom: 2.67%;
+}
+.ptt-plot--swap .chart-ymin {
+  bottom: auto;
+  /* Mirrored, the ↑ half's extreme is the viewBox's BOTTOM pad seen from the
+     top — 14/150 of the box — and not the top edge. `top: -2px` would be right
+     only at the 170px default and would float the label half a centimetre
+     clear of the line it names in a nine-row tile. The 12px lifts it just
+     above that line, which is where `.chart-ymax` sits at the other end. */
+  top: calc(9.33% - 12px);
+}
+
+/* The ramp's reference rate, the window drawn, and the age of the last sample
+   — under the curve, and never inside the measured plot box: these are the two
+   sentences that make the picture readable, so the chart gives up height for
+   them rather than the other way round. */
+.ptt-caption {
+  flex: none;
+  margin-top: var(--sp-2);
+}
+
+/* In edit mode the tile floats its rename/remove pair over the top-right
+   corner — which is exactly where a card head puts its aside: the traffic
+   tile's window chips, the VLAN tile's "top eight". With one icon the
+   overlap clipped a few pixels; with two it swallowed the "30 d" chip
+   whole. So the head makes room, and ONLY while the pair is on screen: 70px
+   is the two 30px buttons, their gap, and the corner inset.
+
+   Padding rather than a narrower aside, because the chips must stay where
+   they are when edit mode ends — a tile whose controls move as you enter and
+   leave the mode is a tile you have to re-find. */
+.dash-grid-tile--editing .card-head {
+  padding-inline-end: 70px;
 }

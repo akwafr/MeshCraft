@@ -16,7 +16,7 @@ import (
 
 // Push SNMP configuration ON the device.
 //
-// Last step of section 5 of docs/03-Security/SNMP identity, and the only one that
+// Last step of section 5 of docs/en/03-Security/SNMP identity.md, and the only one that
 // touches the fleet. `ensureSNMPIdentity` prepares the ground — tag and secret in the
 // database — but a secret the device ignores supervises nothing: without this push, the
 // vault describes supervision that does not exist.
@@ -56,6 +56,27 @@ func (s *Server) snmpIdentityToPose(ctx context.Context,
 		// The community IS the secret: there is no associated account.
 		return driver.SNMPIdentity{Community: clear, Sources: sources}, true
 	case snmpprov.KindV3:
+		// A PLAN WITHOUT ENCRYPTION CARRIES NO SECOND PASSPHRASE, and that is not the
+		// defect below — it is the absence of the thing the defect was about.
+		//
+		// `snmpprov.For` yields `Priv: ""` when the connector declares `SNMPv3Priv` EMPTY,
+		// which is now a real case and not a theoretical one: the FS S3400 has no privacy
+		// user form at all (measured 2026-08-11, four candidates, all "Unknown command"),
+		// so its plan is authNoPriv and its tag is `snmpv3-sha-nopriv`.
+		//
+		// The second passphrase is sent EMPTY here rather than "whatever the vault happens
+		// to hold". `ensureSNMPIdentity` generates a pair for every v3 credential without
+		// looking at the plan, so a nopriv credential DOES carry a second secret — and
+		// handing it to a connector that has nowhere to put it is exactly how a secret
+		// gets dropped on the floor. Empty means the connector receives an intent it can
+		// satisfy exactly, and a connector asked for privacy it cannot do REFUSES loudly
+		// (cf. fs/s3400 refuseSNMPv3Priv) instead of quietly downgrading.
+		if st.Plan.Priv == "" {
+			return driver.SNMPIdentity{
+				User: cred.Username, AuthAlg: st.Plan.Auth,
+				AuthSecret: clear, Sources: sources,
+			}, true
+		}
 		// TWO distinct passphrases are the whole point of the vault's second column
 		// (migration 0017). Reusing the same on both sides fed exactly the same value into
 		// both RFC 3414 derivations: the encryption key was then only the prefix of the
@@ -102,7 +123,7 @@ func (s *Server) snmpIdentityToPose(ctx context.Context,
 // proxy meant to query the device.
 //
 // OBSERVED on the reference fleet's CRS326-24G-2S+, July 29 2026: conformant community,
-// active agent, `addresses=10.99.0.0/16` — and silent walk. The device log gave the answer:
+// active agent, `addresses=192.0.2.0/24` — and silent walk. The device log gave the answer:
 // the proxy reaches it from 10.42.0.67. An agent that rejects a source GOES QUIET, it does
 // not protest, and silence does not distinguish "no agent" from "wrong source". The
 // neighboring CSS326 responded, SwOS having no source-bound field: two platforms on the
@@ -120,7 +141,7 @@ func (s *Server) snmpIdentityToPose(ctx context.Context,
 //     routed or not.
 //
 // THE /32 IS OMITTED WHEN THE SUBNET ALREADY CONTAINS IT, and that is not elegance:
-// `addresses` is compared as a CHAIN to decide whether something must be written
+// `addresses` is compared as a STRING to decide whether something must be written
 // (`snmpConformant`). Adding a redundant /32 would rewrite the community across an already
 // conformant fleet, on a platform where each write is a chance to err — and would do so on
 // EVERY pass, the order of the two values needing to stay stable.
@@ -193,7 +214,7 @@ func coveredByAny(prefixes []string, addr string) bool {
 //
 // EVERYTHING GOES THROUGH THE CONNECTOR DESIGNATED BY DISCOVERY, and it is this path that
 // the founding batch bug took: adopting a MikroTik switch sent this push over INSTANT ON
-// protocol toward it — `https://10.99.0.54/`, connection refused since that device does
+// protocol toward it — `https://192.0.2.54/`, connection refused since that device does
 // not listen on 443, `snmp.apply_failed` at severity 3. Nothing was written because TCP
 // failed; the gesture itself had still started.
 func (s *Server) applySNMPToDevice(ctx context.Context,
@@ -207,6 +228,9 @@ func (s *Server) applySNMPToDevice(ctx context.Context,
 		return out, nil, errNothingToPose
 	}
 	var conn, adm, _, err = s.adminFor(ctx, d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		return out, transcriptOf(adm), err
 	}
@@ -345,6 +369,15 @@ func (s *Server) handleApplyDeviceSNMP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Prepare the ground exactly as adoption-time provisioning does: tag and
+	// secret in the vault when the plan wants them and they are missing. This
+	// call was absent, which made the route's own refusal a lie — it told the
+	// operator to "generate the device's SNMP identity (snmp-apply)" while
+	// snmp-apply could only push identities that already existed. The concrete
+	// case: a device adopted before its range's plan moved to v3 (the S3400,
+	// 2026-08-11) had no v3 credential and NO gesture that could create one.
+	// Idempotent — ensure returns without writing when nothing is missing.
+	s.ensureSNMPIdentity(r.Context(), d)
 	var res, steps, err = s.applySNMPToDevice(r.Context(), d)
 	var noAgent noSNMPAgent
 	if err == errNothingToPose || errors.As(err, &noAgent) {

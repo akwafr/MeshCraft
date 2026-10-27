@@ -24,7 +24,7 @@ import (
 func TestSnapshotSilentWhenUnobserved(t *testing.T) {
 	var m = NewMonitor()
 	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
-		{DeviceID: "dev-jamais", IP: "10.0.0.1", Name: "never-pinged"},
+		{DeviceID: "dev-never", IP: "10.0.0.1", Name: "never-pinged"},
 	}})
 
 	var snap = m.Snapshot()
@@ -48,16 +48,16 @@ func TestSnapshotReturnsCurrentStateInOrder(t *testing.T) {
 		{DeviceID: "dev-a", IP: "10.0.0.10", Name: "a"},
 		{DeviceID: "dev-b", IP: "10.0.0.20", Name: "b"},
 		// No DeviceID: the controller would have nothing to do with it.
-		{DeviceID: "", IP: "10.0.0.40", Name: "anonyme"},
+		{DeviceID: "", IP: "10.0.0.40", Name: "anonymous"},
 	}})
 
-	var oui = true
+	var yes = true
 	var non = false
-	m.states["10.0.0.10"].up = &oui
+	m.states["10.0.0.10"].up = &yes
 	m.states["10.0.0.20"].up = &non
 	m.states["10.0.0.20"].misses = 7
-	m.states["10.0.0.30"].up = &oui
-	m.states["10.0.0.40"].up = &oui
+	m.states["10.0.0.30"].up = &yes
+	m.states["10.0.0.40"].up = &yes
 
 	var snap = m.Snapshot()
 	if len(snap) != 3 {
@@ -109,9 +109,9 @@ func TestSnapshotDropsRemovedTarget(t *testing.T) {
 		{DeviceID: "dev-a", IP: "10.0.0.10"},
 		{DeviceID: "dev-b", IP: "10.0.0.20"},
 	}})
-	var oui = true
-	m.states["10.0.0.10"].up = &oui
-	m.states["10.0.0.20"].up = &oui
+	var yes = true
+	m.states["10.0.0.10"].up = &yes
+	m.states["10.0.0.20"].up = &yes
 
 	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
 		{DeviceID: "dev-a", IP: "10.0.0.10"},
@@ -120,5 +120,43 @@ func TestSnapshotDropsRemovedTarget(t *testing.T) {
 	var snap = m.Snapshot()
 	if len(snap) != 1 || snap[0].DeviceID != "dev-a" {
 		t.Fatalf("snapshot = %+v, expected only dev-a", snap)
+	}
+}
+
+// A DEVICE REPLACED AT THE SAME ADDRESS MUST EARN A FRESH VERDICT.
+//
+// The monitor keys reachability by IP, which is right until the device behind
+// the address changes. Carrying `up` across that change is how a re-adopted
+// switch keeps a status nobody ever measured for it: the ping agrees with the
+// stale verdict, no flip is announced, and the controller — which has never
+// heard of the new device id — shows `unknown` indefinitely. Measured on a
+// CRS305 re-adopted at 198.51.100.100 on 2026-08-12: six hours of `unknown`
+// while SNMP, port rates and spanning tree were all live.
+func TestReplacingTheDeviceAtAnAddressClearsTheVerdict(t *testing.T) {
+	var m = NewMonitor()
+	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
+		{DeviceID: "dev-old", IP: "198.51.100.100", Name: "CRS305-import"},
+	}})
+	// The first device is seen up.
+	m.onReply("198.51.100.100")
+	var snap = m.Snapshot()
+	if len(snap) != 1 || snap[0].DeviceID != "dev-old" ||
+		snap[0].Type != tunnel.EventDeviceUp {
+		t.Fatalf("first device did not settle as up: %+v", snap)
+	}
+
+	// Same address, DIFFERENT device: the verdict must not be inherited.
+	m.SetConfig(tunnel.WatchConfig{Targets: []tunnel.WatchTarget{
+		{DeviceID: "dev-new", IP: "198.51.100.100", Name: "CRS305"},
+	}})
+	if snap = m.Snapshot(); len(snap) != 0 {
+		t.Errorf("a snapshot claimed %+v about a device nothing has pinged yet — "+
+			"the previous occupant's verdict was inherited", snap)
+	}
+
+	// And the next reply announces it, which is what reaches the controller.
+	m.onReply("198.51.100.100")
+	if snap = m.Snapshot(); len(snap) != 1 || snap[0].DeviceID != "dev-new" {
+		t.Fatalf("the new device produced no verdict of its own: %+v", snap)
 	}
 }

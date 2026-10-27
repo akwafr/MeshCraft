@@ -53,6 +53,14 @@ type SealedColumn struct {
 //	credential_generations.secret_enc  — rotation history, required to reach a device left behind
 //	credential_generations.secret2_enc — v3 pair for that generation (nullable)
 //	known_credentials.secret_enc       — "standard" credentials tried by discovery
+//	site_extensions.token_enc          — API token of a foreign controller a site is backed by
+//	                                     (migration 0046, ADR-0015: a per-site secret belongs
+//	                                     in the vault, not in .env.local)
+//	notify_channels.token_enc          — Telegram bot token, or the WHOLE Slack webhook URL
+//	                                     (migration 0048, ADR-0024). The Slack case is why the
+//	                                     column is not named `password_enc`: an incoming-webhook
+//	                                     URL is addressing and credential at once, so it is
+//	                                     sealed entire and `target` stays empty for Slack.
 //
 // What is `bytea` but NOT ciphertext, and must not be touched — confusing them breaks auth
 // without gaining anything:
@@ -72,6 +80,8 @@ func SealedColumns() []SealedColumn {
 		{Table: "credential_generations", Column: "secret_enc"},
 		{Table: "credential_generations", Column: "secret2_enc"},
 		{Table: "known_credentials", Column: "secret_enc"},
+		{Table: "site_extensions", Column: "token_enc"},
+		{Table: "notify_channels", Column: "token_enc"},
 	}
 }
 

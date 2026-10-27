@@ -1,6 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- meshcraft — même tracé que web/src/Logo.tsx (marque du bandeau).
-       Toute retouche doit être reportée dans les deux fichiers. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>meshcraft</title>
+  <!-- meshcraft — same path as web/src/Logo.tsx (the top-bar mark).
+       Any change must be carried over to both files.
+
+       DELIBERATELY STATIC. A favicon SVG can carry SMIL or CSS, but no
+       browser does anything defensible with it: Chromium never animates
+       the tab icon (it rasterises a still image of it), and Firefox
+       animates it without ever stopping — it resamples and repaints
+       forever (bugzilla 1821864, still NEW: up to 90 % of a core for a
+       favicon). On a monitoring workstation that keeps the tab open all
+       day, that is CPU burnt for nothing, and invisible to half the
+       operators. And a favicon has no way to honour
+       prefers-reduced-motion: the document that carries the preference is
+       not this one. So the brand's animation lives in the top bar
+       (web/src/styles.css, LOGO section), where it can be controlled.
+
+       What was improved instead, measured by rasterising at 16 px rather
+       than judging at 100 %: the links are thinner (1.45 → 1.15) and each
+       node carries a ring of the hexagon's gradient, which cuts the link
+       just before it. Without that gap, the three nodes and the bottom
+       link merged into a solid triangle at 16 px — the mark lost its
+       mesh, which is to say its whole meaning. -->
   <defs>
     <linearGradient id="mc-hex" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#6890ff"/>
@@ -9,16 +29,14 @@
   </defs>
   <path d="M16 2.8 L27.4 9.4 L27.4 22.6 L16 29.2 L4.6 22.6 L4.6 9.4 Z"
         fill="url(#mc-hex)" stroke="url(#mc-hex)" stroke-width="3.2" stroke-linejoin="round"/>
-  <!-- Nœuds francs, liens fins : à 16 px les trois nœuds doivent rester
-       distincts au lieu de fusionner en triangle plein. -->
-  <g stroke="#eef3ff" stroke-width="1.45" stroke-linecap="round">
+  <g stroke="#eef3ff" stroke-width="1.15" stroke-linecap="round">
     <path d="M16 9.8 L10.11 20"/>
     <path d="M16 9.8 L21.89 20"/>
     <path d="M10.11 20 L21.89 20"/>
   </g>
-  <g fill="#eef3ff">
-    <circle cx="16" cy="9.8" r="3.1"/>
-    <circle cx="10.11" cy="20" r="3.1"/>
-    <circle cx="21.89" cy="20" r="3.1"/>
+  <g fill="#eef3ff" stroke="url(#mc-hex)" stroke-width="1.4">
+    <circle cx="16" cy="9.8" r="3.2"/>
+    <circle cx="10.11" cy="20" r="3.2"/>
+    <circle cx="21.89" cy="20" r="3.2"/>
   </g>
 </svg>

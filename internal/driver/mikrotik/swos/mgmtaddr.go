@@ -7,91 +7,95 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// Lecture de l'adressage de management d'un SwOS : par quel moyen cet device a
-// obtenu l'adresse a laquelle meshcraft lui parle.
+// Reading a SwOS's management addressing: how this device obtained the
+// address meshcraft talks to it on.
 //
 // Writes live in mgmtwrite.go ([driver.MgmtAddrWriter], [driver.MgmtJumper]).
 // This file only reads /sys.b.
 //
-// # Ce que le observed establishes, et qui change l'affichage du produit
+// # What the survey establishes, and which changes how the product displays it
 //
-// Le jeu de champs INSCRIPTIBLE de /sys.b est enumerated par la sauvegarde de
-// configuration de the device (testdata/backup.swb, CSS326-24G-2S+, SwOS 2.17), donc
-// exhaustif — c'est la same source que celle de pages.go, et c'est ce qui autorise a en
-// tirer une ABSENCE rather qu'un « pas trouve » :
+// The WRITABLE field set of /sys.b is enumerated by the device's
+// configuration backup (testdata/backup.swb, CSS326-24G-2S+, SwOS 2.17), hence
+// exhaustive — it is the same source as pages.go's, and it is what allows
+// drawing an ABSENCE from it rather than a "not found":
 //
 //	sys.b:{id, wdt, dsc, pdsc, ivl, alla, allm, avln, allp, mgmt, prio, cost,
 //	       frmc, poe, igmp, igmq, igfl, igve, ip, dtrp, ainf, iptp}
 //
-// Il y a `ip` et `iptp`. Il n'y a NI PASSERELLE, NI RESOLVEUR DNS, dans aucun onglet,
-// et l'interface web complete de la plateforme tient en un seul fichier qui definit
-// tous ses champs — enumeration exhausts la question, exactement comme elle l'a exhausted
-// pour le destinataire de traps.
+// There is `ip` and `iptp`. There is NEITHER A GATEWAY NOR A DNS RESOLVER, in
+// any tab, and the platform's complete web UI fits in a single file that
+// defines all its fields — enumeration exhausts the question, exactly as it
+// exhausted it for the trap receiver.
 //
-// La consequence est une contrainte d'exploitation, et elle merite d'be dite
-// there where elle se lit : sans passerelle, les sorties hors sous-network
-// (traps, DNS) n'ont pas de route ici ; l'administration entrante peut encore
-// repondre en L2. C'est ce que `Capabilities().Mgmt.Gateway = false` publie, et
-// c'est ce qui doit empecher un UI d'offrir un champ « passerelle » sur cette
-// gamme : faire saisir une valeur qui ne serait pas written fait conclure a
-// l'exploitant que meshcraft n'a pas written ce qu'il avait requested.
+// The consequence is an operational constraint, and it deserves to be stated
+// where it is read: without a gateway, off-subnet egress (traps, DNS) has no
+// route here; inbound administration can still answer over L2. That is what
+// `Capabilities().Mgmt.Gateway = false` publishes, and it is what must stop a
+// UI from offering a "gateway" field on this range: having someone type a
+// value that would not be written makes the operator conclude meshcraft did
+// not write what they asked for.
 
-// Ce qui fera echouer la COMPILATION le jour where le contrat bouge — same raison que les
-// assertions de contract.go : une assertion de type a l'execution echouerait, elle, en
-// silence et sur le terrain.
+// What will make COMPILATION fail the day the contract moves — same reason as
+// the assertions in contract.go: a type assertion at run time would fail
+// silently, and in the field.
 var _ driver.MgmtAddrReader = (*Admin)(nil)
 
-// ReadMgmtAddressing dit comment ce switch a obtenu son adresse d'administration.
+// ReadMgmtAddressing says how this switch obtained its administration
+// address.
 //
-// UNE SEULE PAGE est lue, /sys.b, et c'est la moins chere de la plateforme (780 octets)
-// — celle que l'authentification lit already pour eprouver les identifiants. Sur une
-// plateforme dont chaque page costs deux requests HTTP (Digest) et dont les access sont
-// serialises, un UI qui affiche trois champs ne doit pas en couter quatre.
+// ONE PAGE is read, /sys.b, and it is the cheapest of the platform (780
+// bytes) — the one authentication already reads to test the credentials. On a
+// platform where every page costs two HTTP requests (Digest) and accesses are
+// serialised, a UI that displays three fields must not cost four.
 func (a *Admin) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, error) {
 	var sys, err = a.Get(ctx, PageSys)
 	if err != nil {
-		return driver.MgmtAddrState{}, fmt.Errorf("%s illisible : %w", PageSys, err)
+		return driver.MgmtAddrState{}, fmt.Errorf("%s unreadable: %w", PageSys, err)
 	}
 	var out = MgmtAddrOf(sys)
-	a.step(true, "adressage de management relu",
-		fmt.Sprintf("%s : mode « %s », adresse %s", PageSys,
+	a.step(true, "management addressing read back",
+		fmt.Sprintf("%s: mode \"%s\", address %s", PageSys,
 			modeLabel(out.Mode), addrLabel(out.Address)))
 	return out, nil
 }
 
-// MgmtAddrOf traduit /sys.b en adressage de management observe.
+// MgmtAddrOf translates /sys.b into observed management addressing.
 //
-// PURE, comme PlanPorts et pour la same raison : elle est verifiable sur la capture
-// reelle de the device (testdata/sys.b) rather que sur du hardware, et c'est elle qui
-// decide ce que the UI affirmera sur la configuration d'un switch en service.
+// PURE, like PlanPorts and for the same reason: it is verifiable on the
+// device's real capture (testdata/sys.b) rather than on hardware, and it is
+// what decides what the UI will assert about the configuration of a switch in
+// service.
 //
-// TROIS DECISIONS, chacune contre un mensonge precise.
+// THREE DECISIONS, each against a specific lie.
 //
-// 1. L'ADRESSE RENDUE EST `cip`, CELLE EN COURS, ET NON `ip`.
+// 1. THE ADDRESS RETURNED IS `cip`, THE CURRENT ONE, AND NOT `ip`.
 //
-// Les deux champs coexistent et ne veulent pas dire la same chose : `ip` est l'adresse
-// CONFIGUREE, `cip` celle actually portee. En statique elles sont egales ; en DHCP,
-// `ip` garde l'adresse de repli et `cip` porte le bail. Rendre `ip` ferait afficher, sur
-// un device en DHCP, une adresse a laquelle il ne repond pas — et c'est le genre de
-// valeur qu'un exploitant recopie dans un navigateur avant de conclure a une panne.
-// Le repli sur `ip` n'a lieu que si `cip` manque, et il est DIT dans les notes.
+// The two fields coexist and do not mean the same thing: `ip` is the
+// CONFIGURED address, `cip` the one actually carried. In static mode they are
+// equal; on DHCP, `ip` keeps the fallback address and `cip` carries the lease.
+// Returning `ip` would display, on a DHCP device, an address it does not
+// answer on — and that is the kind of value an operator copies into a browser
+// before concluding there is an outage. Falling back on `ip` only happens if
+// `cip` is missing, and it is SAID in the notes.
 //
-// 2. UN `iptp` INCONNU NE SE TRADUIT PAS EN « STATIQUE ».
+// 2. AN UNKNOWN `iptp` DOES NOT TRANSLATE TO "STATIC".
 //
-// Trois valeurs sont observed dans le selecteur « Address Acquisition » de l'interface
-// (0 « DHCP with fallback », 1 « static », 2 « DHCP only »). Une quatrieme, sur un
-// firmware plus recent, rendrait un mode VIDE et une note — et non le mode le plus
-// probable. « On ne sait pas » est une response exacte ; deviner « statique » sur un
-// device en bail ferait conserver comme intentionnelle une adresse qui peut changer
-// a tout moment.
+// Three values are observed in the UI's "Address Acquisition" selector
+// (0 "DHCP with fallback", 1 "static", 2 "DHCP only"). A fourth, on a more
+// recent firmware, would return an EMPTY mode and a note — not the most likely
+// mode. "We do not know" is an exact answer; guessing "static" on a device on
+// a lease would keep as intentional an address that may change at any moment.
 //
-// 3. « DHCP WITH FALLBACK » EST RENDU COMME DU DHCP, et le repli est dit en note.
+// 3. "DHCP WITH FALLBACK" IS RETURNED AS DHCP, and the fallback is stated in
+// a note.
 //
-// C'est bien du DHCP du point de vue de la question applied — l'adresse n'est pas decidee
-// par l'exploitant — mais la consequence pratique est particular et vaut d'be
-// affichee : cet device A une adresse same quand aucun serveur ne repond, ce qui
-// fait chercher un device muet there where il repond, a une autre adresse
-// (cf. MgmtCapabilities.DHCPFallback, same trap observed sur l'Instant On).
+// It is indeed DHCP from the point of view of the question asked — the
+// address is not decided by the operator — but the practical consequence is
+// particular and worth displaying: this device HAS an address even when no
+// server answers, which sends someone looking for a mute device where it does
+// answer, at another address (cf. MgmtCapabilities.DHCPFallback, the same trap
+// observed on Instant On).
 func MgmtAddrOf(sys *Page) driver.MgmtAddrState {
 	var out driver.MgmtAddrState
 
@@ -104,21 +108,21 @@ func MgmtAddrOf(sys *Page) driver.MgmtAddrState {
 			out.Mode = driver.MgmtAddrModeDHCP
 		case AddrDHCPFallback:
 			out.Mode = driver.MgmtAddrModeDHCP
-			out.Notes = append(out.Notes, "mode « DHCP with fallback » : cet device "+
-				"porte une adresse de repli same quand aucun serveur DHCP ne repond. Un "+
-				"CSS326 qu'on croit muet peut donc repondre ailleurs, sur son adresse de "+
-				"repli, et non a l'adresse attendue.")
+			out.Notes = append(out.Notes, "mode \"DHCP with fallback\": this device "+
+				"carries a fallback address even when no DHCP server answers. A "+
+				"CSS326 believed mute may therefore answer elsewhere, on its fallback "+
+				"address, and not at the expected address.")
 		default:
 			out.Notes = append(out.Notes, fmt.Sprintf(
-				"mode d'acquisition non reconnu (%s = 0x%02x) : ce firmware propose une "+
-					"valeur que le connecteur n'a pas observed. meshcraft ne conclut donc RIEN "+
-					"sur l'origine de l'adresse rather que de supposer la plus probable.",
+				"unrecognised acquisition mode (%s = 0x%02x): this firmware offers a "+
+					"value the connector has not observed. meshcraft therefore concludes NOTHING "+
+					"about the origin of the address rather than assuming the most likely one.",
 				FieldAddrMode, mode))
 		}
 	} else {
 		out.Notes = append(out.Notes, fmt.Sprintf(
-			"%s ne sert pas le champ « %s » : l'origine de l'adresse n'est pas lisible sur "+
-				"ce firmware.", PageSys, FieldAddrMode))
+			"%s does not serve the \"%s\" field: the origin of the address is not readable on "+
+				"this firmware.", PageSys, FieldAddrMode))
 	}
 
 	var cur, hasCur = sys.Num(FieldCurrentIP)
@@ -126,49 +130,49 @@ func MgmtAddrOf(sys *Page) driver.MgmtAddrState {
 	switch {
 	case hasCur && cur != 0:
 		out.Address = DecodeIPv4(cur)
-		// L'ecart entre configuree et en cours n'est une anomalie que si the device
-		// se dit statique — sinon c'est le fonctionnement normal du DHCP.
+		// A gap between configured and current is an anomaly only if the
+		// device says it is static — otherwise it is normal DHCP operation.
 		if hasCfg && cfg != cur && out.Mode == driver.MgmtAddrModeStatic {
 			out.Notes = append(out.Notes, fmt.Sprintf(
-				"the device se declares en adresse statique %s mais repond en %s. L'un des "+
-					"deux champs a been changed sans que l'autre suive : a verify avant toute "+
-					"write sur cette page.", DecodeIPv4(cfg), DecodeIPv4(cur)))
+				"the device declares itself on static address %s but answers on %s. One of "+
+					"the two fields was changed without the other following: to be verified before any "+
+					"write on this page.", DecodeIPv4(cfg), DecodeIPv4(cur)))
 		}
 	case hasCfg && cfg != 0:
 		out.Address = DecodeIPv4(cfg)
 		out.Notes = append(out.Notes, fmt.Sprintf(
-			"adresse EN COURS (« %s ») absente de la page : c'est l'adresse CONFIGUREE "+
-				"(« %s ») qui est affichee. Sur un device en DHCP, les deux peuvent "+
-				"differer.", FieldCurrentIP, FieldIP))
+			"CURRENT address (\"%s\") missing from the page: the CONFIGURED address "+
+				"(\"%s\") is the one displayed. On a DHCP device, the two may "+
+				"differ.", FieldCurrentIP, FieldIP))
 	}
 
 	// Absence of gateway/DNS is a PLATFORM CAPABILITY (Gateway/DNS/Routed/IPARP
 	// on MgmtCapabilities), not a per-read note: notes are localized in the UI
 	// from caps, never stored as French/English prose in the observation.
-	// Aucune interface named : SwOS n'attache pas son adresse a une interface. Ce qui
-	// tient lieu de portee est « Allow From VLAN » (`avln`), qui est le VLAN de
-	// management et se lit already dans State.MgmtVLAN — le remettre ici sous le nom
-	// d'« interface » inviterait a le comparer a un nom d'interface RouterOS, qui est
-	// une tout autre chose.
+	// No named interface: SwOS does not attach its address to an interface.
+	// What stands in for a scope is "Allow From VLAN" (`avln`), which is the
+	// management VLAN and is already read in State.MgmtVLAN — putting it back
+	// here under the name "interface" would invite comparing it with a RouterOS
+	// interface name, which is something else entirely.
 	return out
 }
 
-// modeLabel et addrLabel n'existent que pour le transcript, et pour qu'une ligne de
-// transcript ne dise jamais « mode «  », adresse «  » » — un journal qui affiche du vide
-// se lit comme une panne du connecteur, there where c'est the device qui n'a rien dit.
+// modeLabel and addrLabel exist only for the transcript, so that a transcript
+// line never says `mode "", address ""` — a log that displays emptiness reads
+// as a connector fault, where it is the device that said nothing.
 func modeLabel(mode string) string {
 	switch mode {
 	case driver.MgmtAddrModeStatic:
-		return "statique"
+		return "static"
 	case driver.MgmtAddrModeDHCP:
 		return "DHCP"
 	}
-	return "non observed"
+	return "not observed"
 }
 
 func addrLabel(addr string) string {
 	if addr == "" {
-		return "inconnue"
+		return "unknown"
 	}
 	return addr
 }

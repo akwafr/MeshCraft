@@ -1,0 +1,21 @@
+show spanning-tree
+
+Spanning tree enabled protocol RSTP(2004)
+
+RSTP
+  Root ID    Priority    0
+             Address     D401.C3AB.32F4
+             Port        TGigaEthernet0/2
+             Cost        6000
+             Hello Time 2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768
+             Address     649D.9922.7B95
+             Hello Time 2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface        Role Sts Cost      Pri.Nbr  Type
+---------------- ---- --- --------- -------- -----------------------
+tg0/1            Desg FWD 2000      128.177  P2p
+tg0/2            Root FWD 2000      128.178  P2p
+
+Switch#

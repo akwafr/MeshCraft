@@ -14,6 +14,28 @@ import (
 // requireSite verifies the minimum role on the URL's site.
 func (s *Server) requireSite(w http.ResponseWriter, r *http.Request, minRole string) (string, bool) {
 	var siteID = chi.URLParam(r, "siteID")
+	// AN EMPTY SITE ID IS REFUSED BEFORE THE ROLE IS CONSULTED.
+	//
+	// `CanSite` answers true for a GLOBAL ADMIN whatever site it is asked about,
+	// including "". So a URL like `/api/sites//serial-servers` — which a frontend
+	// produces the moment it interpolates a site id it does not have — passed
+	// this check, and the handler ran with an empty site.
+	//
+	// That is not a theoretical shape. It shipped: the serial-line panel was
+	// mounted on a page with no site in its route, every request went to
+	// `/api/sites//…`, the offer was registered against site "" and could never
+	// match any list. The only visible symptom was a feature that did nothing,
+	// and the only trace was an event insert failing on an empty uuid.
+	//
+	// Refusing here fixes it for every site-scoped route at once, which is the
+	// right altitude: any of them would have behaved the same way, and the next
+	// one to interpolate an empty id would have had to rediscover this.
+	if siteID == "" {
+		respondErr(w, http.StatusBadRequest,
+			"no site in the request path: this endpoint is site-scoped and the caller "+
+				"interpolated an empty site id")
+		return "", false
+	}
 	if !s.Auth.CanSite(r.Context(), siteID, minRole) {
 		respondErr(w, http.StatusForbidden, "insufficient rights on this site")
 		return "", false
@@ -69,7 +91,7 @@ func (s *Server) handleCreateVlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, siteID, "vlan.created", model.SevNotice,
-		"VLAN "+strconv.Itoa(v.VlanID)+" « "+v.Name+" » created", v)
+		"VLAN "+strconv.Itoa(v.VlanID)+" \""+v.Name+"\" created", v)
 	respond(w, http.StatusCreated, v)
 }
 
@@ -101,7 +123,7 @@ func (s *Server) handleUpdateVlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, cur.SiteID, "vlan.updated", model.SevInfo,
-		"VLAN "+strconv.Itoa(v.VlanID)+" « "+v.Name+" » updated", v)
+		"VLAN "+strconv.Itoa(v.VlanID)+" \""+v.Name+"\" updated", v)
 	respond(w, http.StatusOK, v)
 }
 
@@ -130,11 +152,11 @@ func (s *Server) handleDeleteVlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, cur.SiteID, "vlan.deleted", model.SevWarning,
-		"VLAN "+strconv.Itoa(cur.VlanID)+" « "+cur.Name+" » deleted", nil)
+		"VLAN "+strconv.Itoa(cur.VlanID)+" \""+cur.Name+"\" deleted", nil)
 	respond(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// --- Profils (kind = "port" | "device") ---
+// --- Profiles (kind = "port" | "device") ---
 
 type profileInput struct {
 	Name string          `json:"name"`
@@ -186,7 +208,7 @@ func (s *Server) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, siteID, "profile.created", model.SevNotice,
-		"Profile "+kind+" « "+p.Name+" » created", p.Spec)
+		"Profile "+kind+" \""+p.Name+"\" created", p.Spec)
 	respond(w, http.StatusCreated, p)
 }
 
@@ -212,7 +234,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, cur.SiteID, "profile.updated", model.SevInfo,
-		"Profile "+kind+" « "+p.Name+" » updated", p.Spec)
+		"Profile "+kind+" \""+p.Name+"\" updated", p.Spec)
 	respond(w, http.StatusOK, p)
 }
 
@@ -234,11 +256,11 @@ func (s *Server) handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, cur.SiteID, "profile.deleted", model.SevWarning,
-		"Profile "+kind+" « "+cur.Name+" » deleted", nil)
+		"Profile "+kind+" \""+cur.Name+"\" deleted", nil)
 	respond(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// --- Groupes ---
+// --- Groups ---
 
 type groupInput struct {
 	Name            string  `json:"name"`
@@ -277,7 +299,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, siteID, "group.created", model.SevNotice,
-		"Device group « "+g.Name+" » created", nil)
+		"Device group \""+g.Name+"\" created", nil)
 	respond(w, http.StatusCreated, g)
 }
 
@@ -321,6 +343,6 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, cur.SiteID, "group.deleted", model.SevWarning,
-		"Device group « "+cur.Name+" » deleted", nil)
+		"Device group \""+cur.Name+"\" deleted", nil)
 	respond(w, http.StatusOK, map[string]string{"status": "ok"})
 }

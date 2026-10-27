@@ -13,7 +13,7 @@ import (
 )
 
 // Provisioning of a device's SNMP IDENTITY — steps 2 and 3 of section 5 of
-// docs/03-Security/SNMP identity.
+// docs/en/03-Security/SNMP identity.md.
 //
 // `snmpprov` DECIDES ("what would it take to supervise this device?");
 // this file PREPARES THE GROUND from that decision: the technical tag, then the
@@ -271,7 +271,13 @@ func (s *Server) snmpPlanFor(ctx context.Context, d model.Device) (snmpIdentityS
 		// derivations would get the same input. The case can no longer arise (the vault
 		// requires the pair, cf. checkCredSecrets), but naming it in the plan keeps it from
 		// becoming invisible if it did — push would abstain (snmpIdentityToPose).
-		if want.Kind == snmpprov.KindV3 && !existing.HasSecret2 {
+		// ... and it is asked for ONLY when the plan actually encrypts. A connector
+		// that declares `SNMPv3Priv` empty yields `Priv: ""` (the FS S3400 since
+		// 2026-08-12), and reporting a missing encryption passphrase for an identity
+		// that will never encrypt would put a permanent, unfixable "missing" on every
+		// device of that range — and `ensureSNMPIdentity` would keep being called to
+		// generate something nothing reads.
+		if want.Kind == snmpprov.KindV3 && out.Plan.Priv != "" && !existing.HasSecret2 {
 			out.Missing = append(out.Missing,
 				"encryption passphrase for v3 identity \""+existing.Tag+
 					"\": without it, the identity authenticates but encrypts nothing")

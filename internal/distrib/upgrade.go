@@ -19,7 +19,7 @@ import (
 // about a `manifest.json` written at build time; hashing the served files is
 // strictly more honest than a manifest sitting next to them, which could lie.
 //
-// Cf. docs/01-Architecture/Versionnage et mise à jour du proxy.
+// See docs/en/01-Architecture/Proxy versioning and updates.md.
 
 // Upgrade describes the upgrade offered to a proxy.
 type Upgrade struct {
@@ -96,7 +96,7 @@ var buildStamp = regexp.MustCompile(`^\d{8}\.\d{6}$`)
 // therefore "newer" than any build, past, present, or future: the
 // controller offers it NOTHING, the UI displays it as "up to date", and it
 // stays that way forever. This is exactly what was observed on
-// `proxy-akwalan`, reporting `up_to_date` at version `dev` — a `docker
+// `proxy-lab`, reporting `up_to_date` at version `dev` — a `docker
 // compose pull` couldn't fix it either, since the embedded registry was
 // serving the same build.
 //

@@ -1,0 +1,20 @@
+show poe status all
+
+Intf      Detection      Class   Consumed(W) Voltage(V) Current(mA) Consumed Meter(Whr) Temperature(C)
+--------- -------------- ------- ----------- ---------- ----------- ------------------ --------------
+0/1       Unknown        Unknown        0.00      52.32        0.00               0.00            N/A
+0/2       Unknown        Unknown        0.00       0.00        0.00               0.00            N/A
+0/3       Unknown        Unknown        0.00       0.00        0.00               0.00            N/A
+0/4       Unknown        Unknown        0.00       0.00        0.00               0.00            N/A
+0/5       Unknown        Unknown        0.00       0.00        0.00               0.00             55
+0/6       Unknown        Unknown        0.00       0.00        0.00               0.00             55
+0/7       Unknown        Unknown        0.00       0.00        0.00               0.00             55
+0/8       Unknown        Unknown        0.00       0.00        0.00               0.00             55
+0/9       Unknown        Unknown        0.00       0.00        0.00               0.00             53
+0/10      Unknown        Unknown        0.00       0.00        0.00               0.00             53
+0/11      Unknown        Unknown        0.00       0.00        0.00               0.00             53
+0/12      Unknown        Unknown        0.00       0.00        0.00               0.00             53
+0/13      Unknown        Unknown        0.00       0.00        0.00               0.00             63
+0/14      Unknown        Unknown        0.00       0.00        0.00               0.00             63
+0/15      Unknown        Unknown        0.00       0.00        0.00               0.00             63
+0/16      Unknown        Unknown        0.00       0.00        0.00               0.00             63

@@ -13,7 +13,8 @@ import {
   type Vlan,
 } from "../api";
 import { useSiteRole } from "../auth";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal, useToast } from "../components";
+import { ActionButton, ErrorMsg, Field, Modal, useToast } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 import { expandPorts, PALETTE, serves, vlanMap } from "../network";
 
 /** Daily "Profiles" page: port profiles + editable VLAN plan in the side panel (engineer). */
@@ -115,7 +116,7 @@ export default function Profils() {
                 <th>{t("profilsPage.configCol")}</th>
                 <th>PoE</th>
                 <th>STP</th>
-                <th style={{ width: 140 }}></th>
+                <th className="col-actions"></th>
               </tr>
             </thead>
             <tbody>
@@ -164,14 +165,16 @@ export default function Profils() {
                         {spec.bpdu_guard ? " · bpdu" : ""}
                       </span>
                     </td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <td className="col-actions">
                       {ing && (
-                        <>
-                          <ActionButton kind="edit" className="ghost" onClick={() => setEditing(p)}>
-                            {t("common.edit")}
-                          </ActionButton>
-                          <DeleteButton onConfirm={() => removeProfile.mutate(p.id)} />
-                        </>
+                        <div className="icon-actions">
+                          <IconAction
+                            kind="edit"
+                            label={t("common.edit") as string}
+                            onClick={() => setEditing(p)}
+                          />
+                          <IconDeleteButton onConfirm={() => removeProfile.mutate(p.id)} />
+                        </div>
                       )}
                     </td>
                   </tr>

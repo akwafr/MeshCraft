@@ -1,0 +1,9 @@
+show snmp user
+User name: mcliveu
+Engine ID: 8000cda203649d99227b95
+storage-type: nonvolatile
+Rowstatus: active
+Authentication Protocol: SHA 
+Group-name: mcliveg	
+
+poefs3400lab#

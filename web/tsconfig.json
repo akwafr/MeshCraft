@@ -8,7 +8,21 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    // Lets a source module import a sibling as "./hostname.ts".
+    //
+    // WHY IT IS NEEDED, since every other import here is extensionless: the
+    // *.test.ts files are plain scripts run by `node --experimental-strip-types`
+    // (web/scripts/run_frontend_tests.sh), and node's ESM resolver requires a
+    // full specifier. A test importing a soft-reset script therefore fails to
+    // resolve any extensionless import that script makes at RUNTIME — which is
+    // exactly what happened when the four soft-reset scripts started importing
+    // the shared hostname normalizer. Type-only imports are erased and never had
+    // the problem, which is why this only surfaced now.
+    //
+    // Safe with noEmit: tsc never rewrites the specifier, and vite/esbuild
+    // resolves it. It PERMITS the suffix rather than requiring it.
+    "allowImportingTsExtensions": true
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]

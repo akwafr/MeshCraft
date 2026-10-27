@@ -55,24 +55,30 @@ func TestSysBridgeIDsUseDecodeMAC(t *testing.T) {
 	}
 
 	var rootPriority, bridgePriority int
-	if rpr, ok := sys.Num("rpr"); ok {
+	var rpr, rprOK = sys.Num("rpr")
+	if rprOK {
 		rootPriority = int(rpr)
 	}
-	if prio, ok := sys.Num("prio"); ok {
+	var prio, prioOK = sys.Num("prio")
+	if prioOK {
 		bridgePriority = int(prio)
 	}
 
 	var rootID, bridgeID string
-	if v, ok := sys.Value("rmac"); ok && v.Kind == KindStr {
-		if mac, macOK := DecodeMAC(v.Raw); macOK {
+	var rmacV, rmacOK = sys.Value("rmac")
+	if rmacOK && rmacV.Kind == KindStr {
+		var mac, macOK = DecodeMAC(rmacV.Raw)
+		if macOK {
 			rootID = mac
 			if rootPriority > 0 {
 				rootID = fmt.Sprintf("%04x.%s", rootPriority, rootID)
 			}
 		}
 	}
-	if v, ok := sys.Value(FieldMAC); ok && v.Kind == KindStr {
-		if mac, macOK := DecodeMAC(v.Raw); macOK {
+	var macV, macValOK = sys.Value(FieldMAC)
+	if macValOK && macV.Kind == KindStr {
+		var mac, macOK = DecodeMAC(macV.Raw)
+		if macOK {
 			bridgeID = mac
 			if bridgePriority > 0 {
 				bridgeID = fmt.Sprintf("%04x.%s", bridgePriority, bridgeID)

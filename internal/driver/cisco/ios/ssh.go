@@ -95,6 +95,19 @@ var reCLIError = regexp.MustCompile(
 // reEnablePassword: the prompt "Password:" that `enable` puts up.
 var reEnablePassword = regexp.MustCompile(`(?i)password\s*:\s*$`)
 
+// reNoPasswordSet: IOS refusing "enable" because NO enable password exists.
+//
+// This is the platform behaviour that makes the fleet's no-enable-password rule
+// sharper on a Catalyst than on an Arista, and it is asymmetric in a way that is
+// easy to miss: from the CONSOLE, "enable" with nothing configured succeeds;
+// from a VTY (SSH / telnet) it is REFUSED with this line. So on this platform,
+// once [NoEnableCmds] has run, `privilege 15` on the account is not a
+// convenience — it is the only path to a privileged session over the network.
+//
+// Matched by name so that the failure, if it ever happens, reads as what it is
+// instead of timing out on a prompt that will never come.
+var reNoPasswordSet = regexp.MustCompile(`(?i)%\s*No password set`)
+
 // dialSSH opens the connection, honoring the Target's Dialer.
 func dialSSH(ctx context.Context, tgt driver.Target, user, secret string) (*ssh.Client, error) {
 	var addr = net.JoinHostPort(tgt.Host, sshPort)
@@ -236,9 +249,11 @@ func (c *cliConn) waitPrompt(ctx context.Context, timeout time.Duration) (string
 func (c *cliConn) waitFor(ctx context.Context, timeout time.Duration, re *regexp.Regexp) (string, error) {
 	var deadline = time.NewTimer(timeout)
 	defer deadline.Stop()
+	var b byte
+	var ok bool
 	for {
 		select {
-		case b, ok := <-c.out:
+		case b, ok = <-c.out:
 			if !ok {
 				return c.take(), fmt.Errorf("SSH session closed by the device")
 			}
@@ -294,10 +309,16 @@ func (c *cliConn) run(ctx context.Context, cmd string, timeout time.Duration) (s
 
 // enable raises a user-EXEC session to privileged EXEC.
 //
-// Called only when the login landed on ">" — an account created by this
-// product carries `privilege 15` and lands straight on "#". The secret used is
-// the ACCOUNT's: meshcraft stores one secret per account, and EnsureAccount
-// aligns `enable secret` on it for exactly this reason.
+// Called only when the login landed on ">" — an account created by this product
+// carries `privilege 15` and lands straight on "#". The secret tried is the
+// ACCOUNT's, which is what a device provisioned before the fleet's
+// no-enable-password rule still carries.
+//
+// SINCE THAT RULE (cf. [NoEnableCmds]) THIS PATH IS A FALLBACK FOR FOREIGN
+// DEVICES, not a step in our own provisioning: meshcraft no longer sets an enable
+// password, and on IOS a VTY session cannot enable without one. An account of
+// ours that reaches here has lost its `privilege 15`, and the message says so
+// rather than blaming the secret.
 func (c *cliConn) enable(ctx context.Context, secret string) error {
 	var err = c.sendLine("enable")
 	if err != nil {
@@ -305,12 +326,20 @@ func (c *cliConn) enable(ctx context.Context, secret string) error {
 	}
 	var out string
 	out, err = c.waitFor(ctx, cmdTimeout, regexp.MustCompile(
-		rePromptPriv.String()+`|`+reEnablePassword.String()))
+		rePromptPriv.String()+`|`+reEnablePassword.String()+`|`+reNoPasswordSet.String()))
 	if err != nil {
-		return fmt.Errorf("no reaction to « enable »: %v", err)
+		return fmt.Errorf("no reaction to \"enable\": %v", err)
+	}
+	if reNoPasswordSet.MatchString(out) {
+		return fmt.Errorf("\"enable\" refused: %% No password set. This device has NO " +
+			"enable password (which is the fleet rule), and IOS does not allow a vty " +
+			"session to enable without one — from the console it would work. The way up " +
+			"is \"privilege 15\" on this account, which meshcraft writes: this session " +
+			"landed on \">\", so the account lost it or was created elsewhere. Fixing it " +
+			"needs console access")
 	}
 	if rePromptPriv.MatchString(tail(out, 200)) {
-		return nil // no enable secret set: already privileged
+		return nil // no enable password AND the console let us straight through
 	}
 	err = c.sendLine(secret)
 	if err != nil {
@@ -318,7 +347,7 @@ func (c *cliConn) enable(ctx context.Context, secret string) error {
 	}
 	_, err = c.waitPrompt(ctx, cmdTimeout)
 	if err != nil {
-		return fmt.Errorf("« enable » refused the account secret: %v", err)
+		return fmt.Errorf("\"enable\" refused the account secret: %v", err)
 	}
 	return nil
 }

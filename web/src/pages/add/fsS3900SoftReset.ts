@@ -12,7 +12,7 @@
  *
  * Then factory login admin with empty password (OpCode 1.7) or admin/admin,
  * push mgmt + user, verify on serial, caller probes IP.
- * Console: 115200 8N1; enable may be empty or « super ».
+ * Console: 115200 8N1; enable may be empty or "super".
  *
  * Push CLI (same over SSH) — lab OpCode 1.7.0:
  *   vlan database → vlan N name X media ethernet
@@ -26,6 +26,7 @@
  */
 
 import type { SerialSession } from "./serialExpect";
+import { hostnameFromDeviceName } from "./hostname.ts";
 
 export type SoftResetLog = (msg: string) => void;
 
@@ -35,20 +36,20 @@ export type FsS3900SoftResetInput = {
   /** Credentials that work BEFORE reset (factory default admin/admin). */
   currentUser: string;
   currentPassword: string;
-  /** Enable (privileged) password before reset — factory default « super ». */
+  /** Enable (privileged) password before reset — factory default "super". */
   enablePassword: string;
   /** Admin account to create/update after reset (from instance credentials). */
   targetUser: string;
   targetPassword: string;
   mgmtIp: string;
   mgmtMask: string;
-  /** Default gateway — pushed as « ip route 0.0.0.0 0.0.0.0 <gw> » when set. */
+  /** Default gateway — pushed as "ip route 0.0.0.0 0.0.0.0 <gw>" when set. */
   gateway?: string;
   /**
    * Where to place the management address:
-   * - « vlan 1 » (default) — in-band VLAN interface
-   * - « Craft » — dedicated MGT port (interface Craft)
-   * - « management » — global « management ip address … »
+   * - "vlan 1" (default) — in-band VLAN interface
+   * - "Craft" — dedicated MGT port (interface Craft)
+   * - "management" — global "management ip address …"
    */
   mgmtIface?: string;
   signal?: AbortSignal;
@@ -56,7 +57,7 @@ export type FsS3900SoftResetInput = {
 
 const USERNAME = /user\s*name\s*:/i;
 const PASSWORD = /password\s*:/i;
-// Lab OpCode 1.7.0: console shows « ---- Press ENTER to start CLI session ---- »
+// Lab OpCode 1.7.0: console shows "---- Press ENTER to start CLI session ----"
 // after logout and after boot — a CR is needed before Username: appears.
 const LOGIN_BANNER =
   /user\s+access\s+verification|press\s+(any\s+)?key|press\s+enter|login\s*:/i;
@@ -71,20 +72,20 @@ const CLI_ERROR =
 
 /**
  * Startup file name answered to the save prompt. ALWAYS explicit: lab OpCode
- * 1.7.0 prompts « Startup configuration file name: » after
- * « copy running-config startup-config », and accepting a default could write
+ * 1.7.0 prompts "Startup configuration file name:" after
+ * "copy running-config startup-config", and accepting a default could write
  * over Factory_Default_Config.cfg — the file the soft reset boots from.
  */
 export const STARTUP_CONFIG_FILE = "startup1.cfg";
 
 const SAVE_FILENAME_PROMPT = /startup\s+configuration\s+file\s+name\s*:?/i;
-/** Lab: « Flash programming started. / Flash programming completed. / Success. » */
+/** Lab: "Flash programming started. / Flash programming completed. / Success." */
 const SAVE_OK = /flash\s+programming\s+completed|\bsuccess\b|\[OK\]/i;
 /** Output pager. Web Serial cannot announce a tall terminal, so long show
- * output may stop at « --More-- » even when a PuTTY session shows none. */
+ * output may stop at "--More--" even when a PuTTY session shows none. */
 const PAGER = /-+\s*more\s*-+\s*$/i;
 /** Any sign the console fell back to login mid-script (deploy log 2026-08-01:
- * the session was lost during the push and « show run » was typed into
+ * the session was lost during the push and "show run" was typed into
  * Username:). */
 const LOGIN_FALLBACK =
   /user\s+access\s+verification|press\s+enter|user\s*name\s*:\s*$|password\s*:\s*$/i;
@@ -98,8 +99,8 @@ function aborted(signal?: AbortSignal) {
 
 /**
  * Decide which prompt the console is waiting on by the LAST marker in the
- * recent capture. First-match expect is unsafe: a stale « Password: » earlier
- * in the buffer makes us type the password into a fresh « Username: ».
+ * recent capture. First-match expect is unsafe: a stale "Password:" earlier
+ * in the buffer makes us type the password into a fresh "Username:".
  */
 function lastAuthPrompt(text: string): AuthPrompt {
   var tail = text.slice(-800);
@@ -171,7 +172,7 @@ async function sendContinueOnError(
   await session.send(cmd);
   var reply = await expectReply(session, waitMs);
   if (reply.kind === "error") {
-    log(`${label}: CLI error « ${reply.match} » — continuing`);
+    log(`${label}: CLI error "${reply.match}" — continuing`);
   } else if (reply.kind === "confirm") {
     session.mark();
     await session.send("y");
@@ -188,7 +189,7 @@ type LoginCandidate = { user: string; pass: string; enable: string; label: strin
 
 /** Reply classification that ALSO recognizes a fallback to login: the
  * 2026-08-01 deploy log shows the console session dropping mid-push (verify
- * typed « show run » into Username:). Blind sleeps cannot see that. */
+ * typed "show run" into Username:). Blind sleeps cannot see that. */
 async function expectReplyOrLogin(
   session: SerialSession,
   timeoutMs: number,
@@ -239,7 +240,7 @@ async function reloginAny(
 }
 
 /**
- * Collect the output of a show command, feeding the pager when « --More-- »
+ * Collect the output of a show command, feeding the pager when "--More--"
  * appears: Web Serial cannot claim a tall terminal, so output that fits a
  * PuTTY window may still paginate here and swallow every later command.
  */
@@ -274,7 +275,7 @@ export async function collectShowOutput(
 
 /**
  * Find Up/Up Ethernet ports, RETRYING while the switch finishes bringing
- * links up: the 2026-08-01 deploy saw « no Ethernet link Up » ~25 s after
+ * links up: the 2026-08-01 deploy saw "no Ethernet link Up" ~25 s after
  * boot on a switch whose uplink was cabled — SFP+ links need longer. Without
  * an uplink trunk the management VLAN is unreachable and the probe MUST fail.
  */
@@ -303,7 +304,7 @@ async function discoverUpPorts(
 /**
  * Run configure-mode commands one by one, VERIFYING the console after each:
  * y/n confirms are answered, CLI errors logged, and a fallback to login
- * triggers re-login + « conf t » + retry of the same command. Credentials are
+ * triggers re-login + "conf t" + retry of the same command. Credentials are
  * pushed LAST by the caller so a session dropped by the password change finds
  * everything else already in place.
  */
@@ -331,9 +332,9 @@ export async function runConfigCmds(
     if (reply.kind === "login") {
       relogins++;
       if (relogins > 3) {
-        throw new Error(`console session lost repeatedly (last at « ${label} »)`);
+        throw new Error(`console session lost repeatedly (last at "${label}")`);
       }
-      log(`console fell back to login at « ${label} » — re-login and retry…`);
+      log(`console fell back to login at "${label}" — re-login and retry…`);
       await reloginAny(session, logins, log, signal);
       await enterConfig();
       continue;
@@ -344,9 +345,9 @@ export async function runConfigCmds(
       log(`${label}: confirmed y`);
     } else if (reply.kind === "error") {
       // The tail says WHICH word the caret rejected — without it the
-      // 2026-08-01 « % Invalid » cascade was undiagnosable from the log.
+      // 2026-08-01 "% Invalid" cascade was undiagnosable from the log.
       log(
-        `${label}: CLI error « ${reply.match} » — continuing (${clipTail(session.getSinceMark(), 160)})`,
+        `${label}: CLI error "${reply.match}" — continuing (${clipTail(session.getSinceMark(), 160)})`,
       );
     } else if (reply.kind === "prompt") {
       log(`${label}: ok`);
@@ -390,9 +391,9 @@ async function enterEnable(
 /**
  * Reach privileged # prompt (login + enable).
  *
- * Never send a password « cold » from a stale Password: marker.
+ * Never send a password "cold" from a stale Password: marker.
  * After Username:, wait only for a fresh Password: — do not treat a
- * « Username: admin » echo as a re-prompt (that skipped the password entirely).
+ * "Username: admin" echo as a re-prompt (that skipped the password entirely).
  */
 async function ensurePrivileged(
   session: SerialSession,
@@ -413,8 +414,8 @@ async function ensurePrivileged(
   var attempts = 0;
   while (Date.now() < deadline) {
     aborted(signal);
-    // Use post-mark text only — a stale « # » from before reboot must not
-    // short-circuit factory login into « already privileged » + push config.
+    // Use post-mark text only — a stale "#" from before reboot must not
+    // short-circuit factory login into "already privileged" + push config.
     var prompt = lastAuthPrompt(session.getSinceMark());
     if (prompt === "none") {
       // Fall back to a short recent tail if the mark is empty mid-stream.
@@ -464,7 +465,7 @@ async function ensurePrivileged(
         return;
       }
       if (afterUser.index === 3) {
-        // « ---- Press ENTER to start CLI session ---- » — wake it and retry.
+        // "---- Press ENTER to start CLI session ----" — wake it and retry.
         log("login banner — sending CR");
         session.mark();
         await session.send("");
@@ -521,12 +522,12 @@ async function ensurePrivileged(
 }
 
 /**
- * Prefer « reboot » (FS reset guide); older OpCode 1.7.x often uses « restart »;
- * some builds use « reload ».
+ * Prefer "reboot" (FS reset guide); older OpCode 1.7.x often uses "restart";
+ * some builds use "reload".
  *
  * After the verb, wait ONLY for confirm or CLI error — never treat a fleeting
- * « # » as failure and type the next verb into « Continue <y/n>? » (that typed
- * « r… » from reload into the confirm line).
+ * "#" as failure and type the next verb into "Continue <y/n>?" (that typed
+ * "r…" from reload into the confirm line).
  */
 async function rebootOrReload(session: SerialSession, log: SoftResetLog) {
   var verbs = ["reboot", "restart", "reload"];
@@ -537,7 +538,7 @@ async function rebootOrReload(session: SerialSession, log: SoftResetLog) {
     log(`${verb}…`);
     session.mark();
     await session.send(verb);
-    // Let the device print « System will be restarted. Continue <y/n>? ».
+    // Let the device print "System will be restarted. Continue <y/n>?".
     await session.sleep(1000);
     try {
       var hit = await session.expectAny([CONFIRM_Y, CLI_ERROR], 20000);
@@ -551,7 +552,7 @@ async function rebootOrReload(session: SerialSession, log: SoftResetLog) {
       // Consume the error so the next verb does not re-match a stale line.
       session.mark();
       log(
-        `${verb}: CLI error « ${hit.match} »${isLast ? " — continuing (manual reboot OK)" : ` — trying ${verbs[vi + 1]}…`}`,
+        `${verb}: CLI error "${hit.match}"${isLast ? " — continuing (manual reboot OK)" : ` — trying ${verbs[vi + 1]}…`}`,
       );
       if (!isLast) continue;
       return;
@@ -574,7 +575,7 @@ async function rebootOrReload(session: SerialSession, log: SoftResetLog) {
 
 /**
  * Soft factory reset per FS S3900 Reset and Recovery guide §3.2.5
- * (not Cisco « delete startup-config »).
+ * (not Cisco "delete startup-config").
  * CLI errors on individual steps are logged; the script continues.
  */
 async function factoryReset(session: SerialSession, log: SoftResetLog, signal?: AbortSignal) {
@@ -601,7 +602,7 @@ async function factoryReset(session: SerialSession, log: SoftResetLog, signal?: 
     "delete startup1.cfg",
     8000,
   );
-  // Advance mark past delete output (« No such file », etc.) before reboot verbs.
+  // Advance mark past delete output ("No such file", etc.) before reboot verbs.
   session.mark();
   await session.sleep(400);
 
@@ -615,9 +616,9 @@ async function waitLoginAfterReboot(
   signal?: AbortSignal,
 ): Promise<void> {
   aborted(signal);
-  // Drop ALL pre-reboot text. A stale « Username: » from autodetect made us
-  // declare « post-reset login prompt seen » in the same millisecond as
-  // « restart: confirmed y » and push config while U-Boot was still running.
+  // Drop ALL pre-reboot text. A stale "Username:" from autodetect made us
+  // declare "post-reset login prompt seen" in the same millisecond as
+  // "restart: confirmed y" and push config while U-Boot was still running.
   session.mark();
   log("reboot confirmed — waiting for device reboot (minimum 50s)…");
   var minBootMs = 50000;
@@ -757,8 +758,29 @@ async function pushManagement(
 
   var cmds: { cmd: string; label?: string }[] = [];
 
+  // The system name, through the ONE shared normalizer (./hostname.ts), which
+  // mirrors internal/driver/hostname.go — the same function the reconciliation
+  // loop uses. What stood here was `.replace(/[^A-Za-z0-9_-]/g, "_")`, and the
+  // substitute is the point: `_` is the ONE character driver.ValidHostname
+  // forbids outright, so every name this line touched came out in a form the
+  // reconciled path can never emit — a permanent disagreement with the healer,
+  // on a name that goes out over the LLDP system-name TLV.
+  //
+  // A REFUSAL IS REPORTED AND THE REST OF THE PUSH CONTINUES. Aborting the run
+  // over a system name would leave a factory-reset switch with no management
+  // address at all; the honest outcome is a reachable switch still carrying its
+  // factory name, with the reason on screen. This mirrors MgmtPushCmds, which
+  // returns that reason as its error alongside the commands.
   if (opts.hostname?.trim()) {
-    cmds.push({ cmd: `hostname ${opts.hostname.trim().replace(/[^A-Za-z0-9_-]/g, "_")}` });
+    var verdict = hostnameFromDeviceName(opts.hostname);
+    if (verdict.hostname) {
+      cmds.push({ cmd: `hostname ${verdict.hostname}` });
+    } else {
+      log(
+        `the system name was NOT written — ${verdict.reason}. The switch keeps the ` +
+          `name it has; nothing else in this push is affected`,
+      );
+    }
   }
 
   if (vlanId !== null && vlanId !== 1) {
@@ -831,10 +853,10 @@ async function pushManagement(
 }
 
 /**
- * « copy running-config startup-config » — lab OpCode 1.7.0 prompts for the
- * startup FILE NAME (no y/n): answer it, then wait for « Success. ». Waiting
+ * "copy running-config startup-config" — lab OpCode 1.7.0 prompts for the
+ * startup FILE NAME (no y/n): answer it, then wait for "Success.". Waiting
  * for y/n here timed out AND left the CLI at the filename prompt, so the next
- * command (« show run ») was typed as a file name and nothing was persisted.
+ * command ("show run") was typed as a file name and nothing was persisted.
  *
  * A failed save throws: a management config that does not survive a reboot is
  * worse than a refused one (the operator believes it is in place).
@@ -898,7 +920,7 @@ export async function saveStartupConfig(
       await session.send("copy running-config startup-config");
       continue;
     }
-    throw new Error(`save failed: « ${hit.match} »`);
+    throw new Error(`save failed: "${hit.match}"`);
   }
   throw new Error("save: timed out waiting for flash write result");
 }
@@ -954,7 +976,7 @@ async function verifyOnSerial(
   var log = opts.log;
   var vlanId = parseVlanId(opts.iface.trim() || "vlan 1");
 
-  // Re-assert the prompt first: verify used to type « show run » into a login
+  // Re-assert the prompt first: verify used to type "show run" into a login
   // prompt when the session had dropped (2026-08-01 deploy log).
   session.mark();
   await session.send("");
@@ -1044,7 +1066,7 @@ export async function runFsS3900SoftReset(input: FsS3900SoftResetInput): Promise
   ];
   var seenLogin: Record<string, boolean> = {};
   initialLogins = initialLogins.filter((l) => {
-    var key = `${l.user} ${l.pass}`;
+    var key = `${l.user}\0${l.pass}`;
     if (seenLogin[key]) return false;
     seenLogin[key] = true;
     return true;
@@ -1057,7 +1079,7 @@ export async function runFsS3900SoftReset(input: FsS3900SoftResetInput): Promise
 
   await waitLoginAfterReboot(session, log, 300000, input.signal);
 
-  // Fresh buffer for factory login — never inherit pre-reboot « # » / Username:.
+  // Fresh buffer for factory login — never inherit pre-reboot "#" / Username:.
   session.clearCapture();
 
   log("factory login admin/admin (then empty password if needed)…");

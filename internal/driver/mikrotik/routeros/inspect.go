@@ -15,7 +15,7 @@ import (
 //
 // Unlike the Instant On range, there is NOTHING to scrape: three REST menus
 // return the complete identity, in JSON, without ambiguity. OBSERVED on
-// 10.99.0.54:
+// 192.0.2.54:
 //
 //	/rest/system/resource    → {"board-name":"CRS326-24G-2S+",
 //	                            "version":"7.21beta3 (testing)",
@@ -119,7 +119,7 @@ type Port struct {
 
 // Inspect identifies the device. READ-ONLY.
 //
-// VALIDATED LIVE against 10.99.0.54 (CRS326-24G-2S+, RouterOS 7.21beta3): returns
+// VALIDATED LIVE against 192.0.2.54 (CRS326-24G-2S+, RouterOS 7.21beta3): returns
 // model `CRS326-24G-2S+`, serial `945509EF00B0`, firmware `7.21beta3 (testing)`,
 // RouterBOOT `6.42.5`, system name `lan-r4`, MAC `B8:69:F4:5B:A0:D2`, front panel
 // 24 copper ports + 2 SFP+.
@@ -549,8 +549,12 @@ func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 
 // Standard maps the rich identity to what the contract carries.
 //
-// What stays behind is listed on [DeviceIdentity]: RouterBOOT, architecture,
-// platform, and frame ceiling. What is CALCULATED here rather than copied deserves
+// What stays behind is listed on [DeviceIdentity]: architecture, platform, and
+// frame ceiling. RouterBOOT used to stay behind too, until the contract grew
+// [driver.Identity.BootFirmware] — discovery's note distinguishing the system
+// version from the boot loader's depended on the rich type, and folding
+// discovery onto the contract path would have silently dropped it.
+// What is CALCULATED here rather than copied deserves
 // a word, because both cases are decisions:
 //
 //   - `Family` is DERIVED from the reference — 'CRS326-24G-2S+' yields 'CRS'.
@@ -576,9 +580,10 @@ func (id DeviceIdentity) Standard() Identity {
 		Family: familyOf(id.Model),
 		Serial: id.Serial,
 		MAC:    id.MAC,
-		// `Firmware` is the RouterOS version, THE SYSTEM. See [DeviceIdentity] for
-		// why RouterBOOT does not come here.
-		Firmware: id.Firmware,
+		// `Firmware` is the RouterOS version, THE SYSTEM; the boot loader's own
+		// version travels apart, see [DeviceIdentity].
+		Firmware:     id.Firmware,
+		BootFirmware: id.RouterBoot,
 		// RouterOS publishes no separate build number: `build-time` is what
 		// distinguishes two images of the same version, which matters on a `testing`
 		// branch where '7.21beta3' can denote several images.

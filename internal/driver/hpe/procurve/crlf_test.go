@@ -15,7 +15,7 @@ import (
 const rawLineEndings = "hostname \"SW-PLAYER-79\" \n\r" +
 	"max-vlans 30 \n\r" +
 	"vlan 1 \n\r   name \"DEFAULT_VLAN\" \n\r   ip address dhcp-bootp \n\r   no untagged 1-52 \n\r   exit \n\r" +
-	"vlan 99 \n\r   name \"admin\" \n\r   ip address 172.16.99.79 255.255.255.0 \n\r   tagged 45-52 \n\r   exit \n\r" +
+	"vlan 99 \n\r   name \"admin\" \n\r   ip address 203.0.113.79 255.255.255.0 \n\r   tagged 45-52 \n\r   exit \n\r" +
 	"vlan 200 \n\r   name \"joueurs\" \n\r   untagged 1-52 \n\r   exit \n\r" +
 	"interface 45\n\r   dhcp-snooping trust\n\r   exit\n\r"
 
@@ -34,7 +34,7 @@ func TestParseSurvivesTheDevicesLineEndings(t *testing.T) {
 	if rc.VLANs[200] != "joueurs" {
 		t.Errorf("VLAN 200 name = %q", rc.VLANs[200])
 	}
-	// « no untagged » is still a removal, CR or not.
+	// "no untagged" is still a removal, CR or not.
 	if len(rc.Untagged[1]) != 0 {
 		t.Errorf("VLAN 1 untagged = %v, want none", rc.Untagged[1])
 	}
@@ -48,7 +48,7 @@ func TestParseSurvivesTheDevicesLineEndings(t *testing.T) {
 		t.Errorf("management VLAN = %d, want 99", rc.MgmtVLAN)
 	}
 	// The interface stanza that FOLLOWS the VLANs must not be swallowed into the
-	// last one: the stanza has to end at its own « exit » line.
+	// last one: the stanza has to end at its own "exit" line.
 	if len(rc.Untagged[200]) > 52 {
 		t.Error("the trailing interface block leaked into VLAN 200")
 	}

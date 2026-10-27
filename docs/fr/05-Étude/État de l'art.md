@@ -15,7 +15,7 @@ tags: [etude]
 | **Oxidized / RANCID** | backup de configs multi-vendor | ✅ la fonction backup+diff de conf brute est reprise telle quelle ([[Réconciliation]], `config_backups`) ; leurs models = catalogue de quirks CLI par plateforme |
 | **Unimus** | backup + push de commandes multi-vendor, mass config | ✅ valide le marché « multi-vendor config » ; ❌ pousse des *commandes*, pas un état déclaratif — meshcraft vise l'intent |
 | **Ansible (ios_*, junos_*)** | config déclarative par playbooks | ❌ pas de temps réel, pas d'UI, état simulé ; utile comme référence de mapping intent→CLI par plateforme |
-| **OpenConfig / gNMI** | modèle YANG normalisé, streaming telemetry | ✅ inspiration du [[Modèle de données standard]] ; ❌ supporté seulement par le très haut de gamme — inutilisable comme unique interface sur le matériel visé (smart switches) ; un transport gNMI pourra devenir un connecteur (v2+) |
+| **OpenConfig / gNMI** | modèle YANG normalisé, streaming telemetry | ✅ inspiration du [[Modèle de données standard]], et désormais un collecteur réel : `internal/gnmipoll` s'abonne en gRPC (bibliothèque `openconfig/gnmic`) et Arista EOS est collecté par lui SEUL, sans SNMP. ❌ le constat de départ tient toujours pour le reste du parc — gNMI reste l'apanage du haut de gamme, et les sept autres connecteurs restent en SNMP. C'est bien un canal de COLLECTE et non un connecteur : rien ne se configure par gNMI ici |
 | **Weathermap (Network Weathermap, LibreNMS plugin)** | cartes de charge de liens | ✅ la référence visuelle de la page [[Weathermap]] |
 
 ## La niche de meshcraft

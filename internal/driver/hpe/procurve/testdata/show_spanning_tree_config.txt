@@ -1,0 +1,66 @@
+ Multiple Spanning Tree (MST) Configuration Information
+
+  STP Enabled [No] : Yes
+  Force Version [MSTP-operation] : RSTP-operation
+  Default Path Costs [802.1t] : 802.1t              
+  MST Configuration Name : 001ffe007980                    
+  MST Configuration Revision : 0        Switch Priority : 32768
+  Forward Delay [15] : 15               Hello Time [2] : 2 
+  Max Age [20] : 20                     Max Hops [20] : 20
+
+                 | Path      Prio  Admin Auto  Admin Hello  Root Loop TCN  BPDU
+  Port Type      | Cost      rity  Edge  Edge  PtP   Time   Grd  Grd  Grd  Flt 
+  ---- --------- + --------- ----- ----- ----- ----- ------ ---- ---- ---- ----
+  1    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  2    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  3    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  4    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  5    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  6    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  7    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  8    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  9    10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  10   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  11   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  12   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  13   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  14   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  15   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  16   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  17   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  18   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  19   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  20   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  21   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  22   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  23   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  24   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  25   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  26   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  27   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  28   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  29   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  30   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  31   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  32   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  33   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  34   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  35   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  36   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  37   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  38   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  39   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  40   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  41   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  42   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  43   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  44   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  45   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  46   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  47   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  48   10/100TX  | Auto      128   No    Yes   True  Global No   No   No   No  
+  49   100/1000T | Auto      128   No    Yes   True  Global No   No   No   No  
+  50   100/1000T | Auto      128   No    Yes   True  Global No   No   No   No  
+  51             | Auto      128   No    Yes   True  Global No   No   No   No  
+  52             | Auto      128   No    Yes   True  Global No   No   No   No  
+ 

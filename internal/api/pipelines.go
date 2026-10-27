@@ -14,7 +14,7 @@ import (
 )
 
 // Pipelines: what meshcraft does on the fleet, and what gets stuck.
-// See docs/01-Architecture/Unified monitoring and pipelines §5.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md §5.
 
 // stepsFrom converts a connector access transcript into pipeline steps.
 //
@@ -57,6 +57,31 @@ func skippedSteps(from int, skipped []string) []store.PipelineStep {
 	return out
 }
 
+// notAppliedSteps records the structured entries an apply did not land. The
+// step NAME carries the kind, because the two non-guardrail kinds must not read
+// like skippedSteps' "spared by safeguard" — a history that mixed them taught
+// readers to retry applies that could never land.
+func notAppliedSteps(from int, entries []driver.NotApplied) []store.PipelineStep {
+	var names = map[string]string{
+		driver.KindGuardrail: "spared by safeguard",
+		driver.KindPlatform:  "refused by the platform",
+		driver.KindDevice:    "declined by the device",
+	}
+	var out []store.PipelineStep
+	var i int
+	for i = range entries {
+		var detail = entries[i].Text
+		if entries[i].Port != "" {
+			detail = entries[i].Port + ": " + detail
+		}
+		out = append(out, store.PipelineStep{
+			Seq: from + i + 1, Name: names[entries[i].Kind],
+			State: "skipped", Detail: detail,
+		})
+	}
+	return out
+}
+
 // unsupportedSteps records what the PLATFORM cannot write.
 //
 // Bucketed as "skipped" like spared ports — the UI only knows three states —
@@ -79,7 +104,7 @@ func unsupportedSteps(from int, notes []string) []store.PipelineStep {
 // noteSteps records apply facts that need saying and no decision.
 //
 // Same bucket as unsupportedSteps: visible in the transcript, never "blocked".
-// Example: unresolved « all » while the site plan is empty — apply does not strip
+// Example: unresolved "all" while the site plan is empty — apply does not strip
 // tagged membership; Force would change nothing.
 func noteSteps(from int, notes []string) []store.PipelineStep {
 	var out []store.PipelineStep
@@ -109,6 +134,7 @@ func (s *Server) recordPipeline(ctx context.Context, p store.Pipeline, by string
 func pipelineForApply(d model.Device, out applyOutcome, failure error) store.Pipeline {
 	var steps = append(stepsFrom(out.Steps),
 		skippedSteps(len(out.Steps), out.Result.Skipped)...)
+	steps = append(steps, notAppliedSteps(len(steps), out.Result.NotApplied)...)
 	steps = append(steps, unsupportedSteps(len(steps), out.Unsupported)...)
 	// Result.Notes (floors…) plus re-read notes: both are facts, neither blocks.
 	steps = append(steps, noteSteps(len(steps), out.Notes)...)

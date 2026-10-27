@@ -6,572 +6,585 @@ import (
 	"testing"
 )
 
-// Les tests du model VLAN complet : le REVEIL du filtrage, le VLAN de management
-// jamais orphelin, et les trois champs par port que la lecture taisait.
+// Tests of the complete VLAN model: WAKING UP filtering, the management VLAN
+// never orphaned, and the three per-port fields the read kept quiet about.
 //
-// Tous rejouent les captures reelles du CSS326-24G-2S+ de reference (testdata/). Ce
-// qu'elles portent, et qui rend ces tests utiles rather que theoriques :
+// All replay the real captures of the reference CSS326-24G-2S+ (testdata/).
+// What they carry, and what makes these tests useful rather than theoretical:
 //
-//	/fwd.b `vlan`  → [0x01 × 26], i.e. « optional » partout — le DEFAULT
-//	                 d'usine, ni disabled ni enabled ;
-//	/fwd.b `vlni`  → [0x00 × 26], « any » partout ;
-//	/fwd.b `fvid`  → 0x00000000, personne ;
-//	/fwd.b `dvid`  → 100 sur les 24 ports cuivre, 1 sur les deux cages ;
-//	/vlan.b        → VLAN 99 et 100, masque de membres 0x03ffffff — les 26 ports
-//	                 membres des deux.
+//	/fwd.b `vlan`  → [0x01 × 26], i.e. "optional" everywhere — the factory
+//	                 DEFAULT, neither disabled nor enabled;
+//	/fwd.b `vlni`  → [0x00 × 26], "any" everywhere;
+//	/fwd.b `fvid`  → 0x00000000, nobody;
+//	/fwd.b `dvid`  → 100 on the 24 copper ports, 1 on the two cages;
+//	/vlan.b        → VLANs 99 and 100, member mask 0x03ffffff — all 26 ports
+//	                 members of both.
 //
-// Aucune WRITE n'a been exercee sur ce hardware : ces tests eprouvent la decision,
-// pas la reaction de the device.
+// No WRITE has been exercised on this hardware: these tests try out the
+// decision, not the device's reaction.
 
-// modesDeReference charge le tableau /fwd.b `vlan` de la capture.
-func modesDeReference(t *testing.T) []uint32 {
+// referenceModes loads the /fwd.b `vlan` array of the capture.
+func referenceModes(t *testing.T) []uint32 {
 	t.Helper()
 	var fwd, err = ParseObject(capture(t, "fwd.b"))
 	if err != nil {
-		t.Fatalf("/fwd.b : %v", err)
+		t.Fatalf("/fwd.b: %v", err)
 	}
 	var modes, ok = fwd.Nums(FieldVLANMode)
 	if !ok || len(modes) != 26 {
-		t.Fatalf("/fwd.b « %s » : %d valeur(s), 26 attendues", FieldVLANMode, len(modes))
+		t.Fatalf("/fwd.b \"%s\": %d value(s), 26 expected", FieldVLANMode, len(modes))
 	}
 	return modes
 }
 
-// TestModeDeReferenceEstOptional : le prior de tous les tests de mode.
+// TestReferenceModeIsOptional: the premise of every mode test.
 //
-// L'reference device est en « optional » sur ses 26 ports, PAS en « disabled ».
-// C'est ce qui rend le garde-fou de planModeRaise verifiable dans les deux sens : sur
-// cette capture, rien ne doit be reveille.
-func TestModeDeReferenceEstOptional(t *testing.T) {
-	var modes = modesDeReference(t)
+// The reference device is "optional" on its 26 ports, NOT "disabled". That
+// is what makes planModeRaise's guard verifiable in both directions: on this
+// capture, nothing must be woken up.
+func TestReferenceModeIsOptional(t *testing.T) {
+	var modes = referenceModes(t)
 	var i int
 	for i = range modes {
 		if modes[i] != VLANModeOptional {
-			t.Fatalf("/fwd.b « %s »[%d] = %d, expected %d (optional) : la capture montre "+
-				"le default d'usine", FieldVLANMode, i, modes[i], VLANModeOptional)
+			t.Fatalf("/fwd.b \"%s\"[%d] = %d, expected %d (optional): the capture shows "+
+				"the factory default", FieldVLANMode, i, modes[i], VLANModeOptional)
 		}
 	}
 }
 
-// TestRienNEstResserreSurUnPortQuiFonctionne — LE refus qui protege un parc en
+// TestNothingIsTightenedOnAWorkingPort — THE refusal that protects a fleet in
 // service.
 //
-// `optional` → `enabled` RESSERRE un filtre sur un port qui marche : toute trame d'un
-// VLAN que la table ne declares pas cesse de passer a la seconde where c'est written.
-// meshcraft ne sait pas quels VLAN non declares transitent par un port, et personne ne
-// lui a requested de les couper. Meme chose, en pire, pour `enabled` → `strict`, qui
-// ajoute un filtre d'INGRESS.
+// `optional` → `enabled` TIGHTENS a filter on a port that works: every frame
+// of a VLAN the table does not declare stops passing the second it is
+// written. meshcraft does not know which undeclared VLANs transit through a
+// port, and nobody asked it to cut them. Same thing, worse, for `enabled` →
+// `strict`, which adds an INGRESS filter.
 //
-// Et RIEN n'est jamais abaisse : un exploitant qui a mis `strict` l'a voulu.
-func TestRienNEstResserreSurUnPortQuiFonctionne(t *testing.T) {
-	var membres = map[int]bool{1: true, 99: true, 100: true}
-	var protege = map[int]string{99: "plan"}
-	var cas = []struct {
-		nom  string
+// And NOTHING is ever lowered: an operator who set `strict` meant it.
+func TestNothingIsTightenedOnAWorkingPort(t *testing.T) {
+	var members = map[int]bool{1: true, 99: true, 100: true}
+	var protected = map[int]string{99: "plan"}
+	var cases = []struct {
+		name string
 		mode uint32
 	}{
-		{"optional n'est pas resserre", VLANModeOptional},
-		{"enabled n'est pas pousse en strict", VLANModeEnabled},
-		{"strict n'est jamais abaisse", VLANModeStrict},
+		{"optional is not tightened", VLANModeOptional},
+		{"enabled is not pushed to strict", VLANModeEnabled},
+		{"strict is never lowered", VLANModeStrict},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
-			var got = planModeRaise("SFP2", c.mode, membres, 1, true, protege, false)
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got = planModeRaise("SFP2", c.mode, members, 1, true, protected, false)
 			if got.Change {
-				t.Errorf("mode %d changed en %d : seul `disabled` se reveille",
+				t.Errorf("mode %d changed to %d: only `disabled` is woken up",
 					c.mode, got.Mode)
 			}
 			if got.Refused != "" {
-				t.Errorf("un mode qu'on ne touche pas n'a pas de refus a expliquer : %q",
+				t.Errorf("a mode we do not touch has no refusal to explain: %q",
 					got.Refused)
 			}
 		})
 	}
-	// Et `force` ne doit pas non plus resserrer : le bouton « forcer » leve les
-	// garde-fous de la pose, il n'autorise pas une pose que personne n'a demandee.
-	var got = planModeRaise("SFP2", VLANModeOptional, membres, 1, true, protege, true)
+	// And `force` must not tighten either: the "force" button lifts the
+	// write's guards, it does not authorise a write nobody asked for.
+	var got = planModeRaise("SFP2", VLANModeOptional, members, 1, true, protected, true)
 	if got.Change {
-		t.Errorf("force a resserre un port en optional : ce n'est pas ce que force veut "+
-			"dire (obtenu mode %d)", got.Mode)
+		t.Errorf("force tightened a port in optional: that is not what force means "+
+			"(got mode %d)", got.Mode)
 	}
 }
 
-// TestFiltrageReveilleSurUnPortEteint : une pose qui n'agit pas est une pose qui mene.
+// TestFilteringWokenUpOnAPortThatIsOff: a write that does not act is a write
+// that lies.
 //
-// Un port dont /fwd.b `vlan` vaut `disabled` IGNORE la table des VLAN. meshcraft
-// pouvait y write l'appartenance et le VLAN natif, relire, tout comparer, afficher
-// « conforme » — et le port continuait de laisser tout passer. La lecture le DISAIT
-// dans une note ; aucune pose ne le corrigeait, et le seul recours de l'exploitant
-// was d'aller cliquer dans l'interface de son switch.
-func TestFiltrageReveilleSurUnPortEteint(t *testing.T) {
-	var membres = map[int]bool{1: true, 99: true, 100: true}
-	var protege = map[int]string{99: "VLAN de management declared par the device"}
+// A port whose /fwd.b `vlan` is `disabled` IGNORES the VLAN table. meshcraft
+// could write membership and native VLAN there, read back, compare
+// everything, display "conforming" — and the port kept letting everything
+// through. The read SAID so in a note; no write fixed it, and the operator's
+// only recourse was to go and click in their switch's UI.
+func TestFilteringWokenUpOnAPortThatIsOff(t *testing.T) {
+	var members = map[int]bool{1: true, 99: true, 100: true}
+	var protected = map[int]string{99: "management VLAN declared by the device"}
 
-	// Port SANS lien : aucune session ne passe par there, le wake est sans risque.
-	var got = planModeRaise("Port1", VLANModeDisabled, membres, 100, false, protege, false)
+	// Port WITHOUT a link: no session goes through it, waking it is risk-free.
+	var got = planModeRaise("Port1", VLANModeDisabled, members, 100, false, protected, false)
 	if !got.Change || got.Mode != VLANModeEnabled {
-		t.Fatalf("un port off et sans lien doit be reveille en enabled : %+v", got)
+		t.Fatalf("a port that is off and without a link must be woken up to enabled: %+v", got)
 	}
 
-	// Port AVEC lien, membre de tout ce qui doit sortir de lui : le wake reste sur.
-	got = planModeRaise("SFP2", VLANModeDisabled, membres, 1, true, protege, false)
+	// Port WITH a link, member of everything that must leave it: waking it
+	// stays safe.
+	got = planModeRaise("SFP2", VLANModeDisabled, members, 1, true, protected, false)
 	if !got.Change || got.Mode != VLANModeEnabled {
-		t.Fatalf("un port actif membre de son natif ET du VLAN de management peut be "+
-			"reveille : %+v", got)
+		t.Fatalf("an active port that is a member of its native VLAN AND of the management "+
+			"VLAN can be woken up: %+v", got)
 	}
 }
 
-// TestFiltrageNonReveilleSiCaCouperait — le garde-fou du wake, dans ses deux cas.
+// TestFilteringNotWokenUpIfItWouldCut — the wake-up guard, in both its cases.
 //
-// `enabled` filtre a la SORTIE : le poser sur un port qui n'est pas membre d'un VLAN
-// fait tomber ce VLAN sur ce port. Sur un port qui porte un lien, cela veut dire
-// couper — et si ce port porte la session, couper l'administration d'un device qui
-// n'a ni SSH, ni Telnet, ni serial port.
+// `enabled` filters on EGRESS: setting it on a port that is not a member of a
+// VLAN drops that VLAN on that port. On a port that carries a link, that
+// means cutting — and if that port carries the session, cutting the
+// administration of a device that has neither SSH, nor Telnet, nor a serial
+// port.
 //
-// Le refus est RENDU, pas silencieux : sans lui, l'exploitant verrait « conforme » sur
-// un port dont la configuration reste decorative, et n'aurait aucune piste.
-func TestFiltrageNonReveilleSiCaCouperait(t *testing.T) {
-	var protege = map[int]string{99: "VLAN de management declared par the device"}
+// The refusal is RETURNED, not silent: without it, the operator would see
+// "conforming" on a port whose configuration stays decorative, and would have
+// no lead.
+func TestFilteringNotWokenUpIfItWouldCut(t *testing.T) {
+	var protected = map[int]string{99: "management VLAN declared by the device"}
 
-	// CAS 1 : pas membre de son propre VLAN natif. Le trafic untagged du port entre et
-	// ne ressort plus.
+	// CASE 1: not a member of its own native VLAN. The port's untagged
+	// traffic enters and no longer leaves.
 	var got = planModeRaise("SFP2", VLANModeDisabled, map[int]bool{99: true}, 100,
-		true, protege, false)
+		true, protected, false)
 	if got.Change {
-		t.Errorf("le filtrage a been enabled sur un port actif non membre de son VLAN "+
-			"natif : son trafic untagged serait jete (mode %d)", got.Mode)
+		t.Errorf("filtering was enabled on an active port that is not a member of its native "+
+			"VLAN: its untagged traffic would be dropped (mode %d)", got.Mode)
 	}
 	var expected string
-	for _, expected = range []string{"SFP2", "100", "SANS EFFET", "lien ACTIF"} {
+	for _, expected = range []string{"SFP2", "100", "WITHOUT EFFECT", "ACTIVE link"} {
 		if !strings.Contains(got.Refused, expected) {
-			t.Errorf("le refus doit contenir %q ; obtenu : %q", expected, got.Refused)
+			t.Errorf("the refusal must contain %q; got: %q", expected, got.Refused)
 		}
 	}
 
-	// CAS 2 : pas membre du VLAN de MANAGEMENT. C'est le cas grave — la panne ne se
-	// verrait que du cote de meshcraft, le trafic du site continuant de commuter.
+	// CASE 2: not a member of the MANAGEMENT VLAN. This is the serious case —
+	// the outage would only be visible from meshcraft's side, the site's
+	// traffic continuing to switch.
 	got = planModeRaise("SFP2", VLANModeDisabled, map[int]bool{100: true}, 100,
-		true, protege, false)
+		true, protected, false)
 	if got.Change {
-		t.Errorf("le filtrage a been enabled sur un port actif non membre du VLAN de "+
-			"management : l'administration tomberait (mode %d)", got.Mode)
+		t.Errorf("filtering was enabled on an active port that is not a member of the "+
+			"management VLAN: administration would drop (mode %d)", got.Mode)
 	}
 	for _, expected = range []string{"management", "99", "serial"} {
 		if !strings.Contains(got.Refused, expected) {
-			t.Errorf("le refus doit contenir %q ; obtenu : %q", expected, got.Refused)
+			t.Errorf("the refusal must contain %q; got: %q", expected, got.Refused)
 		}
 	}
 
-	// `force` leve ce garde-fou : geste explicite de l'exploitant, qui connait sa
-	// topologie mieux que meshcraft.
-	got = planModeRaise("SFP2", VLANModeDisabled, map[int]bool{}, 100, true, protege, true)
+	// `force` lifts this guard: an explicit gesture from the operator, who
+	// knows their topology better than meshcraft.
+	got = planModeRaise("SFP2", VLANModeDisabled, map[int]bool{}, 100, true, protected, true)
 	if !got.Change || got.Mode != VLANModeEnabled {
-		t.Errorf("force doit lever le garde-fou du wake : %+v", got)
+		t.Errorf("force must lift the wake-up guard: %+v", got)
 	}
 }
 
-// TestReveilDecideSurLAppartenanceDArrivee : la pose declares PUIS filtre, dans cet
-// ordre, et le calcul doit suivre le same ordre.
+// TestWakeUpDecidedOnTheArrivalMembership: the write declares THEN filters, in
+// that order, and the computation must follow the same order.
 //
-// Le garde-fou du wake se calcule sur l'appartenance TELLE QU'ELLE SERA — la table
-// est already completee quand PlanPorts decide. La juger sur l'appartenance d'AVANT
-// refuserait de wake le filtrage d'un port au moment precise where la pose lui donne
-// les appartenances qui le rendent sur : le port resterait a `disabled` a jamais, et
-// chaque passage de reconciliation reproduirait le same refus.
-func TestReveilDecideSurLAppartenanceDArrivee(t *testing.T) {
-	var current, rows = planDeReference(t)
-	// The device est off cote filtrage sur tous ses ports.
+// The wake-up guard is computed on the membership AS IT WILL BE — the table is
+// already completed when PlanPorts decides. Judging it on the BEFORE
+// membership would refuse to wake a port's filtering at the very moment the
+// write gives it the memberships that make it safe: the port would stay
+// `disabled` forever, and every reconciliation pass would reproduce the same
+// refusal.
+func TestWakeUpDecidedOnTheArrivalMembership(t *testing.T) {
+	var current, rows = referencePlan(t)
+	// The device has filtering off on all its ports.
 	var modes = make([]uint32, 26)
 
-	// Un VLAN 42 tout neuf, et SFP2 (le port qui porte le lien) qui le rejoint tagged
-	// en gardant son natif 1 et son 99.
+	// A brand-new VLAN 42, and SFP2 (the port carrying the link) joining it
+	// tagged while keeping its native 1 and its 99.
 	var table, _, err = withVLANs(rows, []VLAN{{ID: 42}}, 26, nil)
 	if err != nil {
-		t.Fatalf("completion refused : %v", err)
+		t.Fatalf("completion refused: %v", err)
 	}
 	var plan, planErr = PlanPorts(PortsInput{
 		Current: current, Table: table, Facade: facadeCSS326(), Modes: modes,
 		Desired: map[string]PortState{
 			"SFP2": {Mode: "trunk", PVID: 1, Tagged: []int{42, 99, 100}},
 		},
-		Protected: map[int]string{99: "VLAN de management declared par the device"},
+		Protected: map[int]string{99: "management VLAN declared by the device"},
 	})
 	if planErr != nil {
-		t.Fatalf("plan refused : %v", planErr)
+		t.Fatalf("plan refused: %v", planErr)
 	}
 	if len(plan.Skipped) != 0 {
-		t.Errorf("aucun refus expected : %v", plan.Skipped)
+		t.Errorf("no refusal expected: %v", plan.Skipped)
 	}
 	if len(plan.Changes) != 1 {
-		t.Fatalf("%d changement(s), expected 1 : %+v", len(plan.Changes), plan.Changes)
+		t.Fatalf("%d change(s), expected 1: %+v", len(plan.Changes), plan.Changes)
 	}
 	if !plan.Changes[0].RaiseMode || plan.Changes[0].Mode != VLANModeEnabled {
-		t.Errorf("le filtrage devait be reveille sur SFP2 : %+v", plan.Changes[0])
+		t.Errorf("filtering should have been woken up on SFP2: %+v", plan.Changes[0])
 	}
 	if !reflect.DeepEqual(plan.Changes[0].Join, []int{42}) {
-		t.Errorf("VLAN a rejoindre = %v, expected [42]", plan.Changes[0].Join)
+		t.Errorf("VLANs to join = %v, expected [42]", plan.Changes[0].Join)
 	}
 }
 
-// TestModesAbsentsNEmpechentPasLaPose : un firmware qui ne sert pas `vlan` ne doit pas
-// faire echouer une pose d'appartenance.
+// TestMissingModesDoNotPreventTheWrite: a firmware that does not serve `vlan`
+// must not make a membership write fail.
 //
-// Refuser la pose entire parce qu'on ne peut pas wake un filtrage serait refuser
-// de configurer un switch parce qu'on ne peut pas tout configurer.
-func TestModesAbsentsNEmpechentPasLaPose(t *testing.T) {
-	var current, rows = planDeReference(t)
+// Refusing the whole write because filtering cannot be woken up would mean
+// refusing to configure a switch because not everything can be configured.
+func TestMissingModesDoNotPreventTheWrite(t *testing.T) {
+	var current, rows = referencePlan(t)
 	var plan, err = PlanPorts(PortsInput{
 		Current: current, Table: rows, Facade: facadeCSS326(), Modes: nil,
 		Desired:   map[string]PortState{"Port1": {Mode: "access", PVID: 99}},
 		Protected: map[int]string{99: "plan"},
 	})
 	if err != nil {
-		t.Fatalf("plan refused faute de tableau des modes : %v", err)
+		t.Fatalf("plan refused for lack of a mode array: %v", err)
 	}
 	if len(plan.Changes) != 1 || plan.Changes[0].PVID != 99 {
-		t.Fatalf("l'appartenance doit rester posable : %+v", plan.Changes)
+		t.Fatalf("membership must remain settable: %+v", plan.Changes)
 	}
 	if plan.Changes[0].RaiseMode {
-		t.Error("aucun mode ne doit be written quand le firmware ne sert pas le champ")
+		t.Error("no mode may be written when the firmware does not serve the field")
 	}
 }
 
-// --- Le VLAN de management, jamais orphelin ---
+// --- The management VLAN, never orphaned ---
 
-// TestVLANDeManagementToujoursDansLaTable : le plan du site est cense le declare,
-// rien ne le garantit.
+// TestManagementVLANAlwaysInTheTable: the site plan is supposed to declare
+// it, nothing guarantees it.
 //
-// Un site importe d'un fichier fabrique, un device dont `avln` designe un VLAN que
-// personne n'a modelise : la pose posait alors tout le reste et laissait precisely le
-// VLAN par lequel elle est arrivee hors de la table.
-func TestVLANDeManagementToujoursDansLaTable(t *testing.T) {
+// A site imported from a hand-made file, a device whose `avln` designates a
+// VLAN nobody modelled: the write then set everything else and left out of
+// the table precisely the VLAN it arrived through.
+func TestManagementVLANAlwaysInTheTable(t *testing.T) {
 	var got = wantedVLANs(
 		map[string]PortState{"Port1": {Mode: "access", PVID: 20}},
 		[]VLAN{{ID: 20, Name: "users"}},
-		map[int]string{7: "VLAN de management du plan du site",
-			99: "VLAN de management declared par the device"})
+		map[int]string{7: "management VLAN from the site plan",
+			99: "management VLAN declared by the device"})
 
 	var expected = []VLAN{{ID: 7}, {ID: 20, Name: "users"}, {ID: 99}}
 	if !reflect.DeepEqual(got, expected) {
-		t.Errorf("VLAN voulus = %+v, expected %+v : les DEUX VLAN de management doivent y "+
-			"be, celui du plan comme celui que the device declares", got, expected)
+		t.Errorf("wanted VLANs = %+v, expected %+v: BOTH management VLANs must be "+
+			"there, the plan's as well as the one the device declares", got, expected)
 	}
-	// Le motif destine a l'exploitant ne doit PAS devenir un nom de VLAN sur
-	// the device : `nm` fait 16 octets, et personne n'a choisi ce label.
+	// The reason meant for the operator must NOT become a VLAN name on the
+	// device: `nm` is 16 bytes, and nobody chose that label.
 	var v VLAN
 	for _, v = range got {
 		if v.ID != 20 && v.Name != "" {
-			t.Errorf("le VLAN %d a recu le nom %q, qui est un motif d'UI", v.ID, v.Name)
+			t.Errorf("VLAN %d received the name %q, which is a UI reason", v.ID, v.Name)
 		}
 	}
 }
 
-// TestLigneDeManagementCreeeAvecLesPortsActifs — le trap le moins intuitif de cette
-// plateforme.
+// TestManagementRowCreatedWithTheActivePorts — the least intuitive trap of
+// this platform.
 //
-// Create une ligne de VLAN sur SwOS fait PASSER ce VLAN du regime « inconnu de la
-// table » au regime « declared, donc filtre ». Sur un port en mode `optional` — le
-// default d'usine, et state des 26 ports de la capture — un VLAN que la table ne
-// declares pas circule librement ; le declare avec un masque de membres VIDE le fait
-// tomber partout, instantanement.
+// Creating a VLAN row on SwOS MOVES that VLAN from the "unknown to the table"
+// regime to the "declared, hence filtered" regime. On a port in `optional`
+// mode — the factory default, and the state of all 26 ports of the capture —
+// a VLAN the table does not declare flows freely; declaring it with an EMPTY
+// member mask drops it everywhere, instantly.
 //
-// Autrement dit : la way la plus rapide de rendre un CSS muet est de create proprement
-// la ligne de son VLAN de management.
-func TestLigneDeManagementCreeeAvecLesPortsActifs(t *testing.T) {
-	var current, rows = planDeReference(t)
-	// The device se dit administre en VLAN 7, qui n'existe pas dans sa table.
-	var protege = map[int]string{7: "VLAN de management declared par the device"}
+// In other words: the quickest way to make a CSS mute is to neatly create the
+// row of its management VLAN.
+func TestManagementRowCreatedWithTheActivePorts(t *testing.T) {
+	var current, rows = referencePlan(t)
+	// The device says it is administered in VLAN 7, which does not exist in
+	// its table.
+	var protected = map[int]string{7: "management VLAN declared by the device"}
 
-	var seed = mgmtSeed(current, protege, rows, facadeCSS326())
-	// SFP2 est le SEUL port qui porte un lien dans la capture (/link.b lnk:0x02000000).
+	var seed = mgmtSeed(current, protected, rows, facadeCSS326())
+	// SFP2 is the ONLY port carrying a link in the capture (/link.b lnk:0x02000000).
 	if !reflect.DeepEqual(seed, map[int][]int{7: {25}}) {
-		t.Fatalf("semis = %v, expected {7: [25]} : seul SFP2 porte un lien", seed)
+		t.Fatalf("seed = %v, expected {7: [25]}: only SFP2 carries a link", seed)
 	}
 
 	var out, created, err = withVLANs(rows, []VLAN{{ID: 7}}, 26, seed)
 	if err != nil {
-		t.Fatalf("completion refused : %v", err)
+		t.Fatalf("completion refused: %v", err)
 	}
 	if !reflect.DeepEqual(created, []int{7}) {
-		t.Fatalf("VLAN created = %v, expected [7]", created)
+		t.Fatalf("VLANs created = %v, expected [7]", created)
 	}
 	var row = rowFor(out, 7)
 	if row == nil {
-		t.Fatal("la ligne du VLAN 7 n'a pas been created")
+		t.Fatal("the VLAN 7 row was not created")
 	}
-	var membre, ok = row.Bit(FieldVLANMembers, 25)
-	if !ok || !membre {
-		t.Error("la ligne du VLAN de management a been created SANS le port actif : sur un " +
-			"port en mode optional, declare un VLAN sans membre le fait tomber — c'est " +
-			"exactement le geste qui coupe access")
+	var member, ok = row.Bit(FieldVLANMembers, 25)
+	if !ok || !member {
+		t.Error("the management VLAN row was created WITHOUT the active port: on a " +
+			"port in optional mode, declaring a VLAN without members drops it — that is " +
+			"exactly the gesture that cuts access")
 	}
-	// Les ports SANS lien n'y entrent pas : le semis est large, pas total.
-	membre, ok = row.Bit(FieldVLANMembers, 0)
-	if !ok || membre {
-		t.Error("Port1 ne porte aucun lien : il n'a pas a entrer dans le VLAN de management")
+	// Ports WITHOUT a link do not enter it: the seed is broad, not total.
+	member, ok = row.Bit(FieldVLANMembers, 0)
+	if !ok || member {
+		t.Error("Port1 carries no link: it has no business entering the management VLAN")
 	}
 }
 
-// TestPasDeSemisQuandLeVLANDeManagementExisteDeja : l'appartenance applied par
-// l'exploitant n'est pas a nous.
-func TestPasDeSemisQuandLeVLANDeManagementExisteDeja(t *testing.T) {
-	var current, rows = planDeReference(t)
-	// Le VLAN 99 EST dans la table de la capture.
+// TestNoSeedWhenTheManagementVLANAlreadyExists: the membership the operator
+// set is not ours.
+func TestNoSeedWhenTheManagementVLANAlreadyExists(t *testing.T) {
+	var current, rows = referencePlan(t)
+	// VLAN 99 IS in the capture's table.
 	var seed = mgmtSeed(current, map[int]string{99: "plan"}, rows, facadeCSS326())
 	if len(seed) != 0 {
-		t.Errorf("semis = %v, expected vide : le VLAN 99 est already declared, son "+
-			"appartenance est celle de l'exploitant", seed)
+		t.Errorf("seed = %v, expected empty: VLAN 99 is already declared, its "+
+			"membership is the operator's", seed)
 	}
-	// Le VLAN 1 n'entre JAMAIS dans la table, same comme VLAN de management : le create
-	// changerait le comportement de tout le trafic untagged de the device.
+	// VLAN 1 NEVER enters the table, even as a management VLAN: creating it
+	// would change the behaviour of all the device's untagged traffic.
 	seed = mgmtSeed(current, map[int]string{1: "plan"}, rows, facadeCSS326())
 	if len(seed) != 0 {
-		t.Errorf("semis = %v, expected vide : le VLAN 1 est le default implicite du "+
-			"hardware et n'a pas de ligne", seed)
+		t.Errorf("seed = %v, expected empty: VLAN 1 is the hardware's implicit "+
+			"default and has no row", seed)
 	}
 }
 
-// --- Le garde-fou du natif FREEZES le port en entier ---
+// --- The native-VLAN guard FREEZES the whole port ---
 
-// TestUnPortEpargneNEstPasReconfigureAMoitie
+// TestASparedPortIsNotHalfReconfigured
 //
-// Une version qui refusait le seul changement de VLAN natif et continuait sur
-// l'appartenance produisait exactement l'anomalie que la lecture state signale : un
-// port dont le natif reste 99 et dont l'appartenance est rewritten pour le VLAN 100. Le
-// trafic untagged entre alors en 99 sur un port qui n'est plus membre de 99, et rien
-// n'en sort. Sur le port qui porte la session, c'est la panne exacte que le garde-fou
-// existe pour empecher — il l'aurait causee lui-same.
-func TestUnPortEpargneNEstPasReconfigureAMoitie(t *testing.T) {
-	var current, rows = planDeReference(t)
-	// SFP2 porte le lien ET l'administration non tagged : c'est le cas classique.
+// A version that refused only the native-VLAN change and continued with
+// membership produced exactly the anomaly the state read flags: a port whose
+// native VLAN stays 99 and whose membership is rewritten for VLAN 100.
+// Untagged traffic then enters on 99 on a port that is no longer a member of
+// 99, and nothing comes out. On the port carrying the session, that is the
+// exact outage the guard exists to prevent — it would have caused it itself.
+func TestASparedPortIsNotHalfReconfigured(t *testing.T) {
+	var current, rows = referencePlan(t)
+	// SFP2 carries the link AND untagged administration: the classic case.
 	current.Ports["SFP2"] = PortState{Mode: "access", PVID: 99}
 
 	var plan, err = PlanPorts(PortsInput{
 		Current: current, Table: rows, Facade: facadeCSS326(),
-		Modes:     modesDeReference(t),
+		Modes:     referenceModes(t),
 		Desired:   map[string]PortState{"SFP2": {Mode: "access", PVID: 100}},
-		Protected: map[int]string{99: "VLAN de management du plan du site"},
+		Protected: map[int]string{99: "management VLAN from the site plan"},
 	})
 	if err != nil {
-		t.Fatalf("plan refused : %v", err)
+		t.Fatalf("plan refused: %v", err)
 	}
 	if len(plan.Changes) != 0 {
-		t.Errorf("le port epargne ne doit recevoir AUCUNE write, pas same une "+
-			"appartenance : %+v", plan.Changes)
+		t.Errorf("the spared port must receive NO write, not even a "+
+			"membership: %+v", plan.Changes)
 	}
 	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0], "UNTAGGED") {
 		t.Fatalf("a single refusal, the native one: %v", plan.Skipped)
 	}
 }
 
-// --- La lecture : les trois champs par port que state taisait ---
+// --- The read: the three per-port fields the state kept quiet about ---
 
-// TestAucuneAnomalieSurLaCaptureReelle : le prior, et il compte.
+// TestNoAnomalyOnTheRealCapture: the premise, and it matters.
 //
-// L'reference device est consistent — 26 ports membres des VLAN 99 et 100, natifs
-// 100 et 1, `vlni` a « any » partout, `fvid` a zero. Une fonction d'anomalies qui
-// signalerait quelque chose ici serait une fonction qui crie en permanence, donc une
-// fonction qu'on apprend a ne plus lire.
-func TestAucuneAnomalieSurLaCaptureReelle(t *testing.T) {
+// The reference device is consistent — 26 ports members of VLANs 99 and 100,
+// natives 100 and 1, `vlni` at "any" everywhere, `fvid` at zero. An anomaly
+// function that flagged something here would be a function that cries all the
+// time, hence a function one learns to stop reading.
+func TestNoAnomalyOnTheRealCapture(t *testing.T) {
 	var vlanRows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
-		t.Fatalf("/vlan.b : %v", err)
+		t.Fatalf("/vlan.b: %v", err)
 	}
 	var fwd *Page
 	fwd, err = ParseObject(capture(t, "fwd.b"))
 	if err != nil {
-		t.Fatalf("/fwd.b : %v", err)
+		t.Fatalf("/fwd.b: %v", err)
 	}
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
 	if len(got) != 0 {
-		t.Errorf("la configuration de l'reference device est consistent : %v", got)
+		t.Errorf("the reference device's configuration is consistent: %v", got)
 	}
 }
 
-// TestAnomalieForceVLANID : le champ qui fait mentir toute la front panel.
+// TestAnomalyForceVLANID: the field that makes the whole faceplate lie.
 //
-// Un port en « Force VLAN ID » range TOUT son trafic entrant dans son VLAN natif,
-// tags comprises. Ce n'est donc PAS un trunk, quoi que la table dise de son
-// appartenance — et the UI affichait pourtant sa liste de VLAN tagged sans reserve.
-func TestAnomalieForceVLANID(t *testing.T) {
+// A port on "Force VLAN ID" puts ALL its incoming traffic into its native
+// VLAN, tags included. It is therefore NOT a trunk, whatever the table says
+// about its membership — and yet the UI displayed its list of tagged VLANs
+// without reservation.
+func TestAnomalyForceVLANID(t *testing.T) {
 	var vlanRows, _ = ParseTable(capture(t, "vlan.b"))
 	var fwd, _ = ParseObject(capture(t, "fwd.b"))
-	// Port3 (index 2) passe en Force VLAN ID.
+	// Port3 (index 2) switches to Force VLAN ID.
 	if !fwd.SetBit(FieldForceVLAN, 2, true) {
-		t.Fatal("le masque fvid de la capture doit be modifiable")
+		t.Fatal("the capture's fvid mask must be modifiable")
 	}
 
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
 	if len(got) == 0 {
-		t.Fatal("un port en Force VLAN ID doit be flagged")
+		t.Fatal("a port on Force VLAN ID must be flagged")
 	}
 	var expected string
-	for _, expected = range []string{"FORCE VLAN ID", "Port3", "PAS des trunks",
-		"does not write jamais"} {
+	for _, expected = range []string{"FORCE VLAN ID", "Port3", "NOT trunks",
+		"never writes"} {
 		if !strings.Contains(got[0], expected) {
-			t.Errorf("la note doit contenir %q ; obtenu : %q", expected, got[0])
+			t.Errorf("the note must contain %q; got: %q", expected, got[0])
 		}
 	}
 }
 
-// TestAnomaliePVIDSansAppartenance : l'equivalent SwOS du default reel du CRS326.
+// TestAnomalyPVIDWithoutMembership: the SwOS equivalent of the CRS326's real
+// fault.
 //
-// Sur SwOS, une trame ne sort d'un port que s'il est membre du VLAN. Un port dont le
-// VLAN natif n'est pas dans son appartenance range son trafic untagged dans un VLAN
-// hence rien ne ressort. The device l'accepte sans rien signaler.
-func TestAnomaliePVIDSansAppartenance(t *testing.T) {
+// On SwOS, a frame leaves a port only if it is a member of the VLAN. A port
+// whose native VLAN is not in its membership puts its untagged traffic into a
+// VLAN nothing comes out of. The device accepts it without flagging anything.
+func TestAnomalyPVIDWithoutMembership(t *testing.T) {
 	var vlanRows, _ = ParseTable(capture(t, "vlan.b"))
 	var fwd, _ = ParseObject(capture(t, "fwd.b"))
-	// Port1 (index 0) sort du VLAN 100, qui reste son VLAN natif.
+	// Port1 (index 0) leaves VLAN 100, which stays its native VLAN.
 	var row = rowFor(vlanRows, 100)
 	if row == nil || !row.SetBit(FieldVLANMembers, 0, false) {
-		t.Fatal("le masque de membres du VLAN 100 doit be modifiable")
+		t.Fatal("the VLAN 100 member mask must be modifiable")
 	}
 
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
 	if len(got) != 1 {
-		t.Fatalf("%d note(s), expected 1 : %v", len(got), got)
+		t.Fatalf("%d note(s), expected 1: %v", len(got), got)
 	}
 	var expected string
-	for _, expected = range []string{"PVID SANS APPARTENANCE", "Port1", "ne ressort nulle part"} {
+	for _, expected = range []string{"PVID WITHOUT MEMBERSHIP", "Port1", "leaves nowhere"} {
 		if !strings.Contains(got[0], expected) {
-			t.Errorf("la note doit contenir %q ; obtenu : %q", expected, got[0])
+			t.Errorf("the note must contain %q; got: %q", expected, got[0])
 		}
 	}
 }
 
-// TestAnomalieVLANNatifAbsentDeLaTable : a ne pas confondre avec le VLAN 1.
+// TestAnomalyNativeVLANAbsentFromTheTable: not to be confused with VLAN 1.
 //
-// Un VLAN natif sans ligne dans /vlan.b n'a aucun membre : rien ne peut en sortir vers
-// un autre port. Le VLAN 1, lui, est le default implicite du hardware et n'a
-// LEGITIMATELY pas de ligne — les deux cages de la capture sont dans ce cas, et les
-// signaler ferait crier la note sur tout device sorti d'usine.
-func TestAnomalieVLANNatifAbsentDeLaTable(t *testing.T) {
+// A native VLAN without a row in /vlan.b has no member: nothing can leave it
+// towards another port. VLAN 1, for its part, is the hardware's implicit
+// default and LEGITIMATELY has no row — the capture's two cages are in that
+// case, and flagging them would make the note cry on every factory-fresh
+// device.
+func TestAnomalyNativeVLANAbsentFromTheTable(t *testing.T) {
 	var vlanRows, _ = ParseTable(capture(t, "vlan.b"))
 	var fwd, _ = ParseObject(capture(t, "fwd.b"))
 	var dvid, ok = fwd.Nums(FieldDefaultVLAN)
 	if !ok {
-		t.Fatal("/fwd.b dvid illisible")
+		t.Fatal("/fwd.b dvid unreadable")
 	}
-	dvid[0] = 300 // Port1 en VLAN natif 300, absent de la table
+	dvid[0] = 300 // Port1 in native VLAN 300, absent from the table
 	fwd.SetNums(FieldDefaultVLAN, dvid)
 
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
 	if len(got) != 1 {
-		t.Fatalf("%d note(s), expected 1 : %v", len(got), got)
+		t.Fatalf("%d note(s), expected 1: %v", len(got), got)
 	}
-	if !strings.Contains(got[0], "VLAN NATIF ABSENT") || !strings.Contains(got[0], "Port1") {
-		t.Errorf("note inattendue : %q", got[0])
+	if !strings.Contains(got[0], "NATIVE VLAN ABSENT") || !strings.Contains(got[0], "Port1") {
+		t.Errorf("unexpected note: %q", got[0])
 	}
-	// Les deux cages sont en VLAN natif 1 sans ligne : la note ne doit PAS les citer.
+	// The two cages are in native VLAN 1 without a row: the note must NOT cite
+	// them.
 	if strings.Contains(got[0], "SFP1") || strings.Contains(got[0], "SFP2") {
-		t.Errorf("le VLAN 1 n'a legitimately pas de ligne : %q", got[0])
+		t.Errorf("VLAN 1 legitimately has no row: %q", got[0])
 	}
 }
 
-// TestAnomalieVLANReceiveIncoherent : le champ que meshcraft does not write pas mais lit.
+// TestAnomalyInconsistentVLANReceive: the field meshcraft does not write but
+// reads.
 //
-// Un access port en « only tagged » jette tout son trafic — un poste branche there n'a
-// rien qui passe. Un trunk en « only untagged » ne fonctionne que dans un sens. Les
-// deux sont configures, actifs, et silencieux.
-func TestAnomalieVLANReceiveIncoherent(t *testing.T) {
+// An access port on "only tagged" drops all its traffic — a workstation
+// plugged in there gets nothing through. A trunk on "only untagged" works in
+// one direction only. Both are configured, active, and silent.
+func TestAnomalyInconsistentVLANReceive(t *testing.T) {
 	var vlanRows, _ = ParseTable(capture(t, "vlan.b"))
 	var fwd, _ = ParseObject(capture(t, "fwd.b"))
 	var recv, ok = fwd.Nums(FieldVLANReceive)
 	if !ok {
-		t.Fatal("/fwd.b vlni illisible")
+		t.Fatal("/fwd.b vlni unreadable")
 	}
-	// Port1 est un trunk dans la capture (natif 100, membre du 99) : « only untagged » y
-	// est incoherent.
+	// Port1 is a trunk in the capture (native 100, member of 99): "only
+	// untagged" is inconsistent there.
 	recv[0] = 2
 	fwd.SetNums(FieldVLANReceive, recv)
 
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
 	if len(got) != 1 {
-		t.Fatalf("%d note(s), expected 1 : %v", len(got), got)
+		t.Fatalf("%d note(s), expected 1: %v", len(got), got)
 	}
-	if !strings.Contains(got[0], "TRUNK QUI N'ACCEPTE QUE LE UNTAGGED") ||
+	if !strings.Contains(got[0], "TRUNK THAT ACCEPTS ONLY UNTAGGED") ||
 		!strings.Contains(got[0], "Port1") {
-		t.Errorf("note inattendue : %q", got[0])
+		t.Errorf("unexpected note: %q", got[0])
 	}
 
-	// L'autre sens : un port d'ACCESS en « only tagged ». On le fabrique en retirant Port1
-	// du VLAN 99, ce qui en fait un access pur au VLAN 100.
+	// The other direction: an ACCESS port on "only tagged". It is made by
+	// removing Port1 from VLAN 99, which makes it a pure access port in VLAN
+	// 100.
 	fwd, _ = ParseObject(capture(t, "fwd.b"))
 	recv, _ = fwd.Nums(FieldVLANReceive)
 	recv[0] = 1
 	fwd.SetNums(FieldVLANReceive, recv)
 	var row = rowFor(vlanRows, 99)
 	if row == nil || !row.SetBit(FieldVLANMembers, 0, false) {
-		t.Fatal("le masque de membres du VLAN 99 doit be modifiable")
+		t.Fatal("the VLAN 99 member mask must be modifiable")
 	}
 
 	got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
-	var trouve bool
+	var found bool
 	var note string
 	for _, note = range got {
-		if strings.Contains(note, "PORT ACCESS QUI N'ACCEPTE QUE LE TAGGED") &&
+		if strings.Contains(note, "ACCESS PORT THAT ACCEPTS ONLY TAGGED") &&
 			strings.Contains(note, "Port1") {
-			trouve = true
+			found = true
 		}
 	}
-	if !trouve {
-		t.Errorf("un access port en « only tagged » doit be flagged : %v", got)
+	if !found {
+		t.Errorf("an access port on \"only tagged\" must be flagged: %v", got)
 	}
 }
 
-// TestAnomalieStrictSansAppartenance : le mode le plus dur, sur un port qu'il rend
-// muet.
+// TestAnomalyStrictWithoutMembership: the harshest mode, on a port it makes
+// mute.
 //
-// `strict` control l'appartenance A L'INGRESS. Un port en strict qui n'est pas membre
-// de son propre VLAN natif jette son trafic untagged from la receive.
-func TestAnomalieStrictSansAppartenance(t *testing.T) {
+// `strict` checks membership ON INGRESS. A port on strict that is not a
+// member of its own native VLAN drops its untagged traffic on receive.
+func TestAnomalyStrictWithoutMembership(t *testing.T) {
 	var vlanRows, _ = ParseTable(capture(t, "vlan.b"))
 	var fwd, _ = ParseObject(capture(t, "fwd.b"))
 	var modes, ok = fwd.Nums(FieldVLANMode)
 	if !ok {
-		t.Fatal("/fwd.b vlan illisible")
+		t.Fatal("/fwd.b vlan unreadable")
 	}
 	modes[0] = VLANModeStrict
 	fwd.SetNums(FieldVLANMode, modes)
 	var row = rowFor(vlanRows, 100)
 	if row == nil || !row.SetBit(FieldVLANMembers, 0, false) {
-		t.Fatal("le masque de membres du VLAN 100 doit be modifiable")
+		t.Fatal("the VLAN 100 member mask must be modifiable")
 	}
 
 	var got = vlanAnomalies(vlanRows, fwd, facadeCSS326())
-	var trouve bool
+	var found bool
 	var note string
 	for _, note = range got {
-		if strings.Contains(note, "FILTRAGE STRICT SANS APPARTENANCE") &&
+		if strings.Contains(note, "STRICT FILTERING WITHOUT MEMBERSHIP") &&
 			strings.Contains(note, "Port1") {
-			trouve = true
+			found = true
 		}
 	}
-	if !trouve {
-		t.Errorf("un port en strict non membre de son natif doit be flagged : %v", got)
+	if !found {
+		t.Errorf("a port on strict that is not a member of its native VLAN must be flagged: %v", got)
 	}
 }
 
-// TestAppartenanceDemandeeContientLeNatif : sur SwOS, un port doit be MEMBRE du VLAN
-// qui sort untagged de lui.
+// TestAskedMembershipIncludesTheNative: on SwOS, a port must be a MEMBER of
+// the VLAN that leaves it untagged.
 //
-// Le confondre avec la liste des VLAN tagged est ce qui produit un PVID orphelin, donc
-// l'anomalie testee juste au-dessus.
-func TestAppartenanceDemandeeContientLeNatif(t *testing.T) {
+// Confusing it with the list of tagged VLANs is what produces an orphaned
+// PVID, hence the anomaly tested just above.
+func TestAskedMembershipIncludesTheNative(t *testing.T) {
 	var got = askedVLANs(PortState{Mode: "trunk", PVID: 100, Tagged: []int{99, 30}})
 	if !reflect.DeepEqual(got, []int{30, 99, 100}) {
-		t.Errorf("appartenance demandee = %v, expected [30 99 100] triee, natif compris", got)
+		t.Errorf("asked membership = %v, expected [30 99 100] sorted, native included", got)
 	}
-	// Un natif a zero veut dire « inchange », jamais « VLAN 0 » : SwOS n'en a pas.
+	// A native at zero means "unchanged", never "VLAN 0": SwOS has none.
 	got = askedVLANs(PortState{Mode: "trunk", Tagged: []int{99}})
 	if !reflect.DeepEqual(got, []int{99}) {
-		t.Errorf("appartenance demandee = %v, expected [99] : un natif a zero n'existe pas", got)
+		t.Errorf("asked membership = %v, expected [99]: a native at zero does not exist", got)
 	}
-	// Un VLAN a la fois natif et tagged ne compte qu'une fois.
+	// A VLAN both native and tagged counts only once.
 	got = askedVLANs(PortState{Mode: "trunk", PVID: 99, Tagged: []int{99}})
 	if !reflect.DeepEqual(got, []int{99}) {
-		t.Errorf("appartenance demandee = %v, expected [99] sans doublon", got)
+		t.Errorf("asked membership = %v, expected [99] without duplicates", got)
 	}
 }

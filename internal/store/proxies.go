@@ -129,7 +129,7 @@ func (s *Store) ListProxies(ctx context.Context, all bool, siteIDs []string) ([]
 // This identity is not stylistic vanity. Coverage is the only entry to a site's
 // devices — a confidentiality boundary, cf. migration 0022 — and attachment to a
 // non-covering proxy does NOT move collection: it removes it, without anything
-// failing (TestRattachementNeDonnePasLaCouverture). This function is what makes that
+// failing (TestAttachmentDoesNotGrantCoverage). This function is what makes that
 // trap unreachable: it both offers only valid choices and rejects the others. The day
 // the two expressions diverge, it would offer silently sterile attachments — they must
 // move together.

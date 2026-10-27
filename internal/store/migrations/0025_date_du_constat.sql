@@ -1,32 +1,31 @@
--- Depuis QUAND l'équipement est dans l'état que `status` annonce.
+-- SINCE WHEN the device has been in the state `status` announces.
 --
--- `status` seul ne se lit pas. « unknown » y mélangeait deux situations qui
--- n'appellent pas la même réaction : un équipement JAMAIS observé — adopté il y a
--- cinq minutes, pas encore pingué — et un équipement dont la surveillance a bien
--- établi un constat que le contrôleur n'a jamais reçu. Le second cas s'est produit :
--- un CSS326 est resté « unknown » dix-neuf heures alors qu'il répondait sans faute,
--- sa seule transition ayant disparu dans une coupure de tunnel (réparé par la
--- réannonce à la reconnexion, cf. tunnel.Event.Resync — cette colonne rend le trou
--- VISIBLE si jamais il se reformait ailleurs).
+-- `status` alone cannot be read. "unknown" mixed two situations that do not
+-- call for the same reaction: a device NEVER observed — adopted five minutes
+-- ago, not pinged yet — and a device whose monitoring did establish a finding
+-- the controller never received. The second case happened: a CSS326 stayed
+-- "unknown" for nineteen hours while it answered flawlessly, its only
+-- transition having vanished in a tunnel outage (fixed by the re-announcement
+-- on reconnection, see tunnel.Event.Resync — this column makes the hole VISIBLE
+-- should it ever form again elsewhere).
 --
--- NULL = jamais observé. C'est la même convention que `observed_at` juste au-dessus,
--- et pour la même raison : on ne prétend pas savoir.
+-- NULL = never observed. Same convention as `observed_at` just above, and for
+-- the same reason: we do not pretend to know.
 alter table devices
   add column if not exists status_at timestamptz;
 
--- Ce que cette date est, exactement — et ce qu'elle N'EST PAS.
+-- What this date is, exactly — and what it is NOT.
 --
--- Elle marque le moment où le constat courant a été ÉTABLI, pas le moment où
--- l'équipement a été vu pour la dernière fois. La nuance est réelle et il faut la
--- tenir : la surveillance ne remonte que des TRANSITIONS, donc un équipement en
--- ligne depuis trois mois porte une date vieille de trois mois sans que rien ne soit
--- en retard. Lire cette colonne comme une fraîcheur ferait donc alerter sur le parc
--- le plus sain.
+-- It marks the moment the current finding was ESTABLISHED, not the moment the
+-- device was last seen. The nuance is real and must be held: monitoring only
+-- reports TRANSITIONS, so a device online for three months carries a
+-- three-month-old date without anything being late. Reading this column as a
+-- freshness would therefore raise alerts on the healthiest fleet.
 --
--- Ce qu'elle permet, en revanche : dire « injoignable depuis 2 h » plutôt
--- qu'« injoignable », et distinguer « jamais observé » de tout le reste. Une vraie
--- mesure de fraîcheur demanderait un battement périodique du proxy — non construit,
--- et c'est un ajout au protocole, pas une lecture de cette colonne.
+-- What it does allow: saying "unreachable for 2 h" rather than "unreachable",
+-- and telling "never observed" from everything else. A real freshness measure
+-- would require a periodic heartbeat from the proxy — not built, and that is an
+-- addition to the protocol, not a reading of this column.
 comment on column devices.status_at is
   'Date d''établissement du constat de joignabilité (NULL = jamais observé). '
   'PAS une date de dernière vue : la surveillance ne remonte que des transitions.';

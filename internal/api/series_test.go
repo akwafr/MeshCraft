@@ -28,12 +28,12 @@ func dev(id, status string, ports map[string]any) model.Device {
 const idA = "11111111-1111-1111-1111-111111111111"
 const idB = "22222222-2222-2222-2222-222222222222"
 
-// TestAucuneRequeteSansMatcheurDEquipement — gate that prevents cross-site leakage.
+// TestNoQueryWithoutADeviceMatcher — gate that prevents cross-site leakage.
 //
 // All exit paths return an EMPTY string, and the caller must then send NOTHING.
 // Worst case: a well-formed query without a matcher succeeds, and one site's
 // chart shows traffic for the entire instance.
-func TestAucuneRequeteSansMatcheurDEquipement(t *testing.T) {
+func TestNoQueryWithoutADeviceMatcher(t *testing.T) {
 	var cas = []struct {
 		name   string
 		query  string
@@ -45,7 +45,7 @@ func TestAucuneRequeteSansMatcheurDEquipement(t *testing.T) {
 			portRateQuery([]string{"*", "..", "d1"}, metricbuf.MetricIfInOctets),
 			"malformed id never enters a query"},
 		{"metric outside vocabulary",
-			portRateQuery([]string{idA}, "meshcraft_inventee"),
+			portRateQuery([]string{idA}, "meshcraft_invented"),
 			"vocabulary is CLOSED: product constants only"},
 		{"metric outside vocabulary, site side",
 			siteRateQuery([]model.Device{dev(idA, "ok", nil)}, "up"),
@@ -64,12 +64,16 @@ func TestAucuneRequeteSansMatcheurDEquipement(t *testing.T) {
 	}
 }
 
-// TestLaRequeteParPortCadreEtFiltre: three elements that make it correct.
-func TestLaRequeteParPortCadreEtFiltre(t *testing.T) {
+// TestThePerPortQueryFramesAndFilters: three elements that make it correct.
+func TestThePerPortQueryFramesAndFilters(t *testing.T) {
 	var q = portRateQuery([]string{idA, idB, "not-a-uuid"}, metricbuf.MetricIfInOctets)
 	var want = []string{
 		metricbuf.MetricIfInOctets, `device=~"` + idA + "|" + idB + `"`,
-		`iftype="6"`, "[120s]", "* 8 / 1e6",
+		// `=~"6|"`: Ethernet by SNMP's iftype, OR no iftype at all — the gNMI
+		// label shape. The strict form excluded every streaming device's ports
+		// from every rate consumer while the store held them fresh (core01,
+		// measured 2026-08-12: 0 series with iftype="6", 65 without).
+		`iftype=~"6|"`, "[120s]", "* 8 / 1e6",
 	}
 	var m string
 	for _, m = range want {
@@ -87,12 +91,12 @@ func TestLaRequeteParPortCadreEtFiltre(t *testing.T) {
 	}
 }
 
-// TestLaSommeDUnSiteExclutLesUplinks — DOUBLE COUNTING trap.
+// TestASiteSumExcludesUplinks — DOUBLE COUNTING trap.
 //
 // Access port traffic exits via uplink: summing everything counts every octet
 // twice. Replacing a simulated curve with a measurement that DOUBLES display
 // would read as an incident, and this test prevents that.
-func TestLaSommeDUnSiteExclutLesUplinks(t *testing.T) {
+func TestASiteSumExcludesUplinks(t *testing.T) {
 	var d = dev(idA, "ok", map[string]any{
 		"GE1":  map[string]any{"mode": "access", "pvid": 100},
 		"GE49": map[string]any{"mode": "trunk", "tagged": "all"},
@@ -110,12 +114,12 @@ func TestLaSommeDUnSiteExclutLesUplinks(t *testing.T) {
 	}
 }
 
-// TestLaSommeDUnSiteJointParOrEtPasParPlus — THE PromQL subtlety in this file.
+// TestASiteSumJoinsByOrNotByPlus — THE PromQL subtlety in this file.
 //
 // sum(a) + sum(b) yields EMPTY as soon as one member has no series: one
 // uncollected device would erase the whole site chart. or unions vectors, and the
 // outer sum aggregates them.
-func TestLaSommeDUnSiteJointParOrEtPasParPlus(t *testing.T) {
+func TestASiteSumJoinsByOrNotByPlus(t *testing.T) {
 	var q = siteRateQuery([]model.Device{dev(idA, "ok", nil), dev(idB, "ok", nil)},
 		metricbuf.MetricIfInOctets)
 	if strings.Count(q, "sum(") != 1 {
@@ -129,12 +133,12 @@ func TestLaSommeDUnSiteJointParOrEtPasParPlus(t *testing.T) {
 	}
 }
 
-// TestUnNomDePortNeCassePasLaRequete: labels come from DEVICES.
+// TestAPortNameDoesNotBreakTheQuery: labels come from DEVICES.
 //
 // Fleets already have every shape ("SFP1", "sfp-sfpplus2", "49"), and one quote
 // in a name would break the query — making a whole site's chart vanish for one
 // badly named port on one switch.
-func TestUnNomDePortNeCassePasLaRequete(t *testing.T) {
+func TestAPortNameDoesNotBreakTheQuery(t *testing.T) {
 	var d = dev(idA, "ok", map[string]any{
 		`GE1"; drop`: map[string]any{"mode": "trunk", "tagged": "all"},
 	})
@@ -147,9 +151,9 @@ func TestUnNomDePortNeCassePasLaRequete(t *testing.T) {
 	}
 }
 
-// TestLOrdreDesPortsExclusEstSTABLE: these names compose a query compared call
+// TestExcludedPortsOrderIsSTABLE: these names compose a query compared call
 // to call.
-func TestLOrdreDesPortsExclusEstSTABLE(t *testing.T) {
+func TestExcludedPortsOrderIsSTABLE(t *testing.T) {
 	var ports = map[string]any{
 		"GE49": map[string]any{"mode": "trunk", "tagged": "all"},
 		"GE50": map[string]any{"mode": "trunk", "tagged": "all"},
@@ -168,12 +172,12 @@ func TestLOrdreDesPortsExclusEstSTABLE(t *testing.T) {
 
 // --- Writing rates into inventory ---
 
-// TestLeDebitAtterritSurLaBonnePrise: label resolution.
+// TestTheRateLandsOnTheRightJack: label resolution.
 //
 // Most costly mistake in this batch: rate on the wrong port yields a credible
 // false graph. Three forms seen in the field are tested — exact facade name,
 // label differing only in punctuation, and bare number (what a 1930 reports).
-func TestLeDebitAtterritSurLaBonnePrise(t *testing.T) {
+func TestTheRateLandsOnTheRightJack(t *testing.T) {
 	var d = dev(idA, "ok", nil)
 	var patch = portRatePatch(d,
 		map[string]float64{"GE1": 12.5, "ge-2": 3, "49": 100},
@@ -200,12 +204,12 @@ func TestLeDebitAtterritSurLaBonnePrise(t *testing.T) {
 	}
 }
 
-// TestUnLibelleInconnuNeCreePasDePort: telemetry must NEVER create a port.
+// TestAnUnknownLabelCreatesNoPort: telemetry must NEVER create a port.
 //
 // A device exposes far more SNMP interfaces than front-panel ports — VLANs,
 // aggregates, loops, with indexes seen at 1000 and 100000 on a 1930. Accepting
 // them would fill inventory with ghost ports carrying traffic.
-func TestUnLibelleInconnuNeCreePasDePort(t *testing.T) {
+func TestAnUnknownLabelCreatesNoPort(t *testing.T) {
 	var patch = portRatePatch(dev(idA, "ok", nil),
 		map[string]float64{"vlan99": 50, "lo0": 1, "GE99": 7}, nil)
 	var name string
@@ -216,13 +220,13 @@ func TestUnLibelleInconnuNeCreePasDePort(t *testing.T) {
 	}
 }
 
-// TestUnPortSansSerieRetombeAZero — guard against PHANTOM rate.
+// TestAPortWithoutSeriesFallsBackToZero — guard against PHANTOM rate.
 //
 // A port whose series vanishes — collection stopped, collector detached — would
 // keep its last displayed rate forever: frozen load nothing contradicts, on a
 // device nobody polls anymore. Between a chart that drops and a permanent ghost,
 // the first reads correctly.
-func TestUnPortSansSerieRetombeAZero(t *testing.T) {
+func TestAPortWithoutSeriesFallsBackToZero(t *testing.T) {
 	var d = dev(idA, "ok", map[string]any{
 		"GE1": map[string]any{"mode": "access", "rx_mbps": 40.0, "tx_mbps": 4.0},
 	})
@@ -236,12 +240,12 @@ func TestUnPortSansSerieRetombeAZero(t *testing.T) {
 	}
 }
 
-// TestAucuneEcritureQuandRienNeChange: this path rewrites the ports column and
+// TestNoWriteWhenNothingChanges: this path rewrites the ports column and
 // wakes site screens.
 //
 // Without this check, a fleet where nothing moves would still get a database
 // write and wake every browser twice a minute to redraw the same picture.
-func TestAucuneEcritureQuandRienNeChange(t *testing.T) {
+func TestNoWriteWhenNothingChanges(t *testing.T) {
 	var d = dev(idA, "ok", map[string]any{
 		"GE1": map[string]any{"mode": "access", "rx_mbps": 12.5, "tx_mbps": 1.25},
 	})
@@ -267,7 +271,7 @@ func TestAucuneEcritureQuandRienNeChange(t *testing.T) {
 	}
 }
 
-// TestValeursAberrantesRameneesAZero: NaN, infinity, and negative never reach the UI.
+// TestAberrantValuesBroughtBackToZero: NaN, infinity, and negative never reach the UI.
 //
 // Negative rate does not exist; showing it would send someone hunting bad cabling.
 // NaN serialized to JSON would break the ENTIRE device record response — not
@@ -276,7 +280,7 @@ func TestAucuneEcritureQuandRienNeChange(t *testing.T) {
 // Device already carries rates: that forces a write, making the corrected value
 // observable. Without that the fix would be empty, which is correct but proves
 // nothing.
-func TestValeursAberrantesRameneesAZero(t *testing.T) {
+func TestAberrantValuesBroughtBackToZero(t *testing.T) {
 	var d = dev(idA, "ok", map[string]any{
 		"GE1": map[string]any{"rx_mbps": 40.0},
 		"GE2": map[string]any{"rx_mbps": 40.0},
@@ -299,5 +303,37 @@ func TestValeursAberrantesRameneesAZero(t *testing.T) {
 	var _, err = json.Marshal(patch)
 	if err != nil {
 		t.Errorf("patch not serializable: %v", err)
+	}
+}
+
+// TestThePerPortGaugeFramesWithoutDeriving: the optics query is a GAUGE read.
+//
+// Two properties, each preventing a false display: no rate() — a dBm level
+// through a derivative would graph the DRIFT of the level and call it the
+// level — and the same closed vocabulary and device matcher as every other
+// composed query. A counter asked through this path composes nothing.
+func TestThePerPortGaugeFramesWithoutDeriving(t *testing.T) {
+	var q = portGaugeQuery([]string{idA, "not-a-uuid"}, metricbuf.MetricSFPRxPowerDBM)
+	if q == "" {
+		t.Fatal("gauge query refused for a metric the vocabulary declares")
+	}
+	if !strings.Contains(q, `device=~"`+idA+`"`) {
+		t.Errorf("device matcher missing: %s", q)
+	}
+	if strings.Contains(q, "rate(") {
+		t.Errorf("a gauge must be read as-is: %s", q)
+	}
+	if strings.Contains(q, "not-a-uuid") {
+		t.Errorf("malformed id entered the query: %s", q)
+	}
+	if portGaugeQuery([]string{idA}, metricbuf.MetricIfInOctets) != "" {
+		t.Error("a counter through the gauge path would graph two billion " +
+			"octets as a level")
+	}
+	if portGaugeQuery(nil, metricbuf.MetricSFPRxPowerDBM) != "" {
+		t.Error("no devices allows no query")
+	}
+	if portGaugeQuery([]string{idA}, "meshcraft_invented") != "" {
+		t.Error("vocabulary is CLOSED for gauges too")
 	}
 }

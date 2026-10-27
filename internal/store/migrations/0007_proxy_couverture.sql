@@ -1,26 +1,26 @@
--- La couverture de sites d'un proxy revient, avec un rôle NOUVEAU : ce n'est
--- plus un fait décoratif (l'ancienne proxy_sites de la migration 0004 ne
--- décidait rien), c'est la FRONTIÈRE DE DROITS du proxy.
+-- A proxy's site coverage comes back, with a NEW role: it is no longer a
+-- decorative fact (migration 0004's former proxy_sites decided nothing), it is
+-- the proxy's RIGHTS BOUNDARY.
 --
---   - qui voit le proxy    : quiconque a un rôle sur un site couvert ;
---   - qui l'administre     : site_admin d'un site couvert (son site, et son
---                            site seulement) ;
---   - pour quels sites il  : les sites couverts.
---     peut être utilisé
+--   - who sees the proxy      : anyone with a role on a covered site;
+--   - who administers it      : site_admin of a covered site (their site, and
+--                               their site only);
+--   - for which sites it      : the covered sites.
+--     may be used
 --
--- Deux notions DISTINCTES, et il ne faut pas les confondre :
+-- Two DISTINCT notions, which must not be confused:
 --
---   global = true  → proxy d'instance, utilisable partout, administré par les
---                    seuls global-admins.
---   global = false → proxy restreint aux sites de proxy_sites. Une couverture
---                    VIDE ne signifie donc PAS « partout » : elle signifie
---                    « nulle part ». Sans cette distinction, un site-admin
---                    retirant son site d'un proxy le promouvrait en proxy
---                    global — une escalade de privilèges.
+--   global = true  → instance proxy, usable everywhere, administered by
+--                    global-admins only.
+--   global = false → proxy restricted to the sites in proxy_sites. An EMPTY
+--                    coverage therefore does NOT mean "everywhere": it means
+--                    "nowhere". Without this distinction, a site-admin removing
+--                    their site from a proxy would promote it to a global proxy
+--                    — a privilege escalation.
 --
--- Ce qui reste inchangé : la couverture ne dit pas ce que le proxy PEUT
--- joindre (c'est observé, cf. device_paths), ni le site d'un équipement
--- découvert (c'est l'adoption qui le choisit).
+-- What stays unchanged: coverage does not say what the proxy CAN reach (that is
+-- observed, see device_paths), nor the site of a discovered device (adoption
+-- chooses it).
 alter table proxies add column if not exists global boolean not null default true;
 
 create table if not exists proxy_sites (
@@ -30,9 +30,9 @@ create table if not exists proxy_sites (
 );
 create index if not exists proxy_sites_site_idx on proxy_sites (site_id);
 
--- La couverture voulue est décidée à l'ÉMISSION du token : le proxy, lui,
--- n'existe qu'au moment où le token est consommé. On fige donc l'intention à
--- l'émission plutôt que de relire les droits de l'émetteur plus tard — ils
--- peuvent avoir changé entre-temps.
+-- The intended coverage is decided when the token is ISSUED: the proxy itself
+-- only exists when the token is consumed. The intent is therefore frozen at
+-- issuance rather than re-reading the issuer's rights later — they may have
+-- changed in the meantime.
 alter table enroll_tokens add column if not exists global boolean not null default false;
 alter table enroll_tokens add column if not exists site_ids uuid[] not null default '{}';

@@ -5,40 +5,49 @@
 // This distinction is the first thing to read, because the rest of the package
 // depends on it and the two are not interchangeable.
 //
-// OBSERVED on hardware, 2026-08-02, on a ProCurve 2610-48 (J9088A) at
-// 172.16.99.79 reached through a meshcraft proxy:
+// OBSERVED on hardware. The survey this package waited for happened on
+// 2026-08-03, on SW-PLAYER-79 — a ProCurve 2610-48 (J9088A, R.11.121) in
+// production at a live site, reached through a meshcraft proxy. Its verbatim
+// output is in testdata/ and every parser here is tested against it.
 //
-//   - TCP 22, 23 and 80 open;
-//   - the web interface answers `Server: eHTTP v2.0` and titles its page
-//     "<hostname> - ProCurve Switch 2610-48 (J9088A)". That title is the single
-//     most reliable identification this range offers over the network: it names
-//     the product AND the JxxxxA part number without any credential;
-//   - the web interface issues NO HTTP authentication challenge — it logs in
-//     through a form, so Basic/Digest injection cannot work on it;
-//   - the SSH banner grab returned EMPTY and an SSH login attempt did not
-//     succeed. Whether that is a credential, a disabled SSH server or an
-//     algorithm mismatch is NOT established (cf. the header of ssh.go).
+// What that session established:
 //
-// DOCUMENTED, from the ProCurve 2600 series management and configuration guide,
-// and NOT captured on this hardware: every CLI command, every capability number,
-// and the reset procedure. They are the vendor's, they are stable across this
-// family, and that is not the same as verified — which is why [Driver.Info]
-// carries the same `Confirmed: false` caveat the Cisco IOS connector does.
+//   - SSH IS enabled and does negotiate. The server is OpenSSH 3.7.1p2 and it
+//     needs the legacy algorithm list this package carries (cf. ssh.go). The
+//     earlier "banner grab returned EMPTY, login did not succeed" was neither a
+//     credential nor a disabled server: the switch allows FOUR management
+//     sessions in total ("show ip ssh"), and abandoned ones hold their slot.
+//     A saturated switch refuses the SESSION CHANNEL after a successful
+//     authentication, which reads exactly like a pty problem — see cli.go;
+//   - the CLI paints with cursor positioning and terminates lines with ESC E;
+//   - "show version" carries NO model and no part number. The product and its
+//     JxxxxA reference are read from the LLDP system description instead
+//     (cf. inspect.go);
+//   - the web interface answers `Server: eHTTP v2.0`, titles its page
+//     "<hostname> - ProCurve Switch 2610-48 (J9088A)", and issues NO HTTP
+//     authentication challenge — it logs in through a form, so Basic/Digest
+//     injection cannot work on it.
 //
-// # Why this ships as a Connector that mostly refuses
+// DOCUMENTED and NOT captured, still: the reset procedure, and the spanning-tree
+// commands other than "spanning-tree", "… bpdu-protection" and
+// "force-version", which appear verbatim in the reference unit's own
+// configuration. The ones that are only documented are implemented AND VERIFIED
+// BY RE-READING the device after the write (cf. stp.go), which is what makes
+// them safe to ship: a form this firmware does not accept surfaces as an error
+// instead of a silent success.
 //
-// The contract's rule (driver/connector.go): a capability every switching
-// platform HAS but that a connector has not coded yet is a MANDATORY method
-// returning [driver.ErrNotImplemented] — not a silent success, and not an
-// absence declared as a platform fact.
+// # What this connector writes
 //
-// So this connector authenticates and reads, and refuses to WRITE. Writing VLAN
-// membership or an administration secret from a command set nobody has run on
-// this range would be exactly the failure the contract exists to prevent: a
-// configuration reported as applied that never arrived. The commands are known;
-// what is missing is one session on the device to confirm the prompts, the
-// paging behaviour and the refusal shapes — the same survey every other
-// connector here rests on.
+// VLAN membership, the SNMP community, spanning tree, management addressing on
+// the current VLAN, and the manager secret. Each write re-reads before acting
+// and — where the platform allows it — verifies afterwards, because on this CLI
+// a refused command prints a "%" line and changes nothing: there is no exit
+// status to test.
+//
+// PoE and port security are writable on this platform and are NOT implemented.
+// They are absent rather than declared, per the contract's rule
+// (driver/connector.go): a capability announced and not delivered is a
+// configuration reported as applied that never arrived.
 package procurve
 
 import (
@@ -60,15 +69,19 @@ func (d *Driver) Info() driver.Info {
 		Name:   "hpe-procurve",
 		Vendor: "HPE",
 		Family: "ProCurve 2600",
+		// The CLI sits behind SSH authentication: nothing is identifiable
+		// without a credential.
+		IdentifyNeedsCredentials: true,
 		// SSH first because it is the transport a connector should use: telnet
 		// carries the administration password in clear across the management
 		// VLAN, and this range offers both. `web` is listed because the
 		// interface exists and an operator uses it; meshcraft does not write
 		// through it.
 		Transport: []string{"ssh", "telnet", "web", "snmp"},
-		Doc: "ProCurve 2600 Series Management and Configuration Guide — DOCUMENTED, " +
-			"not captured: identification observed on a 2610-48 (J9088A) 2026-08-02, " +
-			"the command set is the vendor's and has not been run by this connector",
+		Doc: "ProCurve 2600 Series Management and Configuration Guide, CAPTURED on a " +
+			"2610-48 (J9088A, R.11.121) 2026-08-03: reads, VLAN membership, SNMP, " +
+			"spanning tree and management addressing were run on that hardware and " +
+			"the verbatim output is in the package's testdata",
 	}
 }
 
@@ -88,6 +101,31 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		MaxVlans: 256,
 		Features: map[string]bool{
 			"ssh": true, "telnet": true, "http": true, "serial": true,
+			// LACP: trunks (TrkN). DOCUMENTED forms only — the range is parked
+			// and no unit is adopted; the reader and writer exist (lag.go) and
+			// the writer says so in its result Notes on every run.
+			"LACP": true,
+			// Per-port spanning-tree settings this connector writes. CAPTURED:
+			// "spanning-tree 1 bpdu-protection" is in the reference unit's own
+			// configuration.
+			//
+			// NOT declared, deliberately: STPEdgeAuto and STPPortEnable. Auto-edge
+			// on this range is a separate, always-on detection with no admin value
+			// to write, and a port leaves the tree by being disabled outright —
+			// there is no per-port STP switch to offer.
+			driver.FeatSTPEdge:   true,
+			driver.FeatBPDUGuard: true,
+			// MSTRegion: this connector emits the whole triplet —
+			// "spanning-tree config-name", "config-revision" and
+			// "instance N vlan …" (regionCmds, stp.go), differentially against
+			// what the read returned, so an unchanged region sends nothing.
+			//
+			// The evidence is the CODE, which is what this key asks about: "does
+			// this connector emit a region?" (ADR-0022). What has NOT been done is
+			// a region apply observed on a 2610 in the lab, and ADR-0023 records
+			// that limit rather than letting the declaration imply more than it
+			// means. The key gates a screen; it decides no apply behaviour.
+			driver.FeatMSTRegion: true,
 		},
 		// STP, RSTP and MSTP are all offered by this family. MSTP is what the
 		// fleet's site preference asks for first (cf. driver.STPPreferenceCatalog),
@@ -102,12 +140,26 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// and declaring v3 here would advertise supervision this connector cannot
 		// turn on — the exact "capability that lies" the contract warns about.
 		//
-		// v2c is OBSERVED: the reference unit carried « snmp-server community "les"
-		// Operator » when it was surveyed, and that form is what ApplySNMP writes.
+		// v2c is OBSERVED: the reference unit carried "snmp-server community "ops"
+		// Operator" when it was surveyed, and that form is what ApplySNMP writes.
 		SNMPVersions: []string{"v1", "v2c"},
-		// The web interface and the CLI do not share a session limit worth
-		// declaring; what this range does limit is simultaneous CLI sessions.
-		MaxSessions: 5,
+		// FOUR, and it is the console plus three, not five. CAPTURED from
+		// "show ip ssh" on the reference unit:
+		//
+		//	  Ses Type     | Protocol  Source IP and Port
+		//	  --- -------- + --------- ---------------------
+		//	  1   console  |
+		//	  2   ssh      | SSH v2    203.0.113.3:55374
+		//	  3   ssh      | SSH v2    203.0.113.2:60040
+		//	  4   inactive |
+		//
+		// This number is small enough to be reached in ordinary use, and a
+		// saturated switch does NOT refuse the login — it authenticates and then
+		// refuses the session channel, which surfaces as "the device refused a
+		// pty". Anything holding one of these slots (an abandoned tunnel stream,
+		// a forgotten terminal) costs a quarter of the switch's administration
+		// capacity until the TCP connection dies.
+		MaxSessions: 4,
 		// `write memory` persists what the CLI has already applied: the running
 		// configuration takes effect immediately and is lost at reboot until
 		// saved. Same shape as the FS S3900, and the same free rollback — apply,
@@ -136,7 +188,7 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			VlanRange: [2]int{1, 4094},
 			TaggedOK:  true,
 			Notes: []string{
-				"Management address is set under « vlan <id> » with « ip address ».",
+				"Management address is set under \"vlan <id>\" with \"ip address\".",
 				"The management VLAN must be carried on the uplink or the switch " +
 					"becomes unreachable — this range gives no second path except the " +
 					"serial console.",
@@ -152,19 +204,66 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 // is REACTIVITY, not information.
 func monitoring() driver.MonitoringCapabilities {
 	return driver.MonitoringCapabilities{
-		Channels: []driver.MonitorChannel{{
-			Kind:    "snmp",
-			Metrics: []string{"if_counters"},
-			// A 2610 is a 2007-era switch with a modest CPU: polling it as hard
-			// as a current one costs more than the resolution is worth.
-			MinInterval: 30 * time.Second,
-			Note: "Read-only agent. The web interface logs in through a FORM, so " +
-				"nothing here is collected over HTTP.",
-		}},
-		// No trap receiver is declared. The agent supports traps, but nothing
-		// here has been observed to accept a destination, and declaring the
-		// capability would open 162/udp on a proxy to receive nothing.
+		Channels: []driver.MonitorChannel{
+			{
+				Kind:    "snmp",
+				Metrics: []string{"if_state", "if_counters"},
+				// A 2610 is a 2007-era switch with a modest CPU — the reference
+				// unit sits at 13% doing nothing — so polling it as hard as a
+				// current one costs more than the resolution is worth.
+				MinInterval: 30 * time.Second,
+				Note: "standard IF-MIB, served as soon as a v2c community is set " +
+					"(ApplySNMP). ifDescr on this platform is the BARE PORT NUMBER — " +
+					"\"47\", not an interface name — which the connector translates " +
+					"through driver.PortNamer",
+			},
+			{
+				Kind:        "snmp",
+				Metrics:     []string{"lldp"},
+				MinInterval: 30 * time.Second,
+				// This is the opposite of the Cisco and FS ranges, where the
+				// topology view stays empty until "lldp run" is configured.
+				Note: "standard LLDP-MIB (1.0.8802). This range ships with LLDP ON " +
+					"and records only a departure from that default, so the branch is " +
+					"populated on an untouched switch — CAPTURED 2026-08-03: port 47 " +
+					"sees \"salon-sw01\" on a device whose configuration carries no " +
+					"LLDP line at all",
+			},
+			{
+				Kind:        "snmp",
+				Metrics:     []string{"health"},
+				MinInterval: 5 * time.Minute,
+				Note: "sysUpTime (1.3.6.1.2.1.1.3) is served by every unit of this " +
+					"range. CPU and memory are NOT claimed here — cf. the Unavailable " +
+					"declaration below",
+			},
+		},
+		// No trap receiver is declared. The agent HAS one — "show snmp-server"
+		// prints an empty "Trap Receivers" table with its Address / Community /
+		// Events columns (CAPTURED) — and this connector does not write it.
+		// Declaring the capability would open 162/udp on a proxy to receive
+		// nothing.
 		Traps: false,
+		Unavailable: []driver.MetricUnavailable{
+			{
+				Metric:   "cpu_memory",
+				Observed: true,
+				Source: "\"show system-information\" carries CPU Util (%) and a full " +
+					"memory breakdown (captured 2026-08-03: 13%, 72,603,456 free of " +
+					"83,988,864) — but the periodic collector speaks only SNMP, and this " +
+					"range publishes them under HP's private STATISTICS-MIB (enterprise " +
+					"11), which the poller does not walk. The data EXISTS on the device " +
+					"and meshcraft cannot yet collect it: a poller gap, not a platform one",
+			},
+			{
+				Metric:   "optical_power",
+				Observed: true,
+				Source: "the two mini-GBIC cages of a 2610-48 report no DDM at all: this " +
+					"is a 2007 platform and \"show interfaces brief\" prints a BLANK type " +
+					"for an empty cage rather than any optical figure. Absent on the " +
+					"hardware, not merely uncollected",
+			},
+		},
 	}
 }
 
@@ -230,13 +329,13 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 		},
 		AfterReset: []string{
 			"9600 8N1 on the console port",
-			"the CLI opens at the operator prompt « > »; « enable » reaches manager « # » " +
+			"the CLI opens at the operator prompt \">\"; \"enable\" reaches manager \"#\" " +
 				"with NO password on a factory unit",
-			"SSH is NOT available until « crypto key generate ssh » and « ip ssh » are " +
+			"SSH is NOT available until \"crypto key generate ssh\" and \"ip ssh\" are " +
 				"run: a factory unit answers telnet and the web interface only",
 		},
 		Pitfalls: []string{
-			"« Clear » ALONE, held briefly, resets only the passwords — not the " +
+			"\"Clear\" ALONE, held briefly, resets only the passwords — not the " +
 				"configuration. The two gestures look alike and do very different things",
 			"this range has 256 VLANs, not 4094: a site plan with more will not fit",
 			"telnet carries the password in clear across the management VLAN. Enable " +

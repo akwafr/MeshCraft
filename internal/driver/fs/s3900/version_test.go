@@ -37,7 +37,7 @@ func TestNewFirmwareTriesTheBareFormFirst(t *testing.T) {
 		t.Fatalf("got %d candidate forms, want both", len(alts))
 	}
 	if strings.Contains(strings.Join(alts[0], " "), "media ethernet") {
-		t.Error("1.7.7 is offered « media ethernet » first, the form it rejects")
+		t.Error("1.7.7 is offered \"media ethernet\" first, the form it rejects")
 	}
 	// The other form must still be there: the gate orders, it does not exclude.
 	if !strings.Contains(strings.Join(alts[1], " "), "media ethernet") {

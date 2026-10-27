@@ -10,7 +10,7 @@ import (
 
 // These tests exist because the rule they cover was WRONG IN PRODUCTION.
 //
-// On 2026-08-02 a proxy on 172.16.99.0/24 marked four devices of another site
+// On 2026-08-02 a proxy on 203.0.113.0/24 marked four devices of another site
 // unreachable 3.7 seconds after connecting, while their own collector was polling
 // them successfully. Every case below is one of the situations that produced it,
 // or one the repair must not create in exchange.
@@ -41,12 +41,12 @@ func silent(name string) model.ProxyReach {
 
 // THE REGRESSION TEST FOR THE 2026-08-02 OUTAGE.
 //
-// akwalan polls these devices and has proven their identity; zezombini is a new
+// lab polls these devices and has proven their identity; site2 is a new
 // instance proxy on another network that cannot reach them. The device is online.
 func TestJudgeReachConfirmedUpBeatsUnconfirmedDown(t *testing.T) {
 	var v = judgeReach([]model.ProxyReach{
-		down("proxy-zezombini", false),
-		up("proxy-akwalan", true),
+		down("proxy-site2", false),
+		up("proxy-lab", true),
 	}, nil)
 	if v.Status != "ok" {
 		t.Fatalf("status = %q, want ok: a proxy that proved the device's identity sees it", v.Status)
@@ -54,7 +54,7 @@ func TestJudgeReachConfirmedUpBeatsUnconfirmedDown(t *testing.T) {
 	if !v.Confirmed {
 		t.Error("the verdict does not record that it rests on a confirmed observation")
 	}
-	if !strings.Contains(v.Note, "proxy-akwalan") {
+	if !strings.Contains(v.Note, "proxy-lab") {
 		t.Errorf("note = %q, must name the proxy that decided", v.Note)
 	}
 }
@@ -75,7 +75,7 @@ func TestJudgeReachIsIndependentOfOrder(t *testing.T) {
 func TestJudgeReachConfirmedDownBeatsUnconfirmedUp(t *testing.T) {
 	var v = judgeReach([]model.ProxyReach{
 		up("proxy-elsewhere", false),
-		down("proxy-akwalan", true),
+		down("proxy-lab", true),
 	}, nil)
 	if v.Status != "off" {
 		t.Fatalf("status = %q, want off: an address answering elsewhere is not this device", v.Status)
@@ -93,7 +93,7 @@ func TestJudgeReachConfirmedDownBeatsUnconfirmedUp(t *testing.T) {
 // A confirmed outage names when identity was last proven: that is what separates
 // "the switch is off" from "this collector points at the wrong thing".
 func TestJudgeReachConfirmedDownDatesTheProof(t *testing.T) {
-	var v = judgeReach([]model.ProxyReach{down("proxy-akwalan", true)}, nil)
+	var v = judgeReach([]model.ProxyReach{down("proxy-lab", true)}, nil)
 	if v.Status != "off" {
 		t.Fatalf("status = %q, want off", v.Status)
 	}
@@ -106,8 +106,8 @@ func TestJudgeReachConfirmedDownDatesTheProof(t *testing.T) {
 // fleet can never be SNMP-confirmed. Requiring proof would leave them unmonitored.
 func TestJudgeReachFallsBackToOrWhenNothingIsConfirmed(t *testing.T) {
 	var v = judgeReach([]model.ProxyReach{
-		down("proxy-zezombini", false),
-		up("proxy-akwalan", false),
+		down("proxy-site2", false),
+		up("proxy-lab", false),
 	}, nil)
 	if v.Status != "ok" {
 		t.Fatalf("status = %q, want ok: one proxy reaches it and none can prove anything", v.Status)
@@ -140,7 +140,7 @@ func TestJudgeReachSilentProxyIsNotAnOutage(t *testing.T) {
 // A proxy still forming an opinion must not dilute one already formed.
 func TestJudgeReachSilentProxyDoesNotMaskAnUp(t *testing.T) {
 	var v = judgeReach([]model.ProxyReach{
-		silent("proxy-just-connected"), up("proxy-akwalan", true),
+		silent("proxy-just-connected"), up("proxy-lab", true),
 	}, nil)
 	if v.Status != "ok" {
 		t.Fatalf("status = %q, want ok", v.Status)
@@ -347,15 +347,15 @@ func TestStpRegionRevisionDefaultsToOne(t *testing.T) {
 
 // A DEVICE WHOSE ONLY OBSERVER IS GONE IS NOT ONLINE, and it is not offline
 // either. Observed 2026-08-02: a switch kept reporting "ok — seen by
-// proxy-zezombini" for twelve minutes after that proxy lost its tunnel. Nobody
+// proxy-site2" for twelve minutes after that proxy lost its tunnel. Nobody
 // was looking and the screen said everything was fine.
 func TestJudgeReachIsIndeterminateWhenEveryObserverIsOffline(t *testing.T) {
 	var dead = func(string) bool { return false }
-	var v = judgeReach([]model.ProxyReach{up("proxy-zezombini", true)}, dead)
+	var v = judgeReach([]model.ProxyReach{up("proxy-site2", true)}, dead)
 	if v.Status != "unknown" {
 		t.Fatalf("status = %q, want unknown: a stale green is the worst answer here", v.Status)
 	}
-	if !strings.Contains(v.Note, "proxy-zezombini") {
+	if !strings.Contains(v.Note, "proxy-site2") {
 		t.Errorf("note = %q, must name the proxy that is missing", v.Note)
 	}
 	if !strings.Contains(v.Note, "PROXY outage") {
@@ -365,11 +365,11 @@ func TestJudgeReachIsIndeterminateWhenEveryObserverIsOffline(t *testing.T) {
 
 // A live proxy still decides, even when a dead one disagrees.
 func TestJudgeReachIgnoresOfflineProxiesButKeepsLiveOnes(t *testing.T) {
-	var onlyAkwalan = func(id string) bool { return id == "proxy-akwalan" }
+	var onlyLab = func(id string) bool { return id == "proxy-lab" }
 	var v = judgeReach([]model.ProxyReach{
-		down("proxy-zezombini", true), // gone, and its last word was "down"
-		up("proxy-akwalan", true),
-	}, onlyAkwalan)
+		down("proxy-site2", true), // gone, and its last word was "down"
+		up("proxy-lab", true),
+	}, onlyLab)
 	if v.Status != "ok" {
 		t.Fatalf("status = %q, want ok: the connected proxy sees it", v.Status)
 	}
@@ -379,7 +379,7 @@ func TestJudgeReachIgnoresOfflineProxiesButKeepsLiveOnes(t *testing.T) {
 // it does not soften verdicts.
 func TestJudgeReachStillReportsOutagesFromLiveProxies(t *testing.T) {
 	var allLive = func(string) bool { return true }
-	var v = judgeReach([]model.ProxyReach{down("proxy-akwalan", true)}, allLive)
+	var v = judgeReach([]model.ProxyReach{down("proxy-lab", true)}, allLive)
 	if v.Status != "off" {
 		t.Fatalf("status = %q, want off", v.Status)
 	}
@@ -387,20 +387,20 @@ func TestJudgeReachStillReportsOutagesFromLiveProxies(t *testing.T) {
 
 // THE SECOND HALF OF THE SAME LIE. A live proxy that has never been able to
 // route to a device must not turn it red when the proxy that CAN see it goes
-// offline. Observed 2026-08-02: proxy-akwalan, connected and unable to reach
-// 172.16.99.0/24, reported a healthy switch unreachable.
+// offline. Observed 2026-08-02: proxy-lab, connected and unable to reach
+// 203.0.113.0/24, reported a healthy switch unreachable.
 func TestJudgeReachIgnoresALiveProxyThatHasNeverSeenTheDevice(t *testing.T) {
-	var akwalanLive = func(id string) bool { return id == "proxy-akwalan" }
-	// akwalan: live, never confirmed, never up — not a witness.
-	// zezombini: offline, but it confirmed and saw the device.
+	var labLive = func(id string) bool { return id == "proxy-lab" }
+	// lab: live, never confirmed, never up — not a witness.
+	// site2: offline, but it confirmed and saw the device.
 	var v = judgeReach([]model.ProxyReach{
-		down("proxy-akwalan", false),
-		up("proxy-zezombini", true),
-	}, akwalanLive)
+		down("proxy-lab", false),
+		up("proxy-site2", true),
+	}, labLive)
 	if v.Status != "unknown" {
 		t.Fatalf("status = %q, want unknown: the only real witness is offline", v.Status)
 	}
-	if !strings.Contains(v.Note, "proxy-zezombini") {
+	if !strings.Contains(v.Note, "proxy-site2") {
 		t.Errorf("note = %q, must name the witness that went missing", v.Note)
 	}
 }
@@ -408,8 +408,189 @@ func TestJudgeReachIgnoresALiveProxyThatHasNeverSeenTheDevice(t *testing.T) {
 // But a live proxy that HAS seen the device keeps its authority to report it down.
 func TestJudgeReachTrustsALiveProxyThatHasSeenTheDevice(t *testing.T) {
 	var allLive = func(string) bool { return true }
-	var v = judgeReach([]model.ProxyReach{down("proxy-akwalan", true)}, allLive)
+	var v = judgeReach([]model.ProxyReach{down("proxy-lab", true)}, allLive)
 	if v.Status != "off" {
 		t.Fatalf("status = %q, want off: a proven witness lost it", v.Status)
+	}
+}
+
+// --- The startup hold, and the five things it must not break ---
+//
+// These cover the ~9 second window measured at controller startup: a proxy that has
+// reconnected reports a CONFIRMED down while the proxy that actually reaches the device
+// is not back yet, rule 2 answers "off", and nine seconds later it turns green again.
+// The hold defers the WRITE; it never changes the verdict, and every case below is one
+// of the ways that distinction can be lost.
+
+// settledExcept builds the predicate holdReach consumes: everyone has finished
+// restating what they know, except the named proxies.
+func settledExcept(pending ...string) func(string) bool {
+	var waiting = map[string]bool{}
+	var p string
+	for _, p = range pending {
+		waiting[p] = true
+	}
+	return func(proxyID string) bool { return !waiting[proxyID] }
+}
+
+// THE FAULT ITSELF. Inside the startup window, a confirmed "off" is not written while a
+// proxy that has seen this device before has not finished resyncing.
+func TestHoldReachWaitsForAWitnessStillResyncing(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-site2", true), // back, confirmed, and it no longer reaches it
+		up("proxy-lab", true),     // the real witness, not yet caught up
+	}
+	var v = judgeReach(obs, func(id string) bool { return id == "proxy-site2" })
+	if v.Status != "off" {
+		t.Fatalf("precondition: judgeReach = %q, want off — this test covers the "+
+			"premature off, so it must reproduce it first", v.Status)
+	}
+	var hold, why = holdReach(v, obs, settledExcept("proxy-lab"), 2*time.Second)
+	if !hold {
+		t.Fatal("the write was not held while the device's witness was still resyncing")
+	}
+	if !strings.Contains(why, "proxy-lab") {
+		t.Errorf("reason = %q, must name what we are waiting for", why)
+	}
+}
+
+// The same proxy, one moment later. Nothing is waited for any more, so the verdict —
+// unchanged, since the hold never touched it — is written.
+func TestHoldReachReleasesOnceTheWitnessHasResynced(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-site2", true),
+		up("proxy-lab", true),
+	}
+	var v = judgeReach(obs, func(id string) bool { return id == "proxy-site2" })
+	var hold, _ = holdReach(v, obs, settledExcept(), 2*time.Second)
+	if hold {
+		t.Fatal("still holding after every witness finished restating what it knows")
+	}
+}
+
+// THE REGRESSION THAT MATTERS MOST. A hold that hides a real outage is worse than the
+// window it closes: once the witnesses have spoken, a genuinely dead device reads down,
+// startup window or not.
+func TestHoldReachDoesNotHideADeadDevice(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-lab", true), // the witness itself, caught up, and it is gone
+		down("proxy-site2", true),
+	}
+	var v = judgeReach(obs, func(string) bool { return true })
+	if v.Status != "off" {
+		t.Fatalf("precondition: judgeReach = %q, want off", v.Status)
+	}
+	var hold, _ = holdReach(v, obs, settledExcept(), time.Second)
+	if hold {
+		t.Fatal("a confirmed outage was held although every witness had resynced: " +
+			"this is the fault the hold must never introduce")
+	}
+}
+
+// THE OLD PROXY, and this is the single most important property of the change: a proxy
+// that never sends the marker is settled the instant it connects, so a fleet that has
+// not been upgraded behaves exactly as it did before — no hold, at any point in the
+// window. `settled` returning true everywhere is what an all-old fleet looks like from
+// here (cf. Server.reachSettled, which maps tunnel.ResyncUnsupported to settled).
+func TestHoldReachDoesNothingForProxiesThatCannotResync(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-site2", true),
+		up("proxy-lab", true),
+	}
+	var v = judgeReach(obs, func(id string) bool { return id == "proxy-site2" })
+	var alwaysSettled = func(string) bool { return true }
+	var hold, why = holdReach(v, obs, alwaysSettled, 0)
+	if hold {
+		t.Fatalf("a fleet of proxies that cannot resync was held (%q): the protocol "+
+			"change would freeze every controller restart until the last binary is "+
+			"upgraded", why)
+	}
+}
+
+// THE BOUND, which is the safety property. A witness that never resyncs — a proxy that
+// stays down, or one decommissioned with rows still in `proxy_reach` — must cost the
+// window and not one second more. Past it, today's answer stands.
+func TestHoldReachExpiresWithTheStartupWindow(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-site2", true),
+		up("proxy-lab", true),
+	}
+	var v = judgeReach(obs, func(id string) bool { return id == "proxy-site2" })
+	var neverBack = settledExcept("proxy-lab")
+	var hold, _ = holdReach(v, obs, neverBack, reachStartupWindow-time.Second)
+	if !hold {
+		t.Fatal("released before the window closed")
+	}
+	hold, _ = holdReach(v, obs, neverBack, reachStartupWindow)
+	if hold {
+		t.Fatal("still holding at the end of the window: the hold has no bound, and a " +
+			"device whose observer never returns would keep a stale colour forever")
+	}
+	hold, _ = holdReach(v, obs, neverBack, time.Hour)
+	if hold {
+		t.Fatal("still holding an hour after startup")
+	}
+}
+
+// A Server that never recorded a start time reads as infinitely old, and a nil
+// predicate is a caller with no hub. Both must fall back to today's behaviour: an
+// unknown clock is a reason to write, never a reason to wait.
+func TestHoldReachFallsBackWhenItCannotKnow(t *testing.T) {
+	var obs = []model.ProxyReach{down("proxy-lab", true), up("proxy-other", true)}
+	var v = judgeReach(obs, nil)
+	var hold, _ = holdReach(v, obs, nil, time.Second)
+	if hold {
+		t.Error("held with no way to ask whether anyone had resynced")
+	}
+	hold, _ = holdReach(v, obs, settledExcept("proxy-other"), time.Since(time.Time{}))
+	if hold {
+		t.Error("held on an unset start clock")
+	}
+}
+
+// GOOD NEWS IS NEVER HELD. The hold exists to stop a premature red; delaying a green
+// would make a screen darker than the evidence, which is the fault it is repairing.
+func TestHoldReachNeverDelaysARecovery(t *testing.T) {
+	var obs = []model.ProxyReach{up("proxy-lab", true), down("proxy-other", true)}
+	var v = judgeReach(obs, func(string) bool { return true })
+	if v.Status != "ok" {
+		t.Fatalf("precondition: judgeReach = %q, want ok", v.Status)
+	}
+	var hold, _ = holdReach(v, obs, settledExcept("proxy-other"), time.Second)
+	if hold {
+		t.Error("a device seen by a confirmed proxy was held")
+	}
+}
+
+// "unknown" is judgeReach saying NOBODY CAN SEE THIS DEVICE — a proxy outage, and the
+// one thing an operator must be told immediately at startup. Holding it would suppress
+// the only signal that says "your monitoring is not working".
+func TestHoldReachDoesNotSuppressAProxyOutage(t *testing.T) {
+	var obs = []model.ProxyReach{up("proxy-lab", true)}
+	var v = judgeReach(obs, func(string) bool { return false })
+	if v.Status != "unknown" {
+		t.Fatalf("precondition: judgeReach = %q, want unknown", v.Status)
+	}
+	var hold, _ = holdReach(v, obs, settledExcept("proxy-lab"), time.Second)
+	if hold {
+		t.Error("a proxy outage was hidden by the startup hold")
+	}
+}
+
+// A proxy that has never seen this device is not worth waiting for. It is the same
+// credibility test judgeReach applies, and it must stay the same one: waiting on an
+// observer whose opinion would be discarded anyway delays a verdict for nothing.
+func TestHoldReachIgnoresProxiesThatHaveNeverSeenTheDevice(t *testing.T) {
+	var obs = []model.ProxyReach{
+		down("proxy-lab", true),        // confirmed, and it has lost the device
+		silent("proxy-just-handed-it"), // never confirmed, never up: not a witness
+	}
+	var v = judgeReach(obs, func(string) bool { return true })
+	if v.Status != "off" {
+		t.Fatalf("precondition: judgeReach = %q, want off", v.Status)
+	}
+	var hold, _ = holdReach(v, obs, settledExcept("proxy-just-handed-it"), time.Second)
+	if hold {
+		t.Error("held for a proxy that has never seen this device")
 	}
 }

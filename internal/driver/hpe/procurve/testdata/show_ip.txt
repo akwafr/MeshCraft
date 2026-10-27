@@ -1,0 +1,22 @@
+ Internet (IP) Service
+
+  IP Routing : Disabled
+
+  Default Gateway : 203.0.113.1    
+  Default TTL     : 64   
+  Arp Age         : 20  
+
+  VLAN                 | IP Config  IP Address      Subnet Mask    
+  -------------------- + ---------- --------------- ---------------
+  Default              | DHCP/Bootp                                
+  staff                | Disabled  
+  wifi-guest           | Disabled  
+  streaming            | Disabled  
+  LAN_Management       | Manual     203.0.113.79    255.255.255.0   
+  ZONE1                | Disabled  
+  ZONE2                | Disabled  
+  ZONE3                | Disabled  
+  ZONE4                | Disabled  
+  joueurs              | Disabled  
+ 
+

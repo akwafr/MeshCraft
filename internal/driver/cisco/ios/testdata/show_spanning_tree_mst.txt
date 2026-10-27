@@ -1,0 +1,33 @@
+MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    16384
+             Address     d401.c3ab.32f4
+             Cost        8000
+             Port        28 (TenGigabitEthernet1/0/2)
+             Hello Time   2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     bcc4.93e5.7f80
+             Hello Time   2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface           Role Sts Cost      Prio.Nbr Type
+------------------- ---- --- --------- -------- --------------------------------
+Te1/0/2             Root FWD 2000      128.28   P2p Bound(RSTP) 
+
+
+
+MST1
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    32769
+             Address     bcc4.93e5.7f80
+             This bridge is the root
+             Hello Time   2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32769  (priority 32768 sys-id-ext 1)
+             Address     bcc4.93e5.7f80
+             Hello Time   2 sec  Max Age 20 sec  Forward Delay 15 sec
+
+Interface           Role Sts Cost      Prio.Nbr Type
+------------------- ---- --- --------- -------- --------------------------------
+Te1/0/2             Mstr FWD 2000      128.28   P2p Bound(RSTP) 
+

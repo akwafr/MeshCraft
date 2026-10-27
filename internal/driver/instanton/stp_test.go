@@ -5,7 +5,7 @@ import "testing"
 func TestParseSTPPortsLiveShape(t *testing.T) {
 	var body = `<STP type="section"><GlobalSetting>` +
 		`<BridgeSetting><bridgePriority>32768</bridgePriority>` +
-		`<address>88:25:10:17:61:a7</address></BridgeSetting>` +
+		`<address>02:00:5e:10:61:a7</address></BridgeSetting>` +
 		`<DesignatedRoot><rootBridgeID>4096-04:f4:1c:1d:74:58</rootBridgeID>` +
 		`<rootPathCost>2000</rootPathCost></DesignatedRoot></GlobalSetting>` +
 		`<InterfaceList>` +

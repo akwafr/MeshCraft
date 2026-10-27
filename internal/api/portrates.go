@@ -20,12 +20,12 @@ import (
 // them. And NO code ever WROTE those two fields — they arrived only via config import.
 //
 // On a discovered fleet: `rx = tx = 0` everywhere, empty widgets and a flat curve, on an
-// instance where eleven series families still arrived every second. The operator saw « no
-// telemetry »; the store was full.
+// instance where eleven series families still arrived every second. The operator saw "no
+// telemetry"; the store was full.
 //
 // `applyPortTelemetry` (proxymetrics_handlers.go) already writes `link` on this path, and
-// its comment said where its job stopped: « Two metrics only: link and negotiated speed.
-// Those are what the faceplate can render — an octet counter has no tile. » That was true
+// its comment said where its job stopped: "Two metrics only: link and negotiated speed.
+// Those are what the faceplate can render — an octet counter has no tile." That was true
 // of a COUNTER. A RATE has its tile: these two fields. What was missing was the
 // derivative, and it cannot be computed on batch arrival — you need two samples and time
 // between them, which the series store knows and a handler does not.
@@ -33,7 +33,7 @@ import (
 // # WHY A PERIODIC LOOP, NOT READ-TIME COMPUTATION
 //
 // The inventory schema always planned this — `internal/siteconfig` documents these four
-// fields as « last observed state ». Consequences are concrete:
+// fields as "last observed state". Consequences are concrete:
 //
 //   - FIVE readers are served by one write. Computing at read time would force every route
 //     returning a device to query the series store, and site config export — which has no
@@ -48,7 +48,7 @@ import (
 // frozen load nothing contradicts, on a device nobody polls anymore.
 //
 // Each pass therefore ZEROES faceplate ports for which the store returned nothing. Zero is
-// not « no measurement » — inventory cannot express ignorance on this field — but between
+// not "no measurement" — inventory cannot express ignorance on this field — but between
 // a curve that drops and a permanent phantom load, the first reads correctly.
 
 // portRatesEvery is the refresh cadence.
@@ -129,8 +129,8 @@ func (s *Server) refreshPortRates(ctx context.Context) {
 // portRates queries the store and returns, per device then per FACEPLATE port name,
 // rate in Mbit/s.
 //
-// Returns nil on failure — distinct from an empty map, which means « the store responded,
-// and there is no series ». They lead to different writes: empty map zeroes rates;
+// Returns nil on failure — distinct from an empty map, which means "the store responded,
+// and there is no series". They lead to different writes: empty map zeroes rates;
 // failure touches nothing.
 func (s *Server) portRates(ctx context.Context, ids []string,
 	metric string) map[string]map[string]float64 {
@@ -174,7 +174,7 @@ func (s *Server) portRates(ctx context.Context, ids []string,
 // mapping wrong produces a perfectly credible false chart.
 //
 // Name resolution uses [facadeOf], same as `applyPortTelemetry`: that is how a `port="49"`
-// from a 1930 lands on « GE49 », and `port="SFP2"` from SwOS on « SFP2 ». An unresolvable
+// from a 1930 lands on "GE49", and `port="SFP2"` from SwOS on "SFP2". An unresolvable
 // label is DROPPED, never invented — telemetry does not create ports.
 //
 // ALL faceplate ports are in the patch, not only those with a series — the guard against
@@ -233,6 +233,21 @@ func round3(v float64) float64 {
 		// Negative rate does not exist. `rate()` does not produce them, but a misread
 		// counter reset upstream would, and displaying it sends you looking for cabling
 		// faults.
+		return 0
+	}
+	return math.Round(v*1000) / 1000
+}
+
+// roundSigned3 rounds to thousandths and KEEPS the sign.
+//
+// round3's negative clamp is a statement about RATES — a negative rate does not
+// exist, so showing one would send somebody hunting cabling faults. It is
+// exactly wrong for the gauge families where negative is the ordinary case:
+// every healthy receive level is negative dBm, and clamping it displays a dead
+// fibre as 0 dBm — a strong signal. The two rounders therefore split on what
+// the number IS, and telemetryOf picks by the family's kind.
+func roundSigned3(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
 	}
 	return math.Round(v*1000) / 1000

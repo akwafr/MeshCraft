@@ -8,11 +8,11 @@ import (
 	"meshcraft/internal/model"
 )
 
-const siteCols = `id::text, name, slug, created_at`
+const siteCols = `id::text, name, slug, created_at, local_domain`
 
 func scanSite(row pgx.Row) (model.Site, error) {
 	var st model.Site
-	var err = row.Scan(&st.ID, &st.Name, &st.Slug, &st.CreatedAt)
+	var err = row.Scan(&st.ID, &st.Name, &st.Slug, &st.CreatedAt, &st.LocalDomain)
 	return st, notFound(err)
 }
 
@@ -60,9 +60,18 @@ func (s *Store) SiteBySlug(ctx context.Context, slug string) (model.Site, error)
 		`select `+siteCols+` from sites where slug = $1`, slug))
 }
 
-// RenameSite updates the display name and optionally the URL slug.
+// RenameSite updates the display name, and optionally the URL slug and the
+// site's local DNS domain.
 // Empty slug keeps the current one; a provided slug is validated and uniquified.
-func (s *Store) RenameSite(ctx context.Context, id, name, slug string) (model.Site, error) {
+// `domain` NIL leaves the current one alone; non-nil sets it, INCLUDING to "".
+//
+// A pointer rather than a string because this field has three states and a
+// string carries two: unchanged, set, and explicitly cleared. With a string,
+// "" would have to mean one of the last two, and whichever it meant would make
+// the other impossible — either a rename silently wipes the domain, or a site
+// can never be given none.
+func (s *Store) RenameSite(ctx context.Context, id, name, slug string,
+	domain *string) (model.Site, error) {
 	var cur, err = s.GetSite(ctx, id)
 	if err != nil {
 		return model.Site{}, err
@@ -78,8 +87,13 @@ func (s *Store) RenameSite(ctx context.Context, id, name, slug string) (model.Si
 		}
 	}
 	return scanSite(s.pool.QueryRow(ctx,
-		`update sites set name = $2, slug = $3 where id = $1::uuid returning `+siteCols,
-		id, name, nextSlug))
+		// coalesce on NULL, which is what a nil pointer becomes: absent means
+		// unchanged, and an empty string passes straight through as the legitimate
+		// "this site has no domain".
+		`update sites set name = $2, slug = $3,
+		        local_domain = coalesce($4, local_domain)
+		 where id = $1::uuid returning `+siteCols,
+		id, name, nextSlug, domain))
 }
 
 func (s *Store) DeleteSite(ctx context.Context, id string) error {

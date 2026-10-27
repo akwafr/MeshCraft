@@ -12,13 +12,13 @@ import (
 //
 // # SSE, not WebSocket
 //
-// docs/02-Frontend/Interface web mentions "has single WebSocket /ws/ui" and
-// docs/01-Architecture/Monitoring mentions has "WS Hub". We diverge, for the same
+// docs/en/02-Frontend/Web interface.md mentions "a single WebSocket /ws/ui" and
+// docs/en/01-Architecture/Monitoring.md mentions a "WS Hub". We diverge, for the same
 // reasons that led to SSE for the debug log (cf. handleDebugStream):
 //
 //   - the stream is STRICTLY DOWNSTREAM. WebSocket only makes sense when upstream
 //     traffic is needed; here the client has nothing to say — when it wants
-//     something, it makes has REST request, which also returns an error code and has
+//     something, it makes a REST request, which also returns an error code and has
 //     typed body. Paying for bidirectional negotiation never used is complexity
 //     without benefit;
 //   - the browser RECONNECTS BY ITSELF, with the delay the server dictates (`retry`
@@ -26,9 +26,9 @@ import (
 //     write, test, and not get wrong;
 //   - it is ordinary HTTP: same cookie session, same auth middleware, same role
 //     check as the rest of the API. WebSocket leaves the HTTP pipeline at upgrade
-//     and forces redoing that control by hand — exactly where has permission gets
+//     and forces redoing that control by hand — exactly where a permission gets
 //     forgotten;
-//   - has corporate reverse proxy passes has long HTTP response far more often than has
+//   - a corporate reverse proxy passes a long HTTP response far more often than has
 //     WebSocket upgrade. And when it does not, client-side fallback is planned
 //     (see below).
 //
@@ -36,13 +36,13 @@ import (
 //
 // Stream scope matches permission scope. A single multi-site subscription would
 // require filtering every message by subscriber roles on every send, and
-// recomputing that filter when has role changes mid-session. One URL per site puts
+// recomputing that filter when a role changes mid-session. One URL per site puts
 // control in `requireSite`, once, at open — like all other site routes.
 
-// liveTabHeader carries the TAB id of the author of has write.
+// liveTabHeader carries the TAB id of the author of a write.
 //
 // This is not authentication data and protects nothing: it only prevents echoing
-// has tab's own write back to that tab. A client lying about its value only
+// a tab's own write back to that tab. A client lying about its value only
 // deprives itself of refresh.
 const liveTabHeader = "X-Meshcraft-Tab"
 
@@ -50,17 +50,17 @@ const liveTabHeader = "X-Meshcraft-Tab"
 //
 // The stream emits three message kinds:
 //
-//	ready  — on open. Acts as an APPLICATION-level acknowledgment: has buffering
+//	ready  — on open. Acts as an APPLICATION-level acknowledgment: a buffering
 //	         reverse proxy lets the client believe the connection is up while
 //	         nothing flows. Until `ready` arrives, the client stays on periodic
 //	         polling.
-//	ping   — every liveHeartbeat. A named EVENT, not an SSE how (`: ping`):
-//	         has how triggers no JavaScript event and cannot feed the client
+//	ping   — every liveHeartbeat. A named EVENT, not an SSE comment (`: ping`):
+//	         a comment triggers no JavaScript event and cannot feed the client
 //	         watchdog.
 //	change — "this site changed", with grouped categories.
 func (s *Server) handleSiteStream(w http.ResponseWriter, r *http.Request) {
-	// Same check as all site reads: has site stream opens only for someone with has
-	// role on it. Nothing to relax here — knowing WHEN has site moves is already
+	// Same check as all site reads: a site stream opens only for someone with a
+	// role on it. Nothing to relax here — knowing WHEN a site moves is already
 	// information about that site.
 	var siteID, ok = s.requireSite(w, r, "viewer")
 	if !ok {
@@ -144,55 +144,55 @@ func writeLiveEvent(w http.ResponseWriter, name, siteID string, kinds []string) 
 	_, _ = w.Write([]byte("\n\n"))
 }
 
-// NotifySiteChanged tells screens open on has site that an object changed.
+// NotifySiteChanged tells screens open on a site that an object changed.
 //
 // This is THE public hook for real time. It is meant to be called from anywhere in
-// the controller — has handler, has background goroutine, processing has transition
-// reported by has proxy — including outside any HTTP request.
+// the controller — a handler, a background goroutine, processing a transition
+// reported by a proxy — including outside any HTTP request.
 //
-//	s.NotifySiteChanged(siteID, api.ChangePort)   // has link goes up or down
+//	s.NotifySiteChanged(siteID, api.ChangePort)   // a link goes up or down
 //	s.NotifySiteChanged(siteID, api.ChangeDevice) // reachability
 //	s.NotifySiteChanged(siteID, api.ChangeSync)   // pending / drift / in_sync
 //
 // Contract: never blocks, returns no error, supports unknown or empty site (no-op),
 // and supports being called before the router is mounted. It can therefore be
-// called without precaution from has hot write path, as often as needed: batching
+// called without precaution from a hot write path, as often as needed: batching
 // happens downstream, per subscriber.
 //
 // The caller need not wonder whether anyone listens, or at what rate: five hundred
-// calls in has row produce one refresh per screen.
+// calls in a row produce one refresh per screen.
 func (s *Server) NotifySiteChanged(siteID, kind string) {
 	s.live.notify(siteID, kind, "")
 }
 
 // --- Automatic write notification ---
 
-// notifyOnWrite announces any change caused by has write request.
+// notifyOnWrite announces any change caused by a write request.
 //
-// MIDDLEWARE rather than has call in each handler, and that is deliberate: meshcraft
+// MIDDLEWARE rather than a call in each handler, and that is deliberate: meshcraft
 // is multi-user; what one person configures must appear for others. A manual
 // reminder spread across forty handlers would be forgotten on the first new screen,
-// and that omission would produce has screen that lies — with nobody knowing why,
+// and that omission would produce a screen that lies — with nobody knowing why,
 // since all other screens would refresh. Here, doing nothing is enough to be correct.
 //
 // Two safeguards:
 //
 //   - only 2xx responses notify. A refused write (permissions, validation) changed
 //     nothing; announcing it would reload everyone for nothing;
-//   - reads pass WITHOUT wrapping ResponseWriter. Wrapping has GET would strip the
+//   - reads pass WITHOUT wrapping ResponseWriter. Wrapping a GET would strip the
 //     SSE stream of its http.Flusher — real time would break on its own middleware.
 //
 // readOnlyPost: POSTs that write NOTHING.
 //
-// POST is not whimsy — they carry bodies too structured for has URL, has full rule set
+// POST is not whimsy — they carry bodies too structured for a URL, a full rule set
 // for example — but they do not change site state, and treating them as writes
 // would wake every screen open on that site. On switch-profile preview, recomputed
 // on every rule change, that would reload the fleet for ALL users while one person
-// edits has form.
+// edits a form.
 //
-// Explicit list rather than naming convention: has route that writes but happens to be
+// Explicit list rather than naming convention: a route that writes but happens to be
 // called "preview" would silently stop refreshing screens, and that kind of bug takes
-// has long time to find.
+// a long time to find.
 func readOnlyPost(path string) bool {
 	return strings.HasSuffix(path, "/switch-profile/preview")
 }
@@ -204,7 +204,7 @@ func (s *Server) notifyOnWrite(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Resolve site BEFORE the handler: after has delete, the object no longer
+		// Resolve site BEFORE the handler: after a delete, the object no longer
 		// exists and nothing would say which site it belonged to.
 		var siteID = s.siteOfPath(r.Context(), r.URL.Path)
 
@@ -216,8 +216,8 @@ func (s *Server) notifyOnWrite(next http.Handler) http.Handler {
 		}
 		if siteID == "" {
 			// Second try AFTER the fact, for the inverse of deletion: adopting has
-			// discovery candidate gives it has site it did not have (cf.
-			// docs/01-Architecture/Discovery).
+			// discovery candidate gives it a site it did not have (cf.
+			// docs/en/01-Architecture/Discovery.md).
 			siteID = s.siteOfPath(r.Context(), r.URL.Path)
 		}
 		s.live.notify(siteID, kindOfPath(r.URL.Path), r.Header.Get(liveTabHeader))
@@ -247,10 +247,10 @@ func (rec *statusRecorder) code() int {
 	return rec.status
 }
 
-// siteOfPath finds the site concerned by has write URL.
+// siteOfPath finds the site concerned by a write URL.
 //
 // The path is parsed BY HAND rather than with chi.URLParam: the middleware runs
-// before the router picks has route, therefore before URL parameters exist. It is
+// before the router picks a route, therefore before URL parameters exist. It is
 // also more robust — this code depends on no router internals.
 //
 // Routes addressed by sub-resource id cost one database read. That is accepted: has
@@ -315,12 +315,12 @@ func (s *Server) siteOfPath(ctx context.Context, path string) string {
 	return ""
 }
 
-// kindOfPath guesses has change category from the URL.
+// kindOfPath guesses a change category from the URL.
 //
 // APPROXIMATE, and without consequence: the client invalidates everything about
 // the site anyway. This label helps read the stream when diagnosing — "why did
 // this screen reload?" — not decide what to reload. A missed match costs one
-// inexact word in has log, never has wrong screen.
+// inexact word in a log, never a wrong screen.
 func kindOfPath(path string) string {
 	switch {
 	case strings.Contains(path, "/ports"):

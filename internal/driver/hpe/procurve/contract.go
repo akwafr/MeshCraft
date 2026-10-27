@@ -33,10 +33,40 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// Compile-time: this Driver is a Connector, and its Client is an Admin.
+// Compile-time: everything this connector claims it can do.
+//
+// These assertions are the reason a capability cannot quietly disappear. Every
+// one of them is reached through an `As…` helper at the call site, so dropping a
+// method does not break a build — it makes the feature vanish from the UI with
+// nothing to say why.
+//
+// [driver.IdentityReader] IS DELIBERATELY ABSENT, and this is the place a reader
+// checks before filing that as a gap again: identity on this range costs three
+// commands the open session has not already paid for, so the interface's
+// admission ticket — cheapness — is not met. [Driver.Identify] is the adapter
+// this connector carries instead, and api.observeIdentity does reach it. The
+// full argument, with what would have to change to earn the other one, is on
+// [Client.identity] in inspect.go.
 var (
 	_ driver.Connector = (*Driver)(nil)
 	_ driver.Admin     = (*Client)(nil)
+	// Naming and drawing: the two halves of one translation, checked against
+	// each other by TestConnectorFaceplatesAgreeWithTheirOwnPortNamer.
+	_ driver.PortNamer       = (*Driver)(nil)
+	_ driver.Identifier      = (*Driver)(nil)
+	_ driver.FaceplateReader = (*Client)(nil)
+	// LLDPReader: the CLI neighbour read wired into the read-state gesture
+	// (2026-08-10, cf. lldp.go). Pure wiring — no new command, no new session,
+	// and the range stays parked for writes.
+	_ driver.LLDPReader = (*Client)(nil)
+	// Reads and writes proven on SW-PLAYER-79, 2026-08-03.
+	_ driver.SNMPConfigurator    = (*Client)(nil)
+	_ driver.Persister           = (*Client)(nil)
+	_ driver.MgmtAddrReader      = (*Client)(nil)
+	_ driver.MgmtAddrWriter      = (*Client)(nil)
+	_ driver.SpanningTreeReader  = (*Client)(nil)
+	_ driver.SpanningTreeApplier = (*Client)(nil)
+	_ driver.WebUIAddresser      = (*Driver)(nil)
 )
 
 type (
@@ -131,11 +161,68 @@ func (d *Driver) Authenticate(ctx context.Context, tgt driver.Target,
 	return c, errors.New("no credential accepted")
 }
 
-// WritesExtra: nothing beyond VLAN membership, and VLAN membership itself is not
-// written yet either (cf. ApplyPorts). Spanning tree, PoE and port security are
-// all writable on this platform and none is implemented — declaring one would
-// announce configuration that never arrives.
-func (d *Driver) WritesExtra(name string) bool { return false }
+// WritesExtra names what an apply can carry BESIDES VLAN membership.
+//
+// "stp" is declared because [Client.ApplySpanningTree] exists, writes the mode,
+// the bridge priority, the MST region and the per-port cost/edge/BPDU settings,
+// and — this is the part that earns the declaration — VERIFIES every one of them
+// by re-reading the device afterwards.
+//
+// PoE and port security are writable on this platform and neither is
+// implemented. They are absent here rather than listed, because a name in this
+// list is a promise that an apply will carry that configuration, and a promise
+// that resolves to nothing is worse than a missing feature: it is a
+// configuration reported as applied that never arrived.
+//
+// # `port_admin` — "disable" CAPTURED, "enable" DEDUCED, and NOTHING SENT LIVE
+//
+// Declared 2026-08-06 on an operator decision. The two halves of this pair do not
+// have the same standing and the difference is structural to this range, not a gap
+// somebody forgot to close:
+//
+//   - "disable" is CAPTURED, from the strongest source this platform has. The
+//     reference unit's own running configuration (SW-PLAYER-79, a 2610-48 / J9088A
+//     on R.11.121, read 2026-08-03) carries "interface 1 / disable / exit"
+//     verbatim on a port a human had shut, and on this range the configuration file
+//     IS the command language. Its read-back is captured too — the same unit prints
+//     "Enabled No" for port 1 and "Yes" for the other fifty-one, so BOTH values
+//     of the column portadmin.go reads exist in testdata/;
+//   - "enable" is DEDUCED AND CAN NEVER BE OTHERWISE from a capture. A
+//     configuration on this range records only a DEPARTURE from the defaults (cf.
+//     reNoLLDP's comment), and an enabled port IS the default — so the word cannot
+//     appear in a running-config however many switches are read. It is the
+//     documented inverse, and nothing in this connector has ever sent it.
+//
+// SO THIS CONNECTOR IS DECLARED ON A DEDUCED VERB in the un-shut direction, and
+// the only thing that would change that is a live exercise rather than another
+// read. THERE HAS BEEN NO SUCH EXERCISE: this package has no live_*_test.go at
+// all, unlike fs/s3400 or ubiquiti/edgeswitch, and THE LAB 2610 IS CURRENTLY
+// OFFLINE, so it cannot be arranged today.
+//
+// THE ASYMMETRY IS THE RISK, AND IT POINTS THE WRONG WAY. If "enable" were the
+// wrong word, the direction that fails is the RECOVERY one: a port shut by a
+// captured verb that will not come back up by a deduced one. What keeps that
+// bounded is that a refusal on this platform arrives as a "% Invalid input"
+// line in the output, [cliRefusal] reads it, the port is reported in
+// [driver.ApplyResult.Skipped] naming "enable" as the deduced half, and
+// "write memory" is deliberately NOT sent — so a reboot restores whatever the
+// startup configuration says. There is a serial console as well.
+//
+// MIND THE SESSION BUDGET when the unit comes back: this range allows FOUR
+// concurrent sessions and, saturated, authenticates and then refuses the channel,
+// which reads exactly like a bug (cf. testdata/show_ip_ssh.txt and Close). A cut
+// session goes on holding one of the four until the switch times it out.
+//
+// TODO.md names the exercise that would retire the deduced half.
+func (d *Driver) WritesExtra(name string) bool {
+	return name == "stp" || name == "port_admin"
+}
+
+// Supports: the optional gestures of this platform, computed from the method
+// sets and never listed by hand — see driver.GesturesOf.
+func (d *Driver) Supports() []driver.Gesture {
+	return driver.GesturesOf(d, (*Client)(nil))
+}
 
 func (c *Client) Connector() driver.Info { return (&Driver{}).Info() }
 func (c *Client) Account() string        { return c.User }

@@ -35,7 +35,7 @@ func (d *Driver1930) Info() driver.Info {
 }
 
 // Recognition patterns. A 1930 web page title is
-// « Instant On - Hewlett Packard Enterprise » (observed on real hardware);
+// "Instant On - Hewlett Packard Enterprise" (observed on real hardware);
 // product references JL68xA/JL80xA identify the range in sysDescr or a banner.
 var (
 	reInstantOn = regexp.MustCompile(`(?i)instant\s?on`)
@@ -45,7 +45,7 @@ var (
 	re1830 = regexp.MustCompile(`(?i)\b1830\b`)
 )
 
-// Fingerprint: « is this device for me? »
+// Fingerprint: "is this device for me?"
 //
 // Web title alone does not distinguish 1930 from 1830 — both ranges serve the
 // same UI. We therefore match the FAMILY with moderate confidence, and the exact
@@ -65,7 +65,7 @@ func (d *Driver1930) Fingerprint(ev driver.Evidence) int {
 	if re1930.MatchString(haystack) {
 		return 90 // model named explicitly
 	}
-	// « Instant On » without range number: good candidate, to confirm.
+	// "Instant On" without range number: good candidate, to confirm.
 	return 60
 }
 
@@ -84,47 +84,97 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 	}
 
 	return driver.Capabilities{
-		// « IEEE 802.1Q VLANs up to 256 VLANs, VLANs 4094 and 4093 reserved »
+		// "IEEE 802.1Q VLANs up to 256 VLANs, VLANs 4094 and 4093 reserved"
 		VlanRange: [2]int{1, 4092},
 		MaxVlans:  256,
 		Features: map[string]bool{
-			"Trunk8021Q": true,
-			"PVID":       true,
-			"VoiceVLAN":  true, // « Auto Voice VLAN »
-			"PoE":        strings.Contains(strings.ToUpper(model), "PoE") || strings.Contains(model, "P"),
-			"LLDP":       true, // 802.1AB + LLDP-MED
+			// TRAFFIC DECOMPOSED BY CLASS (ADR-0028). These boxes are collected
+			// over SNMP, and the ifXTable per-class columns are what fills the
+			// two classes — ifInMulticastPkts / ifInBroadcastPkts and their
+			// `out` twins (internal/snmppoll).
+			//
+			// DEDUCED, NOT PROVEN ON THE DEVICE, and the ADR says so in the
+			// same words. The evidence is that the ifXTable ANSWERS on this
+			// range: ifHCInOctets (…31.1.1.1.6) and ifHighSpeed (.15) are
+			// already polled here and already fill these switches'
+			// meshcraft_if_in_octets_total — 104 live series on ArubA alone,
+			// carrying `ifindex`, checked 2026-10-25. An agent answering two
+			// columns of that table implements the table, and the per-class
+			// columns are four more of its columns.
+			//
+			// What could NOT be checked is the walk itself: SNMP is UDP and the
+			// lab route out of the dev host is a TCP SOCKS5, so no snmpwalk was
+			// possible from here. If a firmware turns out to leave these
+			// columns out, it answers noSuchObject, the poller adds nothing and
+			// the series stays empty — the band then reads "not measured yet"
+			// rather than the truth, and the fix is to flip these two to false.
+			driver.FeatTrafficClassMulticast: true,
+			driver.FeatTrafficClassBroadcast: true,
+			// FALSE: the standard MIB has no per-port unknown-unicast counter
+			// at all, so no SNMP-collected platform can hold this one.
+			// ifInUnknownProtos counts a different thing entirely.
+			driver.FeatTrafficClassUnknownUnicast: false,
+			"Trunk8021Q":                          true,
+			"PVID":                                true,
+			"VoiceVLAN":                           true, // "Auto Voice VLAN"
+			"PoE":                                 strings.Contains(strings.ToUpper(model), "PoE") || strings.Contains(model, "P"),
+			"LLDP":                                true, // 802.1AB + LLDP-MED
 			// CST Edge Port: Auto (default) / Enable / Disable — AdminEdgePort +
 			// AutoEdgePort. STP State disables protocol participation per port.
 			driver.FeatSTPEdge:       true,
 			driver.FeatSTPEdgeAuto:   true,
 			driver.FeatSTPPortEnable: true,
-			// CST Port « BPDU Guard » (guide 5200-5879) — suspends port on BPDU.
+			// MSTRegion: this connector writes the FULL 802.1s triplet — the name
+			// and revision through the MSTP section, the VLAN-to-instance table
+			// through the MSTPLogicalInstanceList / MSTPInstanceList /
+			// MSTPVLANList triple (stp_apply.go, stp_mst.go).
+			//
+			// DECLARED LATE, and the omission had a cost rather than being untidy
+			// (ADR-0023). ADR-0022 added the key and declared it on arista-eos
+			// alone, so a UI gated on it would have offered "Conformer" on the
+			// Arista and on none of the eight Instant On — which are exactly the
+			// switches ADR-0021's addendum names as the ones to bring back into
+			// region. A capability absent where it is true is a door that opens
+			// nowhere.
+			//
+			// PROVEN ON HARDWARE, not read off this file: the eight reachable
+			// Aruba of ARENA carried `mst-7f0d238df180`, revision 1, instance 1
+			// = 10-11,42,60,98-100 on 2026-10-25, written by this code.
+			driver.FeatMSTRegion: true,
+			// CST Port "BPDU Guard" (guide 5200-5879) — suspends port on BPDU.
 			driver.FeatBPDUGuard: true,
 			"IGMPSnooping":       true, // v1/v2
-			"LACP":               true, // 802.3ad + static trunks
-			"DHCPSnooping":       true,
-			"DHCPRelay":          true,
-			"ARPProtection":      true,
-			"DoSProtection":      true,
-			"PortSecurity":       true,
-			"ProtectedPorts":     true,
-			"Dot1X":              true, // 802.1x + guest VLAN
-			"RADIUS":             true,
-			"PortMirroring":      true,
-			"IngressRate":        true, // per port
-			"JumboFrames":        true, // 9216 L2 / 9000 routed
-			"StaticRouting":      true, // IPv4, 32 entries
-			"SNTP":               true,
-			"LoopProtection":     true,
-			"EEE":                true, // 802.3az
-			"RMON":               true,
+			// 802.3ad + static trunks — the datasheet capability. The READ and
+			// WRITE are not wired yet: the wcd section carrying trunk
+			// configuration has never been observed on the lab 1930 (the known
+			// sections are VLAN/membership/management ones), and per the house
+			// rule nothing is probed blind on a platform that bills five
+			// sessions. The UI can offer the panel; the apply route answers
+			// with the honest refusal until the section is captured.
+			"LACP":           true,
+			"DHCPSnooping":   true,
+			"DHCPRelay":      true,
+			"ARPProtection":  true,
+			"DoSProtection":  true,
+			"PortSecurity":   true,
+			"ProtectedPorts": true,
+			"Dot1X":          true, // 802.1x + guest VLAN
+			"RADIUS":         true,
+			"PortMirroring":  true,
+			"IngressRate":    true, // per port
+			"JumboFrames":    true, // 9216 L2 / 9000 routed
+			"StaticRouting":  true, // IPv4, 32 entries
+			"SNTP":           true,
+			"LoopProtection": true,
+			"EEE":            true, // 802.3az
+			"RMON":           true,
 			// Storm control exists but is GLOBAL, not per port: an intent that
 			// sets it per port is not applicable here.
 			"StormControl":     true,
 			"StormControlPort": false,
 			// No CLI at all: no SSH, Telnet, or serial console. This product line
 			// has no physical SERIAL PORT either — serial-console adoption, one of
-			// discovery's three entry points (docs/01-Architecture/Discovery), is
+			// discovery's three entry points (docs/en/01-Architecture/Discovery.md), is
 			// therefore IMPOSSIBLE here. A device whose access is lost is recovered
 			// via the reset button, not a console cable.
 			"SSHMgmt":    false,
@@ -134,11 +184,11 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 			"HTTPMgmt":   true,
 		},
 		// SpanningTreeGlobalParam.STPOperationMode: 0=STP, 2=RSTP, 3=MSTP;
-		// enabled=2 turns the tree off (« none »). MSTP radio is hidden on k9
+		// enabled=2 turns the tree off ("none"). MSTP radio is hidden on k9
 		// Instant On, but the code still answers when set.
 		STPModes:     []string{"none", "stp", "rstp", "mstp"},
 		MSTInstances: 8,
-		// « ACLs (named ACL - IPv4 and MAC). Up to 50 ACLs. Up to 480 ACEs »
+		// "ACLs (named ACL - IPv4 and MAC). Up to 50 ACLs. Up to 480 ACEs"
 		MaxACLs:         50,
 		MaxACEs:         480,
 		MaxStaticRoutes: 32,
@@ -150,7 +200,7 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 		// embeds the code — sections `SNMPUserISList` and `SNMPGroupList` exist
 		// and respond. But the page that would expose it is HIDDEN on this model
 		// (`hidden:_top.isDeviceTypek9` in its bundle): the device offers operators
-		// only v2c from « Get Connected », and nothing guarantees v3 writes are accepted.
+		// only v2c from "Get Connected", and nothing guarantees v3 writes are accepted.
 		//
 		// Announcing v3 would lead provisioning to generate a v3 label and secret that
 		// apply would then refuse — an identity that exists in the database and nowhere
@@ -161,7 +211,7 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 		// remains intact: it serves the rest of the fleet. This product line is the
 		// exception, not the other way around.
 		SNMPVersions: []string{"v1", "v2c"},
-		// Product-line observability (cf. docs/01-Architecture/Unified monitoring and
+		// Product-line observability (cf. docs/en/01-Architecture/Unified monitoring and
 		// pipelines §1). Three facts, all established above in this file: SNMP is
 		// read-only and confined to the management VLAN; web UI exists but accepts
 		// only five sessions, so polling it is out of the question; and there is no
@@ -182,7 +232,7 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 					// The former 30 s came from no measurement, but from GROUPING — four
 					// metrics declared together all inherited the most expensive floor.
 					// Nothing in guide 5200-5879 mandates 30 s for `ifHCInOctets`, and
-					// this product line's « fragile under burst » note applies to the WEB
+					// this product line's "fragile under burst" note applies to the WEB
 					// channel and its five sessions (cf. MaxSessions and channel below),
 					// not SNMP, which is read-only and opens no admin session.
 					//
@@ -201,22 +251,31 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 					// split. Leaving them in the same channel as counters would poll them
 					// at 5 s — the exact opposite of the design, which places health and
 					// PoE at 5 min and network tables at 5-15 min
-					// (docs/01-Architecture/Monitoring.md). A 30 s floor already gives
+					// (docs/en/01-Architecture/Monitoring.md). A 30 s floor already gives
 					// six times too much margin; there was no reason to loosen it further.
 					//
 					// `lldp` IS NOW READ, and the split bet paid off: policy asks for 60 s
 					// (cf. api.wantedLLDPInterval), so this floor does not bite and did not
 					// need renegotiation on collection delivery day. Measured since 29 July
-					// 2026 — read-only walk on `sw-labo-1930` (10.99.200.101): LLDP-MIB is
+					// 2026 — read-only walk on `sw-labo-1930` (198.51.100.101): LLDP-MIB is
 					// complete there, `lldpRemPortDesc` included (which CRS326 does not
 					// serve), 52 entries in `lldpLocPortTable`, three neighbors. Two traps
-					// of this agent are documented in docs/01-Architecture/Voisinage LLDP.md:
+					// of this agent are documented in docs/en/01-Architecture/LLDP neighbours.md:
 					// its ports 50 and 52 advertise `lldpLocPortId` as `macAddress(3)` not
 					// `interfaceName(5)`, and the chassis-id it EMITS is not the one it
 					// DECLARES. Health and PoE are still not collected on this channel.
 					Kind:        "snmp",
 					Metrics:     []string{"health", "lldp", "poe"},
 					MinInterval: 30 * time.Second,
+				},
+				{
+					Kind:        "snmp",
+					Metrics:     []string{"fdb"},
+					MinInterval: 30 * time.Second,
+					Note: "MEASURED (walk 2026-08-13 on sw-labo-1930): Q-BRIDGE-MIB " +
+						"dot1qTpFdbPort serves the learned table with its VLAN arc (19 rows), " +
+						"dot1dBasePortIfIndex maps 68 bridge ports (the 52 front ports plus " +
+						"aggregates — resolution through ifDescr keeps only nameable ones).",
 				},
 				{
 					// Last resort when SNMP is unreachable. Floor is high because each read
@@ -257,12 +316,12 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 				},
 			},
 		},
-		// « HTTP and HTTPS sessions (5 sessions total) » — major operational
+		// "HTTP and HTTPS sessions (5 sessions total)" — major operational
 		// constraint: the connector must serialize access, otherwise it evicts the
 		// human administrator from their own UI.
 		MaxSessions: 5,
-		// « Changes take effect immediately but are not retained across a switch
-		// reset unless you click Save Configuration »: free rollback, provided you
+		// "Changes take effect immediately but are not retained across a switch
+		// reset unless you click Save Configuration": free rollback, provided you
 		// apply, verify, THEN save.
 		Commit: driver.CommitApplyThenSave,
 		// Administration account.
@@ -280,7 +339,7 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 		Admin: driver.AdminAccount{
 			Custom:    true,
 			FixedName: "admin",
-			// « Password length: 8-64 characters » (guide 5200-5879).
+			// "Password length: 8-64 characters" (guide 5200-5879).
 			PasswordMin: 8,
 			PasswordMax: 64,
 			Notes: []string{
@@ -295,15 +354,15 @@ func (d *Driver1930) Capabilities(model string) driver.Capabilities {
 			},
 		},
 		Mgmt: driver.MgmtCapabilities{
-			// « By default, the management VLAN ID is 1. The management VLAN can
-			// be any value between 1 and 4092 »
+			// "By default, the management VLAN ID is 1. The management VLAN can
+			// be any value between 1 and 4092"
 			VlanIDs:   driver.VlanAny,
 			VlanRange: [2]int{1, 4092},
 			TaggedOK:  true,
 			Static:    true,
 			DHCP:      true,
-			// « If DHCP is enabled but the DHCP server does not respond, the
-			// default static IP address 192.168.1.1 is used »
+			// "If DHCP is enabled but the DHCP server does not respond, the
+			// default static IP address 192.168.1.1 is used"
 			DHCPFallback: "192.168.1.1",
 			// GATEWAY AND RESOLVERS: carried by the platform. Gateway is readable from
 			// IPv4RouteList on adopted devices; DNS list write is not proven yet.
@@ -353,7 +412,7 @@ func (d *Driver1930) ResetProcedure(model string) driver.ResetProcedure {
 			"configured IP address",
 		},
 		AfterReset: []string{
-			"user « admin », NO password (set on first access)",
+			"user \"admin\", NO password (set on first access)",
 			"DHCP client active; without DHCP response, fallback to 192.168.1.1/24",
 			"home page offering choice between local management and Instant On cloud portal",
 		},
@@ -393,15 +452,15 @@ const (
 )
 
 // Detect classifies the device home page. Deliberately conservative: better
-// « unknown » and a question to the operator than a guess that triggers a POST
+// "unknown" and a question to the operator than a guess that triggers a POST
 // to the wrong place.
 func Detect(body string) Stage {
 	var low = strings.ToLower(body)
 	switch {
 	case strings.Contains(low, "configure locally") ||
 		strings.Contains(low, "manage locally") ||
-		// 2020 guide names this button « CONNECT »; recent firmware shows
-		// « Configure Locally ». Both exist in the field.
+		// 2020 guide names this button "CONNECT"; recent firmware shows
+		// "Configure Locally". Both exist in the field.
 		(strings.Contains(low, "connect") && strings.Contains(low, "cloud")):
 		return StageChooseMode
 	case strings.Contains(low, "set password") || strings.Contains(low, "new password"):

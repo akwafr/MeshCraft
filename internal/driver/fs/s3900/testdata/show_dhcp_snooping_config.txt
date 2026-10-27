@@ -1,0 +1,43 @@
+show dhcp snooping config
+Global DHCP Snooping Status: disabled
+Option82 Status: disabled
+Option82 Sub-option Format: extra subtype included
+Option82 Remote ID: MAC Address (hex encoded)
+Option82 Remote ID TR101 VLAN Field: enabled
+Option82 TR101 Board ID: none
+DHCP Snooping Information Policy: replace
+DHCP Snooping is configured on the following VLANs:
+
+Verify Source MAC-Address: enabled
+DHCP Snooping Rate Limit: unlimited
+                              Circuit-ID       Circuit-ID    Circuit-ID
+Interface Trusted Max-Number  mode             Value         TR101 VLAN Field
+--------- ------- ----------  ---------------  ------------  ----------------
+Eth 1/1   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/2   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/3   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/4   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/5   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/6   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/7   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/8   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/9   No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/10  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/11  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/12  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/13  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/14  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/15  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/16  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/17  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/18  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/19  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/20  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/21  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/22  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/23  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/24  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/25  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/26  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/27  No      16          VLAN-Unit-Port   ---           enabled
+Eth 1/28  No      16          VLAN-Unit-Port   ---           enabled

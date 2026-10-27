@@ -66,7 +66,7 @@ flowchart LR
 >
 > Un proxy stampé `dev` est donc plus récent que tout build passé, présent et futur. Le
 > contrôleur ne lui propose plus rien, l'interface l'affiche **`up_to_date`** — le mot
-> qu'on veut lire — et il le reste pour toujours. `proxy-akwalan` était dans cet état, et
+> qu'on veut lire — et il le reste pour toujours. `proxy-lab` était dans cet état, et
 > un `docker compose pull` n'y changeait rien : le registre intégré servait le même build,
 > `dev` étant aussi le **défaut de l'`ARG`** du Dockerfile. La seule réparation possible
 > était sur la machine du proxy, ce que cette page interdit en première ligne.

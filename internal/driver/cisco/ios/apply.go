@@ -7,12 +7,12 @@ package ios
 //
 // # 1. An absent allowed-vlan line means ALL, not none
 //
-// On IOS a trunk with no « switchport trunk allowed vlan » carries every VLAN.
+// On IOS a trunk with no "switchport trunk allowed vlan" carries every VLAN.
 // Reading that as an empty tagged list is not a rounding error, it inverts the
-// meaning: an « add » would change nothing (everything was already allowed),
+// meaning: an "add" would change nothing (everything was already allowed),
 // the re-read would still show no line, and the port would report drift for
 // ever while every apply issued a no-op. So an exact intent on such a port is
-// written with the SET form (« switchport trunk allowed vlan 99,100 »), which
+// written with the SET form ("switchport trunk allowed vlan 99,100"), which
 // is the only one that actually restricts, and the native VLAN is always
 // included in it — IOS drops native traffic on a trunk whose allowed list does
 // not contain the native VLAN.
@@ -66,22 +66,23 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		return out, fmt.Errorf("pre-write read failed: %v", err)
 	}
 	out.Backup = runOut
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 
 	// LLDP, once, if the switch is not already running it. IOS ships with LLDP
 	// OFF and speaks only CDP, so a Catalyst is invisible to every neighbour in
 	// the fleet and serves an EMPTY LLDP-MIB — meshcraft's topology has a hole
 	// exactly where the switch is (observed 2026-08-03: an adopted 2960-X with
-	// « % LLDP is not enabled », zero neighbours, while it was cabled to the
-	// fleet). Provisioning writes « lldp run », but a device adopted before that
+	// "% LLDP is not enabled", zero neighbours, while it was cabled to the
+	// fleet). Provisioning writes "lldp run", but a device adopted before that
 	// never got it; enabling it on apply closes the gap for the whole existing
 	// fleet. Idempotent and best-effort — a failure here must not fail the port
 	// write it rides along with.
 	if !rc.LLDPRun {
-		if lerr := c.runConfigBlock(ctx, []string{"lldp run"}); lerr == nil {
-			c.step(true, "LLDP enabled globally", "« lldp run » — the switch was invisible to LLDP neighbours")
+		var lerr = c.runConfigBlock(ctx, []string{"lldp run"})
+		if lerr == nil {
+			c.step(true, "LLDP enabled globally", "\"lldp run\" — the switch was invisible to LLDP neighbours")
 		} else {
-			out.Notes = append(out.Notes, "could not enable LLDP (« lldp run »): "+firstLine(lerr.Error()))
+			out.Notes = append(out.Notes, "could not enable LLDP (\"lldp run\"): "+firstLine(lerr.Error()))
 		}
 	}
 
@@ -99,6 +100,10 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		return out, fmt.Errorf("link read failed: %v — the guardrails cannot tell an "+
 			"active port from a dead one, so nothing is written", err)
 	}
+	// How this chassis spells an interface name, before anything is addressed to
+	// one (cf. Client.learnPortStem).
+	c.learnPortStem(runOut)
+	c.learnPortStem(statusOut)
 	var current = stateFromReads(rc, haveVLANs, parseInterfacesStatus(statusOut))
 
 	// Guardrails: the protected VLANs, the plan's AND the device's own.
@@ -179,7 +184,8 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		if portConverged(want, now, allowedAll) {
 			continue
 		}
-		if cliPortName(name) == "" {
+		var cliName = c.portName(name)
+		if cliName == "" {
 			out.Skipped = append(out.Skipped, fmt.Sprintf(
 				"%s not modified: this name is outside the standard-model mapping this "+
 					"connector translates (stack member 1, module slot 0) — nothing was sent "+
@@ -187,7 +193,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 			continue
 		}
 
-		var groups = portCmdCandidates(name, want, now, allowedAll)
+		var groups = portCmdCandidates(name, cliName, want, now, allowedAll)
 		var applied, detail = c.runWithFallbacks(ctx, groups)
 		if !applied {
 			out.Skipped = append(out.Skipped, fmt.Sprintf(
@@ -326,7 +332,7 @@ func missingVLANs(have []VLAN, site []VLAN, mgmtVLAN int, desired map[string]Por
 	return out
 }
 
-// vlanCreateCmds: the IOS global-configuration form. A bare « vlan N » is
+// vlanCreateCmds: the IOS global-configuration form. A bare "vlan N" is
 // enough (unlike FSOS, which demands a name and a media); the name is set on
 // the following line when the plan carries one, and OMITTED when it does not —
 // IOS then keeps its own default (VLAN0100), which is exactly what
@@ -407,14 +413,21 @@ type cmdGroup struct {
 
 // portCmdCandidates builds the convergence for one port.
 //
+// `name` is the standard-model name and labels the transcript; `cliName` is the
+// FULL IOS name the caller resolved against this device's own spelling
+// ([Client.portName]) and is the only thing sent to the wire. They are two
+// arguments and not one because a 3560 answers to "GigabitEthernet0/24" and
+// nothing else, while the label an operator reads stays "GE24" across the
+// fleet.
+//
 // The trunk block carries TWO alternatives and that is the one family
 // difference that actually bites: a 2960/2960-X speaks 802.1Q only and refuses
-// « switchport trunk encapsulation dot1q », while a 3560/3750 refuses
-// « switchport mode trunk » until that same line has been set. Neither order
+// "switchport trunk encapsulation dot1q", while a 3560/3750 refuses
+// "switchport mode trunk" until that same line has been set. Neither order
 // works everywhere, so both are tried and the transcript records which one the
 // device took.
-func portCmdCandidates(name string, want, now PortState, allowedAll bool) []cmdGroup {
-	var enter = "interface " + cliPortName(name)
+func portCmdCandidates(name, cliName string, want, now PortState, allowedAll bool) []cmdGroup {
+	var enter = "interface " + cliName
 	var groups []cmdGroup
 
 	if want.Mode == "trunk" {
@@ -424,7 +437,7 @@ func portCmdCandidates(name string, want, now PortState, allowedAll bool) []cmdG
 			body = append(body, "switchport trunk native vlan "+strconv.Itoa(want.PVID))
 		}
 		if want.TaggedAtLeast {
-			// Never restrict on an unresolved « all »: only add what is missing,
+			// Never restrict on an unresolved "all": only add what is missing,
 			// and add nothing at all when everything is already allowed.
 			if !allowedAll {
 				var toAdd = subtractInts(want.Tagged, now.Tagged)
@@ -433,8 +446,8 @@ func portCmdCandidates(name string, want, now PortState, allowedAll bool) []cmdG
 				}
 			}
 		} else {
-			// The SET form, not « add »: it is the only one that restricts, and
-			// it is idempotent, which « add » on an all-allowed trunk is not.
+			// The SET form, not "add": it is the only one that restricts, and
+			// it is idempotent, which "add" on an all-allowed trunk is not.
 			body = append(body, "switchport trunk allowed vlan "+joinInts(exactAllowed(want)))
 		}
 		body = append(body, "exit")

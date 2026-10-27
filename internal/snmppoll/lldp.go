@@ -12,7 +12,7 @@ import (
 
 // LLDP neighbor data (IEEE 802.1AB), read by the PROXY.
 //
-// See docs/fr/01-Architecture/Voisinage LLDP.md for the survey this file is built on. Nothing
+// See docs/en/01-Architecture/LLDP neighbours.md for the survey this file is built on. Nothing
 // here is inferred from a MIB: each read rule exists because a reference fleet device returned
 // something that required it, and the vault says which.
 //
@@ -43,7 +43,7 @@ const (
 	// Collected while querying a device we already know by name, least obvious point: they do
 	// not describe it, they RECOGNIZE it in what another saw. Without them controller can only
 	// match observations by system name, which is not meshcraft name (survey: `lab-crs326`
-	// announces "lan-r4", `sw-labo-1930` by serial "CN2AKPH86J").
+	// announces "lan-r4", `sw-labo-1930` by serial "CN0EXAMPL1").
 	oidLLDPLocChassisID = "1.0.8802.1.1.2.1.3.2"
 	oidLLDPLocSysName   = "1.0.8802.1.1.2.1.3.3"
 
@@ -100,7 +100,7 @@ const MetricLLDP = "lldp"
 //
 // ONLY subtype whose value is usable port name. Others exist and appear: survey shows
 // `macAddress(3)` on 1930 ports 50 and 52 -- exactly the two ports with neighbors. Treating
-// their `lldpLocPortId` as name would attach neighbors to port named "0x8825101761d9", not on
+// their `lldpLocPortId` as name would attach neighbors to port named "0x02005e1061d9", not on
 // facade: only two observable fleet links would vanish silently.
 const PortIDSubtypeInterfaceName = 5
 
@@ -154,8 +154,8 @@ type LLDPReport struct {
 	// PortIDs: this device's `lldpLocPortId` values, as-is.
 	//
 	// Field looks useless and saves the fleet's only bilateral link. Survey: 1930 declares
-	// `lldpLocChassisId = 0x8825101761a7`, but frames from port 50 carry chassis-id
-	// `0x8825101761d9` -- PORT MAC, its `lldpLocPortId`. CRS326 records neighbor whose
+	// `lldpLocChassisId = 0x02005e1061a7`, but frames from port 50 carry chassis-id
+	// `0x02005e1061d9` -- PORT MAC, its `lldpLocPortId`. CRS326 records neighbor whose
 	// chassis-id appears NOWHERE in 1930 declared identity. Without list, controller cannot
 	// recognize neighbor, link seen both sides looks unilateral.
 	PortIDs []string `json:"port_ids,omitempty"`
@@ -234,7 +234,7 @@ func decodeRemIndex(suffix string) (mark uint32, key remKey, ok bool) {
 //
 //	CRS326, port 26   subtype 5 (interfaceName)  portId "sfp-sfpplus2"
 //	                                             portDesc "bridge/sfp-sfpplus2"
-//	1930,   port 50   subtype 3 (macAddress)     portId "0x8825101761d9"
+//	1930,   port 50   subtype 3 (macAddress)     portId "0x02005e1061d9"
 //	                                             portDesc "50"
 //
 // Always `portDesc` breaks MikroTik: "bridge/sfp-sfpplus2" matches no facade port, `resolve`

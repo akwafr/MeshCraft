@@ -7,78 +7,77 @@ import (
 	"strings"
 )
 
-// L'analyseur des pages `*.b` de SwOS — le socle de tout le connecteur.
+// The parser for SwOS `*.b` pages — the foundation of the whole connector.
 //
-// SwOS ne sert pas de JSON. Il sert des litteraux JavaScript, tels que son
-// interface les mange dans un `eval()` :
+// SwOS does not serve JSON. It serves JavaScript literals, as its UI eats them
+// in an `eval()`:
 //
 //	{upt:0x00e42cfe,mac:'b869f45f14a8',brd:'4353533332362d3234472d32532b',
 //	 spd:[0x07,0x07,0x03],nm:['506f727431','53465031']}
 //
-// Trois ecarts avec JSON, et chacun casse un decoder standard :
+// Three departures from JSON, and each one breaks a standard decoder:
 //
-//   - les keys n'ont PAS de guillemets ;
-//   - les nombres sont hexadecimaux, prefixes `0x`, et de largeur variable — la
-//     page vivante rembourre (`0x0063`), la sauvegarde ne rembourre pas (`0x63`) ;
-//   - les strings sont entre apostrophes SIMPLES et leur contenu est de l'UTF-8
-//     hex-encoded (`'506f727431'` = « Port1 »).
+//   - keys have NO quotes;
+//   - numbers are hexadecimal, prefixed with `0x`, and of variable width — the
+//     live page pads (`0x0063`), the backup does not (`0x63`);
+//   - strings are in SINGLE quotes and their content is hex-encoded UTF-8
+//     (`'506f727431'` = "Port1").
 //
-// Hence cet analyseur. Il est written a la main parce qu'il n'y a pas d'autre choix,
-// et il est verified sur des captures reelles de the device (testdata/) parce
-// que c'est la seule preuve qui vaille.
+// Hence this parser. It is written by hand because there is no other choice,
+// and it is verified on real captures from the device (testdata/) because
+// that is the only proof worth anything.
 //
-// LE PARTI PRIS CENTRAL : un champ absent est ABSENT, jamais zero.
+// THE CENTRAL STANCE: a missing field is ABSENT, never zero.
 //
-// L'interface de the device fait l'inverse — son accesseur (`Ca` dans son
-// JavaScript) rend la valeur par default declared dans la definition du champ
-// quand la page ne porte pas la key. C'est acceptable pour dessiner un formulaire,
-// et inacceptable ici : « ce port est dans le VLAN 0 » et « la page ne dit rien de
-// ce port » menent a des ecritures opposees. Tous les accesseurs rendent donc un
-// second retour booleen, et aucun ne fabrique de valeur.
+// The device's UI does the opposite — its accessor (`Ca` in its JavaScript)
+// returns the default value declared in the field definition when the page
+// does not carry the key. That is acceptable for drawing a form, and
+// unacceptable here: "this port is in VLAN 0" and "the page says nothing about
+// this port" lead to opposite writes. All accessors therefore return a second
+// boolean, and none makes up a value.
 
-// Kind est la nature d'une valeur lue sur une page.
+// Kind is the nature of a value read from a page.
 type Kind int
 
 const (
-	// KindNum : un entier hexadecimal (`0x0063`).
+	// KindNum: a hexadecimal integer (`0x0063`).
 	KindNum Kind = iota
-	// KindStr : une string hex-encoded (`'506f727431'`). Le contenu reste BRUT
-	// jusqu'a ce qu'on demande son texte : une string mal formee doit se signaler
-	// au moment where on la lit, pas faire echouer la page entire.
+	// KindStr: a hex-encoded string (`'506f727431'`). The content stays RAW
+	// until its text is asked for: a malformed string must report itself when
+	// it is read, not make the whole page fail.
 	KindStr
-	// KindList : un tableau, generally indexe par number de port.
+	// KindList: an array, generally indexed by port number.
 	KindList
-	// KindObj : un objet imbrique. Rare sur les pages, la forme normale de
+	// KindObj: a nested object. Rare on pages, the normal shape of
 	// /backup.swb.
 	KindObj
 )
 
-// Value est une valeur lue sur une page `*.b`.
+// Value is a value read from a `*.b` page.
 type Value struct {
 	Kind Kind
-	// Num porte les entiers. SwOS ne depasse jamais 32 bits sur une valeur
-	// scalaire : ses masques de ports au-dela de 32 ports passent par un TABLEAU
-	// de mots (cf. Bit).
+	// Num carries integers. SwOS never exceeds 32 bits on a scalar value: its
+	// port masks beyond 32 ports go through an ARRAY of words (cf. Bit).
 	Num uint32
-	// Raw porte les strings telles que servies — donc encore en hexadecimal.
+	// Raw carries strings as served — hence still in hexadecimal.
 	Raw  string
 	List []Value
 	Obj  *Page
 }
 
-// Page est un objet lu sur une page `*.b`, l'ordre des keys conserve.
+// Page is an object read from a `*.b` page, with key order preserved.
 //
-// L'ordre n'est pas cosmetique : les ecritures renvoient a the device le jeu de
-// champs complet de la page, et reproduire l'ordre dans lequel il l'a servi rend
-// deux transcripts comparables ligne a ligne. Sur une plateforme where l'on ne peut
-// pas relire ce qui a been envoye, c'est la seule way de comprendre un failure sans
-// retourner sur site.
+// The order is not cosmetic: writes send the page's complete field set back
+// to the device, and reproducing the order in which it was served makes two
+// transcripts comparable line by line. On a platform where what was sent
+// cannot be read back, that is the only way to understand a failure without
+// going back on site.
 type Page struct {
 	fields map[string]Value
 	order  []string
 }
 
-// Keys rend les keys dans l'ordre where the device les a servies.
+// Keys returns the keys in the order the device served them.
 func (p *Page) Keys() []string {
 	if p == nil {
 		return nil
@@ -86,8 +85,8 @@ func (p *Page) Keys() []string {
 	return append([]string{}, p.order...)
 }
 
-// Has dit si la page porte la key. A preferer a un accesseur dont on ignorerait
-// le second retour.
+// Has says whether the page carries the key. Prefer it to an accessor whose
+// second return value would be ignored.
 func (p *Page) Has(key string) bool {
 	if p == nil {
 		return false
@@ -96,7 +95,7 @@ func (p *Page) Has(key string) bool {
 	return ok
 }
 
-// Value rend la valeur brute.
+// Value returns the raw value.
 func (p *Page) Value(key string) (Value, bool) {
 	if p == nil {
 		return Value{}, false
@@ -105,8 +104,9 @@ func (p *Page) Value(key string) (Value, bool) {
 	return v, ok
 }
 
-// Num rend un entier. `ok` est faux si la key manque OU si elle porte autre chose
-// qu'un nombre — confondre les deux ferait lire un tableau comme un scalaire.
+// Num returns an integer. `ok` is false if the key is missing OR if it carries
+// something other than a number — confusing the two would read an array as a
+// scalar.
 func (p *Page) Num(key string) (uint32, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindNum {
@@ -115,17 +115,17 @@ func (p *Page) Num(key string) (uint32, bool) {
 	return v.Num, true
 }
 
-// Text decodes une string hex-encoded.
+// Text decodes a hex-encoded string.
 //
-// Le decoding reproduit celui de the device (`Ga` dans son JavaScript) :
-// l'octet NUL TERMINE la string. Ces champs sont des tampons de taille fixe, et
-// ce qui suit le NUL est du residu — le rendre ferait apparaitre des caracteres
-// que l'exploitant ne voit nulle part dans l'interface de son switch.
+// The decoding reproduces the device's (`Ga` in its JavaScript): the NUL byte
+// TERMINATES the string. These fields are fixed-size buffers, and what
+// follows the NUL is residue — returning it would show characters the
+// operator sees nowhere in their switch's UI.
 //
-// Le rembourrage par ESPACES, lui, est conserve : c'est ainsi que les champs
-// SFF-8472 d'un transceiver sont written (`'46532020…'` = « FS » suivi de blancs),
-// et c'est a l'appelant de decider s'il le rogne — pas a l'analyseur d'effacer une
-// information qu'il a lue.
+// SPACE padding, on the other hand, is kept: that is how a transceiver's
+// SFF-8472 fields are written (`'46532020…'` = "FS" followed by blanks), and it
+// is up to the caller to decide whether to trim it — not up to the parser to
+// erase information it read.
 func (p *Page) Text(key string) (string, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindStr {
@@ -134,7 +134,7 @@ func (p *Page) Text(key string) (string, bool) {
 	return decodeHexText(v.Raw)
 }
 
-// Nums rend un tableau d'entiers, typiquement indexe par port.
+// Nums returns an array of integers, typically indexed by port.
 func (p *Page) Nums(key string) ([]uint32, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindList {
@@ -151,8 +151,8 @@ func (p *Page) Nums(key string) ([]uint32, bool) {
 	return out, true
 }
 
-// NumAt rend l'element d'index `i` d'un tableau d'entiers. Un index hors bornes
-// n'est pas un zero : c'est une absence, et elle se dit.
+// NumAt returns the element of index `i` of an integer array. An
+// out-of-bounds index is not a zero: it is an absence, and it says so.
 func (p *Page) NumAt(key string, i int) (uint32, bool) {
 	var list, ok = p.Nums(key)
 	if !ok || i < 0 || i >= len(list) {
@@ -161,9 +161,9 @@ func (p *Page) NumAt(key string, i int) (uint32, bool) {
 	return list[i], true
 }
 
-// Texts rend un tableau de strings decodees. Une seule string illisible fait
-// echouer l'ensemble : rendre les autres en silence laisserait un trou a un index
-// qu'on croirait vide.
+// Texts returns an array of decoded strings. A single unreadable string makes
+// the whole set fail: silently returning the others would leave a hole at an
+// index one would believe empty.
 func (p *Page) Texts(key string) ([]string, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindList {
@@ -185,7 +185,7 @@ func (p *Page) Texts(key string) ([]string, bool) {
 	return out, true
 }
 
-// TextAt rend l'element d'index `i` d'un tableau de strings.
+// TextAt returns the element of index `i` of a string array.
 func (p *Page) TextAt(key string, i int) (string, bool) {
 	var list, ok = p.Texts(key)
 	if !ok || i < 0 || i >= len(list) {
@@ -194,7 +194,7 @@ func (p *Page) TextAt(key string, i int) (string, bool) {
 	return list[i], true
 }
 
-// Obj rend un objet imbrique (les valeurs de /backup.swb).
+// Obj returns a nested object (the values of /backup.swb).
 func (p *Page) Obj(key string) (*Page, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindObj || v.Obj == nil {
@@ -203,7 +203,8 @@ func (p *Page) Obj(key string) (*Page, bool) {
 	return v.Obj, true
 }
 
-// List rend un tableau d'objets — la forme des tables (/vlan.b, /host.b, /acl.b).
+// List returns an array of objects — the shape of tables (/vlan.b, /host.b,
+// /acl.b).
 func (p *Page) List(key string) ([]*Page, bool) {
 	var v, ok = p.Value(key)
 	if !ok || v.Kind != KindList {
@@ -220,22 +221,21 @@ func (p *Page) List(key string) ([]*Page, bool) {
 	return out, true
 }
 
-// Bit lit le bit de rang `i` d'un masque de ports.
+// Bit reads the bit of rank `i` of a port mask.
 //
-// Deux formes coexistent sur cette plateforme, et se tromper de forme donne un
-// masque de ports offset — i.e. une configuration applied sur les MAUVAIS
-// ports :
+// Two shapes coexist on this platform, and getting the shape wrong gives a
+// shifted port mask — i.e. a configuration applied to the WRONG ports:
 //
-//   - jusqu'a 32 ports, le masque est un SCALAIRE et le bit 0 est le port 1
-//     (`fp1:0x03fffffe` sur un 26 ports : tous les ports sauf le premier) ;
-//   - au-dela, c'est un TABLEAU de mots de 32 bits dont le DERNIER element porte
-//     les bits 0 a 31, l'avant-dernier les bits 32 a 63.
+//   - up to 32 ports, the mask is a SCALAR and bit 0 is port 1
+//     (`fp1:0x03fffffe` on a 26-port switch: every port but the first);
+//   - beyond that, it is an ARRAY of 32-bit words whose LAST element carries
+//     bits 0 to 31, the one before it bits 32 to 63.
 //
-// L'ordre des mots est observed dans le JavaScript de the device, qui parcourt le
-// tableau a l'envers (`for(c=a.length-1; 0<=c; --c){ if(32>b) return a[c]>>b&1;
-// b-=32 }`). Aucun model SwOS connu ne depasse 32 ports, mais coder l'ordre
-// inverse par symetrie apparente aurait been un trap silencieux le jour where l'un
-// en depasserait.
+// The word order is observed in the device's JavaScript, which walks the
+// array backwards (`for(c=a.length-1; 0<=c; --c){ if(32>b) return a[c]>>b&1;
+// b-=32 }`). No known SwOS model exceeds 32 ports, but coding the reverse
+// order out of apparent symmetry would have been a silent trap the day one
+// does.
 func (p *Page) Bit(key string, i int) (bool, bool) {
 	if i < 0 {
 		return false, false
@@ -264,18 +264,18 @@ func (p *Page) Bit(key string, i int) (bool, bool) {
 	return false, false
 }
 
-// SetNum pose un entier. Utilise par les ecritures, qui relisent la page,
-// modifient ce qu'elles doivent, et la renvoient entire.
+// SetNum sets an integer. Used by writes, which re-read the page, modify what
+// they must, and send it back whole.
 func (p *Page) SetNum(key string, v uint32) {
 	p.set(key, Value{Kind: KindNum, Num: v})
 }
 
-// SetText pose une string, hex-encoded comme the device l'attend.
+// SetText sets a string, hex-encoded as the device expects.
 func (p *Page) SetText(key string, s string) {
 	p.set(key, Value{Kind: KindStr, Raw: hex.EncodeToString([]byte(s))})
 }
 
-// SetNums pose un tableau d'entiers.
+// SetNums sets an integer array.
 func (p *Page) SetNums(key string, vs []uint32) {
 	var list = make([]Value, 0, len(vs))
 	var v uint32
@@ -285,14 +285,14 @@ func (p *Page) SetNums(key string, vs []uint32) {
 	p.set(key, Value{Kind: KindList, List: list})
 }
 
-// SetBit pose le bit de rang `i` d'un masque de ports, en conservant la FORME
-// (scalaire ou tableau de mots) que the device a servie.
+// SetBit sets the bit of rank `i` of a port mask, keeping the SHAPE (scalar
+// or array of words) the device served.
 //
-// Conserver la forme n'est pas un detail d'esthetique : renvoyer un scalaire there where
-// the device attend un tableau, ou l'inverse, c'est renvoyer un masque qu'il ne
-// lira pas comme on l'a written. Une key absente n'est PAS created — un masque
-// fabrique de rien vaudrait « aucun port », et sur `allp` (« Allow From Ports »)
-// cela suffit a rendre the device injoignable.
+// Keeping the shape is not an aesthetic detail: sending back a scalar where
+// the device expects an array, or the reverse, is sending a mask it will not
+// read the way it was written. A missing key is NOT created — a mask made
+// from nothing would mean "no port", and on `allp` ("Allow From Ports") that
+// is enough to make the device unreachable.
 func (p *Page) SetBit(key string, i int, on bool) bool {
 	if i < 0 {
 		return false
@@ -345,21 +345,22 @@ func (p *Page) set(key string, v Value) {
 	p.fields[key] = v
 }
 
-// NewPage construit une page vide. Sert aux ecritures qui n'ont qu'un champ a
-// poser (/!pwd.b), jamais a celles qui modifient une page existante — celles-there
-// RELISENT (cf. apply.go).
+// NewPage builds an empty page. It serves writes that have only one field to
+// set (/!pwd.b), never those that modify an existing page — those RE-READ
+// (cf. apply.go).
 func NewPage() *Page { return &Page{fields: map[string]Value{}} }
 
-// Only rend une COPIE de la page reduite aux keys demandees, dans l'ordre requested.
+// Only returns a COPY of the page reduced to the requested keys, in the
+// requested order.
 //
-// C'est l'outil du filtrage write, et il est central : une page vivante porte
-// des champs en lecture seule (l'uptime, la temperature, la MAC) que the device
-// n'attend pas en retour. On ne renvoie donc que le jeu de champs INSCRIPTIBLE de
-// la page, observed dans sa propre sauvegarde de configuration (cf. pages.go).
+// It is the write-filtering tool, and it is central: a live page carries
+// read-only fields (uptime, temperature, MAC) the device does not expect
+// back. Only the page's WRITABLE field set is therefore sent back, as observed
+// in its own configuration backup (cf. pages.go).
 //
-// Une key demandee mais absente de la page lue est flagged, pas invented :
-// writing doit s'stop there. Renvoyer une page truncated a un device qui
-// attend le jeu complet, c'est lui laisser remettre a zero ce qu'on n'a pas dit.
+// A key that is requested but missing from the read page is flagged, not
+// invented: the write must stop there. Sending a truncated page to a device
+// that expects the complete set means letting it reset what we did not say.
 func (p *Page) Only(keys []string) (*Page, []string) {
 	var out = NewPage()
 	var missing []string
@@ -375,14 +376,13 @@ func (p *Page) Only(keys []string) (*Page, []string) {
 	return out, missing
 }
 
-// Encode rend la page dans la syntaxe que the device attend en write.
+// Encode returns the page in the syntax the device expects on write.
 //
-// L'encodage des nombres reproduit EXACTEMENT celui de l'interface de
-// the device (`Pa` dans son JavaScript) : hexadecimal, sans majuscules, rembourre
-// a un nombre PAIR de chiffres — donc `0x00` pour zero, `0x63` pour 99,
-// `0x03ffffff` pour un masque de 26 ports. Rien ne prouve que the device soit
-// sensible a ce rembourrage ; reproduire a la lettre ce que son interface envoie
-// est simplement la seule forme dont on sache qu'elle est accepted.
+// The number encoding reproduces EXACTLY that of the device's UI (`Pa` in its
+// JavaScript): hexadecimal, lower case, padded to an EVEN number of digits —
+// hence `0x00` for zero, `0x63` for 99, `0x03ffffff` for a 26-port mask.
+// Nothing proves the device is sensitive to this padding; reproducing to the
+// letter what its UI sends is simply the only shape known to be accepted.
 func (p *Page) Encode() string {
 	var b strings.Builder
 	b.WriteByte('{')
@@ -422,14 +422,14 @@ func encodeValue(v Value) string {
 	return "x"
 }
 
-// EncodeTable rend une table (/vlan.b, /host.b, /acl.b) telle que the device
-// l'attend en write : `[{…},{…}]`.
+// EncodeTable returns a table (/vlan.b, /host.b, /acl.b) as the device
+// expects it on write: `[{…},{…}]`.
 //
-// Une table s'written ENTIRE. Cette plateforme n'a ni ajout ni suppression de ligne :
-// l'interface reconstruit la liste complete depuis son tableau et la poste (`Qa`
-// dans son JavaScript). Poster une table truncated d'une ligne SUPPRIME ce VLAN — ce
-// qui est le comportement voulu quand on l'a decide, et une coupure de service
-// quand on l'a oublie.
+// A table is written WHOLE. This platform has neither row add nor row delete:
+// the UI rebuilds the complete list from its array and posts it (`Qa` in its
+// JavaScript). Posting a table missing one row DELETES that VLAN — which is
+// the intended behaviour when it was decided, and an outage when it was
+// forgotten.
 func EncodeTable(rows []*Page) string {
 	var parts = make([]string, 0, len(rows))
 	var r *Page
@@ -439,7 +439,7 @@ func EncodeTable(rows []*Page) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
-// EncodeNum rend un entier comme l'interface de the device l'written.
+// EncodeNum returns an integer as the device's UI writes it.
 func EncodeNum(v uint32) string {
 	var s = strconv.FormatUint(uint64(v), 16)
 	if len(s)%2 == 1 {
@@ -448,20 +448,20 @@ func EncodeNum(v uint32) string {
 	return "0x" + s
 }
 
-// --- L'analyseur ---
+// --- The parser ---
 
-// Parse lit une page `*.b`. Le result est soit un objet, soit une liste
-// d'objets (les tables : /vlan.b, /host.b, /acl.b, /!dhost.b).
+// Parse reads a `*.b` page. The result is either an object or a list of
+// objects (the tables: /vlan.b, /host.b, /acl.b, /!dhost.b).
 //
-// Une page qui n'est pas du SwOS ne rend PAS une page vide : elle rend une erreur.
-// C'est ce qui distingue « ce switch ne configure pas de VLAN » de « the device
-// m'a servi sa page d'accueil au lieu de ses data » — et il le fait, tous les
-// chemins inconnus rendant l'interface complete en HTTP 200.
+// A page that is not SwOS does NOT return an empty page: it returns an error.
+// That is what distinguishes "this switch configures no VLAN" from "the
+// device served me its home page instead of its data" — and it does, every
+// unknown path returning the complete UI as HTTP 200.
 func Parse(body string) (*Page, []*Page, error) {
 	var s = &scanner{src: body}
 	s.ws()
 	if s.eof() {
-		return nil, nil, fmt.Errorf("page vide : the device n'a rien servi")
+		return nil, nil, fmt.Errorf("empty page: the device served nothing")
 	}
 	switch s.peek() {
 	case '{':
@@ -471,7 +471,7 @@ func Parse(body string) (*Page, []*Page, error) {
 		}
 		s.ws()
 		if !s.eof() {
-			return nil, nil, fmt.Errorf("data residuelles after l'objet, a l'offset %d : %s",
+			return nil, nil, fmt.Errorf("trailing data after the object, at offset %d: %s",
 				s.i, excerpt(s.src[s.i:], 60))
 		}
 		return page, nil, nil
@@ -482,39 +482,39 @@ func Parse(body string) (*Page, []*Page, error) {
 		}
 		s.ws()
 		if !s.eof() {
-			return nil, nil, fmt.Errorf("data residuelles after la table, a l'offset %d : %s",
+			return nil, nil, fmt.Errorf("trailing data after the table, at offset %d: %s",
 				s.i, excerpt(s.src[s.i:], 60))
 		}
 		return nil, rows, nil
 	}
-	return nil, nil, fmt.Errorf("ce n'est pas une page SwOS : elle commence par %q, "+
-		"expected « { » ou « [ » (%s)", s.peek(), excerpt(body, 80))
+	return nil, nil, fmt.Errorf("this is not a SwOS page: it starts with %q, "+
+		"expected \"{\" or \"[\" (%s)", s.peek(), excerpt(body, 80))
 }
 
-// ParseObject lit une page dont on ATTEND un objet. Rend une erreur si
-// the device a servi une table — se tromper de forme ici, c'est lire une
-// configuration there where il n'y a qu'une liste vide.
+// ParseObject reads a page that is EXPECTED to be an object. Returns an error
+// if the device served a table — getting the shape wrong here means reading a
+// configuration where there is only an empty list.
 func ParseObject(body string) (*Page, error) {
 	var page, rows, err = Parse(body)
 	if err != nil {
 		return nil, err
 	}
 	if page == nil {
-		return nil, fmt.Errorf("objet expected, table de %d ligne(s) recue", len(rows))
+		return nil, fmt.Errorf("object expected, table of %d row(s) received", len(rows))
 	}
 	return page, nil
 }
 
-// ParseTable lit une page dont on attend une table. Une table VIDE est un
-// result legitime, et se distingue d'une erreur : sur cet device, `[]` veut
-// dire « aucune rule ACL », pas « je n'ai pas su lire ».
+// ParseTable reads a page expected to be a table. An EMPTY table is a
+// legitimate result, and is distinct from an error: on this device, `[]`
+// means "no ACL rule", not "I could not read it".
 func ParseTable(body string) ([]*Page, error) {
 	var page, rows, err = Parse(body)
 	if err != nil {
 		return nil, err
 	}
 	if page != nil {
-		return nil, fmt.Errorf("table attendue, objet a %d champ(s) recu", len(page.order))
+		return nil, fmt.Errorf("table expected, object with %d field(s) received", len(page.order))
 	}
 	if rows == nil {
 		rows = []*Page{}
@@ -522,13 +522,14 @@ func ParseTable(body string) ([]*Page, error) {
 	return rows, nil
 }
 
-// ParseBackup lit /backup.swb — la configuration ENTIRE en une seule request.
+// ParseBackup reads /backup.swb — the ENTIRE configuration in a single
+// request.
 //
-// La forme est celle d'un objet SANS accolades, dont les keys sont des NOMS DE
-// PAGE : `vlan.b:[…],snmp.b:{…},.pwd.b:{pwd:”}`. C'est la source la plus precieuse
-// de cette plateforme, a double titre : elle donne state complet pour le prix
-// d'une lecture, et elle ENUMERATES, page par page, les champs actually
-// INSCRIPTIBLES — ce qu'aucune documentation ne dit (cf. pages.go).
+// The shape is that of an object WITHOUT braces, whose keys are PAGE NAMES:
+// `vlan.b:[…],snmp.b:{…},.pwd.b:{…}`. It is the most precious source on
+// this platform, on two counts: it gives the complete state for the price of
+// one read, and it ENUMERATES, page by page, the fields that are actually
+// WRITABLE — which no documentation says (cf. pages.go).
 func ParseBackup(body string) (*Page, error) {
 	var s = &scanner{src: body}
 	var page, err = s.fields('\x00')
@@ -537,7 +538,7 @@ func ParseBackup(body string) (*Page, error) {
 	}
 	s.ws()
 	if !s.eof() {
-		return nil, fmt.Errorf("data residuelles dans la sauvegarde, a l'offset %d : %s",
+		return nil, fmt.Errorf("trailing data in the backup, at offset %d: %s",
 			s.i, excerpt(s.src[s.i:], 60))
 	}
 	return page, nil
@@ -562,7 +563,7 @@ func (s *scanner) ws() {
 	}
 }
 
-// object lit `{ key:valeur, … }`.
+// object reads `{ key:value, … }`.
 func (s *scanner) object() (*Page, error) {
 	s.i++ // '{'
 	var page, err = s.fields('}')
@@ -571,15 +572,15 @@ func (s *scanner) object() (*Page, error) {
 	}
 	s.ws()
 	if s.eof() || s.peek() != '}' {
-		return nil, fmt.Errorf("accolade fermante manquante a l'offset %d", s.i)
+		return nil, fmt.Errorf("missing closing brace at offset %d", s.i)
 	}
 	s.i++
 	return page, nil
 }
 
-// fields lit une suite `key:valeur` separee par des virgules, jusqu'a `end`.
-// `end` valant NUL, la suite va jusqu'a la fin de ingress : c'est la forme de
-// /backup.swb.
+// fields reads a comma-separated sequence of `key:value`, up to `end`. With
+// `end` set to NUL, the sequence runs to the end of input: that is the shape
+// of /backup.swb.
 func (s *scanner) fields(end byte) (*Page, error) {
 	var page = NewPage()
 	for {
@@ -588,7 +589,7 @@ func (s *scanner) fields(end byte) (*Page, error) {
 			if end == '\x00' {
 				return page, nil
 			}
-			return nil, fmt.Errorf("fin ingress inattendue a l'offset %d", s.i)
+			return nil, fmt.Errorf("unexpected end of input at offset %d", s.i)
 		}
 		if s.peek() == end {
 			return page, nil
@@ -599,19 +600,18 @@ func (s *scanner) fields(end byte) (*Page, error) {
 		}
 		s.ws()
 		if s.eof() || s.peek() != ':' {
-			return nil, fmt.Errorf("« : » expected after la key %q, a l'offset %d", key, s.i)
+			return nil, fmt.Errorf("\":\" expected after key %q, at offset %d", key, s.i)
 		}
 		s.i++
 		var v Value
 		v, err = s.value()
 		if err != nil {
-			return nil, fmt.Errorf("champ %q : %w", key, err)
+			return nil, fmt.Errorf("field %q: %w", key, err)
 		}
-		// Une key repetee est une page qu'on ne sait pas lire : la last
-		// gagnerait en silence, et writing qui suivrait porterait sur une valeur
-		// que personne n'a vue.
+		// A repeated key is a page we cannot read: the last one would silently
+		// win, and the write that followed would bear on a value nobody saw.
 		if page.Has(key) {
-			return nil, fmt.Errorf("key %q servie deux fois a l'offset %d", key, s.i)
+			return nil, fmt.Errorf("key %q served twice at offset %d", key, s.i)
 		}
 		page.set(key, v)
 		s.ws()
@@ -619,7 +619,7 @@ func (s *scanner) fields(end byte) (*Page, error) {
 			if end == '\x00' {
 				return page, nil
 			}
-			return nil, fmt.Errorf("fin ingress inattendue after %q", key)
+			return nil, fmt.Errorf("unexpected end of input after %q", key)
 		}
 		if s.peek() == ',' {
 			s.i++
@@ -628,14 +628,14 @@ func (s *scanner) fields(end byte) (*Page, error) {
 		if s.peek() == end {
 			return page, nil
 		}
-		return nil, fmt.Errorf("« , » ou fin d'objet expected after %q, obtenu %q a l'offset %d",
+		return nil, fmt.Errorf("\",\" or end of object expected after %q, got %q at offset %d",
 			key, s.peek(), s.i)
 	}
 }
 
-// key lit un nom de champ. Le point et le point d'exclamation sont admis parce
-// que /backup.swb se sert des NOMS DE PAGE comme keys (`vlan.b`, `.pwd.b`) ;
-// aucune page de data n'en porte, les accepter ne relache donc rien d'utile.
+// key reads a field name. The dot and the exclamation mark are allowed because
+// /backup.swb uses PAGE NAMES as keys (`vlan.b`, `.pwd.b`); no data page
+// carries any, so accepting them relaxes nothing useful.
 func (s *scanner) key() (string, error) {
 	var start = s.i
 	for s.i < len(s.src) {
@@ -648,7 +648,7 @@ func (s *scanner) key() (string, error) {
 		break
 	}
 	if s.i == start {
-		return "", fmt.Errorf("nom de champ expected a l'offset %d, obtenu %q", s.i, s.src[s.i])
+		return "", fmt.Errorf("field name expected at offset %d, got %q", s.i, s.src[s.i])
 	}
 	return s.src[start:s.i], nil
 }
@@ -656,7 +656,7 @@ func (s *scanner) key() (string, error) {
 func (s *scanner) value() (Value, error) {
 	s.ws()
 	if s.eof() {
-		return Value{}, fmt.Errorf("valeur attendue, fin ingress")
+		return Value{}, fmt.Errorf("value expected, end of input")
 	}
 	switch s.peek() {
 	case '{':
@@ -673,15 +673,14 @@ func (s *scanner) value() (Value, error) {
 	return s.number()
 }
 
-// array lit un tableau, dont les elements peuvent be des nombres, des strings
-// ou des objets.
+// array reads an array, whose elements may be numbers, strings or objects.
 func (s *scanner) array() (Value, error) {
 	s.i++ // '['
 	var out = Value{Kind: KindList}
 	for {
 		s.ws()
 		if s.eof() {
-			return Value{}, fmt.Errorf("crochet fermant manquant")
+			return Value{}, fmt.Errorf("missing closing bracket")
 		}
 		if s.peek() == ']' {
 			s.i++
@@ -694,7 +693,7 @@ func (s *scanner) array() (Value, error) {
 		out.List = append(out.List, v)
 		s.ws()
 		if s.eof() {
-			return Value{}, fmt.Errorf("crochet fermant manquant")
+			return Value{}, fmt.Errorf("missing closing bracket")
 		}
 		if s.peek() == ',' {
 			s.i++
@@ -704,13 +703,13 @@ func (s *scanner) array() (Value, error) {
 			s.i++
 			return out, nil
 		}
-		return Value{}, fmt.Errorf("« , » ou « ] » expected a l'offset %d, obtenu %q",
+		return Value{}, fmt.Errorf("\",\" or \"]\" expected at offset %d, got %q",
 			s.i, s.peek())
 	}
 }
 
-// rows lit une table `[{…},{…}]`. Les tables de SwOS ne portent que des objets ;
-// y trouver autre chose est une page qu'on ne sait pas lire.
+// rows reads a table `[{…},{…}]`. SwOS tables carry only objects; finding
+// anything else there is a page we cannot read.
 func (s *scanner) rows() ([]*Page, error) {
 	var v, err = s.array()
 	if err != nil {
@@ -720,15 +719,15 @@ func (s *scanner) rows() ([]*Page, error) {
 	var e Value
 	for _, e = range v.List {
 		if e.Kind != KindObj || e.Obj == nil {
-			return nil, fmt.Errorf("table SwOS : ligne qui n'est pas un objet")
+			return nil, fmt.Errorf("SwOS table: row that is not an object")
 		}
 		out = append(out, e.Obj)
 	}
 	return out, nil
 }
 
-// str lit `'…'`. Le contenu n'est PAS decode ici : une string mal encoded ne doit
-// pas faire perdre la page entire, elle doit se signaler quand on lit son texte.
+// str reads `'…'`. The content is NOT decoded here: a badly encoded string
+// must not lose the whole page, it must report itself when its text is read.
 func (s *scanner) str() (Value, error) {
 	s.i++ // '\''
 	var start = s.i
@@ -736,17 +735,16 @@ func (s *scanner) str() (Value, error) {
 		s.i++
 	}
 	if s.eof() {
-		return Value{}, fmt.Errorf("apostrophe fermante manquante a partir de l'offset %d", start)
+		return Value{}, fmt.Errorf("missing closing quote from offset %d", start)
 	}
 	var raw = s.src[start:s.i]
 	s.i++
 	return Value{Kind: KindStr, Raw: raw}, nil
 }
 
-// number lit `0x…`. Le decimal nu est admis : la sauvegarde de configuration et
-// les pages ne servent que de l'hexadecimal prefixe, mais un firmware qui
-// omettrait le prefix donnerait une page illisible pour une raison purement
-// cosmetique.
+// number reads `0x…`. Bare decimal is allowed: the configuration backup and
+// the pages serve only prefixed hexadecimal, but a firmware that omitted the
+// prefix would give a page unreadable for a purely cosmetic reason.
 func (s *scanner) number() (Value, error) {
 	var start = s.i
 	var base = 10
@@ -759,16 +757,16 @@ func (s *scanner) number() (Value, error) {
 		s.i++
 	}
 	if s.i == start {
-		return Value{}, fmt.Errorf("nombre expected a l'offset %d", start)
+		return Value{}, fmt.Errorf("number expected at offset %d", start)
 	}
 	var n, err = strconv.ParseUint(s.src[start:s.i], base, 64)
 	if err != nil {
-		return Value{}, fmt.Errorf("nombre illisible %q : %w", s.src[start:s.i], err)
+		return Value{}, fmt.Errorf("unreadable number %q: %w", s.src[start:s.i], err)
 	}
-	// SwOS n'a pas de valeur au-dela de 32 bits : au-dela, c'est une page qu'on
-	// lit mal, et la tronquer donnerait un masque de ports faux.
+	// SwOS has no value beyond 32 bits: beyond that, it is a page we are
+	// misreading, and truncating it would give a wrong port mask.
 	if n > 0xFFFFFFFF {
-		return Value{}, fmt.Errorf("nombre hors des 32 bits de SwOS : %q", s.src[start:s.i])
+		return Value{}, fmt.Errorf("number outside SwOS's 32 bits: %q", s.src[start:s.i])
 	}
 	return Value{Kind: KindNum, Num: uint32(n)}, nil
 }
@@ -777,11 +775,11 @@ func isHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
-// decodeHexText decodes une string hex-encoded comme the device le fait.
+// decodeHexText decodes a hex-encoded string the way the device does.
 //
-// Un nombre IMPAIR de chiffres voit le dernier abandonne, comme dans le
-// JavaScript de the device (`for(d=0; d+1<a.length; d+=2)`) : on lit ce que
-// the device lit, y compris quand ce qu'il sert est bancal.
+// An ODD number of digits has the last one dropped, as in the device's
+// JavaScript (`for(d=0; d+1<a.length; d+=2)`): we read what the device reads,
+// including when what it serves is lopsided.
 func decodeHexText(raw string) (string, bool) {
 	if len(raw)%2 == 1 {
 		raw = raw[:len(raw)-1]
@@ -790,7 +788,7 @@ func decodeHexText(raw string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	// L'octet NUL termine : ces champs sont des tampons de taille fixe.
+	// The NUL byte terminates: these fields are fixed-size buffers.
 	var i int
 	for i = 0; i < len(b); i++ {
 		if b[i] == 0 {
@@ -800,10 +798,10 @@ func decodeHexText(raw string) (string, bool) {
 	return string(b), true
 }
 
-// excerpt reduit une response a ce qui tient dans un message d'erreur. Sans
-// extrait, « ce n'est pas une page SwOS » n'aide personne : c'est justement le
-// message qu'on obtient quand the device sert son interface web complete a la
-// place des data.
+// excerpt reduces a response to what fits in an error message. Without an
+// excerpt, "this is not a SwOS page" helps nobody: it is precisely the
+// message one gets when the device serves its complete web UI instead of the
+// data.
 func excerpt(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > n {

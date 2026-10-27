@@ -23,8 +23,8 @@ var (
 //
 // OBSERVED on lab sw-labo-1930 (JL685A, InstantOn_1930_3.4.0.0): temporary
 // static ifEntry on VLAN100 with 192.168.100.1/24 accepted with owner=1;
-// owner 0/4 refused « Invalid owner value », owner 5 « BootP is not supported ».
-// Same /16 as the management DHCP interface is refused (« Duplicate IP subnet »).
+// owner 0/4 refused "Invalid owner value", owner 5 "BootP is not supported".
+// Same /16 as the management DHCP interface is refused ("Duplicate IP subnet").
 const ownerStatic = 1
 
 // ReadMgmtAddressing reports how the management interface obtained its address.
@@ -84,7 +84,7 @@ func (a *Admin) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, e
 	}
 
 	a.step(true, "management addressing read",
-		fmt.Sprintf("mode « %s », address %s on %s",
+		fmt.Sprintf("mode \"%s\", address %s on %s",
 			emptyDash(out.Mode), emptyDash(out.Address), emptyDash(out.Interface)))
 	return out, nil
 }

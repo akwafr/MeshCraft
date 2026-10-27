@@ -3,7 +3,7 @@
 // It sets nothing and writes nothing: it ANSWERS THE QUESTION "what would it
 // take to monitor this device?". Separating decision from action is what lets
 // you validate it on a real fleet before a single write goes out
-// (docs/03-Security/SNMP Identity §5).
+// (docs/en/03-Security/SNMP identity.md §5).
 package snmpprov
 
 import (

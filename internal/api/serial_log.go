@@ -157,8 +157,48 @@ func (s *Server) handleGetSerialLog(w http.ResponseWriter, r *http.Request) {
 }
 
 // redactSerialLogLine strips values that look like typed passwords after a keyword,
-// without redacting informational messages such as « setting enable password… ».
-func redactSerialLogLine(line string) string {
+// without redacting informational messages such as "setting enable password…".
+// redactSerialLogLine hides a secret WITHOUT throwing away the rest of the
+// transcript.
+//
+// # Why this splits, when its name says "line"
+//
+// The wizard posts two very different things through here: one-line run-log
+// messages, and the raw SERIAL CAPTURE TAIL — thirty or forty lines of console
+// in a single payload. The redactor used to truncate at the first marker and
+// return, which is right for the first kind and destroys the second: everything
+// after the first "secret" was dropped, transcript and all.
+//
+// That is not a cosmetic loss. On 2026-08-06 a failing Arista run was diagnosed
+// from exactly this capture, and the truncation made the console look like it had
+// gone SILENT right after the credential change — the echoes of the next three
+// commands had been redacted away, not withheld by the device. A real defect was
+// read out of an artifact of this function, and the wrong subsystem was blamed
+// for it.
+//
+// So each physical line is redacted on its own and the rest survives. Per-line
+// semantics are unchanged, which is what keeps the single-line callers identical.
+func redactSerialLogLine(payload string) string {
+	if !strings.ContainsAny(payload, "\r\n") {
+		return redactOneLine(payload)
+	}
+	var lines = strings.Split(payload, "\n")
+	var i int
+	for i = range lines {
+		// Keep the \r of a CRLF console capture where it was: it is not noise,
+		// it is what the device sent, and a transcript is read as it arrived.
+		var cr = strings.HasSuffix(lines[i], "\r")
+		var body = strings.TrimSuffix(lines[i], "\r")
+		body = redactOneLine(body)
+		if cr {
+			body += "\r"
+		}
+		lines[i] = body
+	}
+	return strings.Join(lines, "\n")
+}
+
+func redactOneLine(line string) string {
 	var lower = strings.ToLower(line)
 	var markers = []string{"password:", "password ", "secret:", "secret ", "passwd:", "passwd "}
 	var m string
@@ -168,7 +208,7 @@ func redactSerialLogLine(line string) string {
 			continue
 		}
 		var after = strings.TrimSpace(line[idx+len(m):])
-		// « password… » alone → keep; « password hunter2 » → redact.
+		// "password…" alone → keep; "password hunter2" → redact.
 		if after == "" || strings.HasPrefix(after, "…") || strings.HasPrefix(after, "...") {
 			continue
 		}

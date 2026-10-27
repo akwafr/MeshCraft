@@ -150,7 +150,7 @@ export default function Discover() {
           <div className="empty">{t("discover.noCandidates")}</div>
         </div>
       ) : (
-        <div className="card" style={{ padding: 0, overflowX: "auto" }}>
+        <div className="card card-flush scroll-x scroll-cue">
           <table className="ports-table">
             <thead>
               <tr>

@@ -141,7 +141,7 @@ Et le reste du YAML cible ? Il existe, mais **ailleurs que dans l'intent**, ce q
 | `services.snmp`, `services.snmp.traps` | `site_credentials` (le secret) + `devices.trap_dest_addr` (l'adresse écrite) + `devices.trap_seen_at` (la preuve du chemin retour). **Livré** ([[Monitoring]], [[Identité SNMP]]) |
 | `services.service_account` | `internal/api/devicecreds_handlers.go` + `instanton.EnsureAccount`. Il n'y a **pas** d'authentification par clé publique : la seule plateforme livrée est web-only, donc mot de passe |
 | `services.syslog` | **rien.** Ni champ, ni pose, ni collecteur |
-| `services.telemetry` (gNMI) | **rien** — aucune plateforme livrée ne sait le faire ([[Connecteurs]] : `Streaming: false`) |
+| `services.telemetry` (gNMI) | **Arista EOS uniquement** — seul connecteur à déclarer `Streaming: true` et des canaux `gnmi` (état, compteurs, LLDP, santé). Les sept autres restent en SNMP. Le collecteur est `internal/gnmipoll`, exécuté par le proxy |
 | `services.stp`, `igmp_snooping`, `dhcp_snooping` globaux | **rien** au niveau équipement |
 | `ports[].enabled`, `voice_vlan`, `stp`, `security`, `lldp`, `speed` | **rien** — ni stockés, ni posés. `stp`, `dhcp_snooping` et `port_security` sont pré-déclarés dans `recon.ExtraIntents`, ce qui est le premier pas et pas davantage |
 | `ports[].profile` (trace du profil résolu) | remplacé par un mécanisme différent : les [[Profils de switchs]] sont des **règles** (`internal/portrules`) qui produisent la configuration, avec un rapport par règle disant combien de ports elle a gagnés — plus utile qu'une trace figée dans chaque port, parce qu'il se recalcule |

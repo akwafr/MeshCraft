@@ -1,6 +1,6 @@
 -- SNMP reachability, DISTINCT from ICMP ping status.
 --
--- `status` is established by ping alone (cf. docs/01-Architecture/Monitoring.md).
+-- `status` is established by ping alone (cf. docs/en/01-Architecture/Monitoring.md).
 -- A device can answer ping while SNMP collection is dead (wrong community, agent
 -- down, collector detached) — and the reverse also happens when ICMP is filtered.
 -- One indicator conflated the two and made the collector-failure case invisible:

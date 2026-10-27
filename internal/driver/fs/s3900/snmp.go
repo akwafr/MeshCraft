@@ -52,7 +52,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	if err != nil && runOut == "" {
 		return out, fmt.Errorf("pre-write read failed: %v", err)
 	}
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 	// The 1.7 agent answers as soon as a community exists (factory config:
 	// public/private already set, agent active).
 	out.Enabled = len(rc.Communities) > 0
@@ -83,7 +83,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	if err != nil && runOut == "" {
 		return out, fmt.Errorf("post-write re-read failed: %v", err)
 	}
-	rc = parseRunningConfig(runOut)
+	rc = parseRunningConfig(runOut, c.host)
 	if rc.Communities[want.Community] != "ro" {
 		c.step(false, "SNMP community absent after write",
 			"the CLI accepted the command but the running-config does not carry it")
@@ -96,7 +96,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 
 	if rc.Communities["private"] == "rw" {
 		out.Skipped = append(out.Skipped,
-			"factory community « private » (READ-WRITE) is still present on the device — "+
+			"factory community \"private\" (READ-WRITE) is still present on the device — "+
 				"remove it by hand until its removal form is surveyed on this firmware")
 	}
 

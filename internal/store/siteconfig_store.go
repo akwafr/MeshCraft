@@ -102,7 +102,12 @@ func (s *Store) ExportSiteConfig(ctx context.Context, siteID string) (siteconfig
 			MgmtIP: d.MgmtIP, Status: d.Status, StatusNote: d.StatusNote, Group: grp,
 			PoEBudgetW: d.PoEBudgetW,
 			Position:   siteconfig.Position{X: d.PosX, Y: d.PosY},
-			PortGroups: d.PortGroups, Ports: d.Ports, Extra: d.Extra,
+			PortGroups: d.PortGroups,
+			// The follow-link each port carries is a port profile uuid — the
+			// same portable-by-name treatment as switch profile rules above.
+			Ports: siteconfig.RemapPortFollows(d.Ports,
+				siteconfig.PortRefByID, siteconfig.PortRefByName, portProfileName),
+			Extra: d.Extra,
 		})
 	}
 
@@ -240,6 +245,13 @@ func (s *Store) ImportSiteConfig(ctx context.Context, siteID string, f siteconfi
 		// Imported devices therefore start "unknown" — the column default — until the
 		// first monitoring observation. The field remains in the format for EXPORT, where
 		// it faithfully describes what was observed at export time.
+		// Port follow-links come back from name to THIS site's freshly assigned
+		// ids. A name with no counterpart here is dropped by the remap — a
+		// dangling id would read on screen as "this port's group was deleted",
+		// which on a fresh site is a lie; the honest state is "manual". Stale
+		// ids from an older-format export are purged the same way.
+		var ports = siteconfig.RemapPortFollows(jsonOr(d.Ports, `{}`),
+			siteconfig.PortRefByName, siteconfig.PortRefByID, portProfileID)
 		var id string
 		if err = tx.QueryRow(ctx,
 			`insert into devices (site_id, group_id, name, model, vendor, location, mgmt_ip,
@@ -248,7 +260,7 @@ func (s *Store) ImportSiteConfig(ctx context.Context, siteID string, f siteconfi
 			 returning id::text`,
 			siteID, grpRef, d.Name, d.Model, d.Vendor, d.Location, d.MgmtIP,
 			d.PoEBudgetW, d.Position.X, d.Position.Y,
-			jsonOr(d.PortGroups, `[]`), jsonOr(d.Ports, `{}`), jsonOr(d.Extra, `{}`)).Scan(&id); err != nil {
+			jsonOr(d.PortGroups, `[]`), ports, jsonOr(d.Extra, `{}`)).Scan(&id); err != nil {
 			return fmt.Errorf("device %q: %w", d.Name, err)
 		}
 		deviceID[d.Name] = id

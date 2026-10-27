@@ -12,7 +12,7 @@ import (
 )
 
 // SNMP configuration of an Instant On — step 4 of §5 of
-// docs/03-SNMP Security/Identity.
+// docs/en/03-Security/SNMP identity.md.
 //
 // This is the last step in the chain, and the only one that touches the
 // fleet: `snmpprov` decides what SHOULD be, this file sets it. The
@@ -456,7 +456,7 @@ func (a *Admin) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, e
 			group.SecurityLevel != level || group.WriteView != "" {
 			if err = a.writeSection(ctx, sectionSNMPGroups, "set",
 				groupEntry(want.Group, level),
-				"SNMPv3 access group “"+want.Group+"» set to read-only"); err != nil {
+				"SNMPv3 access group “"+want.Group+"\" set to read-only"); err != nil {
 				return out, err
 			}
 			out.GroupCreated = true
@@ -698,7 +698,7 @@ func checkSecret(what, v string) error {
 	return nil
 }
 
-// --- Le chemin RETOUR : les destinataires de traps ---
+// --- The RETURN path: trap receivers ---
 //
 // The above teaches meshcraft to QUERY the device. What follows teaches it
 // to make the device SPEAK — the last missing layer of the trap channel:
@@ -706,7 +706,7 @@ func checkSecret(what, v string) error {
 // and no device had ever received the order to send.
 //
 // Everything is recorded on `sw-labo-1930` (JL685A, firmware 3.4.0.0) in
-// READ ONLY and recorded in docs/01-Architecture/Connecteurs.md, section
+// READ ONLY and recorded in docs/en/01-Architecture/Connectors.md, section
 // "SNMP trap recipients". Four facts govern this code:
 //
 //  1. There are TWO sections, not one. v1/v2c lives in `SNMPTrap`, whose
@@ -995,12 +995,11 @@ func switchLabel(code string) string {
 	return "code " + code
 }
 
-// receiversAt rend les destinataires d'une table qui portent cette adresse.
+// receiversAt returns the receivers of a table that carry this address.
 //
-// The COUNT counts as much as the entry: two entries for the same address
-// means that the equipment was ADDED where replacement was requested — and
-// this is a case that cannot be excluded, the key of an entry not being the
-// seule adresse.
+// The COUNT matters as much as the entry: two entries for the same address
+// mean the device ADDED where a replacement was asked for — and that case
+// cannot be ruled out, since an entry's key is not the address alone.
 func receiversAt(list []TrapReceiver, addr string) []TrapReceiver {
 	var out []TrapReceiver
 	var r TrapReceiver
@@ -1014,43 +1013,43 @@ func receiversAt(list []TrapReceiver, addr string) []TrapReceiver {
 
 // --- Writing ---
 
-// ApplyTrapReceiver declares the meshcraft collector as the recipient of
-// equipment traps. This is the gesture that puts the channel into service.
+// ApplyTrapReceiver declares the meshcraft collector as a receiver of the
+// device's traps. This is the gesture that puts the channel into service.
 //
-// The order is that imposed by the statement:
+// The order is the one the survey imposes:
 //
 //  1. Validate EVERYTHING before the first write, including the existence of
-//     v3 user and their group's notification view. The equipment,
-//     doesn't check any of that: it accepts a non-existent user without
-//     flinch and then emits nothing authenticable.
-//  2. READ. Without reading, one can neither be idempotent nor construct a
-//     deletion (the key of which is returned by the equipment), nor interpret a
-//     refusal — knowing how many recipients were already there is what distinguishes
-//     “table full” of “wrong writing gesture”.
-//  3. Write, once, in the table of the good family.
-//  4. RELIRE et comparer champ par champ. Sur cette gamme, `statusCode 0` ne veut
-//     not say "fact" - and here the writing itself is a reconstruction
-//     never executed: rereading is not a precaution, it is the only
-//     preuve qui existe.
-//  5. Save in flash. A recipient lost on reboot would leave a
-//     equipment that passes for supervised.
+//     the v3 user and its group's notification view. The device checks none
+//     of that: it accepts a nonexistent user without flinching and then
+//     emits nothing that can be authenticated.
+//  2. READ. Without a read there is no idempotence, no way to build a
+//     deletion (whose key the device hands back), and no way to interpret a
+//     refusal — knowing how many receivers were already there is what tells
+//     "table full" apart from "wrong write gesture".
+//  3. Write, once, into the table of the right family.
+//  4. READ BACK and compare field by field. On this product line,
+//     `statusCode 0` does not mean "done" — and here the write itself is a
+//     reconstruction never executed: reading back is not a precaution, it is
+//     the only proof there is.
+//  5. Save to flash. A receiver lost on reboot would leave a device that
+//     looks monitored.
 //
-// Which is NOT done, voluntarily: no third party recipient is removed,
-// even to make room. A full table is reported, never “released” —
-// couper la supervision de quelqu'un d'autre pour installer la sienne serait le
-// Worst service. And the three transmit switches are not written:
-// no page in the interface writes them, so nothing says they accept it.
+// What is deliberately NOT done: no third-party receiver is removed, not
+// even to make room. A full table is reported, never "freed" — cutting off
+// somebody else's monitoring to install our own would be the worst possible
+// service. And the three emission switches are not written: no page of the
+// UI writes them, so nothing says the device accepts it.
 func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 	want TrapDestination) (TrapResult, error) {
 	var out TrapResult
 	var err error
 
-	// 1. Validation. Rien ne part tant que tout n'est pas nommable.
+	// 1. Validation. Nothing leaves until everything can be named.
 	if (want.Community == "") == (want.User == "") {
-		return out, fmt.Errorf("a recipient of traps carries ONE identity: either one" +
-			"v2c community, or a v3 user — the two tables are separate" +
-			"on this range, and declaring both would cause each event to emit in" +
-			"double to the same collector")
+		return out, fmt.Errorf("a trap receiver carries ONE identity: either a " +
+			"v2c community or a v3 user — the two tables are separate " +
+			"on this product line, and declaring both would make every event " +
+			"reach the same collector twice")
 	}
 	var v3 = want.User != ""
 	out.Version = "v2c"
@@ -1078,22 +1077,24 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 		return out, err
 	}
 
-	// 2. Reading. We never differ against a cached state.
+	// 2. Read. Never diff against a cached state.
 	var st TrapState
 	if st, err = a.ReadTrapReceivers(ctx); err != nil {
 		return out, err
 	}
-	// `Known` carries the count of the table of the TARGET family, the one in which
-	// the writing is going to leave: this is the one whose refusal would measure the ceiling.
+	// `Known` carries the count of the TARGET family's table, the one the
+	// write is about to land in: its refusal is the one that would measure the
+	// ceiling.
 	//
-	// L'autre table part en NOTE, et il ne faut pas y voir de la statistique. Cette
-	// gamme range ses destinataires v1/v2c et v3 dans deux sections distinctes, ce
-	// that no other delivered platform does; nothing says that their ceiling
-	// is not COMMON, and the firmware only applies it when adding. The day when an addition
-	// is refused, the only thing that will allow us to conclude is to know what the
-	// DEUX tables portaient (cf. TrapTableFullError.Other). Le contrat n'a qu'un
-	// compteur — parce que « deux tables » n'a de sens que ici — donc ce fait de
-	// platform goes through the field provided for that: a sentence for the operator.
+	// The other table goes into a NOTE, and it is not there for statistics.
+	// This product line keeps its v1/v2c and v3 receivers in two separate
+	// sections, which no other shipped platform does; nothing says their
+	// ceiling is not SHARED, and the firmware only enforces it on an add. The
+	// day an add is refused, the only thing that allows a conclusion is
+	// knowing what BOTH tables held (cf. TrapTableFullError.Other). The
+	// contract has a single counter — because "two tables" only means
+	// something here — so this platform fact goes through the field meant for
+	// it: a sentence for the operator.
 	out.Known = len(st.V2c)
 	var otherFamily, otherCount = "v3", len(st.V3)
 	if v3 {
@@ -1112,7 +1113,7 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 			"trap receiver would be of no use — set the SNMP identity "+
 			"first (ApplySNMP)", sectionSNMPGlobal, snmpDisabledCode)
 	}
-	// Emission switches: refuse on a “2” (the device says no),
+	// Emission switches: refuse on a "2" (the device says no),
 	// but only NOTE on an absent field. Refusing on absence would cut the
 	// trap channel on any firmware that does not render the field, when
 	// nothing was observed.
@@ -1129,11 +1130,12 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 			sectionSNMPTrap, snmpDisabledCode)
 	}
 	if st.Emitting == "" {
-		out.Notes = append(out.Notes, "the equipment did not render trapsEnbl:"+
-			"the emission of traps could not be verified")
+		out.Notes = append(out.Notes, "the device did not return trapsEnbl: "+
+			"whether it emits traps could not be verified")
 	}
 
-	// Identity v3 checks AGAINST the device, because it doesn't.
+	// The v3 identity is checked AGAINST the device, because the device
+	// does not check it.
 	var securityType string
 	if v3 {
 		if securityType, err = a.trapUserSecurity(ctx, want.User); err != nil {
@@ -1141,26 +1143,26 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 		}
 	}
 
-	// 3. Idempotence. A recipient already there and compliant cannot be rewritten:
-	//    returning to a qualified park must not disturb anything, and above all not
-	//    empiler un doublon par provisionnement.
+	// 3. Idempotence. A receiver already there and conforming is not
+	//    rewritten: going back over an already-qualified fleet must disturb
+	//    nothing, and above all must not stack one duplicate per provisioning.
 	var list = st.V2c
 	if v3 {
 		list = st.V3
 	}
 	var here = receiversAt(list, want.Address)
 	if len(here) == 1 && trapConform(here[0], want, port, securityType, v3) {
-		a.step(true, "recipient of traps already declared and compliant",
-			fmt.Sprintf("%s to %s:%s — no writing required",
+		a.step(true, "trap receiver already declared and conforming",
+			fmt.Sprintf("%s to %s:%s — no write needed",
 				out.Version, want.Address, port))
 		return out, nil
 	}
 
-	// In v3, the username is part of the KEY of the entry
-	// (receiverIPAddress + notificationType + userName + securityType) : un `set`
-	// with another name would add an entry instead of replacing the existing one.
-	// there, and the old one — inert, since its user is not suitable —
-	// continuerait d'occuper une place dans une table dont le plafond est inconnu.
+	// In v3, the user name is part of the entry's KEY
+	// (receiverIPAddress + notificationType + userName + securityType): a `set`
+	// with another name would ADD an entry instead of replacing the one
+	// already there, and the old one — inert, since its user is not the right
+	// one — would keep occupying a slot in a table whose ceiling is unknown.
 	var old TrapReceiver
 	if v3 {
 		for _, old = range here {
@@ -1169,14 +1171,14 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 			}
 			if err = a.writeSection(ctx, sectionTrapReceiversV3, "delete",
 				deleteReceiverV3(old),
-				"old recipient of traps v3 removed before replacement"); err != nil {
+				"old v3 trap receiver removed before replacement"); err != nil {
 				return out, err
 			}
 			out.Replaced = true
 		}
 	}
 
-	// 4. Writing, only one, in the table of the good family.
+	// 4. Write, exactly once, into the right family's table.
 	var section = sectionSNMPTrap
 	var inner = receiverEntryV2c(want, port)
 	if v3 {
@@ -1184,35 +1186,35 @@ func (a *Admin) ApplyTrapReceiver(ctx context.Context,
 		inner = receiverEntryV3(want, port, securityType)
 	}
 	if err = a.writeSection(ctx, section, "set", inner, fmt.Sprintf(
-		"recipient of %s traps declared to %s:%s", out.Version, want.Address,
+		"%s trap receiver declared to %s:%s", out.Version, want.Address,
 		port)); err != nil {
 		return out, trapRefused(err, st, v3, false)
 	}
 
-	// 5. La relecture, qui est la seule preuve.
+	// 5. The read-back, which is the only proof.
 	if err = a.verifyTrapReceiver(ctx, want, port, securityType, v3, st); err != nil {
 		return out, err
 	}
 	out.Set = true
 
-	// 6. Make it sustainable. Failing to save does not cancel the pose — it is
-	//    recorded in the transcript, which is the channel provided for this.
+	// 6. Make it durable. A failed save does not undo the write — it is
+	//    recorded in the transcript, which is the channel meant for that.
 	a.SaveConfig(ctx) //nolint:errcheck // logged in the transcript
 	return out, nil
 }
 
-// trapUserSecurity verifies that the designated v3 user EXISTS and can receive
-// traps, and makes the security level to be declared for him.
+// trapUserSecurity checks that the named v3 user EXISTS and can receive
+// traps, and returns the security level to declare for it.
 //
-// This additional reading is the price of the documented trap: the field
-// `userName` du formulaire de destinataire v3 est un texte libre, sans liste
-// drop-down, and the equipment does not oppose a non-existent name. The recipient
-// registers, and does not emit anything authenticable. Nobody would notice
-// other than by noting the absence of events — that is to say, never.
+// This extra read is the price of the documented trap: the `userName` field
+// of the v3 receiver form is free text, with no drop-down list, and the
+// device does not object to a nonexistent name. The receiver registers and
+// emits nothing that can be authenticated. Nobody would notice except by
+// spotting the absence of events — that is to say, never.
 //
-// The security level is DEDUCED from the user, never chosen: it is the same
-// pair of algorithms which decides its key. A recipient declared in authPriv
-// for a user without encryption would designate an identity that does not exist.
+// The security level is DERIVED from the user, never chosen: the same pair
+// of algorithms decides its key. A receiver declared authPriv for a user
+// without encryption would name an identity that does not exist.
 func (a *Admin) trapUserSecurity(ctx context.Context, user string) (string, error) {
 	var ident, err = a.ReadSNMP(ctx)
 	if err != nil {
@@ -1257,23 +1259,23 @@ func (a *Admin) trapUserSecurity(ctx context.Context, user string) (string, erro
 	return level, nil
 }
 
-// trapConform says if a recipient already declared is THE ONE we want.
+// trapConform says whether a receiver already declared is THE ONE we want.
 //
-// The address is already matched by the caller. What is compared here is everything
-// on which the exploitability of the traps received depends — the port, the fact that it is a
-// Trap and not an Inform, and identity.
+// The address is already matched by the caller. What is compared here is
+// everything the usefulness of the received traps depends on — the port,
+// the fact that it is a Trap and not an Inform, and the identity.
 func trapConform(have TrapReceiver, want TrapDestination,
 	port, securityType string, v3 bool) bool {
 	if have.Port != port || have.NotifyType != notifyTypeTrap {
 		return false
 	}
-	// An attached filter discards traps BY OID, silently:
-	// link events might never happen without anything saying so.
-	// meshcraft does not interpret its content — it only accepts the absence of a filter.
+	// An attached filter drops traps BY OID, silently: link events might
+	// never arrive without anything saying so. meshcraft does not interpret
+	// its content — it only accepts the absence of a filter.
 	//
-	// The test concerns `filterAttached` and not “different from filterNone”:
-	// un firmware qui ne rendrait pas `filterEnabled` rendrait sinon ce
-	// recipient eternally non-compliant, therefore rewritten each time.
+	// The test is on `filterAttached` and not "different from filterNone":
+	// otherwise a firmware that does not return `filterEnabled` would make
+	// this receiver forever non-conforming, hence rewritten every time.
 	if have.Filter == filterAttached || have.FilterName != "" {
 		return false
 	}
@@ -1283,13 +1285,14 @@ func trapConform(have TrapReceiver, want TrapDestination,
 	return have.Community == want.Community && have.SNMPVersion == snmpVersionV2
 }
 
-// verifyTrapReceiver rereads the device and compares field by field.
+// verifyTrapReceiver reads the device back and compares field by field.
 //
-// C'est la fonction la plus importante de ce bloc. Sur cette gamme, « code 0 mais
-// nothing has changed” is a proven failure mode; and the gesture of writing
-// recipients is a reconstruction that no one has yet performed. Each
-// deviation therefore becomes an error which NAMES the faulty field — this is what will make
-// readable the failure of the day when the hypothesis will prove false.
+// This is the most important function of this block. On this product line,
+// "code 0 but nothing changed" is a proven failure mode; and the gesture
+// that writes receivers is a reconstruction nobody has executed yet. Every
+// deviation therefore becomes an error that NAMES the faulty field — that is
+// what will make the failure readable on the day the hypothesis proves
+// false.
 func (a *Admin) verifyTrapReceiver(ctx context.Context, want TrapDestination,
 	port, securityType string, v3 bool, before TrapState) error {
 	var after, err = a.ReadTrapReceivers(ctx)
@@ -1302,8 +1305,8 @@ func (a *Admin) verifyTrapReceiver(ctx context.Context, want TrapDestination,
 	}
 	var here = receiversAt(list, want.Address)
 	if len(here) == 0 {
-		// The equipment said yes and did nothing. The number of recipients it
-		// was already deciding what that means.
+		// The device said yes and did nothing. The number of receivers it
+		// already held decides what that means.
 		return trapRefused(nil, before, v3, true)
 	}
 	if len(here) > 1 {
@@ -1365,19 +1368,19 @@ func (a *Admin) verifyTrapReceiver(ctx context.Context, want TrapDestination,
 	return nil
 }
 
-// trapRefused traduit un refus d'ajout de destinataire — explicite (`statusCode`
-// non nul) ou silencieux (code 0 suivi d'une relecture vide).
+// trapRefused translates a refused receiver add — explicit (non-zero
+// `statusCode`) or silent (code 0 followed by an empty read-back).
 //
-// Toute la valeur de cette fonction est dans la distinction qu'elle fait, et elle
-// depends on the number of recipients ALREADY present:
+// The whole value of this function lies in the distinction it makes, and
+// that distinction depends on the number of receivers ALREADY present:
 //
-//   - there was at least one, so the writing gesture works: this refusal
-//     measures the table ceiling, which is not documented anywhere
-//     (TrapTableFullError) ;
-//   - il n'y en avait aucun, donc ce n'est pas un plafond : c'est le geste
-//     of writing itself — reconstituted, never executed — that the equipment
-//     do not accept. Saying it explicitly saves the next batch from searching
-//     a full table on empty equipment.
+//   - there was at least one, so the write gesture works: this refusal
+//     measures the table ceiling, which is documented nowhere
+//     (TrapTableFullError);
+//   - there was none, so this is not a ceiling: it is the write gesture
+//     itself — reconstructed, never executed — that the device does not
+//     accept. Saying so explicitly spares the next batch from hunting for a
+//     full table on an empty device.
 func trapRefused(cause error, before TrapState, v3, silent bool) error {
 	var accepted, other, fam = len(before.V2c), len(before.V3), "v1/v2c"
 	var section = sectionSNMPTrap
@@ -1402,8 +1405,8 @@ func trapRefused(cause error, before TrapState, v3, silent bool) error {
 	var out = fmt.Sprintf("the device %s the FIRST trap receiver in the "+
 		"%s table (%s), which was empty: this is therefore not a table ceiling. The "+
 		"writing gesture of this section is a reconstruction never performed "+
-		"(docs/01-Architecture/Connecteurs.md, “The writing gesture — HYPOTHESIS to "+
-		"validate”) — that is what this refusal challenges: section name, "+
+		"(docs/en/01-Architecture/Connectors.md, \"The writing gesture — HYPOTHESIS to "+
+		"validate\") — that is what this refusal challenges: section name, "+
 		"child-list nesting, or POST query string.%s",
 		how, fam, section, conclusion)
 	if cause != nil {
@@ -1412,10 +1415,10 @@ func trapRefused(cause error, before TrapState, v3, silent bool) error {
 	return fmt.Errorf("%s", out)
 }
 
-// checkTrapAddress checks the trap address. The scope of the equipment is
-// validated in `unicastipv4` on this family: a broadcast address,
-// loopback or local link would be refused - we might as well say it here, where the message
-// peut nommer la raison.
+// checkTrapAddress checks the trap address. The device's field is validated
+// as `unicastipv4` on this family: a broadcast, loopback or link-local
+// address would be refused — better to say so here, where the message can
+// name the reason.
 func checkTrapAddress(addr string) error {
 	if addr == "" {
 		return fmt.Errorf("trap collector address is empty")
@@ -1427,14 +1430,14 @@ func checkTrapAddress(addr string) error {
 	}
 	if !ip.IsGlobalUnicast() {
 		return fmt.Errorf("trap collector address %q: neither loopback nor "+
-			"link-local, nor multicast — the equipment emits its traps from its"+
-			"interface de management, vers un collecteur joignable depuis elle", addr)
+			"link-local, nor multicast — the device emits its traps from its "+
+			"management interface, towards a collector reachable from it", addr)
 	}
 	return nil
 }
 
-// receiverEntryV2c returns a v1/v2c recipient in the reconstructed form of the
-// statement (`addTrapReceiversV1V2Submit` composed with `tmpl.json2xml`):
+// receiverEntryV2c returns a v1/v2c receiver in the form reconstructed from
+// the survey (`addTrapReceiversV1V2Submit` composed with `tmpl.json2xml`):
 //
 //	SNMPTrap.set.SNMPTrapReceiverList.SNMPTrapReceiverEntry = {receiverIPAddress,
 //	  UDPPortNo, notificationType, timeout, retries, communityString,
@@ -1443,16 +1446,16 @@ func checkTrapAddress(addr string) error {
 // Three fields deserve their line:
 //
 //   - `SNMPVersion` is EXPLICITLY 2. The form default is 1 (SNMPv1):
-//     omitting the field or recopying this default would declare a v1 recipient, and the
-//     collecteur v2c ne verrait jamais rien d'exploitable ;
-//   - `timeout` et `retries` partent VIDES, parce que `notificationType` vaut Trap.
-//     This is what the equipment interface does, which dumps them before sending;
-//     sending them information on a Trap is an unobserved case;
-//   - `filterEnabled` vaut 2 (aucun filtre) et `filterName` reste vide : on ne
-//     I definitely don't want an OID filter that would exclude link events.
+//     omitting the field or copying that default would declare a v1
+//     receiver, and the v2c collector would never see anything usable;
+//   - `timeout` and `retries` go out EMPTY, because `notificationType` is
+//     Trap. That is what the device's own UI does, clearing them before
+//     sending; sending them filled in on a Trap is an unobserved case;
+//   - `filterEnabled` is 2 (no filter) and `filterName` stays empty: we do
+//     not want an OID filter that would exclude link events.
 //
-// La liste `SNMPTrapReceiverList` est un ENFANT, jamais une section : elle
-// only appears in this body, and never in the URL.
+// The `SNMPTrapReceiverList` list is a CHILD, never a section: it appears
+// only in this body, never in the URL.
 func receiverEntryV2c(want TrapDestination, port string) string {
 	return "<SNMPTrapReceiverList><SNMPTrapReceiverEntry>" +
 		"<receiverIPAddress>" + xmlEscape(want.Address) + "</receiverIPAddress>" +
@@ -1467,15 +1470,15 @@ func receiverEntryV2c(want TrapDestination, port string) string {
 		"</SNMPTrapReceiverEntry></SNMPTrapReceiverList>"
 }
 
-// receiverEntryV3 rend un destinataire v3 (`addTrapReceiversV3Submit`) :
+// receiverEntryV3 returns a v3 receiver (`addTrapReceiversV3Submit`):
 //
 //	NotificationReceiverList.set.Receiver = {receiverIPAddress, UDPPortNo,
 //	  notificationType, timeout, retries, securityType, userName, filterEnabled,
 //	  filterName}
 //
-// Pas de `communityString` ici, et pas de `SNMPVersion` : c'est le couple
-// (userName, securityType) which carries the identity. `securityType` resumes
-// the enumeration that `snmp.go` already knows for groups — 1 noAuthNoPriv,
+// No `communityString` here, and no `SNMPVersion`: the (userName,
+// securityType) pair carries the identity. `securityType` reuses the
+// enumeration `snmp.go` already knows for groups — 1 noAuthNoPriv,
 // 2 authNoPriv, 3 authPriv — and it is INFERRED from the user, never chosen.
 //
 // Empty `timeout`/`retries` for the same reason as in v2c: it's a Trap.
@@ -1493,11 +1496,11 @@ func receiverEntryV3(want TrapDestination, port, securityType string) string {
 		"</Receiver>"
 }
 
-// deleteReceiverV3 recalls the KEY of a v3 recipient, not the entire entry:
-// `receiverIPAddress` + `notificationType` + `userName` + `securityType`. Les
-// values ​​come from READING, never from what we wanted to pose — a key
-// reconstructed from memory would designate no entry, and the deletion
-// would succeed without deleting anything.
+// deleteReceiverV3 sends back the KEY of a v3 receiver, not the whole entry:
+// `receiverIPAddress` + `notificationType` + `userName` + `securityType`. The
+// values come from the READ, never from what we meant to set — a key
+// rebuilt from memory would name no entry, and the deletion would succeed
+// without deleting anything.
 func deleteReceiverV3(r TrapReceiver) string {
 	return "<Receiver>" +
 		"<receiverIPAddress>" + xmlEscape(r.Address) + "</receiverIPAddress>" +

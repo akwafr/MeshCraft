@@ -8,7 +8,7 @@ import (
 
 // Correlation of port transitions reported by proxies.
 //
-// Decision 6 (docs/01-Architecture/Monitoring, "Controller-side processing"):
+// Decision 6 (docs/en/01-Architecture/Monitoring.md, "Controller-side processing"):
 // the proxy establishes the FACT — this port went from up to down, and it holds
 // that from an `ifOperStatus` poll, never from trap contents (cf. tunnel.EventPortUp)
 // — the controller does the CORRELATION. This file is that correlation, and nothing
@@ -148,7 +148,7 @@ const (
 	// flapWindow: the sliding window we count over.
 	//
 	// 5 minutes aligns with `if_state` polling cadence (30 to 60 s, cf.
-	// docs/01-Architecture/Monitoring): about ten cycles, enough for real flapping to
+	// docs/en/01-Architecture/Monitoring.md): about ten cycles, enough for real flapping to
 	// show even when the only available channel is polling. Shorter, and the threshold
 	// would become unreachable without traps — detection would only work on fleets
 	// already reactive, i.e. those that need it least.

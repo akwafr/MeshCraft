@@ -46,37 +46,105 @@ without `insecure-registries`. Locally without a domain, keep
 
 ## Screenshots
 
+Captured on the [demo site](#demo-site) (fictional festival, generic switches,
+synthetic telemetry).
+
+**Dashboard** — fleet counters, 24 h site traffic, ports by VLAN, active alerts and recent events.
+
 ![Dashboard](docs/screenshots/dashboard.png)
 
-![Devices](docs/screenshots/devices.png)
-
-![Ports](docs/screenshots/ports.png)
-
-![Topology](docs/screenshots/topology.png)
+**Monitoring** — fleet status with reachability durations, most loaded ports, event log.
 
 ![Monitoring](docs/screenshots/monitoring.png)
 
-![Configuration](docs/screenshots/configuration.png)
+**Equipment** — one card per switch: port strip coloured by VLAN, throughput, PoE, state.
+
+![Equipment](docs/screenshots/devices.png)
+
+**Switch detail** — the port faceplate, coloured by VLAN, with the switch summary.
+
+![Switch detail](docs/screenshots/switch-detail.png)
+
+**Ports** — every port of the site, grouped by switch, with VLAN, link, traffic, PoE and neighbour.
+
+![Ports](docs/screenshots/ports.png)
+
+**Topology** — the site plan: location frames, link speeds, bidirectional rates and link diagnostics.
+
+![Topology](docs/screenshots/topology.png)
+
+**Switch profiles** — rules that turn a switch's faceplate into port configuration, previewed on a real device before anything is written.
+
+![Switch profiles](docs/screenshots/switch-profiles.png)
+
+**Port profiles** — reusable port settings next to the site's VLAN plan.
+
+![Port profiles](docs/screenshots/port-profiles.png)
+
+**Dark theme** — the same topology, in the dark palette.
+
+![Topology, dark theme](docs/screenshots/topology-dark.png)
 
 ## Documentation
 
 Full design lives in the Obsidian vault:
 
-- French: [`docs/fr/`](docs/fr/) (entry: `Meshcraft - Index.md`)
-- English: [`docs/en/`](docs/en/)
+- English (primary): [`docs/en/`](docs/en/) — entry point [`docs/en/Index.md`](docs/en/Index.md)
+- French (translation): [`docs/fr/`](docs/fr/)
 
-Code conventions: [`CLAUDE.md`](CLAUDE.md). Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contribution guidelines and code conventions: [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Interface (overview)
 
 Main tabs (side menu only under Configuration):
 
 - **Dashboard** — counters, active alerts, 24 h aggregate throughput, ports by VLAN, recent events
-- **Devices** — inventory with per-switch port façades; add via discovery, manual IP, serial, catalogue template, or factory-reset procedures
+- **Equipment** — inventory with per-switch port faceplates; add via discovery, manual IP, serial, catalogue template, or factory-reset procedures
 - **Ports** — all site ports grouped by switch
-- **Plan** — full-page topology; dotted frames follow device placement; links show bidirectional throughput
-- **Monitoring** — event log, fleet status, busiest ports
+- **Topology** — full-page site plan; dotted frames follow device placement; links show bidirectional throughput
+- **Monitoring** — a dashboard of its own: event log, fleet status, busiest ports
 - **Configuration** — VLANs, profiles, groups, sites, users, proxies
+
+## Supported platforms
+
+Nine connectors, each written against one platform's own management interface —
+there is no generic SNMP fallback that pretends to configure a switch it does not
+know.
+
+| Connector | Range | Reached over | Telemetry | Verified on hardware |
+|---|---|---|---|---|
+| `arista-eos` | Arista EOS (7000 / 720 / 750) | SSH, serial | **gNMI streaming** | reads + telemetry |
+| `cisco-ios` | Catalyst 2960 / 2960-X / 2960-XR (IOS 12.2–15.2) | SSH, serial, Telnet | SNMP + traps | yes |
+| `aruba-instant-on-1930` | Aruba (HPE) Instant On 1930 | web (`wcd`), SNMP | SNMP + web + traps | yes |
+| `mikrotik-routeros` | MikroTik RouterOS (CRS…) | binary API, SSH, Telnet, serial, SNMP | API + SNMP + web, traps | yes |
+| `mikrotik-swos` | MikroTik SwOS (CSS…) | web, SNMP | SNMP + web | yes |
+| `ubiquiti-edgeswitch` | EdgeSwitch / UniFi Switch (FASTPATH) | SSH, serial, HTTP | SNMP | yes |
+| `fs-s3400` | FS.com S3400 PoE+ (BDCOM-style CLI) | SSH, serial, HTTP | SNMP | yes |
+| `fs-s3900` | FS.com S3900 / S3900-R | SSH, serial, HTTP | SNMP | yes |
+| `hpe-procurve` | HPE ProCurve 2600 | SSH, Telnet, web, SNMP | SNMP | **parked** |
+
+**Arista is the only range collected by streaming telemetry** and the only one
+with no SNMP channel at all: `internal/gnmipoll` subscribes over gNMI/gRPC for
+interface state, counters, LLDP and health. Everything else is polled by
+`internal/snmppoll` from the proxy.
+
+### What "verified" means here, and what it does not
+
+The last column says a real device answered — not that every gesture has been
+run on one. The project's rule is that a connector ships a command form only
+once it has been seen, and declares the WRITE (`WritesExtra`) only once that
+particular write has been exercised, because a declared write puts a button on
+screen whose first use would be on somebody's production switch.
+
+So today: eight ranges declare per-port administrative writes and six declare
+spanning-tree writes, while **no connector declares DHCP snooping** — all nine
+carry the code and none has a capture. The Arista connector's telemetry half is
+captured (EOS 4.28.13.1M) and its configuration writes are not. Each remaining
+declaration is waiting on a capture of that particular write on real hardware.
+
+ProCurve 2600 is **parked**: the connector exists, the lab unit authenticates
+and then refuses the channel past four concurrent sessions, and it is not to be
+picked up without an explicit decision.
 
 ## Discovery and adoption
 
@@ -97,7 +165,7 @@ make web-dev      # Vite dev server with hot reload (API on :8080)
 ## Demo site
 
 Import [`samples/site-demo.json`](samples/site-demo.json) from the fleet page
-(fictional festival: Generic switches, VLANs, port profiles, topology).
+(fictional festival: generic switches, VLANs, port profiles, topology).
 
 ## Repository layout
 
@@ -107,5 +175,5 @@ cmd/proxy/        proxy (enrollment + heartbeat + device access)
 cmd/mkoci/        multi-arch OCI layout for the proxy without buildx
 internal/         api, auth, store (PostgreSQL), drivers, …
 web/              React + TypeScript SPA (Vite), embedded via go:embed
-docs/fr, docs/en  architecture vault (bilingual)
+docs/en, docs/fr  architecture vault (English primary, French translation)
 ```

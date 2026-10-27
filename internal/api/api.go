@@ -9,20 +9,26 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"meshcraft/internal/agenthost"
 	"meshcraft/internal/auth"
 	"meshcraft/internal/config"
 	"meshcraft/internal/debuglog"
 	"meshcraft/internal/distrib"
+	"meshcraft/internal/driverhost"
 	"meshcraft/internal/relocate"
 	"meshcraft/internal/renumber"
 	"meshcraft/internal/secretbox"
+	"meshcraft/internal/socks"
 	"meshcraft/internal/store"
 	"meshcraft/internal/tsdb"
 	"meshcraft/internal/tunnel"
+	"meshcraft/wire/agentv1"
 )
 
 type Server struct {
@@ -56,6 +62,17 @@ type Server struct {
 	// TSDB: time-series storage. Nil = no metrics, and the controller tells proxies
 	// rather than accepting and dropping.
 	TSDB *tsdb.Client
+
+	// DriverMinter scopes external driver sessions' SOCKS credentials.
+	// Nil when the drivers listener is off (cf. StartDriverSocks).
+	DriverMinter *socks.Minter
+
+	// DriverHost runs the git→build→run pipeline for external drivers.
+	// Nil when the feature is off (no Docker socket configured).
+	DriverHost *driverhost.Manager
+	// AgentHost runs the git→OCI-layout pipeline for agent images the built-in
+	// registry serves. Nil when no Docker socket is configured.
+	AgentHost *agenthost.Manager
 	// live: the per-site change bus, replacing periodic polling of fleet screens
 	// (cf. sitebus.go and live_handlers.go). Mounted by Router(); all methods tolerate
 	// nil, so a hand-built Server in a test notifies into the void instead of panicking.
@@ -82,13 +99,60 @@ type Server struct {
 	// serialLog: latest Web Serial wizard transcripts (autodetect / soft-reset),
 	// mirrored to slog as serial.session. Lazy-allocated; tests need not set it.
 	serialLog *serialLogStore
+	// serialReg / serialOnce: published Web Serial lines other operators can
+	// attach to (cf. serialserver.go). IN MEMORY on purpose — an offer is only
+	// meaningful while a browser holds the port open, so it must not survive the
+	// process that holds the socket.
+	serialReg  *serialRegistry
+	serialOnce sync.Once
 	// snmpHeal: per-device backoff of the SNMP provisioning retry loop
 	// (RunSNMPHeal). Zero value is ready to use; tests need not set it.
 	snmpHeal snmpHealState
+	// hostnameHeal: per-device backoff of the system-name reconciliation
+	// (RunHostnameHeal). Zero value is ready to use, like snmpHeal — and for the
+	// same reason it is a field and not package state: two Servers in one test
+	// binary must not share a cooldown.
+	hostnameHeal hostnameHealState
+	// configPoll: per-device backoff of the periodic config read-back
+	// (RunConfigPoll). Zero value is ready to use, like the two above, and a
+	// field rather than package state for the same reason: two Servers in one
+	// test binary must not share a cooldown.
+	configPoll configPollState
+	// extSync: per-extension backoff AND the memory that keeps the background
+	// site-extension import quiet (RunExtSync, ADR-0029 §11-§13). Zero value is
+	// ready to use, and a field for the reason above plus one of its own: it
+	// holds the "was this failing last time" flag, so two Servers sharing it
+	// would swallow each other's transitions.
+	extSync extSyncState
+	// credDeploy holds the fleet-wide credential deployment in flight, and the last
+	// run per credential (cf. creddeploy.go). Zero value is ready to use, like the
+	// three above. A field and not package state for their reason AND a sharper one:
+	// this registry is what refuses a SECOND concurrent run, so two Servers sharing
+	// it would refuse each other's runs, and two Servers that did not share it would
+	// each believe itself the only one on the wire.
+	credDeploy credDeployRegistry
+	// startedAt: when this process began serving, set by Router(). It bounds the
+	// reachability startup hold (cf. reachability.go, holdReach) and nothing else.
+	//
+	// ZERO IS A SAFE VALUE and tests rely on it: an unset clock reads as an age far
+	// past every window, so a hand-built Server holds nothing and behaves exactly as
+	// it did before the hold existed. The failure mode of forgetting to set it is
+	// therefore the old behaviour, never a frozen status.
+	startedAt time.Time
+	// reachHold: devices whose status write is currently deferred, so the retry that
+	// will write it is armed once and not once per event. Zero value ready to use,
+	// like snmpHeal and the others, and a field for the same reason: two Servers in
+	// one test binary must not share it.
+	reachHold reachHoldState
 }
 
 func (s *Server) Router() http.Handler {
 	var r = chi.NewRouter()
+	// The clock the reachability startup hold is bounded by. Taken HERE, with the
+	// other things that must exist before the first proxy connects: a proxy that
+	// reconnects while this is still zero would be inside a window that has not
+	// started, which reads as "long past" and holds nothing — the safe direction.
+	s.startedAt = time.Now()
 	// The bus lives as long as the router: mounting it here avoids lazy creation,
 	// therefore a race between the first subscriber and the first notification.
 	s.live = newSiteBus(maxLiveSubs)
@@ -145,11 +209,47 @@ func (s *Server) Router() http.Handler {
 	// and why neither the event channel nor `ask` could do this — is at the top of
 	// cmd/proxy/lldp.go.
 	r.Post("/api/proxy/lldp", s.handleProxyLLDP)
+	// The forwarding-table snapshot — same family, same reasoning, its own
+	// route for the same cause (cf. cmd/proxy/fdb.go and internal/snmppoll/fdb.go).
+	r.Post("/api/proxy/fdb", s.handleProxyFDB)
+
+	// The SAME lifeline under its versioned name (agentv1.PathPrefix). The
+	// legacy /api/proxy/* routes above stay: a fielded proxy speaks them, and
+	// the contract that documents /api/v1/agent/* must not break the agents it
+	// describes. New agents target the versioned form; the handlers are one and
+	// the same, so the two names cannot diverge in behaviour.
+	r.Post(agentv1.PathPrefix+"/enroll", s.handleProxyEnroll)
+	r.Post(agentv1.PathPrefix+"/heartbeat", s.handleProxyHeartbeat)
+	r.Post(agentv1.PathPrefix+"/migrated", s.handleProxyMigrated)
+	r.Post(agentv1.PathPrefix+"/metrics", s.handleProxyMetrics)
+	r.Post(agentv1.PathPrefix+"/lldp", s.handleProxyLLDP)
+	r.Post(agentv1.PathPrefix+"/fdb", s.handleProxyFDB)
+
+	// The contracts, served as the documents they are: a driver or agent author
+	// fetches the spec this controller actually implements rather than guessing
+	// from a wiki. Anonymous and read-only — a contract is public by nature.
+	// Registered outside the session group, beside the other agent routes.
+	r.Get("/api/v1/contracts/{name}", s.handleContract)
+
 	// Multiplexed tunnel (phase 0bis): outbound WebSocket, authenticated by the
 	// same (proxy_id, secret) pair before upgrade.
 	r.Get(tunnel.Path, s.handleProxyTunnel)
 
 	r.Post("/api/auth/login", s.handleLogin)
+
+	// PUBLIC DASHBOARD: the one route in this API that answers without a session,
+	// on purpose. It is registered HERE — above the session group — because a
+	// share link is opened by someone who has no account on this instance; put
+	// inside the group below it would answer 401 to every visitor, and the whole
+	// feature would be a link that never works.
+	//
+	// Being outside the middleware is exactly what makes it dangerous, so its
+	// scope is closed in the handler rather than by the router: the token names
+	// ONE dashboard, everything served is keyed on the site read from that row,
+	// and each field is projected by hand (cf. handlePublicDashboard, which lists
+	// what this route can and cannot reach). Nothing else public is added beside
+	// it: one door is auditable, two are a pattern.
+	r.Get("/api/public/dashboards/{token}", s.handlePublicDashboard)
 
 	// Session routes.
 	r.Group(func(r chi.Router) {
@@ -166,8 +266,25 @@ func (s *Server) Router() http.Handler {
 		// hands, and what it can reach is decided per CONNECT against that
 		// person's site roles, not by who was allowed to mint it.
 		r.Get("/api/auth/socks-token", s.handleGetSocksToken)
-		r.Post("/api/auth/socks-token", s.handleCreateSocksToken)
-		r.Delete("/api/auth/socks-token", s.handleDeleteSocksToken)
+		// The caller's OWN API tokens (cf. apitoken_handlers.go, which carries
+		// the full shape of these routes, and ADR-0011). Same reasoning as the
+		// SOCKS token above: not site-scoped and not admin-gated, because what
+		// a token can reach is decided per call against its owner's roles, not
+		// by who was allowed to mint it.
+		r.Get("/api/auth/tokens", s.handleListAPITokens)
+		// MINTING OR REVOKING A STANDING CREDENTIAL REQUIRES A SIGNED-IN
+		// SESSION, never an API token. A token able to mint another one — or to
+		// replace the SOCKS token — outlives its own expiry and its own
+		// revocation, which undoes two of the five rules of ADR-0011. The four
+		// routes that do that are grouped here so the rule is stated once
+		// instead of being re-argued in each handler.
+		r.Group(func(r chi.Router) {
+			r.Use(auth.CookieOnly)
+			r.Post("/api/auth/tokens", s.handleCreateAPIToken)
+			r.Delete("/api/auth/tokens/{tokenID}", s.handleRevokeAPIToken)
+			r.Post("/api/auth/socks-token", s.handleCreateSocksToken)
+			r.Delete("/api/auth/socks-token", s.handleDeleteSocksToken)
+		})
 		r.Get("/api/version", s.handleVersion)
 		// APPLICATION log, not to be confused with the fleet log.
 		// Reserved to global-admin, verified in the handler.
@@ -187,8 +304,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/groups", s.handleListGroups)
 			r.Post("/groups", s.handleCreateGroup)
 
-			// Tags and automatic site tagging (cf. docs/01-Architecture/
-			// Tags and credential scope). A tag can decide which credential a device
+			// Tags and automatic site tagging (see docs/en/01-Architecture/Tags and
+			// credential scope.md). A tag can decide which credential a device
 			// receives: writes are at site_admin, like credentials themselves.
 			r.Get("/tags", s.handleListSiteTags)
 			r.Get("/tag-rules", s.handleListTagRules)
@@ -204,8 +321,16 @@ func (s *Server) Router() http.Handler {
 			// OBSERVED LLDP neighborhood, read-only and not writable — that is the whole
 			// difference from `/links`, which carries ENTERED links. An observation is not
 			// created by hand: it is pushed by the collector (`POST /api/proxy/lldp`) or
-			// it does not exist. Cf. docs/01-Architecture/Voisinage LLDP.md.
+			// it does not exist. See docs/en/01-Architecture/LLDP neighbours.md.
 			r.Get("/lldp", s.handleListSiteLLDP)
+			// The CLIENTS of the site: every learned MAC, located, identified
+			// and metered. Read-only for the same reason as /lldp — a client
+			// is an observation, pushed by the collector or nonexistent.
+			r.Get("/clients", s.handleListSiteClients)
+			// …with ONE write, and it only ever forgets: the ledger is
+			// append-only by design, so the broom (`?days=N`) is the only
+			// thing that can ever shorten the list. `operator`, traced.
+			r.Delete("/clients", s.handlePruneSiteClients)
 			r.Get("/plan", s.handleGetSitePlan)
 			r.Put("/plan", s.handleUpdateSitePlan)
 			// Site management addressing plan: read for all roles, write at site_admin
@@ -218,13 +343,111 @@ func (s *Server) Router() http.Handler {
 			r.Post("/credentials/{credID}/rotate", s.handleRotateCredential)
 			r.Put("/credentials/{credID}/mode", s.handleSetCredentialMode)
 			r.Post("/credentials/{credID}/generations/{gen}/reveal", s.handleRevealGeneration)
+			// WHICH generation each device carries, and whether the current one may be
+			// promoted. Read-only and secret-free, hence `operator` like the list: the
+			// count on the list screen says how many devices lag, this says which ones.
+			r.Get("/credentials/{credID}/deployment", s.handleCredentialDeployment)
+			// THE PUSH ITSELF (cf. creddeploy.go). `site_admin` to start and to
+			// stop — it writes an administration password onto every switch in a
+			// scope — and `operator` to watch, like the view above: the report
+			// carries account names, generations and transcripts, never a secret.
+			r.Post("/credentials/{credID}/deploy", s.handleStartCredentialDeploy)
+			r.Get("/credentials/{credID}/deploy", s.handleCredentialDeployStatus)
+			r.Delete("/credentials/{credID}/deploy", s.handleStopCredentialDeploy)
 			r.Delete("/credentials/{credID}", s.handleDeleteSiteCredential)
+
+			// SITE EXTENSIONS: what a site is backed by, and the read-only
+			// inventory it mirrors (ADR-0015, ADR-0016). The list is
+			// secret-free (`has_token`, never the token); writes and anything
+			// that USES the token against the foreign controller are
+			// site_admin, revelation is traced like any vault access.
+			r.Get("/extensions", s.handleListSiteExtensions)
+			r.Put("/extensions", s.handleUpsertSiteExtension)
+			r.Delete("/extensions/{extID}", s.handleDeleteSiteExtension)
+			r.Post("/extensions/{extID}/reveal", s.handleRevealSiteExtensionToken)
+			// The foreign controller's own site list, so pairing is a choice
+			// and not a pasted identifier.
+			r.Get("/extensions/{extID}/remote-sites", s.handleListExtRemoteSites)
+			r.Post("/extensions/{extID}/pair", s.handleExtPair)
+			// One import pass. Writes only into meshcraft's mirror.
+			r.Post("/extensions/{extID}/sync", s.handleExtSync)
+			// ALERTING (ADR-0024). Same secret discipline as extensions above:
+			// the list is secret-free (`has_token`, never the token), writes
+			// and revelation are site_admin, revelation is traced. The test
+			// route is what keeps an operator from discovering a bad chat id
+			// during the incident instead of before it.
+			r.Get("/notify-channels", s.handleListNotifyChannels)
+			r.Put("/notify-channels", s.handleUpsertNotifyChannel)
+			r.Delete("/notify-channels/{chanID}", s.handleDeleteNotifyChannel)
+			r.Post("/notify-channels/{chanID}/reveal", s.handleRevealNotifyToken)
+			r.Post("/notify-channels/test", s.handleTestNotifyChannel)
+
+			// THE THREE GESTURES (ADR-0025). All site_admin: they use the
+			// token against the foreign controller. Every one of them goes
+			// to the UniFi API — never to the box — and none of them
+			// carries a setting: meshcraft holds no intention about these
+			// boxes, so "reconfigure" is "reprovision", which asks the
+			// controller to reassert its own configuration.
+			//
+			// What the token is actually allowed to do, read rather than
+			// assumed, so a read-only key is known before it is needed.
+			r.Get("/extensions/{extID}/rights", s.handleExtRights)
+			// THE FOURTH GESTURE (ADR-0029): editing one SSID. `site_admin`,
+			// like the other three, because it uses the token against the
+			// foreign controller.
+			//
+			// The GET is NOT part of the mirror read above: it goes to the
+			// controller, live, because the PUT's precondition has to compare
+			// against the authority and not against our copy. Both hang off the
+			// MIRROR's id, so a caller can only reach a service set this site
+			// has actually imported.
+			//
+			// There is no POST and no DELETE here on purpose: creating and
+			// removing a service set is not verified on this API, and a removal
+			// has no inert form — the lesson ADR-0025 paid for once.
+			r.Get("/ext-ssids/{extSSIDID}", s.handleGetExtSSID)
+			r.Put("/ext-ssids/{extSSIDID}", s.handlePutExtSSID)
+			// Pending boxes are controller-wide, not this site's: they
+			// belong nowhere until adoption attaches them.
+			r.Get("/extensions/{extID}/adoptable", s.handleExtAdoptable)
+			r.Post("/extensions/{extID}/adopt", s.handleExtAdopt)
+			// Forget is IRREVERSIBLE on UniFi's side and gated by the box's
+			// exact current name, re-read from the controller inside
+			// unifi.Do (ADR-0012's idiom, ADR-0025 §5). A POST and not a
+			// DELETE, so it is not mistaken for deleting meshcraft's own
+			// extension row just above.
+			r.Post("/ext-devices/{extDevID}/forget", s.handleExtForget)
+			r.Post("/ext-devices/{extDevID}/reprovision", s.handleExtReprovision)
+			// The mirror itself, read-only and deliberately NOT under
+			// /devices: that list holds what meshcraft configures.
+			r.Get("/ext-devices", s.handleListSiteExtDevices)
+			// The Wi-Fi screen's single read: access points + the SSIDs of
+			// the site. An access point is not an equipment (ADR-0016).
+			r.Get("/wifi", s.handleListSiteWiFi)
 
 			r.Get("/mgmt-plan", s.handleGetMgmtPlan)
 			r.Put("/mgmt-plan", s.handleUpdateMgmtPlan)
 
 			r.Get("/stp-preference", s.handleGetSTPPreference)
 			r.Put("/stp-preference", s.handlePutSTPPreference)
+			// Root bridge designation. Read at `viewer`, written at `site_admin`:
+			// a second root is an assertion about physical cabling, which is not
+			// an operator-level change (cf. internal/api/stp_rootbridge.go).
+			// READ-ONLY, and computed from the database rather than read off the
+			// hardware. It exists because nothing displayed the MST region before
+			// ADR-0021, and an identity the topology depends on that no screen
+			// renders is an identity nobody verifies.
+			r.Get("/stp-mst-region", s.handleGetSTPMSTRegion)
+			r.Get("/stp-root-bridges", s.handleGetSTPRootBridges)
+			r.Put("/stp-root-bridges", s.handlePutSTPRootBridges)
+			// SHARED SERIAL LINES (cf. serialserver.go). All three are
+			// `site_admin`, INCLUDING the list: a label names a switch somebody is
+			// standing in front of with a console cable, which is operational
+			// information about work in progress — and attaching to one is the
+			// most privileged access a switch has.
+			r.Get("/serial-servers", s.handleListSerialServers)
+			r.Get("/serial-servers/host", s.handleHostSerialServer)
+			r.Get("/serial-servers/{serverID}/attach", s.handleAttachSerialServer)
 
 			r.Get("/export", s.handleExportSite)
 			r.Post("/import", s.handleImportSite)
@@ -234,6 +457,15 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/events", s.handleListEvents)
 			r.Get("/traffic", s.handleSiteTraffic)
+			// Optical fault list: cages whose receive level undercuts their own
+			// history. Viewer, like traffic — reading a level changes nothing.
+			r.Get("/optics/rx-alerts", s.handleOpticsRxAlerts)
+
+			// Dashboards: the site's arrangements of tiles. The list SEEDS the two
+			// defaults the first time a site is ever asked (once ever, cf. migration
+			// 0041), which is why a read is allowed to write here.
+			r.Get("/dashboards", s.handleListDashboards)
+			r.Post("/dashboards", s.handleCreateDashboard)
 
 			// Real-time site stream: "this site changed". Replaces periodic polling of
 			// fleet screens (cf. live_handlers.go). Same minimal role as site reads —
@@ -257,6 +489,12 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/profiles/{kind}/{id}", s.handleDeleteProfile)
 		r.Patch("/api/groups/{id}", s.handleUpdateGroup)
 		r.Delete("/api/groups/{id}", s.handleDeleteGroup)
+		// NO GET ON THIS PATH, and adding one has a condition: the hostname
+		// conformity verdict is published ONLY by the device LIST (withConformity,
+		// conformity.go). A single-device GET that does not carry it makes a device
+		// sheet loaded on its own report the axis as ABSENT rather than UNKNOWN —
+		// see that function's comment for why that reads as a lie rather than as a
+		// hole.
 		r.Patch("/api/devices/{id}", s.handleUpdateDevice)
 		r.Delete("/api/devices/{id}", s.handleDeleteDevice)
 		r.Put("/api/devices/{id}/ports/{port}", s.handleSetDevicePort)
@@ -343,6 +581,43 @@ func (s *Server) Router() http.Handler {
 		// Apply recorded same-VLAN addressing intent ([driver.MgmtAddrWriter]).
 		r.Post("/api/devices/{id}/mgmt-addressing/apply", s.handleApplyMgmtAddressing)
 		r.Post("/api/devices/{id}/stp/apply", s.handleApplyDeviceSTP)
+		// Immediate per-port PoE write (explicit classes) — the wire half of the
+		// port panel's on/off; the stored intent keeps riding PUT /ports.
+		r.Post("/api/devices/{id}/poe/apply", s.handleApplyDevicePoE)
+		// Immediate per-port DHCP-snooping TRUST write. The bool is trust, not
+		// "snooping here": the connector also turns the device-wide feature on
+		// and enables it on the site's VLANs, because a trust flag on a device
+		// that inspects nothing is an exact configuration protecting nothing
+		// (cf. internal/driver/dhcpsnoop.go).
+		r.Post("/api/devices/{id}/dhcp-snooping/apply", s.handleApplyDeviceDHCPSnooping)
+		// Per-port storm control: read what the device carries, then write it.
+		// EVERY RATE CARRIES ITS UNIT on both endpoints — "10" is ten percent of
+		// a gigabit on one platform and ten packets a second on the next, and no
+		// connector converts between them (cf. internal/driver/stormcontrol.go).
+		// The read is LIVE and opens a session, hence `operator` rather than
+		// `viewer`; the write is site_admin like every other write that reaches
+		// hardware.
+		r.Get("/api/devices/{id}/storm-control", s.handleReadDeviceStormControl)
+		r.Post("/api/devices/{id}/storm-control/apply", s.handleApplyDeviceStormControl)
+		// Link aggregation: the COMPLETE desired list, applied then persisted
+		// (cf. lag_handlers.go — replace semantics, so the UI always sends all).
+		r.Post("/api/devices/{id}/lags", s.handleApplyDeviceLAGs)
+		// Shut / un-shut ports NOW. An ACTION, not an intent: nothing lands in
+		// devices.ports and nothing reconciles it (cf. internal/driver/portadmin.go),
+		// and disabling a port carrying administration is refused unless forced.
+		r.Post("/api/devices/{id}/ports/admin", s.handleApplyPortAdmin)
+		// PoE power cycle: the far-end device REBOOTS. Distinct from the link
+		// bounce above on purpose — one button for both would eventually reboot a
+		// building of access points to fix a link light. BLOCKS for the off-delay.
+		r.Post("/api/devices/{id}/ports/power-cycle", s.handlePortPowerCycle)
+		// NO hostname route, and its absence is the design. The device's own system
+		// name is RECONCILED — meshcraft owns it, pushes it when the operator renames
+		// the device (PATCH above), and repairs drift on a cadence (hostnameheal.go).
+		// POST /api/devices/{id}/hostname/apply existed until 2026-08-06 and was
+		// deleted with the doctrine change: a hostname typed by hand would be
+		// overwritten by the next pass, and a button whose effect expires within half
+		// an hour is worse than no button. The verdict travels on the device payload
+		// as `hostname` (cf. HostnameConformity), so the screen still explains itself.
 		// Single-address leap ([driver.MgmtJumper]) — SwOS-shaped; requires confirmed=true.
 		r.Post("/api/devices/{id}/mgmt-addressing/jump", s.handleJumpMgmtAddressing)
 		// Lab / bring-up: temporary static IPv4 interface to learn Instant On owner value.
@@ -364,9 +639,20 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/pipelines/{id}", s.handleGetPipeline)
 		r.Delete("/api/links/{id}", s.handleDeleteLink)
 
+		// Dashboards addressed by their own id: the site is read from the row and
+		// the rights are checked against it (cf. requireDashboard). Renaming and
+		// rearranging are `operator`; the SHARE LINK is `site_admin`, because
+		// publishing a site's state without a login is not the same decision as
+		// moving a tile.
+		r.Patch("/api/dashboards/{id}", s.handleUpdateDashboard)
+		r.Put("/api/dashboards/{id}/tiles", s.handleSetDashboardTiles)
+		r.Delete("/api/dashboards/{id}", s.handleDeleteDashboard)
+		r.Post("/api/dashboards/{id}/share", s.handleShareDashboard)
+		r.Delete("/api/dashboards/{id}/share", s.handleUnshareDashboard)
+
 		// --- Proxies: COVERAGE is the rights boundary ---
 		//
-		// See docs/01-Architecture/Proxy and docs/03-Security/RBAC. Rights depend on the
+		// See docs/en/01-Architecture/Proxy.md and docs/en/03-Security/RBAC.md. Rights depend on the
 		// target proxy's coverage, therefore they are verified in handlers and not by a
 		// group middleware:
 		//
@@ -400,6 +686,27 @@ func (s *Server) Router() http.Handler {
 
 			// Pending tokens are not a public inventory: they say a deployment is in
 			// progress.
+			// External driver repositories: registering one means building and
+			// running third-party code on the controller host — an instance
+			// decision, never a site one (cf. driverrepo_handlers.go).
+			r.Get("/api/driver-repos", s.handleListDriverRepos)
+			r.Post("/api/driver-repos", s.handleAddDriverRepo)
+			r.Post("/api/driver-repos/{repoID}/build", s.handleBuildDriverRepo)
+			r.Post("/api/driver-repos/{repoID}/start", s.handleStartDriverRepo)
+			r.Post("/api/driver-repos/{repoID}/stop", s.handleStopDriverRepo)
+			r.Get("/api/driver-repos/{repoID}/log", s.handleDriverBuildLog)
+			r.Delete("/api/driver-repos/{repoID}", s.handleDeleteDriverRepo)
+
+			// Agent image repositories: the git→OCI-layout pipeline. No
+			// start/stop — an agent is pulled, not run here — only build and
+			// enable.
+			r.Get("/api/agent-repos", s.handleListAgentRepos)
+			r.Post("/api/agent-repos", s.handleAddAgentRepo)
+			r.Post("/api/agent-repos/{repoID}/build", s.handleBuildAgentRepo)
+			r.Put("/api/agent-repos/{repoID}/enabled", s.handleSetAgentRepoEnabled)
+			r.Get("/api/agent-repos/{repoID}/log", s.handleAgentBuildLog)
+			r.Delete("/api/agent-repos/{repoID}", s.handleDeleteAgentRepo)
+
 			r.Get("/api/proxies/enroll-tokens", s.handleListEnrollTokens)
 			r.Delete("/api/proxies/enroll-tokens/{tokenID}", s.handleDeleteEnrollToken)
 
@@ -410,7 +717,7 @@ func (s *Server) Router() http.Handler {
 		// --- Discovery and adoption ---
 		//
 		// Nothing here is addressed by site: a candidate has no site. Adoption chooses
-		// one and verifies rights on it (cf. docs/01-Architecture/Discovery).
+		// one and verifies rights on it (cf. docs/en/01-Architecture/Discovery.md).
 		r.Route("/api/discovery", func(r chi.Router) {
 			r.Get("/candidates", s.handleListDiscovered)
 			r.Get("/candidates/{id}/config", s.handleGetDiscoveredConfig)
@@ -551,7 +858,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any, limit int64) error 
 //
 // An oversized body and malformed JSON are not fixed the same way: the first asks
 // the sender to send less at once, the second to fix what it sends. Conflating them
-// into a single « invalid JSON » — what this function used to do, since a body cut by
+// into a single "invalid JSON" — what this function used to do, since a body cut by
 // http.MaxBytesReader comes out of the decoder as broken syntax — sends diagnosis
 // into a wall: on the proxy side, a silent 400 on a batch that would NEVER pass,
 // therefore perpetual replay of the same batch and complete upload stop.
@@ -559,15 +866,15 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any, limit int64) error 
 // Recognition uses *http.MaxBytesError, not error text: net/http's message is not a
 // contract, the type is.
 //
-// `geste` is the route-specific follow-up; it names the ACTION expected from the
+// `recovery` is the route-specific follow-up; it names the ACTION expected from the
 // sender, which the cap alone cannot imply.
-func failJSON(w http.ResponseWriter, err error, geste string) {
+func failJSON(w http.ResponseWriter, err error, recovery string) {
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
 		// 413 not 400: body shape is not the issue, its SIZE is.
 		respondErr(w, http.StatusRequestEntityTooLarge,
 			"request body too large: cap of "+
-				strconv.FormatInt(tooBig.Limit, 10)+" bytes"+geste)
+				strconv.FormatInt(tooBig.Limit, 10)+" bytes"+recovery)
 		return
 	}
 	respondErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -576,7 +883,7 @@ func failJSON(w http.ResponseWriter, err error, geste string) {
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	var err = readJSON(w, r, v, maxBody)
 	if err != nil {
-		failJSON(w, err, " ; send less data at a time")
+		failJSON(w, err, "; send less data at a time")
 		return false
 	}
 	return true
@@ -590,7 +897,7 @@ func decodeOptional(w http.ResponseWriter, r *http.Request, v any) bool {
 		return true
 	}
 	if err != nil {
-		failJSON(w, err, " ; send less data at a time")
+		failJSON(w, err, "; send less data at a time")
 		return false
 	}
 	return true

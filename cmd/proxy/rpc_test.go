@@ -27,25 +27,25 @@ import (
 
 // --- Fake counterpart ---
 
-// walkerFactice replays a list of PDUs, then an optional error. The walk
+// fakeWalker replays a list of PDUs, then an optional error. The walk
 // stops dead as soon as the callback returns an error, exactly like gosnmp.
-type walkerFactice struct {
+type fakeWalker struct {
 	pdus []gosnmp.SnmpPDU
 	err  error
-	// vues: PDUs actually passed to the callback. This is what lets us
+	// seenPDUs: PDUs actually passed to the callback. This is what lets us
 	// verify that the limit cuts off the WALK itself, not just the
 	// response — a walk that keeps going while discarding its rows would
 	// cost the device for nothing.
-	vues   int
-	racine string
-	fermé  bool
+	seenPDUs int
+	root     string
+	closed   bool
 }
 
-func (w *walkerFactice) BulkWalk(rootOID string, walkFn gosnmp.WalkFunc) error {
-	w.racine = rootOID
+func (w *fakeWalker) BulkWalk(rootOID string, walkFn gosnmp.WalkFunc) error {
+	w.root = rootOID
 	var pdu gosnmp.SnmpPDU
 	for _, pdu = range w.pdus {
-		w.vues++
+		w.seenPDUs++
 		var err = walkFn(pdu)
 		if err != nil {
 			return err
@@ -54,13 +54,13 @@ func (w *walkerFactice) BulkWalk(rootOID string, walkFn gosnmp.WalkFunc) error {
 	return w.err
 }
 
-func (w *walkerFactice) Close() error {
-	w.fermé = true
+func (w *fakeWalker) Close() error {
+	w.closed = true
 	return nil
 }
 
-// pdusCompteur builds n rows of a 64-bit counter table.
-func pdusCompteur(n int) []gosnmp.SnmpPDU {
+// pduCounter builds n rows of a 64-bit counter table.
+func pduCounter(n int) []gosnmp.SnmpPDU {
 	var out = make([]gosnmp.SnmpPDU, 0, n)
 	var i int
 	for i = 1; i <= n; i++ {
@@ -73,8 +73,8 @@ func pdusCompteur(n int) []gosnmp.SnmpPDU {
 	return out
 }
 
-// avecWalker installs a fake counterpart for the duration of a test.
-func avecWalker(t *testing.T, w *walkerFactice, err error) {
+// withWalker installs a fake counterpart for the duration of a test.
+func withWalker(t *testing.T, w *fakeWalker, err error) {
 	t.Helper()
 	askDial = func(tunnel.AskRequest) (askWalker, error) { return w, err }
 	t.Cleanup(func() { askDial = nil })
@@ -82,33 +82,33 @@ func avecWalker(t *testing.T, w *walkerFactice, err error) {
 
 // --- Limits ---
 
-func TestAskMaxRowsAppliqueDefautEtPlafond(t *testing.T) {
+func TestAskMaxRowsAppliesDefaultAndCeiling(t *testing.T) {
 	type cas struct {
-		nom              string
-		demandé, attendu int
+		name            string
+		requested, want int
 	}
 	var cases = []cas{
-		{nom: "absent", demandé: 0, attendu: tunnel.DefaultAskRows},
-		{nom: "negative", demandé: -1, attendu: tunnel.DefaultAskRows},
-		{nom: "reasonable", demandé: 12, attendu: 12},
-		{nom: "at the ceiling", demandé: tunnel.MaxAskRows, attendu: tunnel.MaxAskRows},
+		{name: "absent", requested: 0, want: tunnel.DefaultAskRows},
+		{name: "negative", requested: -1, want: tunnel.DefaultAskRows},
+		{name: "reasonable", requested: 12, want: 12},
+		{name: "at the ceiling", requested: tunnel.MaxAskRows, want: tunnel.MaxAskRows},
 		// A limit the caller can raise isn't a limit.
-		{nom: "beyond the ceiling", demandé: 10 * tunnel.MaxAskRows,
-			attendu: tunnel.MaxAskRows},
+		{name: "beyond the ceiling", requested: 10 * tunnel.MaxAskRows,
+			want: tunnel.MaxAskRows},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
-			var got = askMaxRows(k.demandé)
-			if got != k.attendu {
-				t.Errorf("askMaxRows(%d) = %d, expected %d", k.demandé, got, k.attendu)
+		t.Run(k.name, func(t *testing.T) {
+			var got = askMaxRows(k.requested)
+			if got != k.want {
+				t.Errorf("askMaxRows(%d) = %d, expected %d", k.requested, got, k.want)
 			}
 		})
 	}
 }
 
-func TestAskRowsCoupeEtSignaleLaTroncature(t *testing.T) {
-	var w = &walkerFactice{pdus: pdusCompteur(10)}
+func TestAskRowsCutsAndReportsTruncation(t *testing.T) {
+	var w = &fakeWalker{pdus: pduCounter(10)}
 	var rows, truncated, err = askRows(context.Background(), w, "1.3.6.1.2.1", 4)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -122,18 +122,18 @@ func TestAskRowsCoupeEtSignaleLaTroncature(t *testing.T) {
 	}
 	// The limit stops the WALK: only one extra PDU was read, the one that
 	// established there was more.
-	if w.vues != 5 {
-		t.Errorf("the walk must stop at the 5th PDU, %d read", w.vues)
+	if w.seenPDUs != 5 {
+		t.Errorf("the walk must stop at the 5th PDU, %d read", w.seenPDUs)
 	}
 	if rows[0].Value != "1" || rows[3].Value != "4" {
 		t.Errorf("expected rows in walk order, got %+v", rows)
 	}
 }
 
-func TestAskRowsPasDeTroncaturePileSurLaBorne(t *testing.T) {
+func TestAskRowsNoTruncationExactlyAtTheBound(t *testing.T) {
 	// A walk that lands exactly on the limit is NOT truncated: the one row
 	// too many is what proves there was more, and there wasn't any.
-	var w = &walkerFactice{pdus: pdusCompteur(4)}
+	var w = &fakeWalker{pdus: pduCounter(4)}
 	var rows, truncated, err = askRows(context.Background(), w, "1.3.6.1.2.1", 4)
 	if err != nil || len(rows) != 4 || truncated {
 		t.Fatalf("expected 4 untruncated rows, got %d rows, truncated=%v, err=%v",
@@ -141,13 +141,13 @@ func TestAskRowsPasDeTroncaturePileSurLaBorne(t *testing.T) {
 	}
 }
 
-func TestAskWalkPlafondDurNonContournable(t *testing.T) {
+func TestAskWalkHardCeilingCannotBeBypassed(t *testing.T) {
 	// The controller asks for ten times the ceiling; the proxy returns the ceiling.
-	var w = &walkerFactice{pdus: pdusCompteur(tunnel.MaxAskRows + 1)}
-	avecWalker(t, w, nil)
+	var w = &fakeWalker{pdus: pduCounter(tunnel.MaxAskRows + 1)}
+	withWalker(t, w, nil)
 
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
-		Ask: tunnel.AskSNMPWalk, IP: "10.99.200.101", OID: "1.3.6.1.2.1",
+		Ask: tunnel.AskSNMPWalk, IP: "198.51.100.101", OID: "1.3.6.1.2.1",
 		MaxRows: 10 * tunnel.MaxAskRows,
 	})
 	if resp.Err != "" {
@@ -157,21 +157,21 @@ func TestAskWalkPlafondDurNonContournable(t *testing.T) {
 		t.Errorf("expected %d truncated rows, got %d (truncated=%v)",
 			tunnel.MaxAskRows, len(resp.Rows), resp.Truncated)
 	}
-	if !w.fermé {
+	if !w.closed {
 		t.Error("the SNMP session must be closed: a proxy that leaks its sockets " +
 			"eventually can't query anyone anymore")
 	}
 }
 
-func TestAskWalkRendCeQuIlALuAvantUnEchec(t *testing.T) {
+func TestAskWalkReturnsWhatItReadBeforeAFailure(t *testing.T) {
 	// A device that responds and then goes silent: the rows already read go
 	// out WITH the error. "Here are the first two rows and here's why it
 	// stopped" is fixable; an empty response isn't.
-	var w = &walkerFactice{pdus: pdusCompteur(2), err: errors.New("request timeout")}
-	avecWalker(t, w, nil)
+	var w = &fakeWalker{pdus: pduCounter(2), err: errors.New("request timeout")}
+	withWalker(t, w, nil)
 
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
-		Ask: tunnel.AskSNMPWalk, IP: "10.99.200.101", OID: "1.3.6.1.2.1",
+		Ask: tunnel.AskSNMPWalk, IP: "198.51.100.101", OID: "1.3.6.1.2.1",
 	})
 	if len(resp.Rows) != 2 {
 		t.Errorf("expected 2 rows despite the failure, got %d", len(resp.Rows))
@@ -186,10 +186,10 @@ func TestAskWalkRendCeQuIlALuAvantUnEchec(t *testing.T) {
 	}
 }
 
-func TestAskWalkRespecteLeContexte(t *testing.T) {
+func TestAskWalkHonoursTheContext(t *testing.T) {
 	var ctx, cancel = context.WithCancel(context.Background())
 	cancel()
-	var w = &walkerFactice{pdus: pdusCompteur(10)}
+	var w = &fakeWalker{pdus: pduCounter(10)}
 	var rows, truncated, err = askRows(ctx, w, "1.3.6.1.2.1", tunnel.DefaultAskRows)
 	if err == nil {
 		t.Fatal("a canceled context must stop the walk")
@@ -201,7 +201,7 @@ func TestAskWalkRespecteLeContexte(t *testing.T) {
 
 // --- Connection conventions ---
 
-// TestAskDialHeriteDesConventionsDuPoll: the diagnostic no longer has its
+// TestAskDialInheritsPollConventions: the diagnostic no longer has its
 // OWN connection conventions.
 //
 // This file used to duplicate snmppoll's (v2c, 2 s timeout, a single retry,
@@ -212,7 +212,7 @@ func TestAskWalkRespecteLeContexte(t *testing.T) {
 // TYPE is checked here: it comes from snmppoll.Dial, and nowhere else. A
 // local dialer reintroduced here would fail this test before it could ever
 // diverge.
-func TestAskDialHeriteDesConventionsDuPoll(t *testing.T) {
+func TestAskDialInheritsPollConventions(t *testing.T) {
 	// No packet is sent: in UDP, "connecting" a socket only resolves the
 	// route. This test therefore talks to no device at all.
 	var w, err = dialAskSNMP(tunnel.AskRequest{IP: "127.0.0.1", Port: 1161})
@@ -229,7 +229,7 @@ func TestAskDialHeriteDesConventionsDuPoll(t *testing.T) {
 	}
 }
 
-// TestAskWalkSurLeFilPorteLesConventionsDuPoll verifies these conventions ON
+// TestAskWalkOnTheWireCarriesPollConventions verifies these conventions ON
 // THE WIRE, from this side, with no device.
 //
 // A UDP socket that never replies is enough: in v2c, the datagram carries
@@ -241,7 +241,7 @@ func TestAskDialHeriteDesConventionsDuPoll(t *testing.T) {
 //
 // It runs for the ~4 s of the retry sequence, and that's the exact price of
 // what it measures: you can't observe a timeout without waiting for it.
-func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
+func TestAskWalkOnTheWireCarriesPollConventions(t *testing.T) {
 	var conn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatalf("listening socket: %v", err)
@@ -249,20 +249,20 @@ func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 	var local = conn.LocalAddr().(*net.UDPAddr)
 
 	// A single reader, and its termination serves as a barrier: the
-	// datagrams are only read after <-fini, with no lock and no race.
-	var datagrammes [][]byte
-	var fini = make(chan struct{})
+	// datagrams are only read after <-finished, with no lock and no race.
+	var datagrams [][]byte
+	var finished = make(chan struct{})
 	go func() {
-		defer close(fini)
+		defer close(finished)
 		var tampon = make([]byte, 4096)
 		for {
 			var n, _, errLecture = conn.ReadFromUDP(tampon)
 			if errLecture != nil {
 				return
 			}
-			var copie = make([]byte, n)
-			copy(copie, tampon[:n])
-			datagrammes = append(datagrammes, copie)
+			var copied = make([]byte, n)
+			copy(copied, tampon[:n])
+			datagrams = append(datagrams, copied)
 		}
 	}()
 
@@ -272,15 +272,15 @@ func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 	var w, errDial = dialAskSNMP(tunnel.AskRequest{IP: "127.0.0.1", Port: local.Port})
 	if errDial != nil {
 		_ = conn.Close()
-		<-fini
+		<-finished
 		t.Fatalf("session: %v", errDial)
 	}
-	var début = time.Now()
+	var start = time.Now()
 	var walkErr = w.BulkWalk("1.3.6.1.2.1.1", func(gosnmp.SnmpPDU) error { return nil })
-	var écoulé = time.Since(début)
+	var elapsed = time.Since(start)
 	_ = w.Close()
 	_ = conn.Close()
-	<-fini
+	<-finished
 
 	if walkErr == nil {
 		t.Fatal("a device that never replies must return an error")
@@ -288,33 +288,33 @@ func TestAskWalkSurLeFilPorteLesConventionsDuPoll(t *testing.T) {
 	// Retries: 1 — the initial attempt plus ONE retry. One more retry would
 	// cost a full collection cycle for every silent device; one fewer and
 	// the slightest dropped datagram would pass for an outage.
-	if len(datagrammes) != 2 {
-		t.Fatalf("expected 2 sends (attempt + 1 retry), got %d", len(datagrammes))
+	if len(datagrams) != 2 {
+		t.Fatalf("expected 2 sends (attempt + 1 retry), got %d", len(datagrams))
 	}
 	// "02 01 01": INTEGER version = 1, i.e. v2c. "04 06 public": OCTET
 	// STRING of the fallback community. The two follow each other in the
 	// message header, so a single search attests to both together.
-	var entête = []byte("\x02\x01\x01\x04\x06public")
-	if !bytes.Contains(datagrammes[0], entête) {
+	var header = []byte("\x02\x01\x01\x04\x06public")
+	if !bytes.Contains(datagrams[0], header) {
 		t.Errorf("expected v2c + \"public\" community on the wire, datagram: %x",
-			datagrammes[0])
+			datagrams[0])
 	}
 	// Timeout: 2 s per attempt, so ~4 s for the sequence. The window is
 	// deliberately wide — what must fail is a timeout that has become
 	// something genuinely different: too short, a slow device would pass
 	// for silent; too long, a silent device would hold up a collection
 	// cycle.
-	if écoulé < 3*time.Second || écoulé > 8*time.Second {
-		t.Errorf("expected a ~4 s retry sequence (2 s x 2), got %v", écoulé)
+	if elapsed < 3*time.Second || elapsed > 8*time.Second {
+		t.Errorf("expected a ~4 s retry sequence (2 s x 2), got %v", elapsed)
 	}
 }
 
 // --- Unknown question ---
 
-func TestAskQuestionInconnue(t *testing.T) {
+func TestAskUnknownQuestion(t *testing.T) {
 	// A proxy older than its controller is a NORMAL case: it must say so.
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
-		Ask: "arp_table", IP: "10.99.200.101",
+		Ask: "arp_table", IP: "198.51.100.101",
 	})
 	if resp.Err == "" {
 		t.Fatal("an unknown question must return an Err, not silence")
@@ -343,65 +343,65 @@ func TestAskQuestionInconnue(t *testing.T) {
 
 // --- Type and value translation ---
 
-func TestAskTraductionDesTypes(t *testing.T) {
+func TestAskTypeTranslation(t *testing.T) {
 	type cas struct {
-		nom         string
-		pdu         gosnmp.SnmpPDU
-		typ, valeur string
+		name       string
+		pdu        gosnmp.SnmpPDU
+		typ, value string
 	}
 	var cases = []cas{
-		{nom: "port label", typ: "OctetString", valeur: "GigabitEthernet1/0/1",
+		{name: "port label", typ: "OctetString", value: "GigabitEthernet1/0/1",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 				Value: []byte("GigabitEthernet1/0/1")}},
 		// The case that justifies rendering as TEXT: this counter doesn't
 		// survive a float64, and it's precisely counters that get queried.
-		{nom: "64-bit counter at maximum", typ: "Counter64",
-			valeur: "18446744073709551615",
+		{name: "64-bit counter at maximum", typ: "Counter64",
+			value: "18446744073709551615",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Counter64,
 				Value: uint64(18446744073709551615)}},
-		{nom: "64-bit counter beyond 2^53", typ: "Counter64",
-			valeur: "9007199254740993",
-			pdu:    gosnmp.SnmpPDU{Type: gosnmp.Counter64, Value: uint64(9007199254740993)}},
-		{nom: "port status", typ: "Integer", valeur: "1",
+		{name: "64-bit counter beyond 2^53", typ: "Counter64",
+			value: "9007199254740993",
+			pdu:   gosnmp.SnmpPDU{Type: gosnmp.Counter64, Value: uint64(9007199254740993)}},
+		{name: "port status", typ: "Integer", value: "1",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Integer, Value: 1}},
-		{nom: "gauge", typ: "Gauge32", valeur: "1000",
+		{name: "gauge", typ: "Gauge32", value: "1000",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Gauge32, Value: uint(1000)}},
-		{nom: "uptime", typ: "TimeTicks", valeur: "4294967295",
+		{name: "uptime", typ: "TimeTicks", value: "4294967295",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.TimeTicks, Value: uint32(4294967295)}},
-		{nom: "32-bit counter", typ: "Counter32", valeur: "17",
+		{name: "32-bit counter", typ: "Counter32", value: "17",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Counter32, Value: uint(17)}},
 		// gosnmp prefixes OIDs with a dot, the controller doesn't: only one
 		// notation comes out of here, otherwise nothing compares.
-		{nom: "object identifier", typ: "ObjectIdentifier",
-			valeur: "1.3.6.1.4.1.11.2.3.7.11.253",
+		{name: "object identifier", typ: "ObjectIdentifier",
+			value: "1.3.6.1.4.1.11.2.3.7.11.253",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.ObjectIdentifier,
 				Value: ".1.3.6.1.4.1.11.2.3.7.11.253"}},
-		{nom: "address", typ: "IPAddress", valeur: "10.99.200.101",
-			pdu: gosnmp.SnmpPDU{Type: gosnmp.IPAddress, Value: "10.99.200.101"}},
+		{name: "address", typ: "IPAddress", value: "198.51.100.101",
+			pdu: gosnmp.SnmpPDU{Type: gosnmp.IPAddress, Value: "198.51.100.101"}},
 		// The three SNMPv2 exceptions are responses, not values: all the
 		// information is in the type, and inventing a "0" would read as a
 		// measurement.
-		{nom: "missing object", typ: "NoSuchObject", valeur: "",
+		{name: "missing object", typ: "NoSuchObject", value: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.NoSuchObject, Value: nil}},
-		{nom: "missing instance", typ: "NoSuchInstance", valeur: "",
+		{name: "missing instance", typ: "NoSuchInstance", value: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.NoSuchInstance, Value: nil}},
-		{nom: "end of view", typ: "EndOfMibView", valeur: "",
+		{name: "end of view", typ: "EndOfMibView", value: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.EndOfMibView, Value: nil}},
-		{nom: "null", typ: "Null", valeur: "",
+		{name: "null", typ: "Null", value: "",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Null, Value: nil}},
-		{nom: "opaque float", typ: "OpaqueFloat", valeur: "36.75",
+		{name: "opaque float", typ: "OpaqueFloat", value: "36.75",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OpaqueFloat, Value: float32(36.75)}},
-		{nom: "opaque double", typ: "OpaqueDouble", valeur: "-3.5",
+		{name: "opaque double", typ: "OpaqueDouble", value: "-3.5",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.OpaqueDouble, Value: float64(-3.5)}},
 		// An unrecognized type renders its TAG, not a false label: an
 		// operator reading "Type0x2b" knows to go check the MIB, whereas a
 		// made-up label would send them straight into a wall.
-		{nom: "unexpected type", typ: "Type0x2b", valeur: "doesn't matter",
+		{name: "unexpected type", typ: "Type0x2b", value: "doesn't matter",
 			pdu: gosnmp.SnmpPDU{Type: gosnmp.Asn1BER(0x2b), Value: "doesn't matter"}},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
+		t.Run(k.name, func(t *testing.T) {
 			k.pdu.Name = ".1.3.6.1.2.1.1.1.0"
 			var row = askRow(k.pdu)
 			if row.OID != "1.3.6.1.2.1.1.1.0" {
@@ -410,14 +410,14 @@ func TestAskTraductionDesTypes(t *testing.T) {
 			if row.Type != k.typ {
 				t.Errorf("expected type %q, got %q", k.typ, row.Type)
 			}
-			if row.Value != k.valeur {
-				t.Errorf("expected value %q, got %q", k.valeur, row.Value)
+			if row.Value != k.value {
+				t.Errorf("expected value %q, got %q", k.value, row.Value)
 			}
 		})
 	}
 }
 
-func TestAskOctetStringBinaire(t *testing.T) {
+func TestAskBinaryOctetString(t *testing.T) {
 	// A MAC address: six raw bytes. json.Marshal would silently replace any
 	// non-UTF-8 byte with U+FFFD, which would make it unreadable FOREVER
 	// with nothing to signal the substitution. Hence the prefixed hex.
@@ -456,17 +456,17 @@ func TestAskOctetStringBinaire(t *testing.T) {
 	}
 	// Valid accented UTF-8 too: it isn't binary just because it isn't ASCII.
 	var accent = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
-		Value: []byte("liaison secours — étage 2")})
-	if accent.Value != "liaison secours — étage 2" {
+		Value: []byte("backup link — Zürich, floor 2")})
+	if accent.Value != "backup link — Zürich, floor 2" {
 		t.Errorf("expected UTF-8 preserved, got %q", accent.Value)
 	}
 	// A lone 0x80 byte isn't UTF-8: hex, even when the rest of the string is
 	// perfectly readable — a half-translated value would be worse than
 	// unreadable.
-	var invalide = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
+	var invalid = askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString,
 		Value: []byte{'p', 'o', 'r', 't', 0x80}})
-	if invalide.Value != "0x706f727480" {
-		t.Errorf("expected invalid UTF-8 -> hex, got %q", invalide.Value)
+	if invalid.Value != "0x706f727480" {
+		t.Errorf("expected invalid UTF-8 -> hex, got %q", invalid.Value)
 	}
 	// Empty string: empty, not "0x".
 	if askRow(gosnmp.SnmpPDU{Type: gosnmp.OctetString, Value: []byte{}}).Value != "" {
@@ -476,23 +476,23 @@ func TestAskOctetStringBinaire(t *testing.T) {
 
 // --- Input validation ---
 
-func TestAskOIDEtIPInvalides(t *testing.T) {
-	var w = &walkerFactice{pdus: pdusCompteur(3)}
-	avecWalker(t, w, nil)
+func TestAskInvalidOIDAndIP(t *testing.T) {
+	var w = &fakeWalker{pdus: pduCounter(3)}
+	withWalker(t, w, nil)
 
 	type cas struct {
-		nom, ip, oid string
+		name, ip, oid string
 	}
 	var cases = []cas{
-		{nom: "missing oid", ip: "10.99.200.101", oid: ""},
-		{nom: "non-numeric oid", ip: "10.99.200.101", oid: "1.3.6.sysDescr"},
-		{nom: "oid with an empty segment", ip: "10.99.200.101", oid: "1.3..6"},
-		{nom: "missing address", ip: "", oid: "1.3.6.1"},
-		{nom: "name instead of an address", ip: "switch-labo", oid: "1.3.6.1"},
+		{name: "missing oid", ip: "198.51.100.101", oid: ""},
+		{name: "non-numeric oid", ip: "198.51.100.101", oid: "1.3.6.sysDescr"},
+		{name: "oid with an empty segment", ip: "198.51.100.101", oid: "1.3..6"},
+		{name: "missing address", ip: "", oid: "1.3.6.1"},
+		{name: "name instead of an address", ip: "switch-labo", oid: "1.3.6.1"},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
+		t.Run(k.name, func(t *testing.T) {
 			var resp = handleAsk(context.Background(), tunnel.AskRequest{
 				Ask: tunnel.AskSNMPWalk, IP: k.ip, OID: k.oid,
 			})
@@ -504,9 +504,9 @@ func TestAskOIDEtIPInvalides(t *testing.T) {
 			}
 		})
 	}
-	if w.vues != 0 {
+	if w.seenPDUs != 0 {
 		t.Errorf("an invalid request must not query the device at all, %d PDUs read",
-			w.vues)
+			w.seenPDUs)
 	}
 
 	// The leading dot is accepted in both notations, and only one comes out.
@@ -518,166 +518,166 @@ func TestAskOIDEtIPInvalides(t *testing.T) {
 
 // --- AskSourceAddr ---
 
-func TestAskSourceAddrRendUneAdresseSansMasque(t *testing.T) {
-	// 127.0.0.1 suffit à éprouver la méthode sans rien savoir du réseau de la
-	// machine de test : la boucle locale est routée partout.
+func TestAskSourceAddrReturnsABareAddress(t *testing.T) {
+	// 127.0.0.1 is enough to exercise the method without knowing anything about the
+	// test machine's network: loopback is routed everywhere.
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
 		Ask: tunnel.AskSourceAddr, IP: "127.0.0.1",
 	})
 	if resp.Err != "" {
-		t.Fatalf("aucune erreur attendue, obtenu %q", resp.Err)
+		t.Fatalf("no error expected, got %q", resp.Err)
 	}
 	if resp.SourceAddr != "127.0.0.1" {
-		t.Errorf("adresse source 127.0.0.1 attendue, obtenue %q", resp.SourceAddr)
+		t.Errorf("source address 127.0.0.1 expected, got %q", resp.SourceAddr)
 	}
-	// Sans masque, sans port, sans zone : le contrôleur écrit cette chaîne telle
-	// quelle dans une destination de traps.
+	// No mask, no port, no zone: the controller writes this string as is into a
+	// trap destination.
 	if strings.ContainsAny(resp.SourceAddr, "/:%") {
-		t.Errorf("adresse nue attendue, obtenue %q", resp.SourceAddr)
+		t.Errorf("bare address expected, got %q", resp.SourceAddr)
 	}
 	if net.ParseIP(resp.SourceAddr) == nil {
-		t.Errorf("%q n'est pas une adresse", resp.SourceAddr)
+		t.Errorf("%q is not an address", resp.SourceAddr)
 	}
-	// Aucune ligne de walk ne doit accompagner cette réponse.
+	// No walk row must accompany this response.
 	if resp.Rows != nil {
-		t.Errorf("réponse polluée : %+v", resp.Rows)
+		t.Errorf("polluted response: %+v", resp.Rows)
 	}
 }
 
-func TestAskSourceAddrRefuseCeQuiNEstPasUneAdresse(t *testing.T) {
+func TestAskSourceAddrRefusesWhatIsNotAnAddress(t *testing.T) {
 	var resp = handleAsk(context.Background(), tunnel.AskRequest{
-		Ask: tunnel.AskSourceAddr, IP: "10.99.200.101/24",
+		Ask: tunnel.AskSourceAddr, IP: "198.51.100.101/24",
 	})
 	if resp.Err == "" || resp.SourceAddr != "" {
-		t.Fatalf("un refus explicite est attendu, obtenu %+v", resp)
+		t.Fatalf("an explicit refusal is expected, got %+v", resp)
 	}
 }
 
 // --- Format de fil ---
 
-// TestAskEchangeComplet verrouille le motif : préambule, UNE requête, UNE réponse,
-// puis fermeture. Sur une paire de connexions en mémoire, donc sans yamux ni
-// WebSocket : ce qui est éprouvé ici est le format, pas le transport.
-func TestAskEchangeComplet(t *testing.T) {
-	var client, serveur = net.Pipe()
+// TestAskFullExchange locks the pattern: preamble, ONE request, ONE response,
+// then close. Over a pair of in-memory connections, so without yamux or
+// WebSocket: what is exercised here is the format, not the transport.
+func TestAskFullExchange(t *testing.T) {
+	var client, server = net.Pipe()
 	defer client.Close() //nolint:errcheck
 
-	go tunnel.ServeAskStream(serveur, handleAsk)
+	go tunnel.ServeAskStream(server, handleAsk)
 
 	var err = json.NewEncoder(client).Encode(tunnel.DialRequest{Op: tunnel.OpAsk})
 	if err != nil {
-		t.Fatalf("préambule : %v", err)
+		t.Fatalf("preamble: %v", err)
 	}
 	err = json.NewEncoder(client).Encode(tunnel.AskRequest{
 		Ask: tunnel.AskSourceAddr, IP: "127.0.0.1",
 	})
 	if err != nil {
-		t.Fatalf("requête : %v", err)
+		t.Fatalf("request: %v", err)
 	}
 
 	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var br = bufio.NewReader(client)
-	var ligne string
-	ligne, err = br.ReadString('\n')
+	var line string
+	line, err = br.ReadString('\n')
 	if err != nil {
-		t.Fatalf("réponse : %v", err)
+		t.Fatalf("response: %v", err)
 	}
 	var resp tunnel.AskResponse
-	if err = json.Unmarshal([]byte(ligne), &resp); err != nil {
-		t.Fatalf("réponse illisible %q : %v", ligne, err)
+	if err = json.Unmarshal([]byte(line), &resp); err != nil {
+		t.Fatalf("unreadable response %q: %v", line, err)
 	}
 	if resp.SourceAddr != "127.0.0.1" || resp.Err != "" {
-		t.Errorf("réponse inattendue : %+v", resp)
+		t.Errorf("unexpected response: %+v", resp)
 	}
-	// Les champs sans objet ne sont pas sur le fil : une réponse de source_addr ne
-	// porte ni « rows » ni « truncated ».
-	if strings.Contains(ligne, "rows") || strings.Contains(ligne, "truncated") {
-		t.Errorf("réponse polluée : %s", ligne)
+	// Fields that do not apply are not on the wire: a source_addr response carries
+	// neither "rows" nor "truncated".
+	if strings.Contains(line, "rows") || strings.Contains(line, "truncated") {
+		t.Errorf("polluted response: %s", line)
 	}
-	// Une question, une réponse, le stream se ferme : rien après la ligne.
-	var reste []byte
-	reste, err = br.ReadBytes('\n')
-	if err == nil || len(reste) != 0 {
-		t.Errorf("le stream doit se fermer après la réponse, obtenu %q / %v", reste, err)
+	// One question, one answer, the stream closes: nothing after the line.
+	var rest []byte
+	rest, err = br.ReadBytes('\n')
+	if err == nil || len(rest) != 0 {
+		t.Errorf("the stream must close after the response, got %q / %v", rest, err)
 	}
 }
 
-func TestAskEchangeWalkSurLeFil(t *testing.T) {
-	var w = &walkerFactice{pdus: pdusCompteur(3)}
-	avecWalker(t, w, nil)
+func TestAskWalkExchangeOnTheWire(t *testing.T) {
+	var w = &fakeWalker{pdus: pduCounter(3)}
+	withWalker(t, w, nil)
 
-	var client, serveur = net.Pipe()
+	var client, server = net.Pipe()
 	defer client.Close() //nolint:errcheck
-	go tunnel.ServeAskStream(serveur, handleAsk)
+	go tunnel.ServeAskStream(server, handleAsk)
 
 	var enc = json.NewEncoder(client)
 	var err = enc.Encode(tunnel.DialRequest{Op: tunnel.OpAsk})
 	if err == nil {
 		err = enc.Encode(tunnel.AskRequest{
-			Ask: tunnel.AskSNMPWalk, IP: "10.99.200.101",
+			Ask: tunnel.AskSNMPWalk, IP: "198.51.100.101",
 			OID: "1.3.6.1.2.1.31.1.1.1.6", Community: "secret-de-labo", MaxRows: 2,
 		})
 	}
 	if err != nil {
-		t.Fatalf("émission : %v", err)
+		t.Fatalf("send: %v", err)
 	}
 
 	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
-	var ligne string
-	ligne, err = bufio.NewReader(client).ReadString('\n')
+	var line string
+	line, err = bufio.NewReader(client).ReadString('\n')
 	if err != nil {
-		t.Fatalf("réponse : %v", err)
+		t.Fatalf("response: %v", err)
 	}
 	var resp tunnel.AskResponse
-	if err = json.Unmarshal([]byte(ligne), &resp); err != nil {
-		t.Fatalf("réponse illisible %q : %v", ligne, err)
+	if err = json.Unmarshal([]byte(line), &resp); err != nil {
+		t.Fatalf("unreadable response %q: %v", line, err)
 	}
 	if len(resp.Rows) != 2 || !resp.Truncated {
-		t.Fatalf("2 lignes tronquées attendues, obtenu %+v", resp)
+		t.Fatalf("2 truncated rows expected, got %+v", resp)
 	}
 	if resp.Rows[0].OID != "1.3.6.1.2.1.31.1.1.1.6.1" || resp.Rows[0].Type != "Counter64" {
-		t.Errorf("ligne inattendue : %+v", resp.Rows[0])
+		t.Errorf("unexpected row: %+v", resp.Rows[0])
 	}
-	if w.racine != "1.3.6.1.2.1.31.1.1.1.6" {
-		t.Errorf("racine walkée %q", w.racine)
+	if w.root != "1.3.6.1.2.1.31.1.1.1.6" {
+		t.Errorf("walked root %q", w.root)
 	}
-	// La communauté est un secret d'opération : elle n'a rien à faire dans une
-	// réponse, pas plus que dans un journal.
-	if strings.Contains(ligne, "secret-de-labo") {
-		t.Errorf("la communauté est repartie dans la réponse : %s", ligne)
+	// The community is an operating secret: it has no business in a response, any
+	// more than in a log.
+	if strings.Contains(line, "secret-de-labo") {
+		t.Errorf("the community went back out in the response: %s", line)
 	}
 }
 
-// TestAskAttenteBornée : le contrôleur propose l'attente, le proxy tranche. Une
-// borne qu'un appelant peut relever n'est pas une borne.
-func TestAskAttenteBornée(t *testing.T) {
-	var vue = make(chan time.Duration, 1)
+// TestAskWaitBounded: the controller proposes the wait, the proxy decides. A
+// bound a caller can raise is not a bound.
+func TestAskWaitBounded(t *testing.T) {
+	var seenWait = make(chan time.Duration, 1)
 	var handler = func(ctx context.Context, req tunnel.AskRequest) tunnel.AskResponse {
 		var deadline, ok = ctx.Deadline()
 		if !ok {
-			vue <- 0
-			return tunnel.AskResponse{Err: "sans deadline"}
+			seenWait <- 0
+			return tunnel.AskResponse{Err: "no deadline"}
 		}
-		vue <- time.Until(deadline)
+		seenWait <- time.Until(deadline)
 		return tunnel.AskResponse{SourceAddr: "127.0.0.1"}
 	}
 
 	type cas struct {
-		nom       string
+		name      string
 		timeoutMS int
-		attendue  time.Duration
+		wantWait  time.Duration
 	}
 	var cases = []cas{
-		{nom: "absent", timeoutMS: 0, attendue: tunnel.DefaultAskWait},
-		{nom: "raisonnable", timeoutMS: 3000, attendue: 3 * time.Second},
-		{nom: "au-delà du plafond", timeoutMS: 600_000, attendue: tunnel.MaxAskWait},
+		{name: "absent", timeoutMS: 0, wantWait: tunnel.DefaultAskWait},
+		{name: "reasonable", timeoutMS: 3000, wantWait: 3 * time.Second},
+		{name: "beyond the ceiling", timeoutMS: 600_000, wantWait: tunnel.MaxAskWait},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
-			var client, serveur = net.Pipe()
+		t.Run(k.name, func(t *testing.T) {
+			var client, server = net.Pipe()
 			defer client.Close() //nolint:errcheck
-			go tunnel.ServeAskStream(serveur, handler)
+			go tunnel.ServeAskStream(server, handler)
 
 			var enc = json.NewEncoder(client)
 			var err = enc.Encode(tunnel.DialRequest{Op: tunnel.OpAsk})
@@ -687,28 +687,28 @@ func TestAskAttenteBornée(t *testing.T) {
 				})
 			}
 			if err != nil {
-				t.Fatalf("émission : %v", err)
+				t.Fatalf("send: %v", err)
 			}
 			_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
 			if _, err = bufio.NewReader(client).ReadString('\n'); err != nil {
-				t.Fatalf("réponse : %v", err)
+				t.Fatalf("response: %v", err)
 			}
 
-			var restante = <-vue
-			// Marge d'une seconde : le temps de traversée du tuyau n'est pas nul.
-			if restante > k.attendue || restante < k.attendue-time.Second {
-				t.Errorf("attente ≈ %v attendue, obtenu %v", k.attendue, restante)
+			var remaining = <-seenWait
+			// One-second margin: crossing the pipe does not take zero time.
+			if remaining > k.wantWait || remaining < k.wantWait-time.Second {
+				t.Errorf("wait ≈ %v expected, got %v", k.wantWait, remaining)
 			}
 		})
 	}
 }
 
-// TestAskSansRepondeur : un proxy dont le répondeur n'est pas câblé le DIT. Un
-// stream qui se ferme en silence ne se distingue pas d'un tunnel qui tombe.
-func TestAskSansRepondeur(t *testing.T) {
-	var client, serveur = net.Pipe()
+// TestAskWithoutResponder: a proxy whose responder is not wired SAYS SO. A stream
+// that closes silently cannot be told apart from a tunnel going down.
+func TestAskWithoutResponder(t *testing.T) {
+	var client, server = net.Pipe()
 	defer client.Close() //nolint:errcheck
-	go tunnel.ServeAskStream(serveur, nil)
+	go tunnel.ServeAskStream(server, nil)
 
 	var enc = json.NewEncoder(client)
 	var err = enc.Encode(tunnel.DialRequest{Op: tunnel.OpAsk})
@@ -716,19 +716,19 @@ func TestAskSansRepondeur(t *testing.T) {
 		err = enc.Encode(tunnel.AskRequest{Ask: tunnel.AskSourceAddr, IP: "127.0.0.1"})
 	}
 	if err != nil {
-		t.Fatalf("émission : %v", err)
+		t.Fatalf("send: %v", err)
 	}
 	_ = client.SetReadDeadline(time.Now().Add(10 * time.Second))
-	var ligne string
-	ligne, err = bufio.NewReader(client).ReadString('\n')
+	var line string
+	line, err = bufio.NewReader(client).ReadString('\n')
 	if err != nil {
-		t.Fatalf("réponse : %v", err)
+		t.Fatalf("response: %v", err)
 	}
 	var resp tunnel.AskResponse
-	if err = json.Unmarshal([]byte(ligne), &resp); err != nil {
-		t.Fatalf("réponse illisible %q : %v", ligne, err)
+	if err = json.Unmarshal([]byte(line), &resp); err != nil {
+		t.Fatalf("unreadable response %q: %v", line, err)
 	}
 	if resp.Err == "" {
-		t.Error("une Err est attendue quand aucun répondeur n'est câblé")
+		t.Error("an Err is expected when no responder is wired")
 	}
 }

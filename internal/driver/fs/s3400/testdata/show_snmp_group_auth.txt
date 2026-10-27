@@ -1,0 +1,14 @@
+show snmp group
+groupname: mcagA
+security model: v3 auth 
+read: default 
+write: <no writeview specified> 
+notify: <no notifyview specified> 
+
+groupname: mcagN
+security model: v3 noauth 
+read: default 
+write: <no writeview specified> 
+notify: <no notifyview specified> 
+
+poefs3400lab#

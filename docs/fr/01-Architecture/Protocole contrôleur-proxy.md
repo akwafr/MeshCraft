@@ -216,11 +216,35 @@ imposé : **reliquat de la file, puis cliché, puis direct** — les événement
 pendant la coupure sont plus vieux que le cliché, et les livrer après lui écraserait
 l'état courant par une transition périmée.
 
+**La rafale a une fin, et elle se dit.** `resync` marque chaque événement de la rafale
+et ne dit rien du dernier : le contrôleur ne pouvait donc pas distinguer « ce proxy
+réénonce encore » de « ce proxy n'a rien à dire », et jugeait la joignabilité d'un
+équipement contre un jeu de témoins encore en train de se constituer. Au démarrage du
+contrôleur, cela produisait une fenêtre mesurée d'environ neuf secondes pendant
+laquelle le `down` confirmé d'un proxy s'écrivait alors que celui qui atteint
+réellement l'équipement n'avait pas fini — ou pas commencé — de réénoncer le sien.
+D'où `resync.done`, émis entre le cliché et le direct, **même quand il n'y avait rien
+à réénoncer** : « je n'avais rien à dire » et « j'ai fini de le dire » sont le même
+fait pour le contrôleur.
+
+**Compatibilité, car le parc ne se met pas à jour d'un bloc.** Un proxy antérieur à ce
+marqueur ne l'enverra jamais, et rien côté contrôleur ne doit l'attendre. La capacité
+est donc annoncée à la poignée de main, en-tête `X-Meshcraft-Proxy-Features`, valeur
+`resync-done` — **pas** déduite de `X-Meshcraft-Proxy-Version`, qui n'est qu'un texte
+estampillé au build (des proxys estampillés `dev` ont déjà circulé). Absente,
+l'en-tête ne veut rien dire d'autre que « on ne sait pas » : le contrôleur classe
+alors la session en `ResyncUnsupported` et se comporte exactement comme avant. Et
+parce qu'un proxy peut annoncer la capacité puis mourir en pleine rafale, l'attente
+correspondante côté contrôleur est **bornée par une fenêtre de démarrage** ; passé
+ce délai, la joignabilité redevient ce qu'elle était (cf. `holdReach`, dans
+`internal/api/reachability.go`, et [[Monitoring]]).
+
 | Type | Ce qu'il constate |
 |---|---|
 | `device.up` / `device.down` | joignabilité ICMP, après anti-rebond — ou un **constat réannoncé** à l'ouverture du flux, s'il porte `resync` |
 | `host.seen` | une adresse a répondu dans une plage balayée |
 | `sweep.done` | fin d'un balayage, avec sa couverture |
+| `resync.done` | **fin de la rafale de resynchronisation** : reliquat livré, cliché livré, plus rien à réénoncer |
 | `port.up` / `port.down` | transition d'un port de la façade, dérivée d'`ifOperStatus` |
 | `trap.seen` | un trap de cet équipement vient d'être **accepté** par ce proxy, pour la première fois — le seul événement de **preuve** du contrat, avec son champ `dest_addr` |
 
@@ -364,7 +388,7 @@ différence entre un contrat plausible et un contrat éprouvé :
 
 | Fait relevé | Ce qu'il démontre |
 |---|---|
-| Instant On 1930 en `10.99.200.101`, derrière un proxy déporté | le cas ordinaire, pas un banc de test en boucle locale |
+| Instant On 1930 en `198.51.100.101`, derrière un proxy déporté | le cas ordinaire, pas un banc de test en boucle locale |
 | `source_addr` rend `10.42.0.67` — adresse **routée** : aucun des sous-réseaux du proxy ne contient l'équipement | l'algorithme évident (chercher l'adresse du bon sous-réseau) n'aurait rendu **rien du tout** — cf. § *`source_addr`* |
 | la pose réussit, puis un trap arrive **sur cette adresse même** | l'hypothèse de routage retour est vérifiée, et l'issue « confirme » n'est pas théorique |
 | les transitions de port qui suivent portent `trigger: "trap"` | le chemin rapide sert réellement, et le champ `trigger` est ce qui permet de le constater |
@@ -545,7 +569,7 @@ retenir celle du sous-réseau de l'équipement. **C'est faux dès que le proxy a
 l'équipement par routage** plutôt que par un lien direct.
 
 Relevé sur l'installation réelle : le proxy expose `10.42.0.67/24` et
-`172.17.0.1/16`, l'équipement de labo est en `10.99.200.101`. Aucune
+`172.17.0.1/16`, l'équipement de labo est en `198.51.100.101`. Aucune
 correspondance — et pourtant le proxy l'atteint. L'algorithme évident ne rend donc
 **rien du tout**, et un opérateur en conclurait que le proxy ne voit pas
 l'équipement.

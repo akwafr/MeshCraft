@@ -13,9 +13,9 @@ import (
 
 // Proxy distribution: binaries, enrollment tokens, and generated deployments.
 //
-// Deploying has proxy is open to site-admin, but the future proxy's COVERAGE is
-// bounded by their rights: has site-admin only covers their sites; only has
-// global-admin creates an instance proxy (cf. docs/01-Architecture/Proxy).
+// Deploying a proxy is open to site-admin, but the future proxy's COVERAGE is
+// bounded by their rights: a site-admin only covers their sites; only a
+// global-admin creates an instance proxy (cf. docs/en/01-Architecture/Proxy.md).
 
 // --- Proxy binaries ---
 
@@ -52,7 +52,7 @@ func (s *Server) handleListEnrollTokens(w http.ResponseWriter, r *http.Request) 
 //	site-admin   : never an instance proxy, and only THEIR sites; defaults to
 //	               all sites they administer.
 //
-// This is where isolation is enforced: has site-admin cannot fabricate has proxy
+// This is where isolation is enforced: a site-admin cannot fabricate a proxy
 // that would see another site's networks.
 func (s *Server) requestedCoverage(w http.ResponseWriter, r *http.Request) (bool, []string, bool) {
 	var in struct {
@@ -101,8 +101,8 @@ func (s *Server) requestedCoverage(w http.ResponseWriter, r *http.Request) (bool
 	return false, in.SiteIDs, true
 }
 
-// newEnrollToken issues an enrollment token and logs the issuance: has secret
-// that grants entry of has presence point into the instance.
+// newEnrollToken issues an enrollment token and logs the issuance: a secret
+// that grants entry of a presence point into the instance.
 func (s *Server) newEnrollToken(w http.ResponseWriter, r *http.Request) (string, time.Time, bool) {
 	var global, siteIDs, ok = s.requestedCoverage(w, r)
 	if !ok {
@@ -167,7 +167,7 @@ func (s *Server) handleProxyCompose(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleProxyInstallScript returns the systemd install script (and the unit
-// alone, for those who prefer to install it manually), with has fresh enrollment token.
+// alone, for those who prefer to install it manually), with a fresh enrollment token.
 func (s *Server) handleProxyInstallScript(w http.ResponseWriter, r *http.Request) {
 	var token, expiresAt, ok = s.newEnrollToken(w, r)
 	if !ok {

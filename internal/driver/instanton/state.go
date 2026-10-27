@@ -11,9 +11,9 @@ import (
 
 // Reading state ACTUALLY applied on an Instant On.
 //
-// This is the « Read » step of the reconciliation pipeline
-// (docs/01-Architecture/Reconciliation §2): without it, meshcraft cannot tell
-// whether what it believes matches what is, and « configuration drift » remains
+// This is the "Read" step of the reconciliation pipeline
+// (docs/en/01-Architecture/Reconciliation.md §2): without it, meshcraft cannot tell
+// whether what it believes matches what is, and "configuration drift" remains
 // just a word.
 //
 // Two sections suffice, observed on a real 1930:
@@ -21,7 +21,7 @@ import (
 //	GET wcd?{VLANList}                     → declared VLANs
 //	GET wcd?{VLANInterfaceMembershipTable} → per VLAN, tagged and untagged ports
 //
-// There is NO « PVID per port » section: the device UI computes it itself
+// There is NO "PVID per port" section: the device UI computes it itself
 // (`assets.getPvid`) from untagged membership.
 // We do the same — a port's PVID is the VLAN where it is an untagged member.
 // Looking for a section that does not exist would have been costly; reading it
@@ -30,8 +30,8 @@ import (
 // `VLAN`, `PortState` and `State` are now contract types
 // (`driver.VLAN`, `driver.PortState`, `driver.State`), by ALIAS: cf. contract.go.
 // Their fields and JSON tags are what this package carried — `State` is
-// serialized in `devices.observed`, and a renamed tag would read « zero VLANs,
-// no ports » on every already-collected device.
+// serialized in `devices.observed`, and a renamed tag would read "zero VLANs,
+// no ports" on every already-collected device.
 //
 // `State` gains a `Notes` field for what a connector understood that the structure
 // cannot express — VLAN configuration present but INACTIVE, for example. This
@@ -109,7 +109,7 @@ func (a *Admin) ReadState(ctx context.Context) (State, error) {
 const linkStateUp = "1"
 
 // linksFromPortList lists active ports. Only ports WITH a link are returned:
-// absence in the map means « no link », which is also the safe default when
+// absence in the map means "no link", which is also the safe default when
 // the read said nothing.
 func linksFromPortList(body, prefix string) map[string]bool {
 	var out = map[string]bool{}
@@ -129,8 +129,8 @@ func linksFromPortList(body, prefix string) map[string]bool {
 }
 
 // portsFromMembership rebuilds per-PORT configuration from the per-VLAN table.
-// The device reasons by VLAN (« who is a member? »), meshcraft by port (« what does
-// this port carry? »): the pivot happens here.
+// The device reasons by VLAN ("who is a member?"), meshcraft by port ("what does
+// this port carry?"): the pivot happens here.
 func portsFromMembership(body, prefix string) map[string]PortState {
 	var out = map[string]PortState{}
 	var tagged = map[string][]int{}
@@ -168,11 +168,11 @@ func portsFromMembership(body, prefix string) map[string]PortState {
 	return out
 }
 
-// rePortToken splits a range element: « 12 », « 1-48 », « TRK1-16 ».
+// rePortToken splits a range element: "12", "1-48", "TRK1-16".
 var rePortToken = regexp.MustCompile(`^([A-Za-z]*)(\d+)(?:-([A-Za-z]*)(\d+))?$`)
 
 // ParsePortRange expands the device's compact notation
-// (« 1-48,49-52,TRK1-16 ») into meshcraft port names (« GE1 », « GE2 »…).
+// ("1-48,49-52,TRK1-16") into meshcraft port names ("GE1", "GE2"…).
 //
 // Aggregates (TRK…) are IGNORED: meshcraft does not model LAGs yet,
 // and showing them as ports would invent faceplate ports that do not exist.

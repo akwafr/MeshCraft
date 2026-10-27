@@ -12,7 +12,8 @@ import {
   type User,
 } from "../api";
 import { useAuth } from "../auth";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal } from "../components";
+import { ActionButton, ErrorMsg, Field, Modal } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 
 const emptyForm = {
   email: "",
@@ -98,7 +99,7 @@ export default function Users() {
               <th>Email</th>
               <th>{t("common.name")}</th>
               <th>{t("usersPage.accessCol")}</th>
-              <th style={{ width: 200 }}></th>
+              <th className="col-actions"></th>
             </tr>
           </thead>
           <tbody>
@@ -117,13 +118,17 @@ export default function Users() {
                     ))
                   )}
                 </td>
-                <td style={{ textAlign: "right" }}>
-                  <ActionButton kind="edit" className="ghost" onClick={() => open(u)}>
-                    {t("common.edit")}
-                  </ActionButton>
-                  {u.id !== me?.id && (
-                    <DeleteButton onConfirm={() => remove.mutate(u.id)} />
-                  )}
+                <td className="col-actions">
+                  <div className="icon-actions">
+                    <IconAction
+                      kind="edit"
+                      label={t("common.edit") as string}
+                      onClick={() => open(u)}
+                    />
+                    {u.id !== me?.id && (
+                      <IconDeleteButton onConfirm={() => remove.mutate(u.id)} />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -207,12 +212,13 @@ export default function Users() {
                     <option value="operator">operator</option>
                     <option value="site_admin">site_admin</option>
                   </select>
-                  <button
-                    className="ghost"
+                  {/* Was a bare ✕ with no name at all: an icon-only control
+                      has to carry its verb in aria-label and a tip (§3). */}
+                  <IconAction
+                    kind="close"
+                    label={t("common.remove") as string}
                     onClick={() => setRoles(roles.filter((_, j) => j !== i))}
-                  >
-                    ✕
-                  </button>
+                  />
                 </div>
               ))}
               <ActionButton

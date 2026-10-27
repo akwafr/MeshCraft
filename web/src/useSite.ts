@@ -10,6 +10,17 @@ export type ResolvedSite = {
   id: string;
   slug: string;
   name: string;
+  /**
+   * The site's local DNS domain (`Site.local_domain`), or undefined when the
+   * site declares none — empty is legitimate and every consumer must have a
+   * fallback of its own.
+   *
+   * Carried on the RESOLVED site, not looked up from `sites` at the call site:
+   * the serial provisioning flow needs it while pushing a management
+   * configuration, and re-finding the row there would be a second resolution
+   * that could disagree with this one about which site is open.
+   */
+  local_domain?: string;
 };
 
 /**
@@ -33,13 +44,23 @@ export function useSite(): {
     const bySlug = sites.find((s) => s.slug === siteSlug);
     if (bySlug) {
       localStorage.setItem(LAST_SITE_KEY, bySlug.slug);
-      return { id: bySlug.id, slug: bySlug.slug, name: bySlug.name };
+      return {
+        id: bySlug.id,
+        slug: bySlug.slug,
+        name: bySlug.name,
+        local_domain: bySlug.local_domain,
+      };
     }
     // Legacy bookmarks still carry a UUID in the first segment.
     const byId = sites.find((s) => s.id === siteSlug);
     if (byId) {
       localStorage.setItem(LAST_SITE_KEY, byId.slug);
-      return { id: byId.id, slug: byId.slug, name: byId.name };
+      return {
+        id: byId.id,
+        slug: byId.slug,
+        name: byId.name,
+        local_domain: byId.local_domain,
+      };
     }
     return undefined;
   }, [siteSlug, sites]);

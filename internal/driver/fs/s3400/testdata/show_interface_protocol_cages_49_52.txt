@@ -1,0 +1,11 @@
+show interface | include protocol
+GigaEthernet0/1  is down, line protocol is down
+GigaEthernet0/47 is down, line protocol is down
+GigaEthernet0/48 is down, line protocol is down
+TGigaEthernet0/49 is down, line protocol is down
+TGigaEthernet0/50 is down, line protocol is down
+TGigaEthernet0/51 is up,   line protocol is up
+TGigaEthernet0/52 is up,   line protocol is up
+VLAN29 is up, line protocol is up
+Null0 is up, line protocol is up
+Switch#

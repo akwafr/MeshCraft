@@ -9,236 +9,240 @@ import (
 	"meshcraft/internal/driver"
 )
 
-// Les capabilities declarees, et surtout ce que SwOS NE SAIT PAS FAIRE.
+// The declared capabilities, and above all what SwOS CANNOT DO.
 //
-// Ces tests ne paraphrasent pas une structure : chacun verrouille une declaration
-// dont le renversement changerait une decision d'exploitation. Un `Commit` errone fait
-// croire a un rollback qui n'existe pas ; un `SerialPort` a vrai fait promettre une
-// console de secours a quelqu'un qui devra se deplacer ; une procedure de remise a
-// zero presented comme verified alors qu'elle est deduced se paie au pire moment,
-// celui where access est already perdu.
+// These tests do not paraphrase a structure: each one locks a declaration
+// whose reversal would change an operational decision. A wrong `Commit` makes
+// one believe in a rollback that does not exist; a `SerialPort` set to true
+// promises a recovery console to someone who will have to travel; a reset
+// procedure presented as verified when it is inferred is paid for at the worst
+// moment, the one when access is already lost.
 
-// TestCommitImmediatSansFilet : la contrainte la plus lourde de ce connecteur.
+// TestCommitImmediateWithoutSafetyNet: the heaviest constraint of this
+// connector.
 //
-// L'interface de the device n'a aucun « Save Configuration » : son seul « Discard
-// Changes » RELIT la page depuis the device, i.e. n'annule rien de ce qui
-// est parti. Ce qui est poste est written, et un reboot ne l'annulera pas.
+// The device's UI has no "Save Configuration": its only "Discard Changes"
+// RE-READS the page from the device, i.e. undoes nothing that has gone out.
+// What is posted is written, and a reboot will not undo it.
 //
-// Basculer cette declaration en `apply_then_save` ferait croire a un rollback gratuit
-// qui n'existe pas, et la pose cesserait de prendre la sauvegarde qui est le seul
-// filet reel.
-func TestCommitImmediatSansFilet(t *testing.T) {
+// Flipping this declaration to `apply_then_save` would suggest a free rollback
+// that does not exist, and the write would stop taking the backup that is the
+// only real safety net.
+func TestCommitImmediateWithoutSafetyNet(t *testing.T) {
 	var caps = (&Driver{}).Capabilities("CSS326-24G-2S+")
 	if caps.Commit != driver.CommitImmediate {
-		t.Errorf("Commit = %q ; SwOS persiste d'un seul geste, il n'y a pas de "+
-			"configuration de demarrage distincte et donc aucun retour arriere gratuit",
+		t.Errorf("Commit = %q; SwOS persists in a single gesture, there is no "+
+			"separate startup configuration and therefore no free way back",
 			caps.Commit)
 	}
-	// Une seule session : SwOS n'a aucune notion de session, et le parallelisme n'a
-	// pas been verified sur du hardware en service.
+	// A single session: SwOS has no notion of a session, and parallelism has
+	// not been verified on hardware in service.
 	if caps.MaxSessions != 1 {
-		t.Errorf("MaxSessions = %d ; faute d'avoir pu eprouver le parallelisme, le "+
-			"connecteur doit serialiser ses access", caps.MaxSessions)
+		t.Errorf("MaxSessions = %d; parallelism could not be tested, so the "+
+			"connector must serialise its accesses", caps.MaxSessions)
 	}
 }
 
-// TestAucuneCLINiConsole : ce qui rend chaque garde-fou necessary.
+// TestNoCLINorConsole: what makes every guard necessary.
 //
-// Sur l'reference device, un seul port TCP repond : le 80. L'adoption par
-// console serial — l'une des trois portes ingress de la discovery — est donc
-// IMPOSSIBLE, et une erreur d'adressage de management se repare sur site.
-func TestAucuneCLINiConsole(t *testing.T) {
+// On the reference device, a single TCP port answers: 80. Adoption over a
+// serial console — one of discovery's three entry points — is therefore
+// IMPOSSIBLE, and a management addressing mistake is fixed on site.
+func TestNoCLINorConsole(t *testing.T) {
 	var caps = (&Driver{}).Capabilities("CSS326-24G-2S+")
 	var f string
 	for _, f = range []string{"SSHMgmt", "TelnetMgmt", "SerialCLI", "SerialPort"} {
 		if caps.Has(f) {
-			t.Errorf("%s declared disponible : sur l'reference device, ni 22, "+
-				"ni 23, ni serial port", f)
+			t.Errorf("%s declared available: on the reference device, neither 22, "+
+				"nor 23, nor a serial port", f)
 		}
 	}
 	if !caps.Has("HTTPMgmt") {
-		t.Error("l'interface web est le SEUL chemin d'administration")
+		t.Error("the web UI is the ONLY administration path")
 	}
-	// Le transport declared : « web » ET « snmp », et rien d'autre.
+	// The declared transport: "web" AND "snmp", and nothing else.
 	//
-	// CETTE ASSERTION A CHANGED DE FORME, DELIBEREMENT. Elle exigeait `[web]` tout court,
-	// avec pour motif « annoncer SNMP sans avoir vu l'agent repondre ferait planifier
-	// une collecte qui n'arriverait jamais ». Le motif was juste et sa condition est
-	// now REMPLIE : l'agent a repondu, en v2c, sur l'reference device
-	// (cf. le observed dans SNMPVersions). Garder l'ancienne assertion aurait fait
-	// echouer le test sur un fait verified.
+	// THIS ASSERTION CHANGED SHAPE, DELIBERATELY. It used to require `[web]`
+	// alone, on the grounds that "advertising SNMP without having seen the
+	// agent answer would schedule a collection that would never arrive". The
+	// reasoning was right and its condition is now MET: the agent answered, in
+	// v2c, on the reference device (cf. the survey in SNMPVersions). Keeping the
+	// old assertion would have failed the test on a verified fact.
 	//
-	// Ce que ce test protege vraiment n'was PAS l'absence de SNMP — c'est l'absence
-	// de CLI et de console, qui est le fait dur de cette plateforme et la raison de
-	// toute sa prudence write. La liste est donc verified par ce qu'elle ne doit
-	// PAS contenir, ce qui est plus fidele a l'intention et resistera au prochain
-	// canal de lecture qu'on relevera.
+	// What this test really protects was NOT the absence of SNMP — it is the
+	// absence of CLI and console, which is this platform's hard fact and the
+	// reason for all its write caution. The list is therefore checked by what
+	// it must NOT contain, which is more faithful to the intent and will
+	// survive the next read channel to be surveyed.
 	var transport = (&Driver{}).Info().Transport
-	var interdits = map[string]string{
-		"ssh":    "aucun 22 ouvert sur l'reference device",
-		"telnet": "aucun 23 ouvert",
-		"serial": "ce model n'a pas de connecteur serial",
-		"api":    "SwOS n'a aucune API : ses pages *.b SONT son interface web",
+	var forbidden = map[string]string{
+		"ssh":    "no 22 open on the reference device",
+		"telnet": "no 23 open",
+		"serial": "this model has no serial connector",
+		"api":    "SwOS has no API: its *.b pages ARE its web UI",
 	}
 	var tr string
 	for _, tr = range transport {
-		var pourquoi, interdit = interdits[tr]
-		if interdit {
-			t.Errorf("Transport annonce %q : %s", tr, pourquoi)
+		var why, isForbidden = forbidden[tr]
+		if isForbidden {
+			t.Errorf("Transport advertises %q: %s", tr, why)
 		}
 	}
 	if !slices.Contains(transport, "web") {
-		t.Error("Transport doit annoncer « web » : c'est le seul chemin d'WRITE")
+		t.Error("Transport must advertise \"web\": it is the only WRITE path")
 	}
 	if !slices.Contains(transport, "snmp") {
-		t.Error("Transport doit annoncer « snmp » : l'agent v2c a been observed sur " +
-			"l'reference device, et c'est par lui que la collecte passe")
+		t.Error("Transport must advertise \"snmp\": the v2c agent was observed on " +
+			"the reference device, and collection goes through it")
 	}
 }
 
-// TestSansRoutageNiHorloge : ce que SwOS ne sait pas faire, et qui doit se voir.
-func TestSansRoutageNiHorloge(t *testing.T) {
+// TestNoRoutingNorClock: what SwOS cannot do, and which must be visible.
+func TestNoRoutingNorClock(t *testing.T) {
 	var caps = (&Driver{}).Capabilities("CSS326-24G-2S+")
-	var absentes = []string{
-		"StaticRouting", // SwOS ne route pas du tout : c'est la difference de fond
-		"SNTP",          // aucune horloge, donc aucun horodatage possible
-		"LLDP",          // aucun voisinage normalise
+	var absent = []string{
+		"StaticRouting", // SwOS does not route at all: that is the fundamental difference
+		"SNTP",          // no clock, hence no timestamp possible
+		"LLDP",          // no standard neighbour discovery
 		"Dot1X", "RADIUS", "VoiceVLAN", "DHCPRelay", "JumboFrames",
 		"LoopProtection", "EEE", "RMON", "ARPProtection", "DoSProtection",
 	}
 	var f string
-	for _, f = range absentes {
+	for _, f = range absent {
 		if caps.Has(f) {
-			t.Errorf("%s declared disponible alors qu'aucun champ de the device ne "+
-				"l'establishes", f)
+			t.Errorf("%s declared available although no device field "+
+				"establishes it", f)
 		}
 	}
-	var presentes = []string{
+	var present = []string{
 		"Trunk8021Q", "PVID", "IGMPSnooping", "LACP", "DHCPSnooping",
 		"PortSecurity", "ProtectedPorts", "PortMirroring", "IngressRate",
 		"StormControl", "StormControlPort",
 	}
-	for _, f = range presentes {
+	for _, f = range present {
 		if !caps.Has(f) {
-			t.Errorf("%s est established par un champ de the device et devrait be "+
+			t.Errorf("%s is established by a device field and should be "+
 				"declared", f)
 		}
 	}
-	// Le control de storm est PAR PORT sur SwOS (`srt` est un tableau), there where
-	// l'Instant On ne sait le faire que globalement. C'est une force de cette
-	// plateforme et elle ne doit pas se perdre.
+	// Storm control is PER PORT on SwOS (`srt` is an array), where Instant On
+	// can only do it globally. It is a strength of this platform and must not
+	// be lost.
 	if !caps.Has("StormControlPort") {
-		t.Error("`srt` est un tableau de 26 valeurs : le control de storm est par port")
+		t.Error("`srt` is an array of 26 values: storm control is per port")
 	}
-	// Aucune route, aucune instance MSTP.
+	// No routes, no MSTP instances.
 	if caps.MaxStaticRoutes != 0 || caps.MSTInstances != 0 {
-		t.Errorf("routes = %d, instances MSTP = %d ; SwOS n'a ni l'un ni l'autre",
+		t.Errorf("routes = %d, MSTP instances = %d; SwOS has neither",
 			caps.MaxStaticRoutes, caps.MSTInstances)
 	}
-	// RSTP seulement : le champ qui affiche « STP » est en lecture seule, c'est un
-	// repli automatique et non un mode qu'on choisit.
+	// RSTP only: the field that displays "STP" is read-only, it is an
+	// automatic fallback and not a mode one chooses.
 	if !reflect.DeepEqual(caps.STPModes, []string{"rstp"}) {
-		t.Errorf("STPModes = %v ; l'interface n'offre aucun selecteur de protocole",
+		t.Errorf("STPModes = %v; the UI offers no protocol selector",
 			caps.STPModes)
 	}
 }
 
-// TestResetProcedureHonnete : la procedure de factory reset, et son degre de
-// certitude.
+// TestHonestResetProcedure: the factory reset procedure, and how certain it
+// is.
 //
-// `Confirmed` doit be FAUX : la voie logicielle est observed dans le code de
-// l'interface de the device, mais le geste HARDWARE vient de la documentation et n'a
-// pas been exerce. Comme c'est precisely le geste qu'un operator tentera quand il
-// aura perdu access — au pire moment — le present  comme verified serait la faute que
-// ce champ existe pour empecher.
-func TestResetProcedureHonnete(t *testing.T) {
+// `Confirmed` must be FALSE: the software path is observed in the code of the
+// device's UI, but the HARDWARE gesture comes from documentation and has not
+// been exercised. Since it is precisely the gesture an operator will attempt
+// once access is lost — at the worst moment — presenting it as verified would
+// be the very mistake this field exists to prevent.
+func TestHonestResetProcedure(t *testing.T) {
 	var p = (&Driver{}).ResetProcedure("CSS326-24G-2S+")
 	if p.Confirmed {
-		t.Error("le geste hardware n'a pas been exerce sur ce model : Confirmed doit " +
-			"rester faux, et la source doit dire laquelle des deux halves est established")
+		t.Error("the hardware gesture has not been exercised on this model: Confirmed must " +
+			"stay false, and the source must say which of the two halves is established")
 	}
 	if p.Hardware == "" || p.Software == "" {
-		t.Error("les deux voies doivent be decrites")
+		t.Error("both paths must be described")
 	}
-	// Le geste hardware de MikroTik n'est pas une pression longue sur un device
-	// allume : il exige de couper puis retablir l'alimentation. Le dire evite un
-	// deplacement inutile.
+	// MikroTik's hardware gesture is not a long press on a powered-on
+	// device: it requires cutting then restoring power. Saying so avoids a
+	// pointless site visit.
 	if !strings.Contains(strings.ToLower(p.Hardware), "power") {
-		t.Errorf("le geste hardware doit dire qu'il passe par l'alimentation ; obtenu : %q",
+		t.Errorf("the hardware gesture must say it goes through the power supply; got: %q",
 			p.Hardware)
 	}
-	// La source doit distinguer ce qui est observed de ce qui est deduit.
+	// The source must distinguish what is observed from what is inferred.
 	var expected string
 	for _, expected = range []string{"software", "documentation"} {
 		if !strings.Contains(strings.ToLower(p.Source), expected) {
-			t.Errorf("la source doit mentionner %q ; obtenu : %q", expected, p.Source)
+			t.Errorf("the source must mention %q; got: %q", expected, p.Source)
 		}
 	}
-	// Et le trap qui compte le plus : aucune console de secours.
+	// And the trap that matters most: no recovery console.
 	var joined = strings.ToLower(strings.Join(p.Pitfalls, " "))
 	if !strings.Contains(joined, "serial") {
-		t.Errorf("les pieges doivent dire qu'il n'y a pas de serial port : %v", p.Pitfalls)
+		t.Errorf("the pitfalls must say there is no serial port: %v", p.Pitfalls)
 	}
 }
 
-// TestNotesDeManagementPortentLOrdre : la capability la plus dangereuse a supposer.
+// TestManagementNotesCarryTheOrder: the most dangerous capability to assume.
 //
-// Se tromper rend the device injoignable, et ce model n'a pas de serial port. Les
-// notes doivent porter l'ORDRE des operations et les champs qui coupent access —
-// c'est ce qui fait la difference entre un apply qui marche et un deplacement.
-func TestNotesDeManagementPortentLOrdre(t *testing.T) {
+// Getting it wrong makes the device unreachable, and this model has no serial
+// port. The notes must carry the ORDER of operations and the fields that cut
+// access — that is the difference between an apply that works and a site
+// visit.
+func TestManagementNotesCarryTheOrder(t *testing.T) {
 	var mgmt = (&Driver{}).Capabilities("CSS326-24G-2S+").Mgmt
 	if !mgmt.TaggedOK {
-		t.Error("le management tagged est OBSERVED sur l'reference device : il est " +
-			"administre en VLAN 99 alors que son seul port avec lien a un VLAN natif de 1")
+		t.Error("tagged management is OBSERVED on the reference device: it is " +
+			"administered in VLAN 99 while its only port with a link has native VLAN 1")
 	}
 	if mgmt.VlanIDs != driver.VlanAny {
-		t.Errorf("VlanIDs = %q ; « Allow From VLAN » est libre", mgmt.VlanIDs)
+		t.Errorf("VlanIDs = %q; \"Allow From VLAN\" is free", mgmt.VlanIDs)
 	}
-	// La borne haute est celle de la TABLE des VLAN (4094), pas celle du champ
-	// `avln` (4095) : un VLAN de management doit exister dans la table.
+	// The upper bound is the VLAN TABLE's (4094), not the `avln` field's
+	// (4095): a management VLAN must exist in the table.
 	if mgmt.VlanRange != [2]int{1, 4094} {
-		t.Errorf("VlanRange = %v, expected [1 4094] — la borne la plus basse des deux",
+		t.Errorf("VlanRange = %v, expected [1 4094] — the lower of the two bounds",
 			mgmt.VlanRange)
 	}
 	var joined = strings.ToLower(strings.Join(mgmt.Notes, " "))
 	var expected = []string{
-		"before", // l'ordre des operations
-		"allp",   // les champs qui coupent access
-		"serial", // pas de console de secours
-		"strict", // le mode VLAN qui fait tomber les trames
-		"endian", // l'ordre des octets de l'adresse
+		"before", // the order of operations
+		"allp",   // the fields that cut access
+		"serial", // no recovery console
+		"strict", // the VLAN mode that drops frames
+		"endian", // the byte order of the address
 	}
 	var a string
 	for _, a = range expected {
 		if !strings.Contains(joined, a) {
-			t.Errorf("les notes de management doivent parler de %q : c'est une way "+
-				"documentee de se couper la main", a)
+			t.Errorf("the management notes must talk about %q: it is a documented "+
+				"way of locking yourself out", a)
 		}
 	}
 }
 
-// TestSNMPv2cReleve : l'agent v2c, et le fait qu'il ne soit PAS un v3 deguise.
+// TestSNMPv2cSurveyed: the v2c agent, and the fact that it is NOT a disguised
+// v3.
 //
-// Ce test remplace un test qui verrouillait l'INVERSE — `SNMPVersions` devait be vide,
-// « faute d'avoir vu l'agent repondre ». Le motif was bon et sa condition est levee :
-// le walk du proxy, qui parle v2c en dur, a obtenu sysDescr, sysObjectID, sysName et
-// ifNumber de l'reference device le 29 juillet 2026. Ce qui est verrouille ici est
-// donc le observed, et son EXACTITUDE — annoncer plus que ce qui a repondu serait retomber
-// dans la faute que l'ancien test evitait.
-func TestSNMPv2cReleve(t *testing.T) {
+// This test replaces one that locked the OPPOSITE — `SNMPVersions` had to be
+// empty, "for lack of having seen the agent answer". The reasoning was good and
+// its condition has been lifted: the proxy's walk, which speaks hard-coded
+// v2c, obtained sysDescr, sysObjectID, sysName and ifNumber from the reference
+// device on 29 July 2026. What is locked here is therefore the survey, and its
+// ACCURACY — advertising more than what answered would fall back into the
+// mistake the old test avoided.
+func TestSNMPv2cSurveyed(t *testing.T) {
 	var caps = (&Driver{}).Capabilities("CSS326-24G-2S+")
 	if !reflect.DeepEqual(caps.SNMPVersions, []string{"v2c"}) {
-		t.Errorf("SNMPVersions = %v ; seul v2c a been OBSERVED. v1 est probable mais n'a "+
-			"jamais repondu a personne — le seul canal d'interrogation du projet est v2c — "+
-			"et v3 n'existe pas sur cette plateforme.", caps.SNMPVersions)
+		t.Errorf("SNMPVersions = %v; only v2c was OBSERVED. v1 is probable but has "+
+			"never answered anyone — the project's only query channel is v2c — "+
+			"and v3 does not exist on this platform.", caps.SNMPVersions)
 	}
-	// v3 est une ABSENCE ESTABLISHED par enumeration : /snmp.b tient en quatre champs, et il
-	// n'y a ni utilisateur, ni algorithme, ni chiffrement, dans aucun onglet ni dans la
-	// sauvegarde de configuration. Declare un algorithme ferait engendrer une identity
-	// v3 que rien ne pourrait poser.
+	// v3 is an ABSENCE ESTABLISHED by enumeration: /snmp.b fits in four fields,
+	// and there is no user, no algorithm, no encryption, in any tab or in the
+	// configuration backup. Declaring an algorithm would generate a v3
+	// identity nothing could set.
 	if len(caps.SNMPv3Auth) != 0 || len(caps.SNMPv3Priv) != 0 {
-		t.Errorf("SNMPv3Auth = %v, SNMPv3Priv = %v ; SwOS n'a AUCUN v3",
+		t.Errorf("SNMPv3Auth = %v, SNMPv3Priv = %v; SwOS has NO v3",
 			caps.SNMPv3Auth, caps.SNMPv3Priv)
 	}
 }

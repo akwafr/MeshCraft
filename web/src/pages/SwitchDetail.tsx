@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Suspense, lazy, useRef, useState, type ReactNode } from "react";
+import { viewerDate } from "../ui/clock";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useGlobalKey } from "../ui/dismiss";
 import { useNavigate, useParams } from "react-router-dom";
-import { decodeDevicePathSegment, sitePath } from "../paths";
+import { deviceDetailPath, deviceDetailPathAfterRename, findDeviceBySegment, sitePath } from "../paths";
 import { useSite, useSiteId } from "../useSite";
 import {
   useSiteLive,
-  del,
   get,
   patch,
   post,
@@ -22,7 +23,6 @@ import {
 import { useSiteRole } from "../auth";
 import { MgmtAddressingCard } from "./MgmtAddressing";
 import { SpanningTreeCard, stpEffectiveMeta } from "./SpanningTreeDevice";
-import { ConformMgmtButton } from "./ConformMgmt";
 // LAZY on purpose: DeviceConsole pulls in xterm.js, a terminal emulator worth a
 // quarter of a megabyte that the overwhelming majority of visits to this page
 // never open. Loading it on demand keeps the switch sheet's first paint free of
@@ -31,46 +31,60 @@ import { ConformMgmtButton } from "./ConformMgmt";
 const DeviceConsole = lazy(() => import("./DeviceConsole"));
 import {
   ActionButton,
-  DriftBanner,
-  FailedApplyBanner,
-  IncompleteApplyBanner,
-  PillPicker,
-  SkippedBanner,
-  UnsupportedBanner,
-  ConnectorNotesBanner,
   ErrorMsg,
   HelpTip,
+  PillPicker,
   QuickTip,
-  TagInput,
-  isRuleTag,
-  isTechnicalTag,
   useToast,
-  type DeviceTag,
 } from "../components";
 import {
   deviceRates,
   expandPorts,
-  fmtMbps,
   reachability,
+  sinceLabel,
   serves,
-  statusColor,
   syncLabel,
   vlanMap,
   type PortRef,
 } from "../network";
-import { PortSquare, ProtocolPills, StatusDot, VlanLegend } from "../netui";
-import { portTraffic, TelemetryPanel, useTelemetry } from "../telemetry";
-import { LineChart, SERIES } from "../viz";
+import { ProtocolPills, VlanLegend } from "../netui";
+import { portConfigLines, profileNameMap } from "../portConfig";
+import { portClasses, portLevels, portTraffic, TelemetryPanel, useTelemetry } from "../telemetry";
+import { PortHoverTip, type PortHover } from "../PortHoverTip";
+import { claimHoverTip, releaseHoverTip } from "../hoverExclusive";
+// THE SECTIONS THIS PAGE COMPOSES. Each owns its own markup and nothing else;
+// the page keeps the state, the queries, the mutations and the layout.
+import { AddressDomainRow } from "./switchdetail/AddressDomainRow";
+import { CollectorRow } from "./switchdetail/CollectorRow";
+import { ConfigFreshness } from "./switchdetail/ConfigFreshness";
+import { DeviceBanners } from "./switchdetail/DeviceBanners";
+import { DeviceHeader } from "./switchdetail/DeviceHeader";
+import { DeviceTags } from "./switchdetail/DeviceTags";
+import { Faceplate } from "./switchdetail/Faceplate";
+import { LagBuilder } from "./switchdetail/LagBuilder";
+import { LagSidePanel } from "./switchdetail/LagSidePanel";
+import { lagByMember, lagMemberSet, lagsOf, stripLagView, type Lag } from "../lags";
+import { HostnameRow } from "./switchdetail/HostnameRow";
+import { MultiPortPanel } from "./switchdetail/MultiPortPanel";
+import { PortPanel } from "./switchdetail/PortPanel";
+import { SidePanelGroup } from "./switchdetail/SidePanelGroup";
+// POWER_CYCLE_OFF_SECONDS lives with the overlay that displays it: the number on
+// screen and the number in the request must be the same one.
+import { PortActionOverlay, POWER_CYCLE_OFF_SECONDS } from "./switchdetail/PortActionOverlay";
+// The faceplate's two shape decisions, out of React so they can be asserted
+// (facade.test.ts): which ports share a physical block, and which ones blink.
+import { buildFacade, driftMap } from "./switchdetail/facade";
 
-const PORT_SIZE = 38;
 
 export default function SwitchDetail() {
   const { t, i18n } = useTranslation();
   const { site } = useSite();
   const siteId = useSiteId();
   const siteSlug = site?.slug ?? "";
-  const { deviceName: deviceNameParam } = useParams();
-  const decodedName = decodeDevicePathSegment(deviceNameParam ?? "");
+  // The URL segment is ID-keyed with a name slug ("{name}--{uuid}"); old
+  // name-only bookmarks still resolve (see findDeviceBySegment).
+  const { deviceSeg } = useParams();
+  const deviceSegment = deviceSeg ?? "";
   const navigate = useNavigate();
   const role = useSiteRole(siteId);
   const qc = useQueryClient();
@@ -90,12 +104,83 @@ export default function SwitchDetail() {
   // WebSocket, and keeping it alive behind a hidden panel would hold a vty on a
   // switch that has sixteen of them.
   const [consoleOpen, setConsoleOpen] = useState(false);
+  // The floating port chart on the faceplate — bandwidth, plus the optical
+  // levels on a cage that has them. Same component and same query as the
+  // equipment page and the topology, so the three cannot disagree.
+  const [portHover, setPortHover] = useState<PortHover | null>(null);
+  const facePortTipId = "switch-faceplate-port-tip";
+  /**
+   * The port whose ACTION overlay is up — shut/no-shut and PoE power cycle,
+   * the two gestures that reach the hardware immediately and are not stored
+   * anywhere (cf. internal/api/portadmin_apply.go: neither is an intent,
+   * neither is reconciled).
+   *
+   * A port NAME and not a PortRef: `expandPorts` rebuilds its objects on every
+   * render, so an overlay holding the object would keep repainting from a
+   * snapshot taken before the last poll — and this is the one panel where the
+   * live link state decides whether the confirm button is even enabled.
+   */
+  const [actionPort, setActionPort] = useState<string | null>(null);
+  /**
+   * THE SELECTED AGGREGATE (ADR-0007). A NAME, for the same reason actionPort
+   * is one: the aggregate list is rebuilt from `observed ∪ intent` on every
+   * poll, and a panel holding the object would describe a convergence state
+   * that has since changed.
+   *
+   * Mutually exclusive with the port selection by construction — selecting an
+   * aggregate clears the ports and the range anchor, selecting a port clears
+   * this. An aggregate is an interface, so it owns the side panel exactly the
+   * way a port does, and two things owning it at once is how a panel ends up
+   * describing one thing and writing to another.
+   */
+  const [selLag, setSelLag] = useState<string | null>(null);
+  /** null = closed; "" = creating; a name = editing that aggregate. */
+  const [lagEditing, setLagEditing] = useState<string | null>(null);
   // Real-time: this is the sheet where we track a configuration being
   // applied. The state changes timing WITHOUT any user request —
   // automatic provisioning finishes several seconds after the last click
   // — and it's the controller that comes to announce it (see
   // emitDeviceBG in autoapply.go).
   const refetchInterval = useSiteLive(siteId);
+
+  /**
+   * ESCAPE CLEARS THE SELECTION — and gives way to everything that owns the key
+   * before us.
+   *
+   * The gesture exists because the selection is sticky by design (it survives
+   * polling, panel edits and profile applies), so "I am done with these twelve
+   * ports" needed an answer that is not "find a piece of background to click".
+   *
+   * The four guards below are the whole difficulty, and each one closes a
+   * concrete way of making the key feel broken:
+   *
+   *   - the ACTION OVERLAY and the CONSOLE are modal. Escape there means "close
+   *     this", and clearing the selection underneath would silently change what
+   *     the panel shows once the overlay is gone — including, in the overlay's
+   *     case, the port the operator was about to act on;
+   *   - a focused TEXT INPUT (port label, device name, address) uses Escape to
+   *     revert what is being typed; a SELECT uses it to abandon an open
+   *     dropdown. Neither is a request to drop a selection, and stealing the key
+   *     there would cost the operator the field AND the selection in one press;
+   *   - an OPEN HELP BUBBLE closes on Escape too (see HelpTip). It is detected
+   *     through the `.on` class its own button carries rather than by lifting
+   *     that state into a context: reading the DOM here keeps one gesture in one
+   *     place, and a bubble the operator never opened cannot swallow the key.
+   *
+   * All three cases are now the SHARED guards of useGlobalKey (ui/dismiss.ts):
+   * the overlays sit on the dismissal stack, so "one is open" is the stack's
+   * answer rather than a prop list to keep in sync; the editable-focus and
+   * help-bubble checks moved with it. The rationale above stays because it is
+   * the WHY of those guards — this screen is where they were learned.
+   */
+  useGlobalKey("Escape", () => {
+    setSelPorts([]);
+    setSelProf(null);
+    // The aggregate selection is a selection too, and Escape means the same
+    // thing about it. The builder is a Modal, so it sits ABOVE us on the
+    // dismissal stack and takes the key first — this never closes it.
+    setSelLag(null);
+  });
 
   const { data: devices, error } = useQuery({
     queryKey: ["devices", siteId],
@@ -113,7 +198,7 @@ export default function SwitchDetail() {
     queryFn: () => get<Profile[]>(`/api/sites/${siteId}/profiles/port`),
     enabled: !!siteId,
   });
-  const dev = (devices ?? []).find((d) => d.name === decodedName);
+  const dev = findDeviceBySegment(devices ?? [], deviceSegment);
   const deviceId = dev?.id ?? "";
 
   // TELEMETRY: the quantities no inventory field can carry, plus the
@@ -126,21 +211,38 @@ export default function SwitchDetail() {
     refetchInterval,
   );
 
-  /**
-   * The ports ACTUALLY affected by a drift, and nothing else. Flashing the
-   * whole faceplate for the wrong port would send you searching for a
-   * long time to find what's actually wrong.
-   */
-  const driftPorts = new Map<string, "pending" | "drift" | "applying">();
-  if (dev?.sync === "pending" || dev?.sync === "drift") {
-    for (const c of dev.drift ?? []) driftPorts.set(c.port, dev.sync);
-  }
-  // While an apply is actually running, the ports being written blink as
-  // "provisioning" — a stronger, distinct animation from a still pending. The
-  // ports in flight are exactly those the model diverges on (dev.drift).
-  if (dev?.applying) {
-    for (const c of dev.drift ?? []) driftPorts.set(c.port, "applying");
-  }
+  // The ports that BLINK, and nothing else — flashing the whole faceplate for
+  // the wrong port would send you searching for a long time to find what is
+  // actually wrong. Pending/drift/applying come from the device (facade.ts).
+  //
+  // NOTE: a port action in flight also blinks, and that entry is added further
+  // down — right after the mutations that know about it are declared. See the
+  // comment there for why it cannot come through the pipeline above.
+  const driftPorts = driftMap(dev);
+
+  // The profile VOCABULARY the faceplate tips need: id → name, built once for
+  // the whole facade rather than resolved per square. A port square carries a
+  // `profile_id`, which is a UUID; without this map a hover could only say
+  // "follows a profile", which is not an answer.
+  //
+  // `undefined` WHILE THE QUERY IS STILL IN FLIGHT, and that is not pedantry:
+  // an empty map is a complete vocabulary that happens to contain nothing, so
+  // a port carrying a real `profile_id` would be reported against it as a
+  // DELETED group for the first few hundred milliseconds of every page load.
+  // Saying nothing until the list arrives is the honest state.
+  const profileNames = profiles ? profileNameMap(profiles) : undefined;
+
+  // LINK AGGREGATION: observed ∪ intent (lags.ts), for the overlines and the
+  // panel. Computed here once — the faceplate and the panel must agree on
+  // which ports belong to which aggregate, or the colours would lie.
+  const deviceLagsAll = dev ? lagsOf(dev) : { list: [], observedOnly: new Set<string>() };
+  const deviceLags = deviceLagsAll.list;
+  const lagMembers = lagByMember(deviceLags);
+  // The aggregate the panel describes — resolved from the NAME every render,
+  // so a poll that changed its convergence or its members is reflected.
+  const selLagObj = deviceLags.find((l) => l.name === selLag) ?? null;
+  // The members to emphasise on the faceplate (ADR-0007, decision 1).
+  const lagEmphasis = lagMemberSet(deviceLags, selLagObj ? selLag : null);
 
   /**
    * Proofread the equipment. READ ONLY: replayable as much as you want, including
@@ -171,6 +273,36 @@ export default function SwitchDetail() {
   });
 
   /**
+   * THE ONE AGGREGATE WRITE. Save-and-apply, and it always carries the
+   * COMPLETE desired list.
+   *
+   * Complete because the API's semantics are replace (an aggregate missing
+   * from the list is dissolved — driver.LAGWriter), which makes a partial
+   * send a destruction. Every caller below therefore builds the whole list:
+   * the builder merges its draft over the rest, the dissolve filters one out.
+   *
+   * `stripLagView` is what keeps the body honest — `running` and `raw` are
+   * observations, and the fallback VLAN travels only when it is actually set,
+   * because a connector that does not declare the gesture refuses the whole
+   * list on sight of the field rather than trimming it (ADR-0007).
+   */
+  const applyLags = useMutation({
+    mutationFn: (lags: Lag[]) =>
+      post<{ ok: boolean; result?: unknown; error?: string }>(
+        `/api/devices/${deviceId}/lags`,
+        { lags: lags.map(stripLagView) },
+      ),
+    onSuccess: () => {
+      setLagEditing(null);
+      // Re-read the device rather than trusting the draft: the overlines, the
+      // aggregate cells and the panel then redraw from what the device
+      // actually carries.
+      readState.mutate();
+      showToast(t("lag.applied"));
+    },
+  });
+
+  /**
    * Reinstall the meshcraft configuration on the equipment.
    *
    * The connector REFUSES to rewrite the management VLAN — that of the plan as
@@ -182,13 +314,14 @@ export default function SwitchDetail() {
       ok: boolean;
       error?: string;
       drift?: { port: string }[];
-      result?: { skipped?: string[] };
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[] };
     }>(`/api/devices/${deviceId}/config/apply`, { force: !!force }),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["devices", siteId] });
       if (!res.ok) return showToast(res.error ?? t("switchDetailPage.configNotAppliedToast"));
       const restant = res.drift?.length ?? 0;
-      const ecarte = res.result?.skipped?.length ?? 0;
+      const ecarte =
+        (res.result?.skipped?.length ?? 0) + (res.result?.not_applied?.length ?? 0);
       showToast(
         restant === 0
           ? t("switchDetailPage.configAppliedVerifiedToast")
@@ -209,7 +342,7 @@ export default function SwitchDetail() {
 
   // One port goes through the BATCH endpoint on purpose: it carries the port
   // name in the request BODY, not the URL path. Port names on some platforms
-  // contain a slash (FS « ethernet 1/11 », Cisco « Gi1/0/1 »); in the path
+  // contain a slash (FS "ethernet 1/11", Cisco "Gi1/0/1"); in the path
   // `/ports/{port}` that slash splits the route and the single-port edit hit
   // nothing — which is why a profile applied to one FS port did nothing while a
   // whole-switch apply (already body-based) worked.
@@ -265,15 +398,30 @@ export default function SwitchDetail() {
       qc.setQueryData<Device[]>(["devices", siteId], (list) =>
         (list ?? []).map((d) => (d.id === deviceId ? { ...d, ...fields } : d)),
       );
-      return { previous };
+      // The ID half of the URL survives any rename, but the SLUG half must
+      // move with the optimistic rename to stay readable — and a name-only
+      // bookmark gets upgraded to the ID-keyed form on the way. `replace`,
+      // not `push`: the old spelling is not a place to come back to.
+      const renamed = deviceDetailPathAfterRename(siteSlug, deviceSegment, deviceId, fields.name);
+      if (renamed) navigate(renamed, { replace: true });
+      return { previous, renamedFrom: renamed ? dev?.name : undefined };
     },
     onError: (err, _fields, ctx) => {
       // Without this rollback, the screen would indefinitely keep a value
       // that the controller refused — the worst of both worlds.
       if (ctx?.previous) qc.setQueryData(["devices", siteId], ctx.previous);
+      // The URL rolls back with the name: the cache is back to the old
+      // name, so the slug would lie about the value on screen.
+      if (ctx?.renamedFrom)
+        navigate(deviceDetailPath(siteSlug, { id: deviceId, name: ctx.renamedFrom }), { replace: true });
       showToast(err instanceof Error ? err.message : t("switchDetailPage.updateFailedToast"));
     },
-    onSuccess: (_out, fields) => {
+    onSuccess: (out, fields) => {
+      // The server has the last word on the name too: if it normalized what
+      // was sent, follow ITS spelling — the list will carry out.name, and
+      // the slug must keep matching it.
+      if (fields.name !== undefined && out.name !== fields.name)
+        navigate(deviceDetailPath(siteSlug, { id: deviceId, name: out.name }), { replace: true });
       showToast(
         fields.name !== undefined
           ? t("switchDetailPage.nameUpdatedToast")
@@ -342,6 +490,253 @@ export default function SwitchDetail() {
       showToast(err instanceof Error ? err.message : t("switchDetailPage.attachmentRefusedToast")),
   });
 
+  // THE FIVE WIRE-GESTURE MUTATIONS LIVE ABOVE THE EARLY RETURNS BELOW, AND
+  // THAT PLACEMENT IS THE FIX FOR A BLANK DEVICE PAGE.
+  //
+  // They used to sit further down, after `if (!dev) return …`. That is a Rules
+  // of Hooks violation with a delayed fuse: on the first render of a cold page
+  // the devices query has not resolved, `dev` is undefined, the component
+  // returns early and React records the hooks it saw; when the query lands, the
+  // same component runs five `useMutation` hooks more. React refuses the
+  // mismatch ("Rendered more hooks than during the previous render"), unmounts
+  // the tree, and the whole sheet goes BLANK — no faceplate, no telemetry, and
+  // no Console button, which is how it was reported.
+  //
+  // It only fires on a COLD mount — a pasted device link, a bookmark, or F5 on
+  // this page. Arriving from the fleet list finds the devices query already in
+  // cache, so `dev` is defined on the first render, no early return happens, and
+  // every hook runs: the page works, which is why this survived so long.
+  //
+  // Nothing here reads a value declared between this point and where they used
+  // to be: every reference (`dev?.name`, the mutation parameters) lives inside a
+  // callback that runs on a click, long after render.
+  // The IMMEDIATE half of a PoE gesture, offered only when the connector
+  // declares PoE writable (dev.poe_caps.write). The stored intent keeps riding
+  // the ports endpoint through mutatePort/mutatePorts exactly as before —
+  // deliberately two calls, not one: a device that refuses the write must not
+  // lose the recorded intention, and the auto-apply path stays enable-only
+  // (cf. internal/api/poe_apply.go). Skips are surfaced, not swallowed:
+  // "this jack does not deliver 24v" is the exact fact the operator needs.
+  const applyPoE = useMutation({
+    mutationFn: (ports: Record<string, string>) =>
+      post<{
+      ok: boolean;
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[]; notes?: string[] };
+    }>(
+        `/api/devices/${deviceId}/poe/apply`, { ports }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["devices", siteId] });
+      const skipped = [
+        ...(res.result?.skipped ?? []),
+        ...(res.result?.not_applied ?? []).map((n) => n.text),
+      ];
+      if (skipped.length > 0) {
+        showToast(t("switchDetailPage.poeApplySkippedToast", {
+          count: skipped.length, first: skipped[0],
+        }));
+      }
+    },
+    onError: (err) =>
+      showToast(err instanceof Error ? err.message : t("switchDetailPage.poeApplyFailedToast")),
+  });
+
+  /**
+   * SHUT / NO-SHUT one port, NOW.
+   *
+   * `enable` is what the contract carries — ENABLED, so `false` shuts — and it
+   * comes from `adminGesture().enable`, never from a local negation: the
+   * polarity inverts silently, and `{"GE5": true}` read as "disable GE5" cuts a
+   * customer with a request that looks like it turned something on.
+   *
+   * `force` rides through untouched. It is the operator's answer to "this port
+   * carries a live link", collected by an explicit checkbox in the overlay — a
+   * caller that always sent true would make the confirmation decorative, which
+   * is exactly what the connector-side guardrail expects us not to do.
+   *
+   * NOTHING IS STORED. The endpoint writes no intent (portadmin_apply.go says
+   * why: a shut recorded as an intent would be re-shut on every reconciliation
+   * pass), so the faceplate keeps showing the last READ link state until the
+   * next ⟳ — the overlay says so rather than letting the operator wonder why the
+   * square did not change colour.
+   */
+  const portAdmin = useMutation({
+    mutationFn: (args: { port: string; enable: boolean; force: boolean }) =>
+      post<{
+      ok: boolean;
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[]; notes?: string[] };
+    }>(
+        `/api/devices/${deviceId}/ports/admin`,
+        { ports: { [args.port]: args.enable }, force: args.force },
+      ),
+    onSuccess: (res, args) => {
+      qc.invalidateQueries({ queryKey: ["devices", siteId] });
+      const skipped = [
+        ...(res.result?.skipped ?? []),
+        ...(res.result?.not_applied ?? []).map((n) => n.text),
+      ];
+      // A refused port is an ORDINARY answer on this endpoint, not an error, and
+      // its reason is written for a human: show it verbatim. Reducing it to
+      // "failed" would hide the one sentence that says what to do next.
+      if (skipped.length > 0) {
+        showToast(t("switchDetailPage.portAdminSkippedToast", {
+          port: args.port, reason: skipped[0],
+        }));
+      } else {
+        showToast(t(args.enable
+          ? "switchDetailPage.portAdminEnabledToast"
+          : "switchDetailPage.portAdminShutToast", {
+          port: args.port, device: dev?.name ?? "",
+        }));
+      }
+      (res.result?.notes ?? []).forEach((n) => showToast(n));
+      setActionPort(null);
+    },
+    // 422 here means "this platform does not declare port administrative state
+    // as writable", composed server-side for the operator (cf.
+    // driver.Unsupported). Word for word, never a generic failure.
+    onError: (err) =>
+      showToast(err instanceof Error ? err.message : t("switchDetailPage.portAdminFailedToast")),
+  });
+
+  /**
+   * PoE POWER CYCLE — the volts go away and come back, and the far-end device
+   * REBOOTS. Not a link bounce, and the overlay is built around that difference.
+   *
+   * # This request blocks for the whole off-duration
+   *
+   * The handler answers only once power is BACK, on purpose: the restore is the
+   * contract, and a response that arrived early would leave no way to learn that
+   * the second half failed — i.e. that a port is dark. So nothing here caps the
+   * wait: no AbortController, no signal, no retry. `fetch` has no client-side
+   * timeout of its own, which for once is what we want; the overlay shows a
+   * pending state for the four seconds instead of pretending the click failed.
+   *
+   * react-query's default of zero retries matters more than usual on this one:
+   * a retried power cycle would reboot the far end twice.
+   */
+  const powerCycle = useMutation({
+    mutationFn: (args: { port: string; offForSeconds: number }) =>
+      post<{
+      ok: boolean;
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[]; notes?: string[] };
+    }>(
+        `/api/devices/${deviceId}/ports/power-cycle`,
+        { ports: [args.port], off_for_seconds: args.offForSeconds },
+      ),
+    onSuccess: (res, args) => {
+      qc.invalidateQueries({ queryKey: ["devices", siteId] });
+      const skipped = [
+        ...(res.result?.skipped ?? []),
+        ...(res.result?.not_applied ?? []).map((n) => n.text),
+      ];
+      if (skipped.length > 0) {
+        showToast(t("switchDetailPage.portCycleSkippedToast", {
+          port: args.port, reason: skipped[0],
+        }));
+      } else {
+        showToast(t("switchDetailPage.portCycleDoneToast", { port: args.port }));
+      }
+      // Notes on this path name what the connector could not put back — which
+      // port is dark and what class it should be carrying. The single most
+      // important sentence of the whole gesture, so it gets its own toast.
+      (res.result?.notes ?? []).forEach((n) => showToast(n));
+      setActionPort(null);
+    },
+    onError: (err) =>
+      showToast(err instanceof Error ? err.message : t("switchDetailPage.portCycleFailedToast")),
+  });
+
+  /**
+   * The IMMEDIATE half of a DHCP snooping gesture, sibling of applyPoE and
+   * deliberately shaped the same way: the stored `dhcp_snooping` intent keeps
+   * riding PUT /ports through mutatePort/mutatePorts, and this endpoint carries
+   * only the wire write.
+   *
+   * Two calls and not one, for the reason poe_apply.go states: the automatic
+   * path is ENABLE-ONLY (recon.RequestedExtras only reports positive intents),
+   * so an untrust performed here is never silently re-trusted by a later
+   * auto-apply — and a device that refuses the write does not cost the operator
+   * the recorded decision.
+   *
+   * The bool is TRUSTED, taken at face value in both directions. VLANs are
+   * resolved server-side from the site plan and are NEVER sent from here: a
+   * caller naming its own list could install protection on a VLAN meshcraft does
+   * not model, which no later pass would reconcile or remove.
+   */
+  const applySnoop = useMutation({
+    mutationFn: (ports: Record<string, boolean>) =>
+      post<{
+      ok: boolean;
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[]; notes?: string[] };
+    }>(
+        `/api/devices/${deviceId}/dhcp-snooping/apply`, { ports }),
+    onSuccess: (res, ports) => {
+      qc.invalidateQueries({ queryKey: ["devices", siteId] });
+      const skipped = [
+        ...(res.result?.skipped ?? []),
+        ...(res.result?.not_applied ?? []).map((n) => n.text),
+      ];
+      if (skipped.length > 0) {
+        showToast(t("switchDetailPage.snoopSkippedToast", {
+          count: skipped.length, first: skipped[0],
+        }));
+      } else {
+        showToast(t("switchDetailPage.snoopAppliedToast", {
+          count: Object.keys(ports).length,
+        }));
+      }
+      // The connector may have turned the switch-wide feature on as a side
+      // effect of this click, and it SAYS SO here. A UI that swallowed these
+      // notes would show a trust flag on a device that inspects nothing.
+      (res.result?.notes ?? []).forEach((n) => showToast(n));
+    },
+    onError: (err) =>
+      showToast(err instanceof Error ? err.message : t("switchDetailPage.snoopApplyFailedToast")),
+  });
+
+  /**
+   * PER-PORT STORM CONTROL, the wire half.
+   *
+   * The body carries a UNIT with every threshold, and the frontend never
+   * supplies one the platform did not declare — buildStormBody refuses instead
+   * (stormControl.ts). That is the whole safety property of this feature: a
+   * number sent without its unit is ten percent of a gigabit on one switch and
+   * ten packets a second on the next, and no connector converts between them.
+   *
+   * NOTHING IS STORED as intent, and there is no automatic sibling: no
+   * reconciliation pass sets storm limiters, so a stored value would be one
+   * nothing replays — and the first pass that learned to replay it would start
+   * re-imposing thresholds an operator had deliberately removed by hand.
+   */
+  const applyStorm = useMutation({
+    mutationFn: (body: { ports: Record<string, unknown[]> }) =>
+      post<{
+      ok: boolean;
+      result?: { skipped?: string[]; not_applied?: { port?: string; kind: "guardrail" | "platform" | "device"; text: string }[]; notes?: string[] };
+    }>(
+        `/api/devices/${deviceId}/storm-control/apply`, body),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["devices", siteId] });
+      const skipped = [
+        ...(res.result?.skipped ?? []),
+        ...(res.result?.not_applied ?? []).map((n) => n.text),
+      ];
+      if (skipped.length > 0) {
+        // A refused CLASS lands here, not in the error: the platform wrote what
+        // it could and named what it could not. Showing the first one keeps the
+        // toast readable; the overlay lists them all.
+        showToast(t("switchDetailPage.stormSkippedToast", {
+          count: skipped.length, first: skipped[0],
+        }));
+      } else {
+        showToast(t("switchDetailPage.stormAppliedToast"));
+      }
+      (res.result?.notes ?? []).forEach((n) => showToast(n));
+    },
+    onError: (err) =>
+      showToast(err instanceof Error ? err.message : t("switchDetailPage.stormApplyFailedToast")),
+  });
+
   if (error) return <ErrorMsg error={error} />;
   if (!dev) return <div className="empty">{t("switchDetailPage.notFound")}</div>;
 
@@ -373,9 +768,44 @@ export default function SwitchDetail() {
   const selected = ports.filter((p) => selSet.has(p.name));
   const sel = selected.length === 1 ? selected[0] : null;
 
-  const clickPort = (name: string, e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+  const clickPort = (
+    name: string,
+    e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; detail?: number },
+  ) => {
     const add = e.ctrlKey || e.metaKey;
     setSelProf(null);
+    // A physical port takes the side panel back from an aggregate. The two
+    // selections never coexist, so the panel always describes the thing the
+    // next write applies to.
+    setSelLag(null);
+    /**
+     * DOUBLE-CLICK OPENS THE ACTION OVERLAY, and the single click that preceded
+     * it is honoured rather than undone.
+     *
+     * The browser delivers a double-click as two `click` events, the second
+     * carrying `detail === 2`. We deliberately do NOT wait on a timer to tell
+     * the two apart: a 250 ms delay before a port gets selected would make the
+     * whole facade feel unresponsive, on the one screen where an operator clicks
+     * dozens of squares in a row.
+     *
+     * So the first click has already selected this port alone, and this branch
+     * only re-asserts that state before opening the overlay. The resulting
+     * selection is therefore always "exactly the port named in the overlay" —
+     * the one state that cannot mislead: whatever the operator had selected
+     * before, the panel behind the overlay describes the port they are about to
+     * shut, not a range they are no longer looking at.
+     *
+     * Modifiers are excluded on purpose. ⇧ and Ctrl/⌘ compose a SELECTION, and a
+     * fast second modified click is an ordinary part of doing that — opening a
+     * destructive confirmation there would punish operators for clicking
+     * quickly.
+     */
+    if (!e.shiftKey && !add && (e.detail ?? 1) >= 2) {
+      setSelPorts([name]);
+      setAnchor(name);
+      setActionPort(name);
+      return;
+    }
     if (e.shiftKey && anchor) {
       const a = ports.findIndex((p) => p.name === anchor);
       const b = ports.findIndex((p) => p.name === name);
@@ -395,40 +825,95 @@ export default function SwitchDetail() {
     setSelPorts([name]);
     setAnchor(name);
   };
+
+  /**
+   * SELECTING AN AGGREGATE (ADR-0007, decision 1) — and the range refusal
+   * that comes with it.
+   *
+   * Selecting clears the port selection AND the range anchor. Clearing the
+   * anchor is the load-bearing half: it is what makes a later ⇧-click on a
+   * physical port an ordinary selection instead of a range measured from
+   * wherever the operator happened to be before they clicked an aggregate.
+   */
+  const clickLag = (name: string) => {
+    setSelPorts([]);
+    setAnchor(null);
+    setSelProf(null);
+    setSelLag(name);
+  };
+
+  /**
+   * A ⇧ / Ctrl-⌘ CLICK LANDED ON AN AGGREGATE, AND IT IS REFUSED OUT LOUD.
+   *
+   * Range selection is measured on PHYSICAL order (see FacadeBlockRows, and
+   * the wrapping that once made ⇧-click return a set that looked wrong and
+   * was right). "From port 12 to LAG2" names no set at all: no physical order
+   * contains both. The ADR requires a refusal rather than a reinterpretation,
+   * and a toast is how this page already says no — because the alternative,
+   * quietly treating it as a plain click, hands back a selection the operator
+   * did not ask for on the screen where the selection is what the next write
+   * applies to.
+   */
+  const refuseLagRange = () => showToast(t("lag.rangeRefused"));
+
+  /**
+   * CLICKING THE PAGE BACKGROUND CLEARS THE SELECTION — the pointer equivalent of
+   * Escape, and the same gesture as the multi-panel's "Clear selection" button.
+   *
+   * Bound on `<main>` and not on the document, which is what makes the side panel
+   * safe for free: the panel is a SIBLING of `<main>`, so a click on a VLAN
+   * dropdown never reaches this handler at all. An operator half-way through
+   * adjusting a PVID on twelve ports cannot lose the twelve ports by clicking
+   * the control they came for.
+   *
+   * Inside `<main>`, INTERACTIVE TARGETS are excluded by walking up from the
+   * event target. Two reasons, and the first is not cosmetic:
+   *
+   *   - a PortSquare IS a `<button>`. Its own onClick has just set the
+   *     selection, and this handler runs afterwards on the same click — without
+   *     the exclusion, clicking a port would select it and immediately clear it,
+   *     i.e. the facade would stop working entirely;
+   *   - every other control under `<main>` (the re-read button, the console
+   *     button, banner actions, the telemetry window picker, the help bubbles)
+   *     is something the operator pressed ON PURPOSE while holding a selection.
+   *
+   * `.helptip` covers the bubble as well as its button: those are rendered
+   * `position: fixed` outside this subtree, so they would not reach us anyway —
+   * listed for the day one is inlined.
+   */
+  const clearOnBackground = (e: React.MouseEvent) => {
+    if (selPorts.length === 0 && !selProf && !selLag) return;
+    const el = e.target as HTMLElement | null;
+    if (el?.closest?.("button, a, input, select, textarea, label, summary, details, .helptip")) {
+      return;
+    }
+    setSelPorts([]);
+    setSelProf(null);
+    setSelLag(null);
+  };
+
   const poePct = dev.poe_budget_w
     ? Math.min(100, Math.round((rates.poe / dev.poe_budget_w) * 100))
     : 0;
 
-  // Groups the facade by physical block; ≥16 ports → 2 rows interleaved
-  // (odd above / even below) as on real hardware.
-  const facade: { label: string; rows: PortRef[][] }[] = [];
-  {
-    let idx = 0;
-    for (const g of dev.port_groups ?? []) {
-      const block = ports.slice(idx, idx + g.count);
-      idx += g.count;
-      let rows: PortRef[][];
-      if (g.count >= 16) {
-        const a: PortRef[] = [], b: PortRef[] = [];
-        block.forEach((c, i) => (i % 2 ? b : a).push(c));
-        rows = [a, b];
-      } else rows = [block];
-      facade.push({ label: g.label ?? g.prefix, rows });
-    }
-  }
+  // The faceplate's physical blocks and rows (facade.ts).
+  const facade = buildFacade(dev.port_groups, ports);
 
+  // The one merge every port write goes through: patch OVER the port's own
+  // intent, so a VLAN edit never erases its label or PoE, and a nested stp
+  // patch never erases the stp keys it does not name.
+  const mergeIntent = (base: PortIntent, patchIn: Partial<PortIntent>): PortIntent => {
+    const next = { ...base, ...patchIn };
+    if (patchIn.stp) next.stp = { ...base.stp, ...patchIn.stp };
+    return next;
+  };
   // Apply to ALL selection: patch merges with intent
   // specific to each port, otherwise configuring the VLAN of a range would erase
   // passing the labels and the PoE of each.
   const mutatePorts = (patch: Partial<PortIntent>, msg?: string) => {
     if (selected.length === 0) return;
-    const merge = (base: PortIntent, patchIn: Partial<PortIntent>): PortIntent => {
-      const next = { ...base, ...patchIn };
-      if (patchIn.stp) next.stp = { ...base.stp, ...patchIn.stp };
-      return next;
-    };
     if (selected.length === 1) {
-      setPort.mutate({ port: selected[0].name, intent: merge(selected[0].p, patch) });
+      setPort.mutate({ port: selected[0].name, intent: mergeIntent(selected[0].p, patch) });
     } else {
       const body: Record<string, PortIntent> = {};
       selected.forEach((pr) => {
@@ -436,18 +921,67 @@ export default function SwitchDetail() {
         // can mix copper PoE and SFP, and force poe=true on an SFP
         // would write an intention that the material can never satisfy.
         const eff = patch.poe && !pr.poeCap ? { ...patch, poe: false } : patch;
-        body[pr.name] = merge(pr.p, eff);
+        body[pr.name] = mergeIntent(pr.p, eff);
       });
       setPorts.mutate(body);
     }
     if (msg) showToast(msg);
   };
-  const mutatePort = (pr: PortRef, patch: Partial<PortIntent>, msg?: string) => {
-    const next = { ...pr.p, ...patch };
-    if (patch.stp) next.stp = { ...pr.p.stp, ...patch.stp };
-    setPort.mutate({ port: pr.name, intent: next });
+  // PER-PORT patches in one gesture: the multi panel's PoE repair re-aligns
+  // each port to ITS OWN group, so the value differs port by port — a single
+  // shared patch cannot say that. Same batch endpoint as mutatePorts: one
+  // request, one apply, one log line. Ports outside the selection are ignored
+  // on purpose — the gesture is scoped to what is on screen.
+  const mutatePortsEach = (patches: Record<string, Partial<PortIntent>>, msg?: string) => {
+    const body: Record<string, PortIntent> = {};
+    selected.forEach((pr) => {
+      const patchIn = patches[pr.name];
+      if (patchIn) body[pr.name] = mergeIntent(pr.p, patchIn);
+    });
+    if (Object.keys(body).length === 0) return;
+    setPorts.mutate(body);
     if (msg) showToast(msg);
   };
+  const mutatePort = (pr: PortRef, patch: Partial<PortIntent>, msg?: string) => {
+    setPort.mutate({ port: pr.name, intent: mergeIntent(pr.p, patch) });
+    if (msg) showToast(msg);
+  };
+
+  // THE PORT BEING ACTED ON BLINKS, with the same `port-applying` fade an apply
+  // uses — and deliberately NOT through the drift pipeline that drives it there.
+  //
+  // `dev.applying` + `dev.drift` is VLAN reconciliation: a stored intent, a
+  // computed divergence, a write that closes it. Shutting a port is an ACTION
+  // (cf. internal/driver/portadmin.go) — nothing is stored in devices.ports and
+  // nothing diverges, so the port appears in no `dev.drift` entry and the server
+  // pipeline has nothing to say about it. Feeding it through there would mean
+  // fabricating a drift entry for a state we deliberately do not reconcile, and
+  // the next reconciliation pass would set about "fixing" it.
+  //
+  // So: shared animation, local source. While the mutation is in flight we know
+  // exactly which socket is being written, which is all the faceplate needs — and
+  // the operator watches the socket they clicked, not the toast. It stays here,
+  // after the rest of the map, because it reads `portAdmin` and `powerCycle` —
+  // which are now declared above the early returns, so this is no longer the
+  // temporal-dead-zone constraint it once was, merely the order that keeps the
+  // map's construction in one place.
+  if (actionPort && (portAdmin.isPending || powerCycle.isPending)) {
+    driftPorts.set(actionPort, "applying");
+  }
+
+  // NO HOSTNAME MUTATION HERE, and that is the design.
+  //
+  // The equipment's own name used to be pushed by a button on this page
+  // (POST /api/devices/{id}/hostname/apply, now deleted). It is RECONCILED
+  // instead (internal/driver/hostname.go): renaming the device through
+  // `saveDevice` below is what writes the name onto the equipment, and a
+  // backend loop repairs drift on its own with a per-device cooldown.
+  //
+  // Nothing replaces the button. A "repair now" control next to an automatic
+  // repair teaches that the automation is not trusted, and it would spend a
+  // session on ranges that grant five of them to do what the loop was about to
+  // do for free. The panel reports the verdict (`hostname_conformity`) and
+  // stops there.
 
   const applyProfile = () => {
     if (selected.length === 0 || !selProf) return;
@@ -472,6 +1006,12 @@ export default function SwitchDetail() {
         tagged: spec.mode === "trunk" ? (spec.tagged ?? []) : [],
         poe: !!spec.poe,
         label: prof.name,
+        // The port now FOLLOWS this group: the reference is what lets the
+        // panel open in group mode next time, and what the PoE override
+        // indicator compares against. Values above are still STAMPED — a
+        // later profile edit does not ripple (cf. docs/en/02-Frontend/Profiles
+        // and groups: no inheritance), the reference only records provenance.
+        profile_id: prof.id,
         ...(Object.keys(stp).length > 0 ? { stp } : {}),
       },
       t("switchDetailPage.profileAppliedToast", { name: prof.name, ports: selected.length === 1 ? selected[0].name : t("switchDetailPage.portsCountLabel", { count: selected.length }), device: dev.name }),
@@ -490,13 +1030,19 @@ export default function SwitchDetail() {
 
   return (
     <div className="page2col wide-panel">
-      <main>
+      <main onClick={clearOnBackground}>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <ActionButton kind="close" className="ghost" onClick={() => navigate(sitePath(siteSlug, "equipment"))}>
             {t("switchDetailPage.backToDevices")}
           </ActionButton>
           <span className="row" style={{ gap: 8 }}>
             <span className="note">{syncLabel(dev)}</span>
+            {/* HOW OLD the verdict to its left is. `syncLabel` says whether the
+                device matches its intent; this says when anyone last checked —
+                two questions the sheet used to answer with one sentence, which
+                is why "is this live or from an hour ago?" had no answer short
+                of pressing ⟳ and watching what moved. */}
+            <ConfigFreshness dev={dev} />
             {/* CONSOLE: an interactive shell, or the vendor UI when the platform
                 has no SSH. site_admin only, and the controller decides which of
                 the two — the button just asks. */}
@@ -535,167 +1081,25 @@ export default function SwitchDetail() {
             />
           </Suspense>
         )}
-        {dev.mgmt?.checked && !dev.mgmt.conforms && (
-          // Outside the site addressing plan: meshcraft still watches the
-          // device, but administration is not on the planned path yet.
-          // Same visual family as config drift — an actionable gap, not a scare.
-          <div className="drift-banner mgmt-warn-banner">
-            <div className="drift-text">
-              <div className="drift-title">{t("switchDetailPage.offMgmtPlan")}</div>
-              <div className="note">
-                {dev.mgmt.reason ??
-                  t("switchDetailPage.defaultMgmtUnreachable")}
-              </div>
-              {dev.mgmt.path_state && dev.mgmt.path_state !== "ready" && (
-                <div className="note" style={{ marginTop: 6, color: "var(--warn)" }}>
-                  {dev.mgmt.path_reason}
-                </div>
-              )}
-            </div>
-            <div className="row" style={{ gap: 8 }}>
-              {role === "ing" && (
-                <ConformMgmtButton device={dev} onToast={showToast} />
-              )}
-              <ActionButton
-                kind="link"
-                className="ghost"
-                title={t("switchDetailPage.openMgmtPlanTitle")}
-                onClick={() => navigate(sitePath(siteSlug, "config", "management"))}
-              >
-                {t("switchDetailPage.viewPlan")}
-              </ActionButton>
-            </div>
-          </div>
-        )}
-        {/* Equipment no one monitors anymore: the indicator vanished, and without
-            this banner you would read controller logs to learn why. Placed at the
-            very top — the only one of these banners that says meshcraft no longer
-            knows anything about the device. */}
-        {dev.watch_excluded && (
-          <div className="drift-banner">
-            <div className="drift-text">
-              <div className="drift-title">{t("switchDetailPage.noLongerWatchedTitle")}</div>
-              <div className="note">{dev.watch_excluded}</div>
-              <div className="note" style={{ marginTop: 6 }}>
-                {t("switchDetailPage.watchExcludedNote")}
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Just after: attachment became non-covering. Same family as the banner
-            above — explain why an indicator vanished — but one notch less severe,
-            because the device is still pinged and its status remains true. That
-            is what makes it treacherous: nothing on screen would betray lost SNMP
-            collection without this banner.
-
-            No server-side equivalent, and there cannot be one: the controller
-            refuses to WRITE a non-covering attachment; it cannot prevent coverage
-            from shrinking afterward. */}
-        {collectorStranded && (
-          <div className="drift-banner">
-            <div className="drift-text">
-              <div className="drift-title">
-                {t("switchDetailPage.noSnmpCollectorTitle")}
-              </div>
-              <div className="note">
-                {t("switchDetailPage.collectorStrandedNote1", { name: dev.proxy_name || t("switchDetailPage.unknownProxy") })}
-              </div>
-              <div className="note" style={{ marginTop: 6 }}>
-                {t("switchDetailPage.collectorStrandedNote2")}
-              </div>
-            </div>
-          </div>
-        )}
-        {/* FIRST: failure is the only banner that signals nothing is in place. It
-            must come before nuances. */}
-        {dev.last_apply?.error && (
-          <FailedApplyBanner
-            error={dev.last_apply.error}
-            busy={applyCfg.isPending || importCfg.isPending}
-            onRetry={() => applyCfg.mutate(false)}
-            onImport={() => importCfg.mutate()}
-          />
-        )}
-        {(dev.last_apply?.skipped ?? []).length > 0 && (
-          <SkippedBanner
-            skipped={dev.last_apply?.skipped ?? []}
-            busy={applyCfg.isPending || importCfg.isPending}
-            onForce={() => applyCfg.mutate(true)}
-            onCancel={() => importCfg.mutate()}
-          />
-        )}
-        {/* After spared-port strip: this one calls for no decision, so it must not
-            come before one that does. */}
-        <UnsupportedBanner notes={dev.last_apply?.unsupported ?? []} />
-        {/* LAST informative banner: describes neither failure nor refusal nor a
-            platform limit — it describes what the device ACTUALLY does with
-            traffic, re-read after apply. The controller produced these sentences
-            from the start and nothing displayed them: a VLAN configuration can be
-            applied, verified by re-read, counted conformant, and inert. */}
-        <ConnectorNotesBanner notes={dev.last_apply?.notes ?? []} />
-
-        {/* « In progress » but blocked: apply ran and did not finish everything.
-            Reserved for `pending` — true drift has its own banner; showing two for
-            one problem would blur both. */}
-        {dev.sync === "pending" && dev.apply_stalled && (
-          <IncompleteApplyBanner
-            changes={dev.drift ?? []}
-            busy={applyCfg.isPending || importCfg.isPending}
-            onRetry={() => applyCfg.mutate(false)}
-            onImport={() => importCfg.mutate()}
-          />
-        )}
-        {dev.sync === "drift" && (
-          <DriftBanner
-            changes={dev.drift ?? []}
-            busy={importCfg.isPending || applyCfg.isPending}
-            onImport={() => importCfg.mutate()}
-            onForce={() => applyCfg.mutate(false)}
-          />
-        )}
-        <div className="row" style={{ alignItems: "flex-end", marginTop: 8 }}>
-          <div style={{ minWidth: 0 }}>
-            <div className="row" style={{ gap: 10 }}>
-              <StatusDot dev={dev} />
-              {role === "ing" ? (
-                <QuickTip text={t("switchDetailPage.hostnameTitle")} className="quicktip-inline">
-                  <input
-                    key={dev.id + ":name"}
-                    className="title-input"
-                    defaultValue={dev.name}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                    }}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v && v !== dev.name) saveDevice.mutate({ name: v });
-                      else e.target.value = dev.name;
-                    }}
-                  />
-                </QuickTip>
-              ) : (
-                <h1 style={{ margin: 0 }}>{dev.name}</h1>
-              )}
-              <ProtocolPills dev={dev} />
-            </div>
-            <div className="note" style={{ marginTop: 4 }}>
-              {[dev.model, dev.location, dev.mgmt_ip, dev.extra?.os, dev.extra?.uptime && t("switchDetailPage.inServicePrefix") + dev.extra.uptime]
-                .filter(Boolean)
-                .join(" · ")}
-            </div>
-          </div>
-          <div className="row" style={{ marginLeft: "auto", gap: 26, flex: "none" }}>
-            <Metric k={t("switchDetailPage.switchThroughput")} v={off ? "—" : "↓ " + fmtMbps(rates.rx) + "  ↑ " + fmtMbps(rates.tx)} />
-            <Metric k={t("switchDetailPage.activePorts")} v={rates.up + " / " + rates.total} />
-            {dev.poe_budget_w > 0 && (
-              <Metric
-                k={t("switchDetailPage.poeBudget")}
-                v={Math.round(rates.poe) + " / " + dev.poe_budget_w + " W"}
-                color={poePct >= 85 ? "var(--warn)" : undefined}
-              />
-            )}
-          </div>
-        </div>
+        <DeviceBanners
+          dev={dev}
+          canEdit={role === "ing"}
+          off={off}
+          collectorStranded={collectorStranded}
+          busy={applyCfg.isPending || importCfg.isPending}
+          onApply={(force) => applyCfg.mutate(force)}
+          onImport={() => importCfg.mutate()}
+          onToast={showToast}
+          onViewMgmtPlan={() => navigate(sitePath(siteSlug, "config", "management"))}
+        />
+        <DeviceHeader
+          dev={dev}
+          canEdit={role === "ing"}
+          off={off}
+          rates={rates}
+          poePct={poePct}
+          onRename={(name) => saveDevice.mutate({ name })}
+        />
         <hr className="hr" style={{ margin: "12px 0 16px" }} />
 
         {off && (
@@ -705,64 +1109,68 @@ export default function SwitchDetail() {
           </div>
         )}
 
-        {facade.map((g) => (
-          <div key={g.label} style={{ marginBottom: 18 }}>
-            <div className="kicker" style={{ marginBottom: 6 }}>{g.label}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {g.rows.map((row, ri) => (
-                <div key={ri} style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {row.map((pr) => (
-                    <PortSquare
-                      key={pr.name}
-                      name={pr.name}
-                      displayName={pr.display}
-                      port={pr.p}
-                      vm={vm}
-                      size={PORT_SIZE}
-                      off={off}
-                      hoverVlan={hoverVlan}
-                      selected={selSet.has(pr.name)}
-                      drift={driftPorts.get(pr.name)}
-                      onClick={(e) => clickPort(pr.name, e)}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        <div className="port-legend">
-          {/* Selection shortcuts live HERE, against the facade they control, with
-              help behind: read once. */}
-          <span>
-            {t("switchDetailPage.selection")}
-            <HelpTip label={t("switchDetailPage.selectionHelpLabel")}>
-              <p>
-                {t("switchDetailPage.selectionHelp1")}
-              </p>
-              <ul>
-                <li>{t("switchDetailPage.selectionHelpShift")}</li>
-                <li>{t("switchDetailPage.selectionHelpCtrl")}</li>
-                <li>{t("switchDetailPage.selectionHelpShiftCtrl")}</li>
-              </ul>
-              <p>
-                {t("switchDetailPage.selectionHelpMulti")}
-              </p>
-            </HelpTip>
-          </span>
-          <span><i className="sw" style={{ background: "var(--accent)" }} /> {t("switchDetailPage.legendAccessActive")}</span>
-          <span><i className="sw" style={{ background: "repeating-linear-gradient(135deg,var(--accent) 0 3px,var(--ok) 3px 6px)" }} /> {t("switchDetailPage.legendTrunk")}</span>
-          <span><i className="sw" style={{ border: "1px solid var(--accent)", background: "transparent" }} /> {t("switchDetailPage.legendConfiguredDown")}</span>
-          <span><i className="sw" style={{ background: "#64748b", border: "1px solid #94a3b8" }} /> {t("switchDetailPage.legendActiveUnmanaged")}</span>
-          <span><i className="sw" style={{ background: "var(--bg-hover)", border: "1px solid var(--border)" }} /> {t("switchDetailPage.legendFree")}</span>
-          <span><i className="sw poe" /> {t("switchDetailPage.legendPoeActive")}</span>
-        </div>
+        <Faceplate
+          blocks={facade}
+          profileNames={profileNames}
+          vm={vm}
+          off={off}
+          hoverVlan={hoverVlan}
+          selected={selSet}
+          emphasis={lagEmphasis}
+          drift={driftPorts}
+          lagOf={lagMembers}
+          onPortClick={clickPort}
+          lags={deviceLags}
+          lagsObservedOnly={deviceLagsAll.observedOnly}
+          selectedLag={selLag}
+          canAddLag={role === "ing" && !!dev.lag_caps?.write}
+          onLagSelect={clickLag}
+          onLagRangeRefused={refuseLagRange}
+          onLagAdd={() => setLagEditing("")}
+          onPortHover={(name, e) => {
+            claimHoverTip(facePortTipId);
+            setPortHover({
+              key: name, deviceId, port: name,
+              title: dev.name + " · " + name,
+              // The SAME lines the square's own tip carries, from the same
+              // function — but these are the ones the operator actually sees:
+              // claiming the hover slot right above dismisses that bubble.
+              facts: portConfigLines(
+                ports.find((x) => x.name === name)?.p ?? {},
+                vm,
+                profileNames,
+                t,
+              ),
+              subtitle: t("planPage.linkTraffic24h") as string,
+              classCaps: dev.traffic_class_caps,
+              clientX: e.clientX, clientY: e.clientY,
+            });
+          }}
+          onPortHoverMove={(name, e) =>
+            setPortHover((cur) =>
+              cur && cur.key === name
+                ? { ...cur, clientX: e.clientX, clientY: e.clientY }
+                : cur)
+          }
+          onPortHoverLeave={(name) =>
+            setPortHover((cur) => {
+              if (cur?.key !== name) return cur;
+              releaseHoverTip(facePortTipId);
+              return null;
+            })
+          }
+        />
 
         {/* TELEMETRY under the facade: what port boxes cannot carry. Here, not in
             the right panel, because these values describe the DEVICE not the
             selected port — putting them on the right would hide them as soon as a
             socket is clicked. */}
+        {/* THE AGGREGATES CARD IS GONE (ADR-0007). It was a permanent block
+            that said "no aggregate on this device" on the majority of boxes,
+            and it treated as an encart the thing the data model treats as an
+            interface. The aggregates now live ON the facade, in their own
+            labelled block, and their diagnostic lives in the side panel the
+            way a port's does. */}
         <TelemetryPanel
           dev={dev}
           tel={tele}
@@ -773,8 +1181,29 @@ export default function SwitchDetail() {
       </main>
 
       <aside className="side-panel">
-        {selected.length > 1 ? (
+        {/* AN AGGREGATE OWNS THE PANEL FIRST, and it can only be reached when
+            no port is selected (clickLag clears them). Listed before the port
+            branches rather than after, so the exclusivity is readable here
+            and not only in the handlers. */}
+        {selLagObj ? (
+          <LagSidePanel
+            lag={selLagObj}
+            imported={deviceLagsAll.observedOnly.has(selLagObj.name)}
+            canWrite={role === "ing" && !!dev.lag_caps?.write}
+            busy={applyLags.isPending}
+            onEdit={() => setLagEditing(selLagObj.name)}
+            onDissolve={() =>
+              applyLags.mutate(deviceLags.filter((l) => l.name !== selLagObj.name))
+            }
+            onClear={() => setSelLag(null)}
+          />
+        ) : selected.length > 1 ? (
           <MultiPortPanel
+            // Keyed by the selection, same reason as the single-port panel:
+            // the group/manual selector is per-selection UI state, and
+            // carrying it from one selection to the next would open the
+            // wrong lane on ports that live by the other one.
+            key={selected.map((p) => p.name).join("|")}
             dev={dev}
             sel={selected}
             all={ports}
@@ -786,6 +1215,10 @@ export default function SwitchDetail() {
             onSelProf={setSelProf}
             onApply={applyProfile}
             onPatch={mutatePorts}
+            onPatchEach={mutatePortsEach}
+            onPoEWrite={(ports) => applyPoE.mutate(ports)}
+            onSnoopWrite={(ports) => applySnoop.mutate(ports)}
+            snoopWriting={applySnoop.isPending}
             onClear={() => { setSelPorts([]); setSelProf(null); }}
           />
         ) : !sel ? (
@@ -795,14 +1228,40 @@ export default function SwitchDetail() {
                 <span className="k">{t("switchDetailPage.stateLabel")}</span>
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                   <ProtocolPills dev={dev} />
-                  <span style={{ color: statusColor(dev.status), fontWeight: 700 }}>
+                  {/* THE REACHABILITY SENTENCE CARRIES NO COLOUR (2026-08-09,
+                      UI-GUIDE §7). It used to be painted `statusColor(dev.status)`,
+                      and that function is handed the STATUS ALONE — it cannot see
+                      `status_at`, so it cannot tell the four states `deviceDot`
+                      arbitrates apart, and it renders never-observed and blind
+                      identically. `DeviceHeader` on this same page already draws
+                      `<StatusDot dev={dev} />`, which does have the date and does
+                      make the distinction, so the two disagreed on one screen: a
+                      pulsing orange dot at the top, a plain green sentence below
+                      it. Weight carries the emphasis and the adjacent dot carries
+                      the colour, which is what `dashboardTiles.tsx` already did. */}
+                  {/* THE CONNECTOR'S SENTENCE MOVED TO THE HOVER, 2026-10-24.
+                      The row read "UNREACHABLE — for 4 h — no longer responds
+                      to ping (proxy-lab), which last confirmed its identity
+                      68 days ago": four clauses wrapping over three lines in a
+                      300px panel, of which only the first two were ever scanned.
+
+                      This is NOT the `?` treatment the guide forbids for an
+                      observation. QuickTip is the primitive UI-GUIDE §3 names
+                      for exactly this — "observation, detail, reason", read
+                      every time, no delay. What stays on the row is the state
+                      and how long it has held; what moves is the prose. The
+                      tip itself is structured rather than narrated: the
+                      collector that last saw the device, and when. */}
+                  <QuickTip text={reachDetail(dev, t)} className="quicktip-inline">
+                  <span style={{ fontWeight: 700 }}>
                     {reachability(dev).label}
-                    {reachability(dev).detail ? (
+                    {dev.status_at ? (
                       <span style={{ fontWeight: 400, color: "var(--text-dim)" }}>
-                        {" — " + reachability(dev).detail}
+                        {" — " + sinceLabel(dev.status_at)}
                       </span>
                     ) : null}
                   </span>
+                  </QuickTip>
                 </span>
                 <span className="k">{t("switchDetailPage.placeLabel")}</span>
                 {role === "ing" ? (
@@ -816,35 +1275,13 @@ export default function SwitchDetail() {
                 ) : (
                   <span>{dev.location || "—"}</span>
                 )}
-                {/* Domain only appears when there is something to choose: on a
-                    single-network instance the question does not arise and the row
-                    would only clutter. */}
-                {role === "ing" && (domains ?? []).length > 1 && (
-                  <>
-                    <span className="k" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                      {t("switchDetailPage.networkLabel")}
-                      <HelpTip label={t("switchDetailPage.networkHelpLabel")}>
-                        <p>{t("switchDetailPage.networkHelp1")}</p>
-                        <p>{t("switchDetailPage.networkHelp2")}</p>
-                      </HelpTip>
-                    </span>
-                    <QuickTip text={t("switchDetailPage.networkTitle")} className="quicktip-inline">
-                      <select
-                        value={dev.address_domain_id ?? ""}
-                        disabled={setDomain.isPending}
-                        style={{ minHeight: 28, fontSize: 12 }}
-                        onChange={(e) => setDomain.mutate(e.target.value)}
-                      >
-                        <option value="">{t("switchDetailPage.undeclaredNetwork")}</option>
-                        {(domains ?? []).map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </QuickTip>
-                  </>
-                )}
+                <AddressDomainRow
+                  domains={domains}
+                  value={dev.address_domain_id}
+                  canEdit={role === "ing"}
+                  busy={setDomain.isPending}
+                  onChange={(id) => setDomain.mutate(id)}
+                />
                 <span className="k" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                   {t("switchDetailPage.addressLabel")}
                   <HelpTip label={t("switchDetailPage.addressHelpLabel")}>
@@ -870,64 +1307,15 @@ export default function SwitchDetail() {
                 ) : (
                   <span>{dev.mgmt_ip || "—"}</span>
                 )}
-                {/* Collector, just after address: both say the same thing from two
-                    angles — how we talk to this device, and who talks to it.
-
-                    Row appears when there is something to DECIDE: at least two
-                    covering proxies, or an attachment already declared. With one
-                    covering proxy and no attachment, coverage already decides and
-                    the row would teach nothing. The second condition is not a
-                    convenience: without it, an attachment that became non-covering
-                    would be flagged by the banner and impossible to fix on this page. */}
-                {(covering.length > 1 || dev.proxy_id) && (
-                  <>
-                    <span className="k" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                      {t("switchDetailPage.collectorLabel")}
-                      <HelpTip label={t("switchDetailPage.collectorHelpLabel")}>
-                        <p>{t("switchDetailPage.collectorHelp1")}</p>
-                        <p>{t("switchDetailPage.collectorHelp2")}</p>
-                      </HelpTip>
-                    </span>
-                    {role !== "ing" ? (
-                      // In read-only mode, the collector regime is spelled
-                      // out in full. A "—" would suggest missing data
-                      // where this is in fact normal operation.
-                      <span>
-                        {dev.proxy_name || t("switchDetailPage.noCollectorCoverage")}
-                        {collectorStranded ? t("switchDetailPage.noLongerCoversSite") : ""}
-                      </span>
-                    ) : (
-                      <QuickTip text={t("switchDetailPage.collectorSelectTitle")} className="quicktip-inline">
-                        <select
-                          value={dev.proxy_id ?? ""}
-                          disabled={setCollector.isPending}
-                          style={{ minHeight: 28, fontSize: 12 }}
-                          onChange={(e) => setCollector.mutate(e.target.value)}
-                        >
-                        {/* Detachment listed first, and named: this is a fleet-wide regime,
-                            not a checkbox for "none". */}
-                        <option value="">{t("switchDetailPage.noCollectorOption")}</option>
-                        {covering.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                            {p.global ? t("switchDetailPage.instanceProxySuffix") : ""}
-                            {p.revoked ? t("switchDetailPage.revokedSuffix") : ""}
-                          </option>
-                        ))}
-                        {/* Non-covering attachment is NOT in the list: without this entry
-                            the select would show the first option and imply the device
-                            is detached — a screen that would lie about the very state
-                            it exists to fix. */}
-                        {collectorStranded && (
-                          <option value={dev.proxy_id}>
-                            {t("switchDetailPage.unknownProxyNoCovers", { name: dev.proxy_name || t("switchDetailPage.unknownProxy") })}
-                          </option>
-                        )}
-                      </select>
-                      </QuickTip>
-                    )}
-                  </>
-                )}
+                <HostnameRow conf={dev.hostname_conformity} />
+                <CollectorRow
+                  dev={dev}
+                  covering={covering}
+                  stranded={collectorStranded}
+                  canEdit={role === "ing"}
+                  busy={setCollector.isPending}
+                  onChange={(id) => setCollector.mutate(id)}
+                />
                 <span className="k">{t("switchDetailPage.systemLabel")}</span><span>{dev.extra?.os || dev.vendor || "—"}</span>
                 <span className="k">{t("switchDetailPage.uptimeLabel")}</span><span>{dev.extra?.uptime || "—"}</span>
               </div>
@@ -1017,6 +1405,10 @@ export default function SwitchDetail() {
           </div>
         ) : (
           <PortPanel
+            // Keyed by port: the group/manual selector is per-port UI state,
+            // and carrying it from one socket to the next would open the wrong
+            // tab on a port that follows nothing.
+            key={sel.name}
             dev={dev}
             pr={sel}
             role={role}
@@ -1024,63 +1416,117 @@ export default function SwitchDetail() {
             vlans={vlans ?? []}
             profiles={profiles ?? []}
             traffic={portTraffic(tele, sel.name)}
+            classes={portClasses(tele, sel.name, dev.traffic_class_caps)}
+            levels={portLevels(tele, sel.name)}
             stepSeconds={tele?.step_seconds ?? 0}
             selProf={selProf}
             onSelProf={setSelProf}
             onApply={applyProfile}
             onPatch={(patch, msg) => mutatePort(sel, patch, msg)}
+            onPoEWrite={(ports) => applyPoE.mutate(ports)}
+            onSnoopWrite={(ports) => applySnoop.mutate(ports)}
+            snoopWriting={applySnoop.isPending}
           />
         )}
         <ErrorMsg error={setPort.error} />
         <ErrorMsg error={setPorts.error} />
       </aside>
+      {/* The action overlay is a SIBLING of main and aside, not a child of the
+          faceplate: it is `position: fixed`, and mounting it inside `<main>`
+          would hand its backdrop clicks to the background-clears-selection
+          handler — the operator would close the overlay and lose the port it
+          named at the same time.
+
+          Mounted only while a port is named, and keyed by that port, so the
+          force checkbox can never survive from one port to the next: a ticked
+          "shut it anyway" inherited by the next double-click is the exact
+          accident this confirmation exists to prevent. */}
+      {actionPort && ports.some((p) => p.name === actionPort) && (
+        <PortActionOverlay
+          key={actionPort}
+          dev={dev}
+          pr={ports.find((p) => p.name === actionPort)!}
+          traffic={portTraffic(tele, actionPort)}
+          classes={portClasses(tele, actionPort, dev.traffic_class_caps)}
+          levels={portLevels(tele, actionPort)}
+          stepSeconds={tele?.step_seconds ?? 0}
+          adminBusy={portAdmin.isPending}
+          cycleBusy={powerCycle.isPending}
+          error={portAdmin.error ?? powerCycle.error}
+          deviceId={deviceId}
+          stormBusy={applyStorm.isPending}
+          stormError={applyStorm.error}
+          stormResult={applyStorm.data?.result}
+          onStorm={(body) => applyStorm.mutate(body)}
+          onAdmin={(enable, force) =>
+            portAdmin.mutate({ port: actionPort, enable, force })
+          }
+          onPowerCycle={() =>
+            powerCycle.mutate({ port: actionPort, offForSeconds: POWER_CYCLE_OFF_SECONDS })
+          }
+          onClose={() => {
+            portAdmin.reset();
+            powerCycle.reset();
+            applyStorm.reset();
+            setActionPort(null);
+          }}
+        />
+      )}
+      {/* THE AGGREGATE BUILDER, a sibling for the same reason the action
+          overlay is one: it darkens the page, so its backdrop must not reach
+          the background-clears-selection handler inside `<main>`.
+
+          Keyed by what it edits, so the draft can never survive from one
+          aggregate to the next — an operator who cancels an edit of LAG2 and
+          opens LAG3 must not find LAG2's members staged under LAG3's name. */}
+      {lagEditing !== null && (
+        <LagBuilder
+          key={lagEditing || "new"}
+          blocks={facade}
+          vm={vm}
+          caps={dev.lag_caps}
+          lags={deviceLags}
+          editing={deviceLags.find((l) => l.name === lagEditing) ?? null}
+          busy={applyLags.isPending}
+          error={applyLags.error}
+          onApply={(draft) =>
+            // The COMPLETE list: the draft over everything else, because the
+            // API replaces (an aggregate missing from the body is dissolved).
+            applyLags.mutate([
+              ...deviceLags.filter((l) => l.name !== (lagEditing || draft.name)),
+              draft,
+            ])
+          }
+          onClose={() => {
+            applyLags.reset();
+            setLagEditing(null);
+          }}
+        />
+      )}
+      <PortHoverTip hover={portHover} />
       {toast}
     </div>
   );
 }
 
-function Metric({ k, v, color }: { k: string; v: string; color?: string }) {
-  return (
-    <div>
-      <div className="kicker" style={{ marginBottom: 3 }}>{k}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: "pre", color: color ?? "var(--text)" }}>
-        {v}
-      </div>
-    </div>
-  );
-}
-
 /**
- * Collapsible block in the device side panel. Tall sections (management
- * addressing, VLAN plan) start folded so the default view stays a summary.
+ * What the reachability row says ON HOVER: the collector that last saw this
+ * device and the moment it did, as two facts rather than a sentence.
+ *
+ * The connector's own `status_note` is appended when there is one, because
+ * it is the only place a platform-specific reason ever appears — but it
+ * comes last, after the two fields an operator actually acts on.
  */
-function SidePanelGroup({
-  title,
-  meta,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  meta?: ReactNode;
-  defaultOpen: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <details
-      className="side-panel-group"
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-    >
-      <summary className="side-panel-group-sum">
-        <span className="kicker">{title}</span>
-        {meta != null && meta !== "" && (
-          <span className="note side-panel-group-meta">{meta}</span>
-        )}
-      </summary>
-      <div className="side-panel-group-body">{children}</div>
-    </details>
-  );
+function reachDetail(
+  dev: Device,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  const bits: string[] = [];
+  if (dev.proxy_name) bits.push(dev.proxy_name);
+  if (dev.status_at) bits.push((viewerDate(dev.status_at) ?? new Date(dev.status_at)).toLocaleString());
+  else bits.push(t("status.neverObserved"));
+  const head = bits.join(" \u00b7 ");
+  return dev.status_note ? head + "\n" + dev.status_note : head;
 }
 
 function mgmtEffectiveMeta(
@@ -1093,926 +1539,3 @@ function mgmtEffectiveMeta(
   if (effective === "") return t("mgmtAddressing.effectiveUnknown");
   return undefined;
 }
-
-/**
- * Normalize the same way the controller does (api.normalizeTag): lowercase,
- * spaces compacted. Duplicating the rule here isn't distrust of the
- * server — it's what lets us say "already exists" BEFORE the round trip,
- * and show the label in the toast exactly as it will actually be stored.
- */
-/**
- * Equipment labels.
- * See docs/01-Architecture/Identifier labels and scope.
- *
- * A label is not harmless: a site administration credential can target
- * it, and the equipment then falls under a different EXPECTED password.
- * Hence the help icon — adding a label writes nothing to the equipment
- * itself, and the operator must be able to verify that without leaving
- * the form.
- *
- * The panel lives next to the equipment identity, not the ports: a label
- * qualifies the machine, never a single port.
- */
-function DeviceTags({
-  deviceId,
-  siteId,
-  canEdit,
-  onToast,
-  embedded,
-}: {
-  deviceId: string;
-  siteId: string;
-  canEdit: boolean;
-  onToast: (msg: string) => void;
-  /** Title lives on the side-panel group when true. */
-  embedded?: boolean;
-}) {
-  const { t } = useTranslation();
-
-  const qc = useQueryClient();
-
-  const { data, error } = useQuery({
-    queryKey: ["device-tags", deviceId],
-    queryFn: () => get<{ tags: DeviceTag[] }>(`/api/devices/${deviceId}/tags`),
-  });
-  // Labels already in use on the site. Suggesting what already exists is
-  // the only thing that keeps "regie" from coexisting with "régie": two
-  // separate sets where the operator believed they were designating just
-  // one, and a tag that ends up covering only half the intended fleet.
-  const { data: siteTags } = useQuery({
-    queryKey: ["site-tags", siteId],
-    queryFn: () => get<{ tags: string[] }>(`/api/sites/${siteId}/tags`),
-    enabled: canEdit,
-  });
-
-  // Placing the first occurrence of a label, or removing the last, changes
-  // also the site list — which the Labels page and this entry reread.
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["device-tags", deviceId] });
-    qc.invalidateQueries({ queryKey: ["site-tags", siteId] });
-  };
-
-  const add = useMutation({
-    // The tag travels in the PATH: it must be encoded — a raw "/" or
-    // accent would break the route there.
-    mutationFn: (tag: string) =>
-      put<{
-        tag: string;
-        switch_profile_apply?: {
-          ok?: boolean;
-          profile_name?: string;
-          applied?: number;
-          issues?: string[];
-          error?: string;
-        };
-      }>(`/api/devices/${deviceId}/tags/${encodeURIComponent(tag)}`),
-    onSuccess: (res, tag) => {
-      invalidate();
-      qc.invalidateQueries({ queryKey: ["devices", siteId] });
-      const apply = res?.switch_profile_apply;
-      if (apply?.ok) {
-        onToast(
-          t("switchDetailPage.tagAppliedProfileToast", {
-            tag: res?.tag ?? tag,
-            profile: apply.profile_name ?? "",
-            count: apply.applied ?? 0,
-          }),
-        );
-      } else if (apply && apply.ok === false) {
-        onToast(
-          t("switchDetailPage.tagAppliedProfileBlockedToast", {
-            tag: res?.tag ?? tag,
-            profile: apply.profile_name ?? "",
-            reason: apply.issues?.[0] ?? apply.error ?? "",
-          }),
-        );
-      } else {
-        onToast(t("switchDetailPage.tagAppliedToast", { tag: res?.tag ?? tag }));
-      }
-    },
-  });
-  const remove = useMutation({
-    mutationFn: (t: DeviceTag) =>
-      del(`/api/devices/${deviceId}/tags/${encodeURIComponent(t.tag)}`),
-    onSuccess: (_res, removed) => {
-      invalidate();
-      // The toast repeats the consequence at the exact moment it happens:
-      // for an inferred tag, the removal only lasts until the next
-      // reassessment, and now is the moment to find out.
-      onToast(
-        isRuleTag(removed)
-          ? t("switchDetailPage.tagRemovedRuleToast", { tag: removed.tag })
-          : t("switchDetailPage.tagRemovedToast", { tag: removed.tag }),
-      );
-    },
-  });
-
-  const tags = data?.tags ?? [];
-  const hasRule = tags.some(isRuleTag);
-  // Two populations of labels coexist on the same equipment, and they are
-  // not treated the same way (see the closing note of §3.1 of the labels
-  // page): operational tags, arbitrary and removable, and TECHNICAL tags,
-  // placed by meshcraft, which determine an identifier. The second family
-  // has two mechanisms — the SNMPv3 identity and the password tied to the
-  // platform's password policy — hence a help paragraph that says what to
-  // look for, and where, shown only when the equipment carries one.
-  const technical = tags.filter(isTechnicalTag);
-
-  return (
-    <div>
-      {!embedded && (
-        <div className="kicker">
-          {t("switchDetailPage.tagsTitle")}
-          <HelpTip label={t("switchDetailPage.tagsHelpLabel")}>
-            <p>{t("switchDetailPage.tagsHelp1")}</p>
-            {technical.length > 0 && (
-              <p>{t("switchDetailPage.tagsHelpTechnical")}</p>
-            )}
-            {hasRule && (
-              <p>{t("switchDetailPage.tagsHelpRule")}</p>
-            )}
-          </HelpTip>
-        </div>
-      )}
-      <div style={{ marginTop: embedded ? 0 : 8 }}>
-        <TagInput
-          tags={tags}
-          suggestions={siteTags?.tags ?? []}
-          readOnly={!canEdit}
-          busy={add.isPending || remove.isPending}
-          onAdd={(t) => add.mutate(t)}
-          onRemove={(t) => remove.mutate(t)}
-        />
-      </div>
-
-      <ErrorMsg error={error ?? add.error ?? remove.error} />
-    </div>
-  );
-}
-
-function PortPanel({
-  dev,
-  pr,
-  role,
-  off,
-  vlans,
-  profiles,
-  traffic,
-  stepSeconds,
-  selProf,
-  onSelProf,
-  onApply,
-  onPatch,
-}: {
-  dev: Device;
-  pr: PortRef;
-  role: "ing" | "tech" | "viewer";
-  off: boolean;
-  vlans: Vlan[];
-  profiles: Profile[];
-  /** Both directions of traffic from THIS port, measured (see ../telemetry). */
-  traffic: { rx: (number | null)[]; tx: (number | null)[] };
-  /** The pitch of the window served, to name the points of the axis. */
-  stepSeconds: number;
-  selProf: string | null;
-  onSelProf: (id: string | null) => void;
-  onApply: () => void;
-  onPatch: (patch: Partial<PortIntent>, msg?: string) => void;
-}) {
-  const { t } = useTranslation();
-
-  const p = pr.p;
-  const vm = vlanMap(vlans);
-  const canApply = role !== "viewer" && !off;
-  const ing = role === "ing";
-
-  // THE HISTORY OF BOTH DIRECTIONS, MEASURED.
-  //
-  // It used to be MANUFACTURED: thirty points generated by a deterministic
-  // jitter around the current value, drawing a plausible-looking curve for
-  // a past that had never actually been measured. It now comes from the
-  // time-series store (GET /api/devices/{id}/telemetry), i.e. real
-  // equipment counters.
-  //
-  // An unreachable switch keeps its curve: that's what happened BEFORE it
-  // went down, and that's exactly what we come here to look at. Only the
-  // "now" value is forced to zero, because no traffic flows through
-  // silent equipment.
-  const rxHist = traffic.rx;
-  const txHist = traffic.tx;
-  const lastNum = (xs: (number | null)[]) => {
-    var i = xs.length - 1;
-    for (; i >= 0; i--) {
-      if (xs[i] != null) return xs[i] as number;
-    }
-    return null;
-  };
-  const rxNow = off ? 0 : (lastNum(rxHist) ?? p.rx_mbps ?? 0);
-  const txNow = off ? 0 : (lastNum(txHist) ?? p.tx_mbps ?? 0);
-  const hasHist =
-    rxHist.some((v) => v != null) || txHist.some((v) => v != null);
-
-  const tagged = p.tagged ?? [];
-  const toggleTrunkMember = (vid: number) => {
-    let next: number[] =
-      tagged === "all" ? vlans.map((v) => v.vlan_id) : (tagged as number[]).slice();
-    const i = next.indexOf(vid);
-    if (i > -1) next.splice(i, 1);
-    else next.push(vid);
-    next.sort((a, b) => a - b);
-    onPatch({ tagged: next });
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div>
-        <div className="kicker">{dev.name} · {pr.name} · {pr.speed}</div>
-        {ing && !off ? (
-          <input
-            className="port-label-input"
-            value={p.label ?? ""}
-            placeholder={t("switchDetailPage.portLabelPlaceholder")}
-            onChange={(e) => onPatch({ label: e.target.value })}
-          />
-        ) : (
-          <div style={{ fontSize: 16, fontWeight: 700, marginTop: 8 }}>
-            {p.label || pr.name + t("switchDetailPage.portFreeSuffix")}
-          </div>
-        )}
-      </div>
-
-      <div className="kv" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-        <span className="k">{t("switchDetailPage.linkLabel")}</span>
-        <span style={{ color: off ? "var(--text-dim)" : p.link ? "var(--ok)" : "var(--text-dim)", fontWeight: 600 }}>
-          {off ? t("switchDetailPage.switchUnreachableShort") : p.link ? p.link + t("switchDetailPage.linkFullDuplex") : t("switchDetailPage.noLinkDetected")}
-        </span>
-        <span className="k">PoE</span>
-        <span>
-          {!pr.poeCap
-            ? t("switchDetailPage.poeNotAvailable")
-            : (p.poe_w ?? 0) > 0
-              ? String(p.poe_w).replace(".", ",") + t("switchDetailPage.poeActiveWatts")
-              : p.poe
-                ? t("switchDetailPage.poeEnabledWaiting")
-                : t("switchDetailPage.poeOff")}
-        </span>
-        <span className="k">{t("switchDetailPage.trafficLabel")}</span>
-        <span style={{ whiteSpace: "pre" }}>{"↓ " + fmtMbps(rxNow) + "  ↑ " + fmtMbps(txNow)}</span>
-      </div>
-
-      <div>
-        <div className="kicker" style={{ marginBottom: 4 }}>
-          {t("switchDetailPage.portTrafficTitle")}
-        </div>
-        {hasHist ? (
-          <LineChart
-            height={132}
-            series={[
-              { name: t("switchDetailPage.chartIncoming"), color: SERIES.in, points: rxHist },
-              { name: t("switchDetailPage.chartOutgoing"), color: SERIES.out, points: txHist },
-            ]}
-            format={fmtMbps}
-            xLabel={(i, n) => {
-              if (i === n - 1) return t("switchDetailPage.chartNow");
-              const back = (n - 1 - i) * stepSeconds;
-              if (back < 90) return t("switchDetailPage.chartSecondsAgo", { n: Math.round(back) });
-              if (back < 5400) return t("switchDetailPage.chartMinutesAgo", { n: Math.round(back / 60) });
-              if (back < 48 * 3600) return t("switchDetailPage.chartHoursAgo", { n: Math.round(back / 3600) });
-              return t("switchDetailPage.chartDaysAgo", { n: Math.round(back / 86400) });
-            }}
-          />
-        ) : (
-          <div className="note">
-            {t("switchDetailPage.noTrafficNote")}
-          </div>
-        )}
-      </div>
-
-      {off && (
-        <div className="note" style={{ border: "1px solid var(--border)", padding: "10px 12px", borderRadius: 8 }}>
-          {t("switchDetailPage.unreachableConfigNote")}
-        </div>
-      )}
-
-      {!off && canApply && (
-        <div style={{ borderTop: "2px solid var(--border)", paddingTop: 12 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>{t("switchDetailPage.portProfilesTitle")}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {profiles.map((prof) => {
-              const spec = prof.spec as unknown as PortProfileSpec;
-              const locked = !!spec.eng_only && !ing;
-              const selp = selProf === prof.id;
-              const swatchIds =
-                spec.mode === "access"
-                  ? [spec.pvid]
-                  : spec.tagged === "all"
-                    ? [spec.pvid]
-                    : ((spec.tagged ?? []) as number[]).slice(0, 4);
-              return (
-                <button
-                  key={prof.id}
-                  disabled={locked}
-                  className={"prof-row" + (selp ? " sel" : "")}
-                  onClick={() => onSelProf(prof.id)}
-                >
-                  <span style={{ display: "flex", gap: 2, flex: "none" }}>
-                    {swatchIds.map((id, i) => (
-                      <span
-                        key={i}
-                        style={{
-                          width: 9, height: 9, borderRadius: 2, display: "block",
-                          background: id != null && vm.get(id) ? vm.get(id)!.color : "#888",
-                        }}
-                      />
-                    ))}
-                  </span>
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{prof.name}</span>
-                  <span className="note" style={{ marginLeft: "auto", whiteSpace: "nowrap", fontSize: 9, letterSpacing: ".05em" }}>
-                    {(spec.mode === "access"
-                      ? t("switchDetailPage.accessPrefix", { pvid: spec.pvid ?? "" })
-                      : spec.tagged === "all" ? "TRUNK ▤▤▤" : "TRUNK") + (spec.poe ? " · POE" : "")}
-                  </span>
-                </button>
-              );
-            })}
-            {profiles.length === 0 && <div className="note">{t("switchDetailPage.noProfilesDefined")}</div>}
-          </div>
-          <ActionButton kind="apply" style={{ width: "100%", marginTop: 10 }} disabled={!selProf} onClick={onApply}>
-            {t("switchDetailPage.applyProfileBtn")}
-          </ActionButton>
-          {!ing && (
-            <div className="note" style={{ fontSize: 10, marginTop: 6 }}>
-              {t("switchDetailPage.engineerProfilesNote")}
-            </div>
-          )}
-        </div>
-      )}
-
-      {!off && ing && (
-        <div style={{ borderTop: "2px solid var(--border)", paddingTop: 12 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>{t("switchDetailPage.manualConfigTitle")}</div>
-          <div className="seg3">
-            {(["access", "trunk", "libre"] as const).map((m) => (
-              <button
-                key={m}
-                className={p.mode === m ? "on" : ""}
-                onClick={() =>
-                  onPatch(
-                    m === "trunk"
-                      ? { mode: m, tagged: tagged === "all" || (Array.isArray(tagged) && tagged.length) ? tagged : p.pvid != null ? [p.pvid] : [] }
-                      : { mode: m },
-                  )
-                }
-              >
-                {m === "access" ? t("switchDetailPage.modeAccess") : m === "trunk" ? t("switchDetailPage.modeTrunk") : t("switchDetailPage.modeFree")}
-              </button>
-            ))}
-          </div>
-
-          {p.mode === "access" && (
-            <div className="vlan-pick">
-              {vlans.map((v) => (
-                <button
-                  key={v.id}
-                  className={"vlan-row" + (p.pvid === v.vlan_id ? " sel" : "")}
-                  onClick={() => onPatch({ mode: "access", pvid: v.vlan_id, tagged: [] })}
-                >
-                  <span className="vlan-chip" style={{ background: v.color, margin: 0 }} />
-                  <span style={{ fontWeight: 600 }}>{v.name}</span>
-                  <span className="note">{v.vlan_id}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {p.mode === "trunk" && (
-            <>
-              <div className="kicker" style={{ margin: "10px 0 6px" }}>{t("switchDetailPage.taggedMembersTitle")}</div>
-              <div className="vlan-pick">
-                <button
-                  className="vlan-row"
-                  onClick={() =>
-                    onPatch({ tagged: tagged === "all" ? (p.pvid != null ? [p.pvid] : []) : "all" })
-                  }
-                >
-                  <span
-                    className="vlan-chip"
-                    style={{ background: tagged === "all" ? "var(--accent)" : "transparent", border: "1px solid var(--border)", margin: 0 }}
-                  />
-                  <span style={{ fontWeight: 600 }}>{t("switchDetailPage.fullTrunkAllVlans")}</span>
-                </button>
-                {vlans.map((v) => {
-                  const member = tagged === "all" || (Array.isArray(tagged) && tagged.includes(v.vlan_id));
-                  return (
-                    <button key={v.id} className="vlan-row" onClick={() => toggleTrunkMember(v.vlan_id)}>
-                      <span
-                        className="vlan-chip"
-                        style={{ background: member ? v.color : "transparent", border: `1px solid ${v.color}`, margin: 0 }}
-                      />
-                      <span style={{ fontWeight: 600, color: member ? "var(--text)" : "var(--text-dim)" }}>
-                        {v.name}
-                      </span>
-                      <span className="note">{v.vlan_id}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="kicker" style={{ margin: "10px 0 5px" }}>{t("switchDetailPage.nativeVlanTitle")}</div>
-              <select
-                value={p.pvid ?? ""}
-                onChange={(e) => onPatch({ pvid: e.target.value ? Number(e.target.value) : null })}
-              >
-                <option value="">—</option>
-                {vlans.map((v) => (
-                  <option key={v.id} value={v.vlan_id}>{v.vlan_id} — {v.name}</option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {pr.poeCap && p.mode !== "libre" && (
-            <div className="row" style={{ marginTop: 12 }}>
-              <span className="kicker">PoE</span>
-              <div className="seg3" style={{ marginBottom: 0 }}>
-                <button
-                  className={p.poe ? "on" : ""}
-                  onClick={() => onPatch({ poe: true }, t("switchDetailPage.poeEnabledToast", { name: pr.name }))}
-                >
-                  {t("switchDetailPage.poePoweredBtn")}
-                </button>
-                <button
-                  className={!p.poe ? "on" : ""}
-                  onClick={() => onPatch({ poe: false, poe_w: 0 }, t("switchDetailPage.poeDisabledToast", { name: pr.name }))}
-                >
-                  {t("switchDetailPage.poeCutBtn")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {p.mode !== "libre" && (dev.stp_caps?.edge || dev.stp_caps?.port_enable || dev.stp_caps?.bpdu_guard) && (
-            <div style={{ marginTop: 12 }}>
-              {dev.stp_caps?.edge && (
-                <div className="row" style={{ marginBottom: 8 }}>
-                  <span className="kicker">{t("switchDetailPage.stpEdgeLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    {(dev.stp_caps.edge_auto
-                      ? (["auto", "yes", "no"] as const)
-                      : (["yes", "no"] as const)
-                    ).map((e) => (
-                      <button
-                        key={e}
-                        className={String(p.stp?.edge ?? "") === e ? "on" : ""}
-                        onClick={() =>
-                          onPatch(
-                            { stp: { edge: e } },
-                            t("switchDetailPage.stpEdgeToast", { name: pr.name, edge: e }),
-                          )
-                        }
-                      >
-                        {e === "auto"
-                          ? t("switchDetailPage.stpEdgeAuto")
-                          : e === "yes"
-                            ? t("switchDetailPage.stpEdgeYes")
-                            : t("switchDetailPage.stpEdgeNo")}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {dev.stp_caps?.port_enable && (
-                <div className="row" style={{ marginBottom: 8 }}>
-                  <span className="kicker">{t("switchDetailPage.stpPortEnableLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    <button
-                      className={p.stp?.enabled !== false ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { enabled: true } },
-                          t("switchDetailPage.stpPortOnToast", { name: pr.name }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.stpPortOn")}
-                    </button>
-                    <button
-                      className={p.stp?.enabled === false ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { enabled: false } },
-                          t("switchDetailPage.stpPortOffToast", { name: pr.name }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.stpPortOff")}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {dev.stp_caps?.bpdu_guard && (
-                <div className="row">
-                  <span className="kicker">{t("switchDetailPage.bpduGuardLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    <button
-                      className={p.stp?.bpdu_guard === true ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { bpdu_guard: true } },
-                          t("switchDetailPage.bpduGuardOnToast", { name: pr.name }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.bpduGuardOn")}
-                    </button>
-                    <button
-                      className={p.stp?.bpdu_guard === false ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { bpdu_guard: false } },
-                          t("switchDetailPage.bpduGuardOffToast", { name: pr.name }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.bpduGuardOff")}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Compacts a selection into ranges: "1-8, 12, 24-26". A panel that
- * announces "1, 2, 3, 4, 5, 6, 7, 8" forces you to count again to verify
- * that we actually selected what we thought we did.
- */
-function rangeLabel(sel: PortRef[], all: PortRef[]): string {
-  // A port not found in `all` is discarded rather than crashing the
-  // render: an incomplete label is a display glitch, an exception here
-  // would blank out the whole page.
-  const idx = sel.map((p) => all.indexOf(p)).filter((i) => i >= 0).sort((a, b) => a - b);
-  if (idx.length === 0) return sel.map((p) => p.name).join(", ");
-  const out: string[] = [];
-  let i = 0;
-  while (i < idx.length) {
-    let j = i;
-    while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
-    const a = all[idx[i]].name;
-    const b = all[idx[j]].name;
-    out.push(i === j ? a : j === i + 1 ? `${a}, ${b}` : `${a}–${b}`);
-    i = j + 1;
-  }
-  return out.join(", ");
-}
-
-/** Common value for the entire selection, or `undefined` if they differ. */
-function common<T>(sel: PortRef[], of: (p: PortRef) => T): T | undefined {
-  const first = of(sel[0]);
-  return sel.every((p) => of(p) === first) ? first : undefined;
-}
-
-/**
- * Multiple selection panel.
- *
- * Two principles hold this screen:
- *
- * 1. what DIFFERS between ports is shown as such ("mixed"), never
- *    reduced to the value of the first — otherwise the screen would lie
- *    about what we're about to overwrite;
- * 2. nothing is sent until you click: on twelve ports, a toggle applied
- *    on hover would be a permanent accident.
- */
-function MultiPortPanel({
-  dev,
-  sel,
-  all,
-  role,
-  off,
-  vlans,
-  profiles,
-  selProf,
-  onSelProf,
-  onApply,
-  onPatch,
-  onClear,
-}: {
-  dev: Device;
-  sel: PortRef[];
-  /** The SAME list that `sel` came from: `expandPorts` reconstructs
-   * new objects on each call, and an `indexOf` on a copy returns -1. */
-  all: PortRef[];
-  role: "ing" | "tech" | "viewer";
-  off: boolean;
-  vlans: Vlan[];
-  profiles: Profile[];
-  selProf: string | null;
-  onSelProf: (id: string | null) => void;
-  onApply: () => void;
-  onPatch: (patch: Partial<PortIntent>, msg?: string) => void;
-  onClear: () => void;
-}) {
-  const { t } = useTranslation();
-
-  const vm = vlanMap(vlans);
-  const ing = role === "ing";
-  const canApply = role !== "viewer" && !off;
-  const [label, setLabel] = useState("");
-
-  const mode = common(sel, (p) => p.p.mode ?? "libre");
-  const pvid = common(sel, (p) => p.p.pvid ?? null);
-  const poe = common(sel, (p) => !!p.p.poe);
-  const withPoe = sel.filter((p) => p.poeCap).length;
-  const linked = sel.filter((p) => !!p.p.link).length;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div>
-        <div className="kicker">{dev.name} · {t("switchDetailPage.selectionKicker")}</div>
-        <div style={{ fontSize: 16, fontWeight: 700, marginTop: 8 }}>
-          {sel.length} ports
-        </div>
-        <div className="note mono" style={{ marginTop: 2 }}>{rangeLabel(sel, all)}</div>
-        <ActionButton kind="cancel" className="ghost" style={{ marginTop: 6 }} onClick={onClear}>
-          {t("switchDetailPage.clearSelection")}
-        </ActionButton>
-      </div>
-
-      <div className="kv" style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-        <span className="k">{t("switchDetailPage.modeLabel")}</span>
-        <span style={{ fontWeight: 600 }}>
-          {mode === undefined ? <i style={{ color: "var(--warn)" }}>{t("switchDetailPage.modeMixed")}</i>
-            : mode === "access" ? t("switchDetailPage.modeAccessLabel") : mode === "trunk" ? t("switchDetailPage.modeTrunkLabel") : t("switchDetailPage.modeFreeLabel")}
-        </span>
-        <span className="k">{t("switchDetailPage.vlanLabel")}</span>
-        <span>
-          {pvid === undefined ? <i style={{ color: "var(--warn)" }}>{t("switchDetailPage.modeMixed")}</i>
-            : pvid === null ? "—"
-              : (vm.get(pvid)?.name ?? "VLAN " + pvid) + " (" + pvid + ")"}
-        </span>
-        <span className="k">{t("switchDetailPage.activeLinksLabel")}</span>
-        <span>{off ? "—" : linked + " / " + sel.length}</span>
-        <span className="k">PoE</span>
-        <span>
-          {withPoe === 0 ? t("switchDetailPage.noPoeInSelection")
-            : (poe === undefined ? t("switchDetailPage.modeMixed") : poe ? t("switchDetailPage.powered") : t("switchDetailPage.cut")) +
-              (withPoe < sel.length ? t("switchDetailPage.poeCapableNote", { capable: withPoe, total: sel.length }) : "")}
-        </span>
-      </div>
-
-      {off && (
-        <div className="note" style={{ border: "1px solid var(--border)", padding: "10px 12px", borderRadius: 8 }}>
-          {t("switchDetailPage.unreachableMultiNote")}
-        </div>
-      )}
-
-      {!off && canApply && (
-        <div style={{ borderTop: "2px solid var(--border)", paddingTop: 12 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>{t("switchDetailPage.portProfilesTitle")}</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {profiles.map((prof) => {
-              const spec = prof.spec as unknown as PortProfileSpec;
-              const locked = !!spec.eng_only && !ing;
-              return (
-                <button
-                  key={prof.id}
-                  disabled={locked}
-                  className={"prof-row" + (selProf === prof.id ? " sel" : "")}
-                  onClick={() => onSelProf(prof.id)}
-                >
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{prof.name}</span>
-                  <span className="note" style={{ marginLeft: "auto", whiteSpace: "nowrap", fontSize: 9, letterSpacing: ".05em" }}>
-                    {(spec.mode === "access"
-                      ? t("switchDetailPage.accessPrefix", { pvid: spec.pvid ?? "" })
-                      : "TRUNK") + (spec.poe ? " · POE" : "")}
-                  </span>
-                </button>
-              );
-            })}
-            {profiles.length === 0 && <div className="note">{t("switchDetailPage.noProfilesDefined")}</div>}
-          </div>
-          <ActionButton kind="apply" style={{ width: "100%", marginTop: 10 }} disabled={!selProf} onClick={onApply}>
-            {t("switchDetailPage.applyToNPorts", { count: sel.length })}
-          </ActionButton>
-        </div>
-      )}
-
-      {!off && ing && (
-        <div style={{ borderTop: "2px solid var(--border)", paddingTop: 12 }}>
-          <div className="kicker" style={{ marginBottom: 8 }}>{t("switchDetailPage.manualConfigTitle")}</div>
-          <div className="seg3">
-            {(["access", "trunk", "libre"] as const).map((m) => (
-              <button
-                key={m}
-                className={mode === m ? "on" : ""}
-                onClick={() =>
-                  onPatch(
-                    m === "libre" ? { mode: m } : { mode: m },
-                    t("switchDetailPage.portsToModeToast", { count: sel.length, mode: m.toUpperCase() }),
-                  )
-                }
-              >
-                {m === "access" ? t("switchDetailPage.modeAccess") : m === "trunk" ? t("switchDetailPage.modeTrunk") : t("switchDetailPage.modeFree")}
-              </button>
-            ))}
-          </div>
-
-          {(mode === "access" || mode === undefined) && (
-            <>
-              <div className="kicker" style={{ margin: "10px 0 6px" }}>{t("switchDetailPage.accessVlanTitle")}</div>
-              <div className="vlan-pick">
-                {vlans.map((v) => (
-                  <button
-                    key={v.id}
-                    className={"vlan-row" + (pvid === v.vlan_id ? " sel" : "")}
-                    onClick={() =>
-                      onPatch(
-                        { mode: "access", pvid: v.vlan_id, tagged: [] },
-                        t("switchDetailPage.portsToAccessToast", { count: sel.length, name: v.name }),
-                      )
-                    }
-                  >
-                    <span className="vlan-chip" style={{ background: v.color, margin: 0 }} />
-                    <span style={{ fontWeight: 600 }}>{v.name}</span>
-                    <span className="note">{v.vlan_id}</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {mode === "trunk" && (
-            <>
-              <div className="kicker" style={{ margin: "10px 0 6px" }}>
-                {t("switchDetailPage.taggedMembersTitle")}
-                <HelpTip label={t("switchDetailPage.taggedMembersHelpLabel")}>
-                  <p>
-                    {t("switchDetailPage.taggedMembersHelp")}
-                  </p>
-                </HelpTip>
-              </div>
-              <div className="vlan-pick">
-                <button
-                  className="vlan-row"
-                  onClick={() => onPatch({ tagged: "all" }, t("switchDetailPage.fullTrunkSelectionToast", { count: sel.length }))}
-                >
-                  <span className="vlan-chip" style={{ background: "var(--accent)", margin: 0 }} />
-                  <span style={{ fontWeight: 600 }}>{t("switchDetailPage.fullTrunkAllVlans")}</span>
-                </button>
-              </div>
-            </>
-          )}
-
-          {withPoe > 0 && (
-            <div className="row" style={{ marginTop: 12 }}>
-              <span className="kicker">PoE</span>
-              <div className="seg3" style={{ marginBottom: 0 }}>
-                <button
-                  className={poe === true ? "on" : ""}
-                  onClick={() => onPatch({ poe: true }, t("switchDetailPage.poeEnabledMultiToast", { count: withPoe }))}
-                >
-                  {t("switchDetailPage.poePoweredBtn")}
-                </button>
-                <button
-                  className={poe === false ? "on" : ""}
-                  onClick={() => onPatch({ poe: false, poe_w: 0 }, t("switchDetailPage.poeDisabledMultiToast", { count: withPoe }))}
-                >
-                  {t("switchDetailPage.poeCutBtn")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {mode !== "libre" && (dev.stp_caps?.edge || dev.stp_caps?.port_enable || dev.stp_caps?.bpdu_guard) && (
-            <div style={{ marginTop: 12 }}>
-              {dev.stp_caps?.edge && (
-                <div className="row" style={{ marginBottom: 8 }}>
-                  <span className="kicker">{t("switchDetailPage.stpEdgeLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    {(dev.stp_caps.edge_auto
-                      ? (["auto", "yes", "no"] as const)
-                      : (["yes", "no"] as const)
-                    ).map((e) => (
-                      <button
-                        key={e}
-                        className={common(sel, (p) => String(p.p.stp?.edge ?? "")) === e ? "on" : ""}
-                        onClick={() =>
-                          onPatch(
-                            { stp: { edge: e } },
-                            t("switchDetailPage.stpEdgeToast", { name: `${sel.length} ports`, edge: e }),
-                          )
-                        }
-                      >
-                        {e === "auto"
-                          ? t("switchDetailPage.stpEdgeAuto")
-                          : e === "yes"
-                            ? t("switchDetailPage.stpEdgeYes")
-                            : t("switchDetailPage.stpEdgeNo")}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {dev.stp_caps?.port_enable && (
-                <div className="row" style={{ marginBottom: 8 }}>
-                  <span className="kicker">{t("switchDetailPage.stpPortEnableLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    <button
-                      className={common(sel, (p) => p.p.stp?.enabled !== false) === true ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { enabled: true } },
-                          t("switchDetailPage.stpPortOnToast", { name: `${sel.length} ports` }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.stpPortOn")}
-                    </button>
-                    <button
-                      className={common(sel, (p) => p.p.stp?.enabled === false) === true ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { enabled: false } },
-                          t("switchDetailPage.stpPortOffToast", { name: `${sel.length} ports` }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.stpPortOff")}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {dev.stp_caps?.bpdu_guard && (
-                <div className="row">
-                  <span className="kicker">{t("switchDetailPage.bpduGuardLabel")}</span>
-                  <div className="seg3" style={{ marginBottom: 0 }}>
-                    <button
-                      className={common(sel, (p) => p.p.stp?.bpdu_guard === true) === true ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { bpdu_guard: true } },
-                          t("switchDetailPage.bpduGuardOnToast", { name: `${sel.length} ports` }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.bpduGuardOn")}
-                    </button>
-                    <button
-                      className={common(sel, (p) => p.p.stp?.bpdu_guard === false) === true ? "on" : ""}
-                      onClick={() =>
-                        onPatch(
-                          { stp: { bpdu_guard: false } },
-                          t("switchDetailPage.bpduGuardOffToast", { name: `${sel.length} ports` }),
-                        )
-                      }
-                    >
-                      {t("switchDetailPage.bpduGuardOff")}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="kicker" style={{ margin: "12px 0 5px" }}>{t("switchDetailPage.commonLabelTitle")}</div>
-          <div className="row" style={{ gap: 6 }}>
-            <input
-              value={label}
-              placeholder={t("switchDetailPage.commonLabelPlaceholder")}
-              onChange={(e) => setLabel(e.target.value)}
-              style={{ minHeight: 28, fontSize: 12 }}
-            />
-            <ActionButton
-              kind="apply"
-              className="secondary"
-              disabled={!label.trim()}
-              onClick={() => {
-                onPatch({ label: label.trim() }, t("switchDetailPage.portsTaggedToast", { count: sel.length }));
-                setLabel("");
-              }}
-            >
-              Apply
-            </ActionButton>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-
-
-
-
-
-
-
-
-
-
-

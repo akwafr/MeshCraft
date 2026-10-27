@@ -14,16 +14,16 @@ import "testing"
 // you want to read. The reference proxy stayed that way until someone
 // looked into why it was reporting `dev`.
 
-// TestIsNewerNeLaisseAucunProxyBloque
+// TestIsNewerLeavesNoProxyStuck
 //
 // THE CASE THAT MATTERS is the third line: `dev` → a timestamp. Without it,
 // the controller has no way left to recover a mis-stamped proxy, and the
 // architecture rule "no intervention on the proxy's machine, ever" is dead.
-func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
+func TestIsNewerLeavesNoProxyStuck(t *testing.T) {
 	var cas = []struct {
 		candidate, current string
 		attend             bool
-		pourquoi           string
+		why                string
 	}{
 		{"20260729.213000", "20260726.181502", true,
 			"two timestamps: lexicographic comparison IS chronology"},
@@ -36,7 +36,7 @@ func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
 			"THE BUG THAT WAS FIXED: \"dev\" sorts AFTER digits, so the old " +
 				"`candidate > current` returned false — a proxy stamped \"dev\" was no " +
 				"longer reachable by any upgrade, and could only be fixed on its own machine"},
-		{"20260729.213000", "hors-build", true,
+		{"20260729.213000", "out-of-build", true,
 			"the current build-outside-the-pipeline default: same handling, and that's the point"},
 		{"20260729.213000", "0.1.0", true,
 			"a version some build tool placed there by mistake has no position in time"},
@@ -64,19 +64,19 @@ func TestIsNewerNeLaisseAucunProxyBloque(t *testing.T) {
 		var got = IsNewer(c.candidate, c.current)
 		if got != c.attend {
 			t.Errorf("IsNewer(%q, %q) = %v, expected %v — %s",
-				c.candidate, c.current, got, c.attend, c.pourquoi)
+				c.candidate, c.current, got, c.attend, c.why)
 		}
 	}
 }
 
-// TestIsNewerEstAntisymetrique: two distinct timestamps cannot each be newer
+// TestIsNewerIsAntisymmetric: two distinct timestamps cannot each be newer
 // than the other.
 //
 // A consistency check, and it catches the mistake one would make by
 // "fixing" this function too hastily — returning true as soon as the two
 // differ would make a fleet oscillate between two versions, each heartbeat
 // offering the other one.
-func TestIsNewerEstAntisymetrique(t *testing.T) {
+func TestIsNewerIsAntisymmetric(t *testing.T) {
 	var a, b = "20260726.181502", "20260729.213000"
 	if IsNewer(a, b) && IsNewer(b, a) {
 		t.Error("both directions are true: a fleet would oscillate between two versions")

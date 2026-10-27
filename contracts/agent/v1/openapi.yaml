@@ -1,0 +1,201 @@
+# Meshcraft Agent Protocol v1 — the HTTP lifeline between a controller and a
+# proxy agent, plus the credentialed telemetry pushes.
+#
+# The Go types in meshcraft/wire/agentv1 are the SOURCE OF TRUTH for the
+# lifeline bodies (enroll, heartbeat, migrate, metrics); both the controller
+# (internal/api) and the proxy (cmd/proxy) import them, so the two ends cannot
+# disagree on a field. This document is the paths, their auth model, and the
+# rules a Go compiler cannot state.
+#
+# The four rules everything below restates:
+#   1. A PROXY HAS NO SESSION. It enrolls once with a one-time token, receives
+#      a (proxy_id, secret) pair, and carries that pair in the body of every
+#      later call. Never a cookie, never a user bearer token.
+#   2. VERSIONS ARE UTC BUILD STAMPS (yyyymmdd.HHMMSS). "dev" sorts before
+#      every real build and is never offered an upgrade.
+#   3. MIGRATION BEFORE UPGRADE. A heartbeat may answer "migrate"; the proxy
+#      attaches to the new instance first, then upgrades from there.
+#   4. PUSHES ARE SCOPED. metrics/lldp/fdb carry a `device` the proxy must be
+#      authorized to describe (COLLECTION authority); a sighting for a device
+#      outside the proxy's coverage is refused, never stored.
+#
+# The multiplexed tunnel (yamux over WSS at /api/proxy/tunnel) is a separate
+# control plane; its wire types live in internal/tunnel and are summarized
+# under "The tunnel" at the end of this document, not modeled as REST here.
+openapi: 3.1.0
+info:
+  title: Meshcraft Agent Protocol
+  version: "1.0.0"
+  description: >
+    Served by the controller under /api/v1/agent (the legacy /api/proxy/*
+    paths remain as aliases for fielded proxies). A proxy is an agent: it
+    enrolls, heartbeats, relays telemetry it collects on a network the
+    controller cannot reach, and carries the controller's tunnel.
+  license:
+    name: AGPL-3.0-only
+
+servers:
+  - url: /api/v1/agent
+    description: Versioned lifeline.
+  - url: /api/proxy
+    description: Legacy alias, same handlers. Fielded proxies speak this.
+
+paths:
+  /enroll:
+    post:
+      summary: Exchange an enrollment token for a durable identity
+      description: >
+        The token carries the coverage decided at issuance (global, or a set of
+        sites). The secret is returned ONCE; the controller stores only its hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "./schemas.json#/components/schemas/EnrollRequest" }
+      responses:
+        "200":
+          description: Enrolled.
+          content:
+            application/json:
+              schema: { $ref: "./schemas.json#/components/schemas/EnrollResponse" }
+        "401":
+          description: Invalid, expired, or already-used token.
+
+  /heartbeat:
+    post:
+      summary: Signal presence, report the last upgrade, receive pending orders
+      description: >
+        Authenticated by (proxy_id, secret). The response carries at most one
+        order: `migrate` (priority) or `upgrade`. A heartbeat that reports an
+        upgrade `failed` suspends further offers of that version until a human
+        acts — replaying a binary that will not start teaches nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "./schemas.json#/components/schemas/HeartbeatRequest" }
+      responses:
+        "200":
+          description: Acknowledged, possibly with an order.
+          content:
+            application/json:
+              schema: { $ref: "./schemas.json#/components/schemas/HeartbeatResponse" }
+        "401":
+          description: Unknown or revoked proxy.
+
+  /migrated:
+    post:
+      summary: Tell the OLD instance it can forget this proxy
+      description: >
+        Best-effort: the proxy has already enrolled on the target and persisted
+        its new state before calling this. The old instance revokes the proxy
+        and cuts its tunnel; failure here is inconsequential to the proxy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "./schemas.json#/components/schemas/MigratedRequest" }
+      responses:
+        "200": { description: Acknowledged; this instance forgot the proxy. }
+        "401": { description: Unknown or revoked proxy. }
+
+  /metrics:
+    post:
+      summary: Relay a batch of collected samples to storage
+      description: >
+        The proxy buffers samples (SNMP today, gNMI and traps beside it) and
+        flushes BATCHES; the controller relays them to VictoriaMetrics, which is
+        never reachable from a proxy network. The sample shape is
+        meshcraft/wire/metrics — the one series vocabulary every producer
+        shares. A batch beyond the advertised ceiling (20000 samples / 8 MiB)
+        is refused whole, never truncated: a silent gap is unexplainable.
+        Samples whose `device` label falls outside this proxy's coverage are
+        dropped and counted, not stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "./schemas.json#/components/schemas/MetricsRequest" }
+      responses:
+        "200": { description: Accepted (kept count and any scope drops reported). }
+        "401": { description: Unknown or revoked proxy. }
+        "413": { description: Batch too large; split it. }
+
+  /lldp:
+    post:
+      summary: Push one device's LLDP neighborhood snapshot
+      description: >
+        ONE device per request, a FULL snapshot (not a delta): a vanished
+        neighbor must vanish, and a full table is the only retraction that needs
+        no invented "gone" message. The credentialed envelope is
+        {proxy_id, secret, report}; `report` is the neighbor table, whose shape
+        is internal/snmppoll.LLDPReport — an inventory-shaped body that stays
+        beside its producer until a non-Go agent needs to emit it, at which
+        point it joins the wire module. Same COLLECTION-authority scope as
+        metrics: a proxy cannot report neighbors for a device it does not cover.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proxy_id, secret, report]
+              properties:
+                proxy_id: { type: string }
+                secret: { type: string }
+                report:
+                  type: object
+                  description: internal/snmppoll.LLDPReport (device_id, neighbors, served, …).
+      responses:
+        "200": { description: Stored. }
+        "401": { description: Unknown or revoked proxy. }
+        "403": { description: Device outside this proxy's coverage. }
+        "422": { description: Snapshot without a device identifier. }
+
+  /fdb:
+    post:
+      summary: Push one device's forwarding-table snapshot
+      description: >
+        Same family, same threat model, same one-device-full-snapshot shape as
+        /lldp — this route writes INVENTORY, so a compromised proxy allowed to
+        invent sightings could place any MAC on any port of a site it does not
+        cover. `report` is internal/snmppoll.FDBReport.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proxy_id, secret, report]
+              properties:
+                proxy_id: { type: string }
+                secret: { type: string }
+                report:
+                  type: object
+                  description: internal/snmppoll.FDBReport (device_id, entries, served, dropped).
+      responses:
+        "200": { description: Stored. }
+        "401": { description: Unknown or revoked proxy. }
+        "403": { description: Device outside this proxy's coverage. }
+        "422": { description: Snapshot without a device identifier. }
+
+# THE TUNNEL — not a REST resource, documented so an agent author knows it exists.
+#
+#   GET /api/proxy/tunnel  (WebSocket upgrade)
+#
+# The proxy dials OUT to this route over WSS and multiplexes it with yamux.
+# Authentication is by headers BEFORE the upgrade — X-Meshcraft-Proxy-Id and
+# X-Meshcraft-Proxy-Secret, the same pair as the heartbeat — with an optional
+# X-Meshcraft-Proxy-Features naming capabilities the proxy will produce (an
+# absent token means "assume nothing", the whole compatibility contract). Once
+# up, three exchange patterns share the yamux session, each a stream opened
+# with a one-line JSON preamble:
+#
+#   dial   controller -> proxy : {"op":"dial","host":…,"port":…} then raw TCP
+#   watch  controller -> proxy : {"op":"watch"} then a WatchConfig, replaced whole
+#   events proxy -> controller : {"op":"events"} then a stream of Event lines
+#   ask    controller -> proxy : {"op":"ask"} one question, one answer, close
+#
+# The control-plane types (WatchConfig, Event, AskRequest/Response) live in
+# internal/tunnel/control.go; contracts/tunnel/ is where their schemas land
+# when the tunnel gains a non-Go implementation.

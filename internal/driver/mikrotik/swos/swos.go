@@ -1,46 +1,46 @@
-// Package swos pilote les switchs MikroTik sous SwOS — le systeme des CSS, a ne
-// pas confondre avec RouterOS.
+// Package swos drives MikroTik switches running SwOS — the system of the CSS
+// range, not to be confused with RouterOS.
 //
-// SwOS est WEB-ONLY, et plus etroitement que ne l'est l'Instant On : ni SSH, ni
-// Telnet, ni HTTPS, ni serial port. Sur l'reference device, un seul port
-// TCP repond, le 80. Toute l'administration passe par des pages `*.b` servies sous
-// authentification HTTP Digest, qui rendent des objets a la syntaxe JavaScript aux
-// valeurs hexadecimales (cf. parse.go).
+// SwOS is WEB-ONLY, and more narrowly so than Instant On: no SSH, no Telnet,
+// no HTTPS, no serial port. On the reference device, a single TCP port
+// answers: 80. All administration goes through `*.b` pages served behind HTTP
+// Digest authentication, which return objects in JavaScript syntax with
+// hexadecimal values (cf. parse.go).
 //
-// D'WHERE VIENNENT LES CAPABILITIES DE CE FICHIER
+// WHERE THIS FILE'S CAPABILITIES COME FROM
 //
-// Il n'existe aucun guide constructeur qui les donne. MikroTik documente RouterOS
-// abondamment et SwOS a peine ; la reference de la plateforme est le JAVASCRIPT
-// QUE THE DEVICE SERT LUI-SAME — une page `index.html` de 44 807 octets, script
-// integralement en ligne, qui definit chaque onglet, chaque champ, son type, son
-// encodage, ses bornes, et la request par laquelle l'interface l'written. C'est la
-// method qu'a employed le connecteur Instant On sur sa propre gamme, et c'est ici
-// la seule source qui existe.
+// No vendor guide gives them. MikroTik documents RouterOS extensively and
+// SwOS barely; the platform's reference is the JAVASCRIPT THE DEVICE SERVES
+// ITSELF — an `index.html` page of 44,807 bytes, script fully inline, that
+// defines every tab, every field, its type, its encoding, its bounds, and the
+// request by which the UI writes it. That is the method the Instant On
+// connector used on its own range, and here it is the only source there is.
 //
-// Trois observed independants la corroborent, tous joints au paquet (testdata/) :
+// Three independent observations corroborate it, all attached to the package
+// (testdata/):
 //
-//   - les pages de data vivantes de the device — /sys.b, /link.b, /fwd.b,
-//     /vlan.b, /rstp.b, /lacp.b, /sfp.b, /snmp.b, /acl.b, /host.b, /!dhost.b,
-//     /stats.b ;
-//   - sa SAUVEGARDE DE CONFIGURATION, /backup.swb, qui enumerates page par page les
-//     champs qu'il stocke actually — donc l'inventaire exact de ce qui est
-//     inscriptible ;
-//   - le challenge de son authentification, lisible SANS identifiant, qui porte la
-//     reference du model.
+//   - the device's live data pages — /sys.b, /link.b, /fwd.b, /vlan.b,
+//     /rstp.b, /lacp.b, /sfp.b, /snmp.b, /acl.b, /host.b, /!dhost.b,
+//     /stats.b;
+//   - its CONFIGURATION BACKUP, /backup.swb, which enumerates page by page the
+//     fields it actually stores — hence the exact inventory of what is
+//     writable;
+//   - the challenge of its authentication, readable WITHOUT credentials,
+//     which carries the model reference.
 //
-// Materiel de reference : **MikroTik CSS326-24G-2S+, SwOS 2.17** (serial
-// 945809C232D5, MAC b8:69:f4:5f:14:a8), atteint a travers le tunnel d'un proxy.
-// Chaque valeur chiffree ci-dessous porte celui de ces observed qui l'establishes, ou
-// dit explicitement qu'elle est deduced.
+// Reference hardware: **MikroTik CSS326-24G-2S+, SwOS 2.17** (serial
+// 945809C232D5, MAC b8:69:f4:5f:14:a8), reached through a proxy's tunnel.
+// Every figure below names the observation that establishes it, or says
+// explicitly that it is inferred.
 //
-// # CE QUE SwOS NE SAIT PAS FAIRE EST UN LIVRABLE
+// # WHAT SwOS CANNOT DO IS A DELIVERABLE
 //
-// SwOS est volontairement pauvre face a RouterOS, et la half de la valeur de ce
-// connecteur est de le DIRE : pas de routage, pas d'horloge, pas de syslog, pas de
-// trap, pas de LLDP, pas de compte named, pas de rollback. Ces `false` et ces
-// motifs d'indisponibilite ne sont pas des trous a combler dans une version
-// suivante : ce sont des faits de la plateforme, et les afficher est ce qui
-// empechera meshcraft de promettre a un exploitant ce qu'un CSS ne tiendra pas.
+// SwOS is deliberately poor next to RouterOS, and half of this connector's
+// value is to SAY so: no routing, no clock, no syslog, no traps, no LLDP, no
+// named account, no rollback. Those `false` values and those unavailability
+// reasons are not holes to fill in a later version: they are facts of the
+// platform, and displaying them is what will stop meshcraft from promising an
+// operator what a CSS will not deliver.
 package swos
 
 import (
@@ -53,7 +53,7 @@ import (
 
 func init() { driver.Register(&Driver{}) }
 
-// Driver couvre la gamme CSS sous SwOS.
+// Driver covers the CSS range running SwOS.
 type Driver struct{}
 
 func (d *Driver) Info() driver.Info {
@@ -61,54 +61,55 @@ func (d *Driver) Info() driver.Info {
 		Name:   "mikrotik-swos",
 		Vendor: "MikroTik",
 		Family: "SwOS",
-		// WEB pour l'ADMINISTRATION, SNMP pour la COLLECTE — et les deux ne sont pas
-		// interchangeables : tout ce que ce connecteur WRITES passe par les pages `*.b`,
-		// et l'agent SNMP est en lecture seule.
+		// WEB for ADMINISTRATION, SNMP for COLLECTION — and the two are not
+		// interchangeable: everything this connector WRITES goes through the
+		// `*.b` pages, and the SNMP agent is read-only.
 		//
-		// « snmp » a been ajoute sur un OBSERVED, pas sur une deduction. Le commentaire
-		// previous disait « rien dans ce que ce connecteur a pu establish ne dit a quelle
-		// version du protocole il repond, et l'outil d'exploration disponible ne parle
-		// pas UDP » : le walk du proxy, lui, parle UDP, et l'agent a repondu en v2c
-		// (cf. SNMPVersions pour les valeurs).
+		// "snmp" was added on an OBSERVATION, not on an inference. The previous
+		// comment said "nothing this connector could establish says which
+		// protocol version it answers, and the available exploration tool does
+		// not speak UDP": the proxy's walk does speak UDP, and the agent answered
+		// in v2c (cf. SNMPVersions for the values).
 		Transport: []string{"web", "snmp"},
-		Doc: "Releve sur hardware (MikroTik CSS326-24G-2S+, SwOS 2.17) : pages *.b, " +
-			"sauvegarde de configuration /backup.swb, et le JavaScript de l'interface " +
-			"embarquee, qui est la seule documentation de la plateforme",
+		Doc: "Surveyed on hardware (MikroTik CSS326-24G-2S+, SwOS 2.17): *.b pages, " +
+			"configuration backup /backup.swb, and the JavaScript of the embedded " +
+			"UI, which is the platform's only documentation",
 	}
 }
 
-// Motifs de reconnaissance.
+// Recognition patterns.
 //
-// SwOS se nomme trois fois, et c'est une plateforme confortable a reconnaitre :
+// SwOS names itself three times, which makes it a comfortable platform to
+// recognise:
 //
-//   - le TITRE de sa page web est « MikroTik SwOS » (observed sur the device de
-//     reference) ;
-//   - le REALM de son challenge Digest porte la reference exacte du model
-//     (`realm="CSS326-24G-2S+"`), et il est lisible SANS identifiant ;
-//   - un sysDescr SNMP, quand l'agent repond, porte « SwOS ».
+//   - the TITLE of its web page is "MikroTik SwOS" (observed on the reference
+//     device);
+//   - the REALM of its Digest challenge carries the exact model reference
+//     (`realm="CSS326-24G-2S+"`), and it is readable WITHOUT credentials;
+//   - an SNMP sysDescr, when the agent answers, carries "SwOS".
 var (
 	reSwOS = regexp.MustCompile(`(?i)SwOS`)
-	// reRealmModel accroche une reference MikroTik commutee there where elle apparait
-	// dans un corps de page ou un en-tete recopie dans l'Evidence.
+	// reRealmModel catches a MikroTik switching reference wherever it appears
+	// in a page body or a header copied into the Evidence.
 	reRealmModel = regexp.MustCompile(`(?i)\b(CSS[0-9]{3}|CRS[0-9]{3})[0-9A-Za-z+\-]*`)
-	// reRouterOS exclut RouterOS. Les CRS existent dans les deux mondes — le same
-	// chassis demarre sous SwOS ou sous RouterOS — et leurs capabilities n'ont rien
-	// a voir. Prendre un CRS sous RouterOS pour un SwOS ferait refuser la half de
-	// ce qu'il sait faire, et write par le mauvais chemin.
+	// reRouterOS excludes RouterOS. CRS models exist in both worlds — the same
+	// chassis boots SwOS or RouterOS — and their capabilities have nothing in
+	// common. Taking a CRS on RouterOS for a SwOS would refuse half of what it
+	// can do, and write through the wrong path.
 	reRouterOS = regexp.MustCompile(`(?i)RouterOS`)
 )
 
-// Fingerprint : « cet device est-il pour moi ? »
+// Fingerprint: "is this device mine?"
 //
-// Le nom de la plateforme est un signe SUR : « SwOS » n'apparait que there. Le realm
-// qui porte une reference CSS/CRS en est un autre, independant, et c'est celui
-// qu'on obtient sans le moindre identifiant.
+// The platform name is a SAFE sign: "SwOS" appears nowhere else. A realm
+// carrying a CSS/CRS reference is another, independent one, and it is the one
+// you get without any credentials at all.
 //
-// L'exclusion de RouterOS passe AVANT tout le reste : un CRS peut demarrer sous
-// l'un ou l'autre systeme, et c'est le seul cas de ce projet where deux connecteurs se
-// disputent le same chassis. Le titre de la page tranche — c'est le seul indice
-// que le systeme EN COURS D'EXECUTION produit lui-same, there where une reference de
-// model ne dit rien de ce qui a demarre.
+// Excluding RouterOS comes BEFORE everything else: a CRS can boot either
+// system, and it is the only case in this project where two connectors
+// compete for the same chassis. The page title settles it — it is the only
+// clue the RUNNING system produces itself, whereas a model reference says
+// nothing about what booted.
 func (d *Driver) Fingerprint(ev driver.Evidence) int {
 	var haystack = strings.Join([]string{
 		ev.HTTPTitle, ev.HTTPServer, ev.HTTPBody, ev.SysDescr, ev.SSHBanner, ev.ShellOut,
@@ -118,319 +119,317 @@ func (d *Driver) Fingerprint(ev driver.Evidence) int {
 	}
 	switch {
 	case reSwOS.MatchString(haystack) && reRealmModel.MatchString(haystack):
-		// La plateforme ET le model : on ne peut pas faire mieux sans se connecter.
+		// The platform AND the model: we cannot do better without logging in.
 		return 98
 	case reSwOS.MatchString(haystack):
 		return 95
 	case reRealmModel.MatchString(haystack):
-		// Une reference CSS/CRS sans que « SwOS » n'apparaisse : bon candidat, a
-		// confirmer. Un CRS peut be sous RouterOS, et la discovery n'a peut-be
-		// pas lu le realm.
+		// A CSS/CRS reference without "SwOS" appearing: a good candidate, to
+		// be confirmed. A CRS may be running RouterOS, and discovery may not
+		// have read the realm.
 		return 55
 	}
 	return 0
 }
 
-// Capabilities de la gamme SwOS, observed sur hardware.
+// Capabilities of the SwOS range, observed on hardware.
 func (d *Driver) Capabilities(model string) driver.Capabilities {
-	// Le PoE se deduit de la reference, faute de mieux quand on n'a pas
-	// the device sous la main : la convention de nommage de MikroTik marque le
-	// PoE par un `P` (« CRS328-24P-4S+ ») there where les modeles sans PoE portent un `G`
-	// (« CSS326-24G-2S+ »). Le CSS326 de reference n'en a pas, et son propre
-	// firmware le confirme trois fois : `npoe:0x00` et `poe:0x00` dans /sys.b, et
-	// AUCUNE page /poe.b — le chemin rend l'interface web, i.e. n'existe pas.
+	// PoE is inferred from the reference, for lack of anything better when
+	// the device is not at hand: MikroTik's naming convention marks PoE with
+	// a `P` ("CRS328-24P-4S+") where models without PoE carry a `G`
+	// ("CSS326-24G-2S+"). The reference CSS326 has none, and its own firmware
+	// confirms it three times: `npoe:0x00` and `poe:0x00` in /sys.b, and NO
+	// /poe.b page — the path renders the web UI, i.e. does not exist.
 	var poe = ModelHasPoE(model)
 
 	return driver.Capabilities{
-		// Bornes du VLAN, observed dans la definition de la table de the device :
-		// `{n:"VLAN ID", t:I, id:"vid", min:1, max:4094}`. A ne pas confondre avec
-		// le « Default VLAN ID » par port, que la same interface borne a 4095 — c'est
-		// la TABLE qui contraint, puisqu'un port ne peut appartenir only un VLAN
-		// declared.
+		// VLAN bounds, observed in the device's table definition:
+		// `{n:"VLAN ID", t:I, id:"vid", min:1, max:4094}`. Not to be confused
+		// with the per-port "Default VLAN ID", which the same UI bounds at 4095
+		// — the TABLE is what constrains, since a port can only belong to a
+		// declared VLAN.
 		VlanRange: [2]int{1, 4094},
-		// 250 entries : la borne que l'interface de the device s'impose a
-		// elle-same (`Z:250` sur la table des VLAN, avec le refus « Max entries
-		// (250) »). C'est la contrainte qui vaut pour un connecteur qui rejoue cette
-		// interface, et c'est la seule que la plateforme chiffre.
+		// 250 entries: the bound the device's UI imposes on itself (`Z:250` on
+		// the VLAN table, with the refusal "Max entries (250)"). That is the
+		// constraint that holds for a connector replaying this UI, and it is
+		// the only one the platform puts a number on.
 		MaxVlans: 250,
-		// Ce que la plateforme sait faire, et surtout ce qu'elle ne sait pas.
+		// What the platform can do, and above all what it cannot.
 		//
-		// Les keys sont celles du connecteur Instant On, a la lettre : c'est ce qui
-		// permet de comparer un CSS et un 1930 dans le same tableau. Chaque `true`
-		// nomme le champ de the device qui l'establishes ; chaque `false` est un
-		// constat d'ABSENCE dans l'inventaire complet de son interface et de sa
-		// sauvegarde de configuration, pas une supposition de prudence.
+		// The keys are the Instant On connector's, to the letter: that is what
+		// lets a CSS and a 1930 be compared in the same table. Every `true`
+		// names the device field that establishes it; every `false` is an
+		// observed ABSENCE across the full inventory of its UI and its
+		// configuration backup, not a cautious assumption.
 		Features: map[string]bool{
-			// /vlan.b (table VLAN + masque de membres) et /fwd.b (`vlan`, `vlni`).
+			// /vlan.b (VLAN table + member mask) and /fwd.b (`vlan`, `vlni`).
 			"Trunk8021Q": true,
-			// /fwd.b `dvid` — « Default VLAN ID », un par port.
+			// /fwd.b `dvid` — "Default VLAN ID", one per port.
 			"PVID": true,
-			// Aucune notion de VLAN voix : rien dans l'interface, rien dans la
-			// sauvegarde. Un intent qui en demanderait un est refused, et c'est mieux
-			// que de le poser dans le vide.
+			// No notion of a voice VLAN: nothing in the UI, nothing in the
+			// backup. An intent asking for one is refused, which is better than
+			// setting it into the void.
 			"VoiceVLAN": false,
-			// /poe.b et le groupe « PoE Out » de /sys.b, sur les modeles qui en ont :
-			// l'interface conditionne son onglet PoE a la presence du hardware.
+			// /poe.b and the "PoE Out" group of /sys.b, on models that have it:
+			// the UI shows its PoE tab only when the hardware is present.
 			"PoE": poe,
-			// PAS DE LLDP. C'est l'absence la plus lourde de consequences de toute la
-			// plateforme, et elle est ferme : ni 802.1AB, ni LLDP-MED, aucun champ,
-			// aucune table de voisinage, dans aucun onglet ni dans la sauvegarde. SwOS
-			// n'annonce et n'ecoute que le protocole proprietaire de MikroTik, MNDP
-			// (/sys.b `pdsc`, « Mikrotik Discovery Protocol », un masque par port).
-			// Les modeles PoE portent bien un champ `lldp`, mais c'est la negociation
-			// de puissance LLDP-MED d'un port alimente : elle ne construit aucune
-			// table de voisins.
+			// NO LLDP. It is the absence with the heaviest consequences on the
+			// whole platform, and it is final: no 802.1AB, no LLDP-MED, no
+			// field, no neighbour table, in any tab or in the backup. SwOS only
+			// announces and listens to MikroTik's proprietary protocol, MNDP
+			// (/sys.b `pdsc`, "Mikrotik Discovery Protocol", one mask per port).
+			// PoE models do carry an `lldp` field, but that is the LLDP-MED power
+			// negotiation of a powered port: it builds no neighbour table.
 			"LLDP": false,
 			// Per-port RSTP participation (/rstp.b `ena`). The `edge` bit on the
 			// live page is operational (edge detected), not an admin policy —
 			// POST edge:0x… is accepted then cleared on read-back (CSS326 lab).
 			driver.FeatSTPPortEnable: true,
 			// /sys.b `igmp`, `igmq` (querier), `igfl` (fast leave), `igve` (v2/v3),
-			// plus la table des groupes appris /!igmp.b.
+			// plus the learned group table /!igmp.b.
 			"IGMPSnooping": true,
-			// /lacp.b — `mode` par port en « passive », « active » ou « static ».
+			// /lacp.b — per-port `mode` as "passive", "active" or "static".
 			"LACP": true,
-			// /sys.b, groupe « DHCP & PPPoE Snooping » : `dtrp` (ports de confiance)
-			// et `ainf` (insertion de l'option d'information, dite option 82).
+			// /sys.b, "DHCP & PPPoE Snooping" group: `dtrp` (trusted ports) and
+			// `ainf` (insertion of the information option, a.k.a. option 82).
 			"DHCPSnooping": true,
-			// Aucun relais DHCP : SwOS ne route pas, donc ne relaie pas. L'insertion
-			// d'option 82 ci-dessus n'est pas un relais et ne doit pas se lire ainsi.
+			// No DHCP relay: SwOS does not route, so it does not relay. The
+			// option 82 insertion above is not a relay and must not be read as
+			// one.
 			"DHCPRelay": false,
-			// Ni inspection ARP, ni protection contre le deni de service : rien de tel
-			// dans l'interface. Ce qui en approche le plus est l'ACL, qui filtre mais
-			// ne surveille pas.
+			// Neither ARP inspection nor denial-of-service protection: nothing
+			// of the kind in the UI. The closest thing is the ACL, which filters
+			// but does not monitor.
 			"ARPProtection": false,
 			"DoSProtection": false,
-			// /fwd.b `lck` (« Port Lock ») et `lckf` (« Lock On First »), avec la
-			// table des hotes statiques /host.b et son drapeau `drp`.
+			// /fwd.b `lck` ("Port Lock") and `lckf` ("Lock On First"), with the
+			// static host table /host.b and its `drp` flag.
 			"PortSecurity": true,
-			// /fwd.b `fp1`…`fp26` — une matrice d'isolation complete, un masque de
-			// destinations autorisees par port SOURCE. Bien plus fin que des « ports
-			// proteges » ordinaires.
+			// /fwd.b `fp1`…`fp26` — a complete isolation matrix, one mask of
+			// allowed destinations per SOURCE port. Much finer than ordinary
+			// "protected ports".
 			"ProtectedPorts": true,
-			// Ni 802.1X, ni RADIUS : aucun champ, aucune notion d'authentification
-			// access au network sur cette plateforme.
+			// Neither 802.1X nor RADIUS: no field, no notion of network access
+			// authentication on this platform.
 			"Dot1X":  false,
 			"RADIUS": false,
-			// /fwd.b `imr` (miroir en ingress), `omr` (en sortie), `mrto` (port
-			// destination), plus `mrr` par VLAN et `mirr` par rule ACL.
+			// /fwd.b `imr` (ingress mirror), `omr` (egress), `mrto` (destination
+			// port), plus `mrr` per VLAN and `mirr` per ACL rule.
 			"PortMirroring": true,
-			// /fwd.b `ir` — un rate ingress par port.
+			// /fwd.b `ir` — one ingress rate per port.
 			"IngressRate": true,
-			// Aucun reglage de trame geante nulle part. Le hardware en accepte
-			// peut-be par default, mais une capability describes ce qu'on peut
-			// CONFIGURER et donc garantir : un intent « activer les trames geantes »
-			// n'a ici aucune write a faire, et le declare disponible ferait croire
-			// qu'il a been applied.
+			// No jumbo frame setting anywhere. The hardware may accept them by
+			// default, but a capability describes what can be CONFIGURED and
+			// therefore guaranteed: an intent "enable jumbo frames" has no write
+			// to make here, and declaring it available would suggest it had been
+			// applied.
 			"JumboFrames": false,
-			// SwOS NE ROUTE PAS. Pas de table de routage, pas de passerelle, pas
-			// d'interface IP autre que celle du management. C'est la difference de
-			// fond avec RouterOS sur le same chassis, et elle doit se voir avant qu'un
-			// exploitant ne batisse un plan dessus.
+			// SwOS DOES NOT ROUTE. No routing table, no gateway, no IP interface
+			// other than management's. That is the fundamental difference with
+			// RouterOS on the same chassis, and it must be visible before an
+			// operator builds a plan on it.
 			"StaticRouting": false,
-			// AUCUNE HORLOGE. Pas de NTP, pas de SNTP, pas de fuseau, pas de date
-			// nulle part dans l'interface. Consequence en cascade : aucun horodatage
-			// n'est disponible sur cet device, ce qui est aussi la raison pour
-			// laquelle il n'a pas de syslog (cf. Monitoring.Syslog).
+			// NO CLOCK. No NTP, no SNTP, no time zone, no date anywhere in the
+			// UI. The knock-on consequence: no timestamp is available on this
+			// device, which is also why it has no syslog (cf. Monitoring.Syslog).
 			"SNTP": false,
-			// Pas de protection de boucle dediee. RSTP existe, et c'est tout — ce
-			// n'est pas la same chose : RSTP suppose un voisin qui parle RSTP.
+			// No dedicated loop protection. RSTP exists, and that is all — it is
+			// not the same thing: RSTP assumes a neighbour that speaks RSTP.
 			"LoopProtection": false,
-			// Ni economie d'energie 802.3az, ni RMON.
+			// Neither 802.3az energy saving nor RMON.
 			"EEE":  false,
 			"RMON": false,
-			// /fwd.b `srt` (« Storm Rate », en pourcentage), `suni` (« Limit Unknown
-			// Unicast ») et `fmc` (« Flood Unknown Multicast »).
+			// /fwd.b `srt` ("Storm Rate", as a percentage), `suni` ("Limit
+			// Unknown Unicast") and `fmc` ("Flood Unknown Multicast").
 			"StormControl": true,
-			// PAR PORT, et c'est une force de cette plateforme there where l'Instant On ne
-			// sait le faire que globalement : `srt` est un TABLEAU, un pourcentage par
-			// port (26 valeurs a 0x64 sur l'reference device).
+			// PER PORT, and it is a strength of this platform where Instant On
+			// can only do it globally: `srt` is an ARRAY, one percentage per
+			// port (26 values at 0x64 on the reference device).
 			"StormControlPort": true,
-			// AUCUNE ligne de commande, d'aucune sorte, et aucun serial port sur ce
-			// model. Sur l'reference device, un seul port TCP repond : le 80.
-			// Ni 22, ni 23, ni 443.
+			// NO command line of any kind, and no serial port on this model. On
+			// the reference device, a single TCP port answers: 80. Neither 22,
+			// nor 23, nor 443.
 			//
-			// Consequence a retenir avant toute write : l'adoption par console
-			// serial, l'une des trois portes ingress de la discovery, est IMPOSSIBLE
-			// ici. Un device dont on a perdu access se recupere par le bouton de
-			// factory reset, donc par un deplacement.
+			// Consequence to keep in mind before any write: adoption over a
+			// serial console, one of discovery's three entry points, is
+			// IMPOSSIBLE here. A device whose access is lost is recovered with
+			// the factory reset button, hence with a site visit.
 			"SSHMgmt":    false,
 			"TelnetMgmt": false,
 			"SerialCLI":  false,
 			"SerialPort": false,
-			// Le seul chemin. En CLAIR : SwOS n'ecoute pas en HTTPS, et la
-			// confidentialite repose entirely sur le tunnel du proxy.
+			// The only path. In CLEARTEXT: SwOS does not listen on HTTPS, and
+			// confidentiality rests entirely on the proxy's tunnel.
 			"HTTPMgmt": true,
 		},
-		// RSTP, and RSTP only — no protocol selector, no « none ».
+		// RSTP, and RSTP only — no protocol selector, no "none".
 		//
 		// The UI exposes a per-port RSTP switch (/rstp.b `ena`), bridge priority
 		// and cost mode (/sys.b `prio`, `cost`). The `rstp` field on /rstp.b that
-		// shows « STP » or « RSTP » is READ-ONLY: automatic fallback when a
-		// neighbor speaks only 802.1D, not a mode we choose. Declaring « stp » or
-		// « none » would accept intents no write can honor. Site preference
-		// « none » is therefore skipped for this platform (ResolveSTPMode).
+		// shows "STP" or "RSTP" is READ-ONLY: automatic fallback when a
+		// neighbor speaks only 802.1D, not a mode we choose. Declaring "stp" or
+		// "none" would accept intents no write can honor. Site preference
+		// "none" is therefore skipped for this platform (ResolveSTPMode).
 		STPModes: []string{"rstp"},
-		// Pas de MSTP, donc pas d'instances.
+		// No MSTP, so no instances.
 		MSTInstances: 0,
-		// L'ACL de SwOS est une LISTE PLATE : il n'y a pas d'ACL named qu'on
-		// attacherait a des interfaces, il y a une seule table de rules, chacune
-		// portant ses propres ports d'application (`frm`). Le contrat de meshcraft
-		// distingue les deux nombres, et la traduction honnete est donc « une ACL,
-		// 32 rules ».
+		// The SwOS ACL is a FLAT LIST: there are no named ACLs attached to
+		// interfaces, there is a single rule table, each rule carrying its own
+		// ports of application (`frm`). meshcraft's contract distinguishes the
+		// two numbers, so the honest translation is "one ACL, 32 rules".
 		//
-		// 32 est la borne que l'interface s'impose (`Z:32`, refus « Max entries (32) »).
-		// Les criteres sont riches pour la gamme — MAC source et destination avec
-		// masques, ethertype, VLAN et priorite, IP source et destination avec
-		// prefixes et ports, protocole, DSCP — et les actions sont « drop »,
-		// « mirror », « redirect », limitation de rate et rewrite de VLAN.
+		// 32 is the bound the UI imposes on itself (`Z:32`, refusal "Max entries
+		// (32)"). The criteria are rich for the range — source and destination
+		// MAC with masks, ethertype, VLAN and priority, source and destination
+		// IP with prefixes and ports, protocol, DSCP — and the actions are
+		// "drop", "mirror", "redirect", rate limiting and VLAN rewrite.
 		MaxACLs: 1,
 		MaxACEs: 32,
-		// Aucun routage, donc aucune route.
+		// No routing, hence no routes.
 		MaxStaticRoutes: 0,
-		// 15 agregats : /lacp.b borne `sgrp` a 15 (`{n:"Group", t:I, id:"sgrp",
-		// max:15}`), et l'interface nomme « Trunk1 » a « Trunk15 » les agregats
-		// qu'elle sait afficher.
+		// 15 aggregates: /lacp.b bounds `sgrp` at 15 (`{n:"Group", t:I,
+		// id:"sgrp", max:15}`), and the UI names the aggregates it can display
+		// "Trunk1" to "Trunk15".
 		MaxLAGs: 15,
-		// INCONNU, et dit comme tel rather que suppose.
+		// UNKNOWN, and said so rather than assumed.
 		//
-		// L'interface de the device n'impose AUCUNE borne au nombre de ports d'un
-		// same agregat, et aucun observed ne permet de l'establish en lecture seule — il
-		// faudrait constituer un agregat et regarder where the device refuse. 0 se lit
-		// « inconnu » et fait donc refuser, conformement a la rule du projet : c'est
-		// sans consequence aujourd'hui, meshcraft ne posant pas d'agregat, et c'est
-		// la valeur a relever le jour where il en posera.
+		// The device's UI imposes NO bound on the number of ports in one
+		// aggregate, and no observation can establish it read-only — you would
+		// have to build an aggregate and watch where the device refuses. 0 reads
+		// as "unknown" and therefore causes a refusal, as the project rule
+		// requires: that has no consequence today, since meshcraft does not set
+		// aggregates, and it is the value to survey on the day it does.
 		PortsPerLAG: 0,
-		// v2c ET RIEN D'AUTRE, et chacun des deux termes est une decision.
+		// v2c AND NOTHING ELSE, and each of the two terms is a decision.
 		//
-		// Ce que /snmp.b PROUVE : un agent existe, il est actif (`en:0x01`), il porte
-		// UNE community (`com`, 64 octets au plus), un contact et une localisation.
-		// Ce qu'il prouve tout autant, par son inventaire complet : il n'y a AUCUN
-		// SNMPv3 sur cette plateforme — pas d'utilisateur, pas d'algorithme
-		// d'authentification, pas de chiffrement, aucun champ, dans aucun onglet ni
-		// dans la sauvegarde de configuration. Et pas de destinataire de trap.
+		// What /snmp.b PROVES: an agent exists, it is enabled (`en:0x01`), it
+		// carries ONE community (`com`, at most 64 bytes), a contact and a
+		// location. What it proves just as well, through its complete
+		// inventory: there is NO SNMPv3 on this platform — no user, no
+		// authentication algorithm, no encryption, no field, in any tab or in
+		// the configuration backup. And no trap receiver.
 		//
-		// Ce que cette page n'a jamais pu prouver : a quelle version du protocole cet
-		// agent repond. L'interface n'a pas de selecteur, et une community ne dit pas
-		// si l'agent sert du v1, du v2c, ou les deux. Cette liste est donc restee VIDE
-		// tant que la response manquait — l'outil disponible pour atteindre the device
-		// a travers le tunnel ne parlant que HTTP en lecture, aucune request SNMP ne
-		// pouvait be emise. Elle ne l'est plus, et c'est le network qui a tranche, pas
-		// la page.
+		// What that page could never prove: which protocol version the agent
+		// answers. The UI has no selector, and a community does not say whether
+		// the agent serves v1, v2c or both. This list therefore stayed EMPTY
+		// while the answer was missing — the only tool available to reach the
+		// device through the tunnel spoke read-only HTTP, so no SNMP request
+		// could be sent. That is no longer the case, and it was the network
+		// that settled it, not the page.
 		//
-		// ┌── v2c : OBSERVED, l'agent a repondu ────────────────────────────────────┐
+		// ┌── v2c: OBSERVED, the agent answered ───────────────────────────────────┐
 		//
-		// Cette liste was VIDE, et le commentaire qu'elle portait disait : « la liste
-		// se levera d'une ligne le jour where un `snmpget` aura repondu depuis un proxy ».
-		// C'est fait, le 29 juillet 2026, sur l'reference device 10.99.0.36
-		// (CSS326-24G-2S+, SwOS 2.17), par le walk de diagnostic du proxy — lequel parle
-		// **v2c en dur** (`gosnmp.Version2c`, internal/snmppoll), ce qui fait de chaque
-		// response obtenue une preuve de v2c et non d'autre chose :
+		// This list was EMPTY, and the comment it carried said: "the list will
+		// gain a line the day an `snmpget` has answered from a proxy". That
+		// happened on 29 July 2026, on the reference device 192.0.2.36
+		// (CSS326-24G-2S+, SwOS 2.17), through the proxy's diagnostic walk —
+		// which speaks **hard-coded v2c** (`gosnmp.Version2c`,
+		// internal/snmppoll), which makes every answer obtained a proof of v2c
+		// and of nothing else:
 		//
 		//	sysDescr.0     CSS326-24G-2S+ SwOS v2.17
 		//	sysObjectID.0  1.3.6.1.4.1.14988.2
-		//	sysName.0      lan-m6      ← le champ `id` de /sys.b, decode
-		//	ifNumber.0     26          ← les 26 ports de /link.b (`prt:0x1a`)
+		//	sysName.0      lan-m6      ← the `id` field of /sys.b, decoded
+		//	ifNumber.0     26          ← the 26 ports of /link.b (`prt:0x1a`)
 		//
-		// Les deux dernieres lignes ne sont pas decoratives : elles CROISENT le SNMP
-		// avec ce que le connecteur lit en web sur le same device. Un agent qui
-		// repondrait pour un autre hardware — cas reel quand une adresse a been recyclee
-		// — ne rendrait pas ce nom-there et ce compte de ports-there.
+		// The last two lines are not decoration: they CROSS-CHECK SNMP against
+		// what the connector reads over the web on the same device. An agent
+		// answering for other hardware — a real case when an address has been
+		// recycled — would not return that name and that port count.
 		//
-		// v1 N'EST PAS ANNONCE, et l'omission est volontaire : l'agent le sert
-		// probablement (SwOS n'a aucun selecteur de version), mais rien ne l'a montre —
-		// le seul canal d'interrogation du projet est v2c. Une capability se observes, elle
-		// ne se deduit pas d'une vraisemblance, et annoncer v1 n'apporterait rien : c'est
-		// v2c que le collecteur emploie.
+		// v1 IS NOT ADVERTISED, and the omission is deliberate: the agent
+		// probably serves it (SwOS has no version selector), but nothing has
+		// shown it — the project's only query channel is v2c. A capability is
+		// observed, it is not inferred from plausibility, and advertising v1
+		// would bring nothing: v2c is what the collector uses.
 		//
-		// v3 reste ABSENT, et c'est un fait de plateforme established par enumeration
-		// exhaustive : /snmp.b tient en quatre champs (activation, community, contact,
-		// localisation), il n'y a ni utilisateur, ni algorithme, ni chiffrement, dans
-		// aucun onglet ni dans la sauvegarde de configuration. `snmpprov.For` conclut
-		// donc « v2c, NON conforme au plancher de la politique », ce qui est exactement
-		// la verite a afficher : supervise, et en clair.
+		// v3 stays ABSENT, and that is a platform fact established by exhaustive
+		// enumeration: /snmp.b fits in four fields (enable, community, contact,
+		// location), there is no user, no algorithm, no encryption, in any tab
+		// or in the configuration backup. `snmpprov.For` therefore concludes
+		// "v2c, NOT compliant with the policy floor", which is exactly the
+		// truth to display: monitored, and in cleartext.
 		//
 		// └───────────────────────────────────────────────────────────────────────┘
 		SNMPVersions: []string{"v2c"},
-		// Observabilite de la plateforme.
+		// Platform observability.
 		//
-		// TOUT est du polling web, et il faut commencer par there : SwOS ne pousse
-		// RIEN. Aucun destinataire de trap, aucun serveur syslog, aucune telemetry —
-		// et il ne pourrait pas horodater un message same s'il en envoyait un,
-		// n'ayant pas d'horloge. There where le canal de traps d'un Instant On permet de
-		// RALENTIR le polling state a 30 s en gardant la reactivity, ici le polling
-		// EST la reactivity : un lien qui tombe se voit au prochain cycle, jamais
-		// avant.
+		// EVERYTHING is web polling, and that is where to start: SwOS pushes
+		// NOTHING. No trap receiver, no syslog server, no telemetry — and it
+		// could not timestamp a message even if it sent one, having no clock.
+		// Where an Instant On's trap channel allows SLOWING state polling down
+		// to 30 s while keeping reactivity, here polling IS the reactivity: a
+		// link that drops is seen on the next cycle, never earlier.
 		//
-		// Ce que costs une lecture sur cette plateforme, et c'est ce qui fixe les
-		// planchers ci-dessous :
+		// What a read costs on this platform, and this is what sets the floors
+		// below:
 		//
-		//   - DEUX requests HTTP par page, toujours. SwOS n'a pas de session : le
-		//     Digest se renegocie a chaque fois, donc un 401 puis la request
-		//     authentifiee. Une collecte « une lecture toutes les 10 s » est en
-		//     realite douze requests par minute ;
-		//   - le corps ENTIER de la page, sans exception. SwOS n'offre aucun moyen de
-		//     demander un sous-ensemble : ni un port, ni une colonne. There where un walk
-		//     SNMP peut se limiter a quatre colonnes, ici /stats.b serialise ses
-		//     26 ports et sa quarantaine de compteurs a chaque appel ;
-		//   - le CPU qui serialise est celui d'un commutateur ingress de gamme, et
-		//     c'est le same qui sert l'interface a l'administrateur humain.
+		//   - TWO HTTP requests per page, always. SwOS has no session: Digest is
+		//     renegotiated every time, so a 401 then the authenticated request.
+		//     A "one read every 10 s" collection is in reality twelve requests
+		//     a minute;
+		//   - the ENTIRE page body, without exception. SwOS offers no way to ask
+		//     for a subset: not a port, not a column. Where an SNMP walk can be
+		//     limited to four columns, here /stats.b serialises its 26 ports and
+		//     its forty-odd counters on every call;
+		//   - the CPU doing the serialising is that of an access-range switch,
+		//     and it is the same one that serves the UI to the human
+		//     administrator.
 		//
-		// Mesures faites sur l'reference device, a travers le tunnel du proxy
-		// (moyenne de cinq lectures, aller-retour du controleur inclus, donc majoree) :
-		// /sys.b 780 octets en 49 ms, /link.b 2 026 octets en 46 ms, /stats.b
-		// 12 694 octets en 50 ms, /backup.swb 2 996 octets en 51 ms.
+		// Measurements on the reference device, through the proxy's tunnel
+		// (average of five reads, controller round trip included, hence an
+		// upper bound): /sys.b 780 bytes in 49 ms, /link.b 2,026 bytes in 46 ms,
+		// /stats.b 12,694 bytes in 50 ms, /backup.swb 2,996 bytes in 51 ms.
 		//
-		// # LE GENRE DES CANAUX, ET POURQUOI IL Y EN A NOW DEUX
+		// # THE KIND OF THE CHANNELS, AND WHY THERE ARE NOW TWO
 		//
-		// Quatre canaux `web`, puis UN canal `snmp` en dernier de la liste. Cette
-		// place disait longtemps le contraire — « aucun canal snmp ici, et ce n'est
-		// pas un oubli » — et elle avait raison tant que `SNMPVersions` was vide :
-		// un connecteur ne declares pas une collecte dont il n'a jamais vu l'agent
-		// repondre. Le walk du 29 juillet 2026 sur 10.99.0.36 a leve le verrou ; la
-		// declaration `v2c` est trente lignes plus haut, et le canal qu'elle autorise
-		// porte, OID par OID, ce que ce walk a effectivement obtenu.
+		// Four `web` channels, then ONE `snmp` channel at the end of the list.
+		// This spot long said the opposite — "no snmp channel here, and it is
+		// not an oversight" — and it was right as long as `SNMPVersions` was
+		// empty: a connector does not declare a collection whose agent it has
+		// never seen answer. The walk of 29 July 2026 on 192.0.2.36 lifted the
+		// lock; the `v2c` declaration is thirty lines above, and the channel it
+		// authorises carries, OID by OID, what that walk actually obtained.
 		//
-		// Le genre n'est pas decoratif : la planification du controleur interroge le
-		// canal PAR GENRE (`MonitoringCapabilities.BestOfKind("snmp", …)`), parce que
-		// la collecte periodique s'execute sur le proxy et ne parle que ce protocole.
-		// Tant que cette plateforme n'annoncait que du `web`, elle ne recevait aucune
-		// cadence SNMP — consistent, et sans consequence puisqu'elle n'apparaissait dans
-		// aucune cible. C'est exactement ce qui change ici.
+		// The kind is not decoration: the controller's scheduling queries the
+		// channel BY KIND (`MonitoringCapabilities.BestOfKind("snmp", …)`),
+		// because periodic collection runs on the proxy and speaks only that
+		// protocol. As long as this platform advertised only `web`, it received
+		// no SNMP cadence — consistent, and without consequence since it
+		// appeared in no target. That is exactly what changes here.
 		//
-		// Les deux genres ne se recouvrent pas, et aucun ne subsume l'autre. Ce que le
-		// scraping web rend est dans telemetry.go : compteurs 64 bits, rates computed
-		// par the device, temperature de puce, temps de fonctionnement, diagnostic
-		// optique COMPLET des cages — le web seul porte les puissances, la table
-		// optique de l'agent s'arretant au courant de polarisation. SNMP, lui, costs
-		// assez peu pour tenir un plancher a 10 s there where /stats.b serialise
-		// 12 694 octets a chaque appel.
+		// The two kinds do not overlap, and neither subsumes the other. What
+		// web scraping returns is in telemetry.go: 64-bit counters, rates
+		// computed by the device, chip temperature, uptime, COMPLETE optical
+		// diagnostics of the cages — only the web carries the powers, the
+		// agent's optical table stopping at bias current. SNMP, for its part,
+		// costs little enough to hold a 10 s floor where /stats.b serialises
+		// 12,694 bytes on every call.
 		//
-		// Le manque, en revanche, est de PLATEFORME et non de protocole : ni la charge
-		// processeur ni la memory ne sont published d'un cote ni de l'autre, et c'est
-		// `Unavailable` qui le dit a la fiche device — pas une note de canal que
-		// personne ne lit.
+		// What is missing, on the other hand, is a PLATFORM gap and not a
+		// protocol one: neither CPU load nor memory is published on either
+		// side, and `Unavailable` is what tells the device page so — not a
+		// channel note nobody reads.
 		Monitoring: driver.MonitoringCapabilities{
 			Channels: []driver.MonitorChannel{
 				{
-					// Etat des ports, depuis /link.b : masques de lien, d'activation et de
-					// duplex, index de rate et nom par port. 2 026 octets.
+					// Port state, from /link.b: link, enable and duplex masks, rate
+					// index and name per port. 2,026 bytes.
 					//
-					// PLANCHER A 10 s, et il n'est pas recopie.
+					// FLOOR AT 10 s, and it is not copied from elsewhere.
 					//
-					// L'interface de the device rafraichit cette page toutes les 3 s
-					// (`refresh:3E3`) : la plateforme encaisse donc demontrablement ce
-					// rythme pour un client. Ce n'est pourtant pas le plancher retenu, et la
-					// raison est un changement de REGIME, pas de client — une page qu'un
-					// administrateur regarde une minute et une collecte qui ne stops
-					// jamais, sur un parc entier, pendant des mois, ne sollicitent pas la
-					// same chose. 10 s est ce qu'on accepte de faire en PERMANENCE.
+					// The device's UI refreshes this page every 3 s (`refresh:3E3`):
+					// the platform therefore demonstrably handles that pace for one
+					// client. It is still not the chosen floor, and the reason is a
+					// change of REGIME, not of client — a page an administrator watches
+					// for a minute and a collection that never stops, across a whole
+					// fleet, for months, do not ask the same thing of the device. 10 s
+					// is what we accept to do PERMANENTLY.
 					//
-					// Descendre plus bas serait de surcroit sans objet : la reactivity qu'on
-					// chercherait there ne s'obtient pas par le polling sur cette plateforme,
-					// elle s'obtiendrait par un trap, et SwOS n'en emet aucun. Qui voudra la
-					// descendre devra l'avoir mesuree sur du hardware, comme celle-ci l'a
-					// been.
+					// Going lower would moreover be pointless: the reactivity one would
+					// seek there is not obtained by polling on this platform, it would
+					// be obtained by a trap, and SwOS emits none. Whoever wants to lower
+					// it must have measured it on hardware, as this one was.
 					Kind:        "web",
 					Metrics:     []string{"if_state"},
 					MinInterval: 10 * time.Second,
@@ -439,26 +438,24 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 						"on the next cycle.",
 				},
 				{
-					// Compteurs et rates, depuis /stats.b. 12 694 octets — six fois la
-					// page suivante par la taille, et de loin la plus couteuse.
+					// Counters and rates, from /stats.b. 12,694 bytes — six times the
+					// next page by size, and by far the most expensive.
 					//
-					// PLANCHER A 15 s, plus HAUT que celui de state des ports, a l'inverse
-					// de ce que fait le connecteur Instant On. La raison est le cost, et lui
-					// seul : cette page serialise a chaque appel les quarante compteurs des
-					// vingt-six ports, sans qu'aucun moyen n'existe d'en demander moins.
-					// A 15 s, cela reste sous le kilo-octet par seconde et par device ;
-					// a 5 s, un parc de deux cents CSS representerait un demi-megaoctet par
-					// seconde de serialisation permanente sur des CPU de commutateurs
-					// access.
+					// FLOOR AT 15 s, HIGHER than the port state one, the opposite of
+					// what the Instant On connector does. The reason is cost, and cost
+					// alone: on every call this page serialises the forty counters of
+					// the twenty-six ports, with no way to ask for less. At 15 s that
+					// stays under a kilobyte per second per device; at 5 s, a fleet of
+					// two hundred CSS would mean half a megabyte per second of permanent
+					// serialisation on access-switch CPUs.
 					//
-					// Et ce plancher ne costs PAS la finesse de la courbe, ce qui est le
-					// point decisif : SwOS calcule lui-same les rates snapshots (`rrb` et
-					// `trb`, en hundredths de bit par seconde). meshcraft n'a donc pas besoin
-					// de deriver deux lectures de compteur pour tracer un rate, et un
-					// echantillonnage plus large ne le lisse pas — contrairement a une
-					// plateforme where le rate ne s'obtient qu'en differenciant
-					// `ifHCInOctets`. C'est ce qui rend 15 s acceptable there where il ne le
-					// serait pas ailleurs.
+					// And this floor does NOT cost the curve its resolution, which is
+					// the decisive point: SwOS computes the snapshot rates itself (`rrb`
+					// and `trb`, in hundredths of a bit per second). meshcraft therefore
+					// does not need to derive two counter reads to plot a rate, and a
+					// wider sample interval does not smooth it — unlike a platform where
+					// the rate is only obtained by differentiating `ifHCInOctets`. That
+					// is what makes 15 s acceptable here where it would not be elsewhere.
 					Kind:        "web",
 					Metrics:     []string{"if_counters"},
 					MinInterval: 15 * time.Second,
@@ -468,15 +465,15 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 						"smooth them.",
 				},
 				{
-					// Sante, depuis /sys.b. 780 octets, la page la moins chere.
+					// Health, from /sys.b. 780 bytes, the cheapest page.
 					//
-					// PLANCHER A 30 s. Une temperature ne bouge pas en dessous de la
-					// minute, et la conception du monitoring place la sante a cinq minutes :
-					// 30 s laisse already dix fois la marge necessary, et il n'y a aucune
-					// raison de descendre. Il y en a une de ne pas le faire — c'est aussi la
-					// page que l'interface de the device rafraichit a la seconde quand un
-					// administrateur la regarde, et le connecteur n'a pas a lui disputer son
-					// propre switch.
+					// FLOOR AT 30 s. A temperature does not move below the minute, and
+					// the monitoring design puts health at five minutes: 30 s already
+					// leaves ten times the necessary margin, and there is no reason to
+					// go lower. There is one not to — it is also the page the device's
+					// UI refreshes every second when an administrator is watching it,
+					// and the connector has no business competing with them for their
+					// own switch.
 					Kind:        "web",
 					Metrics:     []string{"health"},
 					MinInterval: 30 * time.Second,
@@ -486,20 +483,19 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 						"display them.",
 				},
 				{
-					// Diagnostic optique, depuis /sfp.b.
+					// Optical diagnostics, from /sfp.b.
 					//
-					// SwOS SERT la puissance optique, et c'est une vraie difference avec
-					// l'Instant On, qui ne l'expose nulle part : /sfp.b rend par cage la
-					// temperature, la tension, le courant de polarisation, la puissance
-					// emise et la puissance recue. Releve sur l'reference device,
-					// cage 2 occupee par un SFP-10G-BX : `tpw:0x12ba`, `rpw:0x0ad2`,
-					// valeurs vivantes.
+					// SwOS SERVES optical power, and that is a real difference from
+					// Instant On, which exposes it nowhere: /sfp.b returns, per cage,
+					// temperature, voltage, bias current, transmitted power and
+					// received power. Surveyed on the reference device, cage 2
+					// holding an SFP-10G-BX: `tpw:0x12ba`, `rpw:0x0ad2`, live values.
 					//
-					// PLANCHER A 30 s. Les registres de diagnostic d'un transceiver ne sont
-					// pas dans la memory du commutateur : ils se lisent sur le bus I²C du
-					// module, le plus lent de la carte. Et un budget optique derive sur des
-					// jours, pas sur des secondes — une lecture par demi-minute est already
-					// bien plus fine que ce que le phenomene demande.
+					// FLOOR AT 30 s. A transceiver's diagnostic registers are not in
+					// the switch's memory: they are read over the module's I²C bus,
+					// the slowest on the board. And an optical budget drifts over
+					// days, not seconds — one read every half minute is already much
+					// finer than the phenomenon calls for.
 					Kind:        "web",
 					Metrics:     []string{"optical_power"},
 					MinInterval: 30 * time.Second,
@@ -510,53 +506,53 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 						"power columns (observed; see the snmp channel).",
 				},
 				{
-					// ┌── LE CANAL SNMP : OBSERVED SUR HARDWARE, ET C'EST NOUVEAU ────────┐
+					// ┌── THE SNMP CHANNEL: OBSERVED ON HARDWARE, AND IT IS NEW ─────────┐
 					//
-					// Ce canal n'existait pas, parce que `SNMPVersions` was vide : le
-					// connecteur ne pouvait pas declare une collecte dont il n'avait pas
-					// vu l'agent repondre. Le walk du 29 juillet 2026 sur 10.99.0.36 a
-					// tranche, et ce canal ne porte QUE ce que ce walk a effectivement
-					// obtenu — pas la liste de ce qu'une MIB permettrait d'esperer.
+					// This channel did not exist, because `SNMPVersions` was empty:
+					// the connector could not declare a collection whose agent it had
+					// not seen answer. The walk of 29 July 2026 on 192.0.2.36 settled
+					// it, and this channel carries ONLY what that walk actually
+					// obtained — not the list of what a MIB would let one hope for.
 					//
-					// CE QUE L'AGENT SERT, verified OID par OID :
+					// WHAT THE AGENT SERVES, verified OID by OID:
 					//
-					//	ifDescr        « Port1 »… « SFP1 », « SFP2 » — les noms de /link.b, et
-					//	               donc CEUX DE CE CONNECTEUR depuis qu'il nomme ses ports
-					//	               comme the device (cf. naming.go). Une serial collectee
-					//	               en SNMP par le proxy et une configuration lue en web par
-					//	               le controleur designent la same prise par le same nom,
-					//	               sans table de correspondance nulle part.
-					//	ifOperStatus   servi (1 sur la cage SFP2, seule a porter un lien)
-					//	ifHCInOctets   189 323 935 sur cette cage : compteurs 64 bits VIVANTS
-					//	ifHCOutOctets  1 666 156
-					//	ifHighSpeed    10000 (Mbit/s) — et c'est LUI qu'il faut lire (voir plus bas)
-					//	sysUpTime      servi
-					//	mtxrHealth.11  690, soit 69,0 °C — la SEULE grandeur de sante published
+					//	ifDescr        "Port1"… "SFP1", "SFP2" — the /link.b names, and
+					//	               therefore THIS CONNECTOR'S since it names its ports
+					//	               like the device does (cf. naming.go). A series
+					//	               collected over SNMP by the proxy and a configuration
+					//	               read over the web by the controller designate the
+					//	               same socket by the same name, with no mapping table
+					//	               anywhere.
+					//	ifOperStatus   served (1 on cage SFP2, the only one carrying a link)
+					//	ifHCInOctets   189,323,935 on that cage: LIVE 64-bit counters
+					//	ifHCOutOctets  1,666,156
+					//	ifHighSpeed    10000 (Mbit/s) — and THAT is the one to read (see below)
+					//	sysUpTime      served
+					//	mtxrHealth.11  690, i.e. 69.0 °C — the ONLY health quantity published
 					//
-					// CE QUE L'AGENT NE SERT PAS, et qui decide de ce canal autant que le
-					// reste : `hrProcessorLoad` et `hrStorage` rendent AUCUNE valeur — pas
-					// de CPU, pas de memory par SNMP sur cette plateforme. Et la table
-					// optique stops a la colonne 8 (`txBias`) : ni `txPower` (colonne
-					// 9), ni `rxPower` (colonne 10). C'est pourquoi `optical_power`
-					// N'EST PAS dans la liste ci-dessous alors que le canal web, lui, le
-					// sert — les puissances sont dans /sfp.b (`tpw`, `rpw`) et nulle part
-					// ailleurs. Declare ici une metrique que l'agent ne rend pas ferait
-					// promettre une courbe qu'aucune collecte ne remplirait.
+					// WHAT THE AGENT DOES NOT SERVE, which decides this channel as much
+					// as the rest: `hrProcessorLoad` and `hrStorage` return NO value —
+					// no CPU, no memory over SNMP on this platform. And the optical
+					// table stops at column 8 (`txBias`): neither `txPower` (column 9)
+					// nor `rxPower` (column 10). That is why `optical_power` is NOT in
+					// the list below although the web channel serves it — the powers
+					// are in /sfp.b (`tpw`, `rpw`) and nowhere else. Declaring here a
+					// metric the agent does not return would promise a curve no
+					// collection would ever fill.
 					//
-					// LE TRAP A NE PAS REPRODUIRE, observed sur la cage active :
-					// `ifSpeed` rend **0** sur un lien a 10 Gbit/s, there where `ifHighSpeed`
-					// rend 10000. Un collecteur qui lirait `ifSpeed` afficherait donc un
-					// rate nul sur les liaisons les plus rapides du parc. Le poller lit
-					// bien `ifHighSpeed` (internal/snmppoll) ; c'est note ici parce que
-					// c'est le genre de chose qu'on « corrige » un jour dans le mauvais
-					// sens.
+					// THE TRAP NOT TO REPRODUCE, observed on the active cage: `ifSpeed`
+					// returns **0** on a 10 Gbit/s link, where `ifHighSpeed` returns
+					// 10000. A collector reading `ifSpeed` would therefore display a
+					// zero rate on the fastest links in the fleet. The poller does read
+					// `ifHighSpeed` (internal/snmppoll); it is noted here because it is
+					// the kind of thing someone "fixes" one day in the wrong direction.
 					//
-					// PLANCHER A 10 s, contre 15 s pour les compteurs en web : un GETBULK
-					// sur six colonnes costs a cet device infiniment moins que la
-					// serialisation des 12 694 octets de /stats.b, et c'est tout l'interet
-					// d'avoir ce canal. Il ne REMPLACE pas le web pour autant — /stats.b
-					// porte les rates snapshots computed par the device, que SNMP
-					// n'expose pas.
+					// FLOOR AT 10 s, against 15 s for web counters: a GETBULK on six
+					// columns costs this device infinitely less than serialising the
+					// 12,694 bytes of /stats.b, and that is the whole point of having
+					// this channel. It does not REPLACE the web for all that — /stats.b
+					// carries the snapshot rates computed by the device, which SNMP does
+					// not expose.
 					//
 					// └────────────────────────────────────────────────────────────────┘
 					Kind:        "snmp",
@@ -568,100 +564,109 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 						"HOST-RESOURCES-MIB (observed). Optical POWERS do not go through " +
 						"this channel: this agent's optical table stops at bias current.",
 				},
+				{
+					Kind:        "snmp",
+					Metrics:     []string{"fdb"},
+					MinInterval: 30 * time.Second,
+					Note: "MEASURED (walk 2026-08-13 on the CSS326): the FLAT BRIDGE-MIB only — " +
+						"dot1dTpFdbPort answers (12 rows), dot1qTpFdbPort serves NOTHING, so a " +
+						"learned MAC arrives WITHOUT its VLAN (recorded as unknown, never guessed). " +
+						"dot1dBasePortIfIndex maps the 26 bridge ports.",
+				},
 			},
-			// SwOS NE POUSSE RIEN.
+			// SwOS PUSHES NOTHING.
 			//
-			// Pas de destinataire de trap : /snmp.b n'a que quatre champs — activation,
-			// community, contact, localisation. Pas de serveur syslog : aucun champ
-			// dans aucun onglet, et de toute way aucune horloge pour horodater un
-			// message. Pas de telemetry continue, evidemment.
+			// No trap receiver: /snmp.b has only four fields — enable, community,
+			// contact, location. No syslog server: no field in any tab, and in any
+			// case no clock to timestamp a message. No streaming telemetry,
+			// obviously.
 			//
-			// Ce n'est pas un detail de tableau : c'est ce qui fait que la supervision
-			// de cet device est ENTIRELY du polling, et qu'un exploitant qui
-			// compte sur des alertes poussees doit le savoir avant de batir dessus.
+			// This is not a table detail: it is what makes this device's
+			// monitoring ENTIRELY polling, and an operator who relies on pushed
+			// alerts must know it before building on it.
 			Traps:     false,
 			Syslog:    false,
 			Streaming: false,
-			// Ce que la plateforme n'expose PAS, avec son motif.
+			// What the platform does NOT expose, with its reason.
 			//
-			// Deux cas seulement, et volontairement : ce n'est pas la liste de tout ce
-			// qui manque a the UI. Les metriques servies par un canal ci-dessus n'ont
-			// rien a faire ici, et une metrique que meshcraft ne lit pas encore n'y a
-			// rien a faire non plus — l'y mettre la declarerait impossible et ferait
-			// renoncer un exploitant a ce qui n'attend qu'un lot de collecte.
+			// Only these cases, and deliberately: this is not the list of
+			// everything the UI lacks. Metrics served by a channel above have no
+			// place here, and a metric meshcraft does not read yet has no place
+			// here either — putting it here would declare it impossible and make
+			// an operator give up on what only awaits a collection batch.
 			Unavailable: unavailableFor(poe),
 		},
-		// UNE session a la fois, et c'est un plancher de prudence assume.
+		// ONE session at a time, and it is a deliberate safety floor.
 		//
-		// SwOS n'a pas de session du tout : authentication is a header HTTP
-		// rejoue a chaque request, et rien ne compte les clients. Il n'existe donc
-		// aucune limite documentee a annoncer, et aucun message d'erreur du type
-		// « trop de sessions » dans son interface.
+		// SwOS has no session at all: authentication is an HTTP header replayed
+		// on every request, and nothing counts clients. There is therefore no
+		// documented limit to advertise, and no "too many sessions" error
+		// message in its UI.
 		//
-		// Ce qui A been established : des dizaines de lectures SEQUENTIELLES passent sans
-		// incident. Ce qui n'a PAS been established : ce que fait the device sous lectures
-		// concurrentes — cela n'a pas been tente, un CPU de commutateur access n'etant
-		// pas un endroit where l'on decouvre ce genre de chose sur un device en
-		// service. Declare 1 fait serialiser les access du connecteur, ce qui est
-		// exactement le comportement sur, et c'est la rule « une capability inconnue
-		// est supposee absente » appliquee au parallelisme.
+		// What HAS been established: dozens of SEQUENTIAL reads go through
+		// without incident. What has NOT been established: what the device does
+		// under concurrent reads — that was not attempted, an access-switch CPU
+		// not being a place to discover that kind of thing on a device in
+		// service. Declaring 1 serialises the connector's accesses, which is
+		// exactly the safe behaviour, and it is the rule "an unknown capability
+		// is assumed absent" applied to parallelism.
 		MaxSessions: 1,
-		// IMMEDIAT, et c'est la contrainte la plus lourde de ce connecteur : il n'y a
-		// AUCUN filet gratuit a l'apply.
+		// IMMEDIATE, and it is the heaviest constraint of this connector: there
+		// is NO free safety net on apply.
 		//
-		// L'inventaire de l'interface est sans ambiguite. Ses seuls boutons sont
-		// « Apply All », qui poste la page et rien d'autre, et « Discard Changes »,
-		// qui se contente de RELIRE la page depuis the device — un annulateur
-		// purement local, qui n'annule rien de ce qui est parti. Il n'existe nulle part
-		// de « Save Configuration », de configuration de demarrage distincte, ni de
-		// commit a confirmer : ce qui est poste est written, et un reboot ne
-		// l'annulera pas. C'est l'inverse exact de l'Instant On, dont le « appliquer
-		// puis sauver » offre un retour arriere par coupure d'alimentation.
+		// The UI inventory is unambiguous. Its only buttons are "Apply All",
+		// which posts the page and nothing else, and "Discard Changes", which
+		// merely RE-READS the page from the device — a purely local undo, which
+		// undoes nothing that has gone out. There is no "Save Configuration"
+		// anywhere, no separate startup configuration, no commit to confirm:
+		// what is posted is written, and a reboot will not undo it. It is the
+		// exact opposite of Instant On, whose "apply then save" offers a way
+		// back through a power cut.
 		//
-		// La seule way de revenir en arriere est donc de RESTAURER un fichier de
-		// sauvegarde. C'est pourquoi Admin.Backup existe et pourquoi ApplyPorts la
-		// prend avant to write : sur cette plateforme, la prudence n'est pas dans la
-		// strategie de commit, elle est dans ce qu'on a pris la peine de copier avant.
+		// The only way back is therefore to RESTORE a backup file. That is why
+		// Admin.Backup exists and why ApplyPorts takes one before writing: on
+		// this platform, caution is not in the commit strategy, it is in what
+		// one took the trouble to copy beforehand.
 		Commit: driver.CommitImmediate,
 		Mgmt: driver.MgmtCapabilities{
-			// Le VLAN de management est LIBRE : /sys.b `avln` (« Allow From VLAN »),
-			// borne a 4095 par l'interface, 0 valant « depuis n'importe quel VLAN ».
+			// The management VLAN is FREE: /sys.b `avln` ("Allow From VLAN"),
+			// bounded at 4095 by the UI, 0 meaning "from any VLAN".
 			VlanIDs: driver.VlanAny,
-			// 1 a 4094 et non 1 a 4095 : la borne de l'interface sur `avln` est bien
-			// 4095, mais un VLAN de management doit exister dans la TABLE des VLAN pour
-			// que le port qui le porte en soit membre, et la table stops a 4094.
-			// Retenir la borne la plus BASSE des deux est le seul choix sur.
+			// 1 to 4094 and not 1 to 4095: the UI's bound on `avln` is indeed
+			// 4095, but a management VLAN must exist in the VLAN TABLE for the
+			// port carrying it to be a member, and the table stops at 4094.
+			// Keeping the LOWER of the two bounds is the only safe choice.
 			VlanRange: [2]int{1, 4094},
-			// TAGGED : OBSERVED, pas deduit.
+			// TAGGED: OBSERVED, not inferred.
 			//
-			// L'reference device est joignable en 10.99.0.36 avec `avln:0x0063`
-			// (VLAN 99), alors que le SEUL port qui porte un lien est la cage SFP2
-			// (/link.b `lnk:0x02000000`, bit 25) et que le VLAN par default de ce port
-			// est 1 (/fwd.b `dvid[25]=0x01`). Le trafic d'administration arrive donc
-			// necessarily TAGGED en 99 sur ce port. La table des adresses apprises le
-			// confirme, qui montre des hotes en VLAN 99 sur ce same port (/!dhost.b,
-			// `vid:0x0063, prt:0x19`).
+			// The reference device is reachable at 192.0.2.36 with `avln:0x0063`
+			// (VLAN 99), while the ONLY port carrying a link is cage SFP2
+			// (/link.b `lnk:0x02000000`, bit 25) and that port's default VLAN is
+			// 1 (/fwd.b `dvid[25]=0x01`). Administration traffic therefore
+			// necessarily arrives TAGGED in 99 on that port. The learned address
+			// table confirms it, showing hosts in VLAN 99 on that same port
+			// (/!dhost.b, `vid:0x0063, prt:0x19`).
 			TaggedOK: true,
-			// Les trois modes du selecteur « Address Acquisition » de l'interface, dans
-			// son ordre : « DHCP with fallback », « static », « DHCP only ».
-			// L'reference device est en statique (`iptp:0x01`), ce qui est
-			// observed ; les deux autres modes existent dans le code de son interface,
-			// ce qui est une source forte mais n'a pas been exerce.
+			// The three modes of the UI's "Address Acquisition" selector, in its
+			// order: "DHCP with fallback", "static", "DHCP only". The reference
+			// device is static (`iptp:0x01`), which is observed; the other two
+			// modes exist in its UI code, which is a strong source but has not
+			// been exercised.
 			Static: true,
 			DHCP:   true,
-			// NI PASSERELLE, NI RESOLVEUR — et c'est une ABSENCE ESTABLISHED, pas un
-			// « pas trouve ». Le jeu de champs inscriptible de /sys.b est enumerated par
-			// la sauvegarde de configuration de the device lui-same
-			// (testdata/backup.swb) : `ip` et `iptp` y sont, aucun champ de passerelle
-			// ni de DNS n'y figure, et l'interface web complete de la plateforme tient
-			// en un seul fichier qui definit tous ses champs. L'enumeration exhausts la
-			// question, comme elle l'a exhausted pour le destinataire de traps.
+			// NEITHER GATEWAY NOR RESOLVER — and it is an ESTABLISHED ABSENCE, not
+			// a "not found". The writable field set of /sys.b is enumerated by
+			// the device's own configuration backup (testdata/backup.swb): `ip`
+			// and `iptp` are there, no gateway or DNS field appears, and the
+			// platform's complete web UI fits in a single file that defines all
+			// its fields. The enumeration exhausts the question, as it exhausted
+			// it for the trap receiver.
 			//
-			// Consequence d'exploitation : sans passerelle, les sorties hors
-			// sous-network (traps, DNS) n'ont pas de route ici. L'administration
-			// entrante depuis un autre sous-network reste possible tant que le
-			// chemin L2 de retour existe — ce n'est pas « injoignable hors subnet ».
-			// Le collecteur beneficie quand meme d'etre dans le bon network.
+			// Operational consequence: without a gateway, off-subnet egress
+			// (traps, DNS) has no route here. Inbound administration from
+			// another subnet remains possible as long as the L2 return path
+			// exists — this is not "unreachable off-subnet". The collector still
+			// benefits from being in the right network.
 			Gateway: false,
 			DNS:     false,
 			// No L3 route off-subnet (same fact as Gateway=false). Inbound still
@@ -669,26 +674,27 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// in the right network rather than relying on a gateway that is not there.
 			Routed: false,
 			IPARP:  true,
-			// DEDUIT de la documentation MikroTik, pas observed : l'adresse de repli
-			// d'usine d'un device MikroTik est 192.168.88.1. Le mode « DHCP with
-			// fallback » de l'interface implique bien une adresse de repli, mais
-			// l'reference device etant en statique, aucune lecture ne la donne.
-			// A verify avant de s'en servir pour rattraper un device perdu.
+			// INFERRED from MikroTik documentation, not observed: the factory
+			// fallback address of a MikroTik device is 192.168.88.1. The UI's
+			// "DHCP with fallback" mode does imply a fallback address, but the
+			// reference device being static, no read gives it. To be verified
+			// before relying on it to recover a lost device.
 			DHCPFallback: "192.168.88.1",
-			// AUCUNE voie de secours hors bande, et c'est ESTABLISHED par enumeration, pas
-			// suppose : sur l'reference device, un seul port TCP repond — le 80.
-			// Ni 22, ni 23, et ce model n'a pas de connecteur serial.
+			// NO out-of-band recovery path, and that is ESTABLISHED by
+			// enumeration, not assumed: on the reference device, a single TCP
+			// port answers — 80. Neither 22 nor 23, and this model has no serial
+			// connector.
 			//
-			// La difference avec RouterOS est instructive et vaut d'be written ici,
-			// parce que les deux plateformes sortent du same constructeur : RouterOS
-			// garde MAC-winbox, i.e. une administration en couche 2 qui survit a
-			// n'importe quelle erreur d'adressage. SwOS n'a rien de tel — son interface
-			// web est son unique porte, et cette porte depend du VLAN declared dans
-			// `avln` (/sys.b). Se tromper there ferme the device pour de bon.
+			// The difference with RouterOS is instructive and worth writing down
+			// here, because both platforms come from the same vendor: RouterOS
+			// keeps MAC-winbox, i.e. layer-2 administration that survives any
+			// addressing mistake. SwOS has nothing of the kind — its web UI is
+			// its only door, and that door depends on the VLAN declared in
+			// `avln` (/sys.b). Getting it wrong locks the device out for good.
 			//
-			// Consequence, a lire avec [driver.CommitImmediate] juste au-dessus : ni
-			// filet de commit, ni voie de secours. Le SEUL retour arriere de cette
-			// plateforme est la copie de configuration prise avant writing
+			// Consequence, to be read with [driver.CommitImmediate] just above:
+			// no commit safety net, no recovery path. The ONLY way back on this
+			// platform is the configuration copy taken before writing
 			// ([driver.ApplyResult.Backup]).
 			OutOfBand: false,
 			// Same Digest POST channel as port apply / SNMP. Same-VLAN apply and
@@ -696,64 +702,65 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			// honest single-address leap (never MgmtMover).
 			ApplySameVLAN: true,
 			JumpVLAN:      true,
-			// L'ORDRE DES OPERATIONS. Ce model n'a PAS de serial port : chacune des
-			// lignes ci-dessous est une way documentee de se couper la main, et le
-			// seul recours serait un deplacement avec un trombone.
+			// THE ORDER OF OPERATIONS. This model has NO serial port: each of the
+			// lines below is a documented way to lock yourself out, and the only
+			// recourse would be a site visit with a paper clip.
 			Notes: []string{
 				"NO out-of-band console: no SSH, no Telnet, no serial port. On the " +
 					"reference device, a single TCP port answers — 80. A management " +
 					"addressing mistake is fixed on site, at the factory-reset button.",
 				"Create the VLAN in the table (/vlan.b) AND make the port that carries " +
-					"administration a member of it BEFORE selecting that VLAN in « Allow " +
-					"From VLAN » (/sys.b `avln`). The reverse order points administration " +
+					"administration a member of it BEFORE selecting that VLAN in \"Allow " +
+					"From VLAN\" (/sys.b `avln`). The reverse order points administration " +
 					"at a VLAN that never reaches the CPU.",
-				"« Allow From VLAN » accepts ONLY one VLAN, and there is no second " +
+				"\"Allow From VLAN\" accepts ONLY one VLAN, and there is no second " +
 					"management address: unlike Instant On, you cannot add the new path, " +
 					"verify it, then remove the old one. The cutover is a jump, which is " +
 					"why a configuration backup must be taken beforehand.",
 				"Three other /sys.b fields cut access just as surely: `allp` " +
-					"(« Allow From Ports », mask of ports allowed to administer), `alla` " +
-					"and `allm` (allowed subnet). They mean « allow everything » when zero " +
+					"(\"Allow From Ports\", mask of ports allowed to administer), `alla` " +
+					"and `allm` (allowed subnet). They mean \"allow everything\" when zero " +
 					"on the reference device; writing them without understanding them is " +
 					"the shortest path to a silent device.",
 				"The management port VLAN mode (/fwd.b `vlan`) must stay compatible " +
-					"with the management VLAN. Setting it to « strict » on a port that " +
+					"with the management VLAN. Setting it to \"strict\" on a port that " +
 					"is not a member of the management VLAN drops frames before they " +
 					"reach the CPU.",
 				"SwOS configuration is persistent IMMEDIATELY (see Commit): a power " +
 					"cut does not undo a failed cutover.",
-				"The address is little-endian in the page (`0x2400630a` = 10.99.0.36). " +
-					"Reversing it writes 36.0.99.10 while believing you wrote 10.99.0.36.",
+				"The address is little-endian in the page (`0x240200c0` = 192.0.2.36). " +
+					"Reversing it writes 36.2.0.192 while believing you wrote 192.0.2.36.",
 			},
 		},
-		// Le compte d'administration : il n'y en a qu'un, et il ne se nomme pas.
+		// The administration account: there is only one, and it has no name of
+		// its own.
 		Admin: driver.AdminAccount{
-			// PAS de compte named, et c'est un FAIT, pas une prudence.
+			// NO named account, and that is a FACT, not caution.
 			//
-			// SwOS n'a aucune notion de compte. Le formulaire de changement de mot de
-			// passe de son interface ne porte que trois champs — ancien, nouveau,
-			// confirmation ; la page qui le receives ne contient qu'une key, `{pwd:''}` ;
-			// et la sauvegarde de configuration ENTIRE de the device ne mentionne
-			// aucun nom d'utilisateur. Il n'y a litteralement rien a nommer.
+			// SwOS has no notion of an account. The password change form of its
+			// UI carries only three fields — old, new, confirmation; the page
+			// receiving it holds a single key, `{pwd:''}`; and the device's ENTIRE
+			// configuration backup mentions no user name. There is literally
+			// nothing to name.
 			//
-			// Consequence pour meshcraft : le nom unifie du parc ne peut PAS be applied
-			// ici. C'est important et non anecdotique — cela veut dire que access
-			// direct a un CSS ne sera jamais predictable de la same way que sur le
-			// reste du parc, et que la seule chose que le provisionnement peut y
-			// unifier est le SECRET.
+			// Consequence for meshcraft: the fleet's unified name CANNOT be
+			// applied here. That matters and is not anecdotal — it means direct
+			// access to a CSS will never be predictable in the same way as on the
+			// rest of the fleet, and the only thing provisioning can unify there
+			// is the SECRET.
 			Custom:    false,
 			FixedName: FixedAdminName,
-			// 0 se lit « inconnu » dans ce contrat, et c'est ici la valeur exacte :
-			// SwOS n'impose aucune longueur minimale, et accepte same un mot de passe
-			// VIDE — l'reference device en porte un, et c'est avec un secret
-			// vide que toutes les lectures de ce connecteur ont been validees. Le dire
-			// dans les notes rather que de laisser un 1 mentir.
+			// 0 reads as "unknown" in this contract, and here it is the exact
+			// value: SwOS imposes no minimum length, and even accepts an EMPTY
+			// password — the reference device carries one, and every read of this
+			// connector was validated with an empty secret. Saying so in the
+			// notes rather than letting a 1 lie.
 			PasswordMin: 0,
-			// 15 caracteres : la borne que l'interface de the device s'impose, pour
-			// l'ancien comme pour le nouveau secret (« Bad old password » au-dela de 15
-			// sur l'ancien, « New password is too long » sur le nouveau).
+			// 15 characters: the bound the device's UI imposes on itself, for the
+			// old secret as for the new one ("Bad old password" beyond 15 on the
+			// old one, "New password is too long" on the new one).
 			PasswordMax: maxPasswordLen,
-			// La ponctuation passe : la seule contrainte est l'ASCII (cf. Notes).
+			// Punctuation goes through: the only constraint is ASCII (cf. Notes).
 			AlphanumericOnly: false,
 			Notes: []string{
 				"An EMPTY password is accepted by SwOS, and that is the factory state: " +
@@ -780,30 +787,32 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 	}
 }
 
-// unavailableFor rend ce que la plateforme n'expose pas, selon que le model porte
-// du PoE ou non.
+// unavailableFor returns what the platform does not expose, depending on
+// whether the model carries PoE.
 //
-// Chaque ingress repond a « pourquoi n'ai-je pas cette courbe ? » en disant s'il y a
-// quelque chose a attendre — la seule chose que ces motifs apportent a un exploitant.
+// Each entry answers "why don't I have this curve?" by saying whether there
+// is anything to wait for — the only thing these reasons give an operator.
 //
-// LA CHARGE PROCESSEUR ET LA MEMORY Y SONT ENTREES avec the UI qui les affiche.
-// Elles were dites dans deux endroits que personne ne lit : une `Note` de canal de
-// supervision, et les phrases que `ReadTelemetry` joint a chaque snapshot. Or ce qui
-// atteint la fiche device est CETTE liste, et elle seule — le panneau de telemetry
-// affichait donc « le connecteur ne dit pas si la plateforme la publie » sur une absence
-// que le connecteur documente depuis sa first livraison. Un savoir qui n'arrive pas a
-// the UI where la question se pose n'existe pas.
+// CPU LOAD AND MEMORY WERE ADDED together with the UI that displays them.
+// They used to be stated in two places nobody reads: a monitoring channel
+// `Note`, and the sentences `ReadTelemetry` attaches to every snapshot. Yet
+// what reaches the device page is THIS list, and it alone — the telemetry
+// panel therefore displayed "the connector does not say whether the platform
+// publishes it" for an absence the connector had documented since its first
+// delivery. Knowledge that does not reach the UI where the question arises
+// does not exist.
 //
-// La granularite est celle de la QUESTION, pas celle du canal : `health` reste un canal
-// declared — cette plateforme sert bien une temperature — et ce sont les deux grandeurs
-// manquantes qui se nomment. Declare `health` indisponible ferait disparaitre la
-// temperature, qui est la seule mesure de fatigue disponible ici.
+// The granularity is that of the QUESTION, not of the channel: `health`
+// remains a declared channel — this platform does serve a temperature — and
+// it is the two missing quantities that are named. Declaring `health`
+// unavailable would make the temperature disappear, and it is the only
+// measure of wear available here.
 func unavailableFor(poe bool) []driver.MetricUnavailable {
 	var out = []driver.MetricUnavailable{
 		{
 			Metric:   "cpu",
 			Observed: true,
-			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (10.99.0.36): " +
+			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (192.0.2.36): " +
 				"none of the served pages (/sys.b, /link.b, /fwd.b, /vlan.b, /stats.b, " +
 				"/sfp.b, /rstp.b, /lacp.b, /snmp.b, /acl.b, /host.b, /dhost.b) carries a " +
 				"load field, and neither does the full configuration backup (/backup.swb). " +
@@ -813,7 +822,7 @@ func unavailableFor(poe bool) []driver.MetricUnavailable {
 		{
 			Metric:   "memory",
 			Observed: true,
-			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (10.99.0.36): " +
+			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (192.0.2.36): " +
 				"no memory field in the served pages or in /backup.swb, and the SNMP " +
 				"agent returns no value on hrStorage (1.3.6.1.2.1.25.2.3) — walk of " +
 				"29 July 2026.",
@@ -827,11 +836,11 @@ func unavailableFor(poe bool) []driver.MetricUnavailable {
 			// and not finding it in the configuration backup either, exhausts the
 			// question.
 			Observed: true,
-			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (10.99.0.36): " +
+			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (192.0.2.36): " +
 				"the entire web UI (index.html, 44,807 bytes, fully inline script) " +
 				"defines its tabs and every field — no LLDP occurrence outside PoE " +
 				"power negotiation on a port, no neighbor table, no discovery tab " +
-				"besides « Mikrotik Discovery Protocol » (/sys.b `pdsc`). The full " +
+				"besides \"Mikrotik Discovery Protocol\" (/sys.b `pdsc`). The full " +
 				"configuration backup (/backup.swb, 2,996 bytes, attached to the " +
 				"package) carries no LLDP field. Pages /lldp.b and /neighbor.b do not " +
 				"exist: they render the web UI, as every unknown path does on this " +
@@ -842,7 +851,7 @@ func unavailableFor(poe bool) []driver.MetricUnavailable {
 		out = append(out, driver.MetricUnavailable{
 			Metric:   "poe",
 			Observed: true,
-			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (10.99.0.36): " +
+			Source: "Observed on MikroTik CSS326-24G-2S+ running SwOS 2.17 (192.0.2.36): " +
 				"/sys.b returns `npoe:0x00`, `poe:0x00` and `poes:0x00`, and page /poe.b " +
 				"does not exist — it renders the web UI. The UI also gates its PoE tab " +
 				"on the presence of that hardware.",
@@ -851,16 +860,16 @@ func unavailableFor(poe bool) []driver.MetricUnavailable {
 	return out
 }
 
-// ResetProcedure de la gamme.
+// ResetProcedure of the range.
 //
-// `Confirmed` est FAUX, et il faut lire pourquoi : les deux halves de cette
-// procedure ne sont pas connues avec la same certitude, et le contrat n'a qu'un
-// booleen pour les deux. La voie logicielle est solidement established — elle est
-// observed dans le code de l'interface de the device lui-same. Le geste hardware,
-// lui, vient de la documentation MikroTik et n'a pas been exerce sur ce model. Comme
-// c'est precisely le geste qu'un operator tentera quand il aura perdu access,
-// i.e. au pire moment, le present  comme verified serait la faute que ce
-// champ existe pour empecher.
+// `Confirmed` is FALSE, and it is worth reading why: the two halves of this
+// procedure are not known with the same certainty, and the contract has only
+// one boolean for both. The software path is solidly established — it is
+// observed in the code of the device's own UI. The hardware gesture, for its
+// part, comes from MikroTik documentation and has not been exercised on this
+// model. Since it is precisely the gesture an operator will attempt once
+// access is lost, i.e. at the worst moment, presenting it as verified would be
+// the very mistake this field exists to prevent.
 func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 	return driver.ResetProcedure{
 		Hardware: "Front-panel Reset button. Cut power, hold the button, restore power " +
@@ -868,7 +877,7 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 			"then release: SwOS configuration returns to factory state. Releasing BEFORE " +
 			"the blink is only a normal boot and erases nothing. PROCEDURE UNVERIFIED on " +
 			"this model: it comes from vendor documentation, not a trial.",
-		Software: "Web UI, System tab, Backup section, « Reset Configuration » button " +
+		Software: "Web UI, System tab, Backup section, \"Reset Configuration\" button " +
 			"(confirmation required). The gesture is a POST to /reset, observed in the " +
 			"device UI code. Administrator access required, so unusable when access is " +
 			"exactly what was lost.",
@@ -880,7 +889,7 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 			"the SNMP community",
 		},
 		AfterReset: []string{
-			"user « admin », EMPTY password — observed on the reference device, which " +
+			"user \"admin\", EMPTY password — observed on the reference device, which " +
 				"carries that state",
 			"fallback address 192.168.88.1 (MikroTik documentation, NOT verified)",
 			"web UI on port 80, cleartext, no HTTPS",
@@ -891,7 +900,7 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 			"The hardware gesture requires cutting then restoring power while holding " +
 				"the button: it is not a simple long press on a powered-on device.",
 			"SwOS configuration is persistent immediately: unlike a platform that " +
-				"« apply then save », a power cut undoes no configuration mistake. Only " +
+				"\"apply then save\", a power cut undoes no configuration mistake. Only " +
 				"restoring a backup (/backup.swb) does.",
 			"On CRS chassis that can boot under RouterOS or SwOS, a factory reset is " +
 				"not an OS switch: verify which of the two answers before concluding the " +
@@ -900,7 +909,7 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 		// False: see the comment on this method.
 		Confirmed: false,
 		Source: "Software path: observed in the embedded UI JavaScript of a " +
-			"CSS326-24G-2S+ on SwOS 2.17 (« Reset Configuration » button → POST /reset). " +
+			"CSS326-24G-2S+ on SwOS 2.17 (\"Reset Configuration\" button → POST /reset). " +
 			"Hardware gesture and fallback address: MikroTik documentation, not " +
 			"exercised on this model.",
 	}

@@ -52,6 +52,15 @@ services:
       # Public controller URL: used in generated proxy docker-compose files and
       # in migration orders between instances.
       MESHCRAFT_EXTERNAL_URL: ${MESHCRAFT_EXTERNAL_URL:-}
+      # --- External drivers (MDP), all three required to enable the feature ---
+      # The drivers' SOCKS listener (bind, and the address driver containers
+      # dial — the compose network makes the controller reachable by name).
+      MESHCRAFT_DRIVER_SOCKS_LISTEN: ${MESHCRAFT_DRIVER_SOCKS_LISTEN:-}
+      MESHCRAFT_DRIVER_SOCKS_ADVERTISE: ${MESHCRAFT_DRIVER_SOCKS_ADVERTISE:-}
+      # The Docker socket the git→build→run pipeline uses. Mounting it (below)
+      # gives the CONTROLLER control of the operator host's Docker — that is
+      # the point, and it is why the whole feature is opt-in.
+      MESHCRAFT_DOCKER_SOCKET: ${MESHCRAFT_DOCKER_SOCKET:-}
       MESHCRAFT_ADMIN_EMAIL: ${MESHCRAFT_ADMIN_EMAIL:-admin@meshcraft.local}
       # Empty = password generated and printed once in the logs.
       MESHCRAFT_ADMIN_PASSWORD: ${MESHCRAFT_ADMIN_PASSWORD:-}

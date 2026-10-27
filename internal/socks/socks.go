@@ -323,30 +323,72 @@ func writeReply(conn net.Conn, code byte) error {
 // FIN in the other direction, and on a platform that only tolerates a handful of
 // sessions that costs the operator their access.
 func relay(client, upstream net.Conn) (int64, int64) {
-	var idle = newIdleGuard(client, upstream, maxIdle)
+	return relayWithIdle(client, upstream, maxIdle)
+}
+
+// relayWithIdle is relay with the idle bound made an argument.
+//
+// The bound exists for the client that VANISHES WITHOUT A FIN — a laptop that
+// sleeps, a Wi-Fi drop, a browser process killed — where neither io.Copy ever
+// returns and the tunnel stream behind `upstream` is held open indefinitely. On
+// a range that tolerates four concurrent sessions, a handful of those is the
+// operator's access. That case cannot be reproduced through the public entry
+// point without sitting out [maxIdle], so the bound is a parameter here and the
+// constant is applied by the one production caller above.
+func relayWithIdle(client, upstream net.Conn, limit time.Duration) (int64, int64) {
+	var idle = newIdleGuard(client, upstream, limit)
 	defer idle.stop()
 
 	type result struct{ n int64 }
 	var toUpstream = make(chan result, 1)
 	go func() {
 		var n, _ = io.Copy(upstream, idle.reader(client))
-		_ = closeWrite(upstream)
+		// THE HALF-CLOSE IS THE WHOLE LEAK. When it works, the device sees EOF
+		// and answers with its own, the copy below returns, and the deferred
+		// Close runs. When the upstream CANNOT half-close — every tunnel stream,
+		// because yamux's Stream has no CloseWrite — the device is never told
+		// anything, so a device sitting at a prompt never speaks first, the copy
+		// below blocks, and the stream lives until the idle guard fires half an
+		// hour later. MEASURED 2026-08-10 on unifimoule1: one leaked stream per
+		// SOCKS connection, reaped at ~29-30 min, and the client had hung up
+		// CLEANLY — so this is not the fin-less case the guard was built for.
+		//
+		// If the peer cannot be told, there is nothing to wait for: tearing the
+		// pair down is what the proxy side already does (its `pipe` returns on
+		// the FIRST direction to finish). This restores that symmetry for the
+		// connections that cannot signal, and leaves genuine half-close intact
+		// for the ones that can — a client that shuts down its write side and
+		// keeps reading is a real pattern, and closing on it would be a worse
+		// bug than the leak.
+		if !closeWrite(upstream) {
+			_ = client.Close()
+			_ = upstream.Close()
+		}
 		toUpstream <- result{n}
 	}()
 	var received, _ = io.Copy(client, idle.reader(upstream))
-	_ = closeWrite(client)
+	closeWrite(client)
 	var sent = <-toUpstream
 	return received, sent.n
 }
 
 // closeWrite half-closes when the connection supports it, so the peer sees EOF
-// instead of waiting. Tunnel streams do not, and that is not an error.
-func closeWrite(c net.Conn) error {
+// instead of waiting, and REPORTS WHETHER IT DID.
+//
+// The boolean is the point. This returned an error before, and the one thing
+// that could go wrong here does not surface as one: a connection that has no
+// CloseWrite at all took the nil-error path, indistinguishable from a
+// half-close that worked. Both callers discarded it with `_ =`, so the case the
+// comment had already identified — "tunnel streams do not" — was silently a
+// success, and the caller went on to wait for an EOF that could never arrive.
+// A false here means the peer WILL NOT be told; see the caller for what that
+// costs and what it now does about it.
+func closeWrite(c net.Conn) bool {
 	var cw, ok = c.(interface{ CloseWrite() error })
 	if !ok {
-		return nil
+		return false
 	}
-	return cw.CloseWrite()
+	return cw.CloseWrite() == nil
 }
 
 // idleGuard closes both connections when nothing has moved for the timeout.

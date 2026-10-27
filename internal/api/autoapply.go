@@ -16,7 +16,7 @@ import (
 // AUTOMATIC application of configuration to the device.
 //
 // OPERATIONAL DECISION that departs from the spec. The pipeline in
-// docs/01-Architecture/Reconciliation places explicit validation between plan and
+// docs/en/01-Architecture/Reconciliation.md places explicit validation between plan and
 // apply. Operations decided otherwise, for a simple reason: configuring forty-eight
 // ports in the UI IS the approval. Leaving configuration pending for a second gesture,
 // on a product whose promise is to administer the fleet, means asking twice for the
@@ -64,6 +64,28 @@ func (s *Server) applyingNow(deviceID string) bool {
 	s.Apply.mu.Lock()
 	defer s.Apply.mu.Unlock()
 	return s.Apply.busy[deviceID]
+}
+
+// applyQueuedOrRunning reports whether an automatic apply is running OR due
+// on this device — the `busy` map plus the debounce timers.
+//
+// Consulted by the PoE sampler before opening its own session, and the union
+// is deliberate: `busy` alone leaves the 6-second debounce window open, and a
+// sampler session started there would still be mid-read when the apply fires
+// — two sessions on a device that counts them. The caller SKIPS, never waits:
+// this queue is the device's serialization, and a second waiter beside it
+// would be a second serialization mechanism.
+func (s *Server) applyQueuedOrRunning(deviceID string) bool {
+	if s.Apply == nil {
+		return false
+	}
+	s.Apply.mu.Lock()
+	defer s.Apply.mu.Unlock()
+	if s.Apply.busy[deviceID] {
+		return true
+	}
+	var _, pending = s.Apply.pending[deviceID]
+	return pending
 }
 
 // schedule requests an apply for this device, after batching.
@@ -137,12 +159,12 @@ func (s *Server) autoApplyDevice(ctx context.Context, deviceID string) {
 				" — configuration stays pending, it can be re-applied manually.")
 		return
 	}
-	if len(res.Remaining) > 0 || len(res.Result.Skipped) > 0 {
+	if len(res.Remaining) > 0 || len(res.Result.AllNotApplied()) > 0 {
 		s.emitDeviceBG(d, "config.applied", model.SevNotice,
 			"Configuration applied on \""+d.Name+"\": "+itoa(len(res.Result.PortsWritten))+
 				" port(s), "+itoa(len(res.Result.VLANsCreated))+" VLAN(s) created, "+
-				itoa(len(res.Result.Skipped))+" skipped, "+itoa(len(res.Remaining))+
-				" drift(s) remaining.")
+				itoa(len(res.Result.AllNotApplied()))+" not applied, "+
+				itoa(len(res.Remaining))+" drift(s) remaining.")
 		return
 	}
 	s.emitDeviceBG(d, "config.applied", model.SevInfo,
@@ -197,6 +219,32 @@ type applyOutcome struct {
 	// These are PHRASES for an operator, not codes: we display them, draw no decision from them
 	// — a connector that wants a decision made must refuse itself.
 	Notes []string
+}
+
+// mergeSTPApply folds a spanning-tree apply result into the port apply outcome.
+//
+// STP refusals do NOT join Result.Skipped, and that distinction is the whole
+// point: Skipped is the FORCE-ABLE bucket — the management-port guardrail an
+// operator can deliberately lift — while [driver.SpanningTreePlan] carries no
+// Force at all. An STP refusal is a platform limit ("the MST InstanceEntry
+// shape has never been observed on this range") or a partial-apply fact, and
+// no button changes either.
+//
+// Merging them into Skipped made the screen count them as skipped PORTS: a
+// 1930 in MSTP showed "Configuration applied, but 1 port was skipped" on
+// EVERY apply, forever, with a Force button that could not clear it — and the
+// operator ended up forcing repeatedly, lifting the real management-port
+// guardrail for nothing. These phrases belong with the others force cannot
+// change: in notes (cf. rememberApply), where the MSTP region lines already
+// land.
+func mergeSTPApply(out *applyOutcome, stp driver.ApplyResult) {
+	out.Result.Notes = append(out.Result.Notes, stp.Skipped...)
+	out.Result.Notes = append(out.Result.Notes, stp.Notes...)
+	// Also on the outcome itself: when ApplyPorts failed, runApply returns
+	// before rebuilding out.Notes from Result.Notes, and rememberApply would
+	// otherwise lose what STP did say.
+	out.Notes = append(out.Notes, stp.Skipped...)
+	out.Notes = append(out.Notes, stp.Notes...)
 }
 
 // unsupportedNotes says what apply did NOT write because this connector cannot write it — not
@@ -302,6 +350,9 @@ func (s *Server) runApply(ctx context.Context, d model.Device,
 	}
 
 	var _, adm, _, err = s.adminFor(ctx, d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	out.Steps = transcriptOf(adm)
 	if err != nil {
 		return out, err
@@ -330,9 +381,80 @@ func (s *Server) runApply(ctx context.Context, d model.Device,
 			out.Notes = append(out.Notes, "spanning tree apply also failed: "+stpErr.Error())
 		}
 	} else {
-		out.Result.Skipped = append(out.Result.Skipped, stpRes.Skipped...)
-		out.Result.Notes = append(out.Result.Notes, stpRes.Notes...)
-		out.Notes = append(out.Notes, stpRes.Notes...)
+		mergeSTPApply(&out, stpRes)
+	}
+	if err != nil {
+		return out, err
+	}
+
+	// Storm control: the limiter a port profile DECLARED. Runs even when the
+	// writes above failed, same reasoning as spanning tree and PoE — and with one
+	// of its own: a storm limiter is the control that protects the switch from
+	// the loop a half-finished VLAN push can create, so it is the last thing that
+	// should be skipped because an earlier step went wrong.
+	//
+	// Silent when no profile declares one, which is every site today.
+	var stormRes, stormErr = s.applyDeviceStormControl(ctx, d, conn, adm)
+	out.Steps = adm.Transcript()
+	if stormErr != nil {
+		if err == nil {
+			err = stormErr
+		} else {
+			out.Notes = append(out.Notes, "storm control apply also failed: "+stormErr.Error())
+		}
+	} else {
+		out.Notes = append(out.Notes, stormRes.Notes...)
+		out.Result.Skipped = append(out.Result.Skipped, stormRes.Skipped...)
+		out.Result.NotApplied = append(out.Result.NotApplied, stormRes.NotApplied...)
+	}
+
+	// PoE: enable-only (cf. driver.PoEPortIntent). Runs even when the writes
+	// above failed, same reasoning as spanning tree — a VLAN or STP problem
+	// must not block turning power on for a port that asked for it.
+	var poeRes, poeErr = s.applyDevicePoE(ctx, d, conn, adm)
+	out.Steps = adm.Transcript()
+	if poeErr != nil {
+		if err == nil {
+			err = poeErr
+		} else {
+			out.Notes = append(out.Notes, "PoE apply also failed: "+poeErr.Error())
+		}
+	} else {
+		out.Result.Skipped = append(out.Result.Skipped, poeRes.Skipped...)
+		out.Result.NotApplied = append(out.Result.NotApplied, poeRes.NotApplied...)
+		out.Result.Notes = append(out.Result.Notes, poeRes.Notes...)
+		out.Notes = append(out.Notes, poeRes.Notes...)
+	}
+	if err != nil {
+		return out, err
+	}
+
+	// DHCP snooping: TRUST-only, and enable-only, for the same reason PoE is
+	// (cf. driver.PoEPortIntent and recon.RequestedExtras — only POSITIVE
+	// intents are ever reported). This path can therefore only ever TRUST a
+	// port, never untrust one, so an operator who untrusts a port by hand is
+	// never quietly re-trusted behind their back on the next pass.
+	//
+	// Runs even when the writes above failed, same reasoning as spanning tree
+	// and PoE: a VLAN problem must not block installing the protection a port
+	// asked for. The connector also turns the device-wide feature on as part of
+	// the gesture and says so in Notes — which is exactly why those Notes are
+	// merged out rather than dropped: enabling global snooping affects every
+	// port on the box, not just the ones named here, and an operator who did not
+	// ask for that must be able to read it afterwards.
+	var snoopRes, snoopErr = s.applyDeviceDHCPSnooping(ctx, d, conn, adm)
+	out.Steps = adm.Transcript()
+	if snoopErr != nil {
+		if err == nil {
+			err = snoopErr
+		} else {
+			out.Notes = append(out.Notes, "DHCP snooping apply also failed: "+snoopErr.Error())
+		}
+	} else {
+		out.Result.Skipped = append(out.Result.Skipped, snoopRes.Skipped...)
+		out.Result.NotApplied = append(out.Result.NotApplied, snoopRes.NotApplied...)
+		out.Result.Notes = append(out.Result.Notes, snoopRes.Notes...)
+		out.Notes = append(out.Notes, snoopRes.Notes...)
 	}
 	if err != nil {
 		return out, err
@@ -403,6 +525,7 @@ func (s *Server) rememberApply(ctx context.Context, deviceID string,
 		"ports_written": out.Result.PortsWritten,
 		"vlans_created": out.Result.VLANsCreated,
 		"skipped":       out.Result.Skipped,
+		"not_applied":   out.Result.NotApplied,
 		"unsupported":   out.Unsupported,
 		"remaining":     len(out.Remaining),
 		"backup_bytes":  len(out.Result.Backup),

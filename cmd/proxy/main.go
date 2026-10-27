@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"meshcraft/wire/agentv1"
 )
 
 // Injected at build time via -ldflags (see Dockerfile):
@@ -49,7 +51,7 @@ var (
 
 // protocolVersion: controller <-> proxy protocol compatibility. A build
 // timestamp cannot say what we refuse — that's the role of this integer
-// (see docs/01-Architecture/Protocole controleur-proxy).
+// (see docs/en/01-Architecture/Controller-proxy protocol.md).
 const protocolVersion = 1
 
 const stateDir = "/var/lib/meshcraft"
@@ -57,7 +59,7 @@ const stateDir = "/var/lib/meshcraft"
 // State is the proxy's local state: this file alone is enough to re-attach it.
 //
 // No site: a proxy is a network point of presence for the instance, it
-// belongs to no site (see docs/01-Architecture/Proxy).
+// belongs to no site (see docs/en/01-Architecture/Proxy.md).
 type State struct {
 	Controller string `json:"controller"`
 	ProxyID    string `json:"proxy_id"`
@@ -129,19 +131,17 @@ func postJSON(url string, in any, out any) (int, error) {
 	return resp.StatusCode, nil
 }
 
-type enrollReply struct {
-	Status        string `json:"status"`
-	ProxyID       string `json:"proxy_id"`
-	Secret        string `json:"secret"`
-	ControllerURL string `json:"controller_url"`
-	Error         string `json:"error"`
-}
-
 // enroll exchanges an enrollment token for a durable identity.
+//
+// The proxy stays on the legacy /api/proxy/* paths deliberately: a proxy in
+// the field may be pointed at a controller too old to serve /api/v1/agent/*,
+// and the aliases exist precisely so it never has to care. The BODIES are the
+// shared agentv1 types — that is what keeps the two ends from drifting; the
+// path is not.
 func enroll(controller, token, name string) (State, error) {
-	var out enrollReply
+	var out agentv1.EnrollResponse
 	var code, err = postJSON(controller+"/api/proxy/enroll",
-		map[string]string{"token": token, "name": name}, &out)
+		agentv1.EnrollRequest{Token: token, Name: name}, &out)
 	if err != nil {
 		return State{}, err
 	}
@@ -154,16 +154,6 @@ func enroll(controller, token, name string) (State, error) {
 		base = normalizeURL(out.ControllerURL)
 	}
 	return State{Controller: base, ProxyID: out.ProxyID, Secret: out.Secret}, nil
-}
-
-type heartbeatReply struct {
-	Status  string `json:"status"`
-	Migrate struct {
-		ControllerURL string `json:"controller_url"`
-		EnrollToken   string `json:"enroll_token"`
-	} `json:"migrate"`
-	Upgrade *upgradeOffer `json:"upgrade"`
-	Error   string        `json:"error"`
 }
 
 func main() {
@@ -225,18 +215,26 @@ func main() {
 	snmpCollector.SetEmitter(monitor.emit)
 	go snmpCollector.Run(context.Background())
 
+	// Streaming telemetry, for the devices the controller carries on gNMI rather
+	// than SNMP (cf. cmd/proxy/gnmi.go). It BORROWS the SNMP collector's buffer
+	// and its LLDP route rather than opening its own: the proxy has exactly one
+	// metric buffer, with one saturation counter, and a second producer with a
+	// second buffer would drop samples in a place its own saturation report never
+	// mentions.
+	gnmiCollector = NewGNMICollector(snmpCollector.buf, snmpCollector.pushLLDP)
+	gnmiCollector.SetEmitter(monitor.emit)
+
 	go runTunnel(st, version)
 
 	var fails int
 	for {
-		var out heartbeatReply
-		var body = map[string]any{
-			"proxy_id": st.ProxyID, "secret": st.Secret, "version": version,
-			"protocol": protocolVersion, "os": runtime.GOOS, "arch": goarch(),
-			"ifaces": localIfaces(),
-		}
-		if pendingReport != nil {
-			body["upgrade"] = pendingReport
+		var out agentv1.HeartbeatResponse
+		var ifaces, _ = json.Marshal(localIfaces())
+		var body = agentv1.HeartbeatRequest{
+			ProxyID: st.ProxyID, Secret: st.Secret, Version: version,
+			Protocol: protocolVersion, OS: runtime.GOOS, Arch: goarch(),
+			Ifaces:  ifaces,
+			Upgrade: pendingReport,
 		}
 		var code, err = postJSON(st.Controller+"/api/proxy/heartbeat", body, &out)
 		switch {
@@ -266,7 +264,7 @@ func main() {
 					}
 				}
 			}
-			if out.Status == "migrate" && out.Migrate.ControllerURL != "" {
+			if out.Status == "migrate" && out.Migrate != nil && out.Migrate.ControllerURL != "" {
 				var migrated, mErr = migrate(st, out.Migrate.ControllerURL, out.Migrate.EnrollToken, name)
 				if mErr != nil {
 					slog.Error("migration failed — staying on current instance",
@@ -299,8 +297,8 @@ func migrate(old State, targetURL, token, name string) (State, error) {
 	if err = saveState(st); err != nil {
 		return old, fmt.Errorf("new state not persisted: %w", err)
 	}
-	var code, ackErr = postJSON(old.Controller+"/api/proxy/migrated", map[string]string{
-		"proxy_id": old.ProxyID, "secret": old.Secret, "new_controller": st.Controller,
+	var code, ackErr = postJSON(old.Controller+"/api/proxy/migrated", agentv1.MigratedRequest{
+		ProxyID: old.ProxyID, Secret: old.Secret, NewController: st.Controller,
 	}, nil)
 	if ackErr != nil || code != http.StatusOK {
 		slog.Warn("old instance not notified (no consequence)",

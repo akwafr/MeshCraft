@@ -29,7 +29,7 @@ interface GigabitEthernet1/0/2
  switchport access vlan 10
 !
 interface GigabitEthernet1/0/24
- description Uplink coeur
+ description Uplink core
  switchport mode trunk
  switchport trunk native vlan 1
  switchport trunk allowed vlan 10,20,30-31
@@ -52,7 +52,7 @@ func TestParseIOS(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Dialect != "ios" {
-		t.Fatalf("dialecte %q", res.Dialect)
+		t.Fatalf("dialect %q", res.Dialect)
 	}
 	if res.Hostname != "sw-atelier-01" {
 		t.Fatalf("hostname %q", res.Hostname)
@@ -138,7 +138,7 @@ func TestParseIOS(t *testing.T) {
 
 const comwareConfig = `
 #
- sysname sw-regie
+ sysname sw-ops
 #
 vlan 100
  name Video
@@ -169,9 +169,9 @@ func TestParseComware(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Dialect != "comware" {
-		t.Fatalf("dialecte %q", res.Dialect)
+		t.Fatalf("dialect %q", res.Dialect)
 	}
-	if res.Hostname != "sw-regie" {
+	if res.Hostname != "sw-ops" {
 		t.Fatalf("hostname %q", res.Hostname)
 	}
 	var acc = res.Ports["GigabitEthernet0/0/1"]
@@ -271,12 +271,12 @@ interface vlan 1
  ip add dhcp
 !
 interface vlan 99
- ip add 10.99.0.240 255.255.0.0
+ ip add 192.0.2.240 255.255.0.0
 !
 interface craft
  ip add 192.168.1.1 255.255.255.0
 !
-ip route 0.0.0.0 0.0.0.0 10.99.0.1
+ip route 0.0.0.0 0.0.0.0 192.0.2.1
 !
 end
 `

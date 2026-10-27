@@ -1,0 +1,8 @@
+show snmp group
+groupname: mcliveg
+security model: v3 priv 
+read: default 
+write: <no writeview specified> 
+notify: <no notifyview specified> 
+
+poefs3400lab#

@@ -150,7 +150,7 @@ func paintSysMgmt(page *Page, want driver.MgmtAddrIntent, vlanID int, changeAvln
 		page.SetNum(FieldAddrMode, AddrStatic)
 		page.SetNum(FieldIP, enc)
 	case driver.MgmtAddrModeDHCP:
-		// DHCP only — not « with fallback »: the intent is DHCP from the site plan.
+		// DHCP only — not "with fallback": the intent is DHCP from the site plan.
 		page.SetNum(FieldAddrMode, AddrDHCPOnly)
 	default:
 		return fmt.Errorf("unsupported addressing mode %q (expected static or dhcp)", want.Mode)

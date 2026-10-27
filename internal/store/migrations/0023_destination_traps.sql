@@ -1,79 +1,79 @@
--- Destination de traps écrite dans l'équipement : ce qu'on a POSÉ, et ce qui
--- l'a PROUVÉ.
+-- Trap destination written into the device: what was SET, and what PROVED
+-- it.
 --
--- Le problème. Le canal de traps est complet partout sauf au dernier étage : le
--- proxy sait recevoir et filtrer, le contrôleur sait corréler, le connecteur
--- sait déclarer un destinataire (instanton.ApplyTrapReceiver), et le
--- rattachement de la migration 0022 fournit l'unicité sans laquelle « une
--- adresse » n'a pas de sens. Il manquait le geste qui les relie — écrire dans
--- chaque équipement l'adresse vers laquelle émettre — et donc aussi la trace de
--- ce geste. Sans trace, meshcraft ne saurait pas dire ce qu'il a écrit ni où :
--- la seule façon de le savoir serait de relire chaque équipement, c'est-à-dire
--- d'ouvrir une session web par switch pour répondre à une question d'inventaire.
+-- The problem. The trap channel is complete everywhere except at the last
+-- stage: the proxy can receive and filter, the controller can correlate, the
+-- connector can declare a recipient (instanton.ApplyTrapReceiver), and the
+-- attachment of migration 0022 provides the uniqueness without which "an
+-- address" has no meaning. What was missing was the gesture linking them —
+-- writing into each device the address to emit towards — and therefore also the
+-- trace of that gesture. Without a trace, meshcraft could not say what it wrote
+-- nor where: the only way to know would be to re-read every device, i.e. open a
+-- web session per switch to answer an inventory question.
 --
--- Ce que ces colonnes distinguent, et c'est TOUT leur objet : la PRÉTENTION et
--- la PREUVE.
+-- What these columns distinguish, and that is their WHOLE purpose: the CLAIM
+-- and the PROOF.
 --
---   * `trap_dest_addr` / `trap_dest_proxy_id` / `trap_dest_at` disent « nous
---     avons écrit cette adresse dans cet équipement, à cette date, et elle
---     appartenait à ce proxy ». C'est une prétention, même quand l'équipement a
---     répondu `statusCode 0` et que la relecture de vérification a confirmé la
---     ligne : elle prouve que l'équipement PORTE la configuration, pas que ses
---     traps arrivent. L'adresse vient de la question `AskSourceAddr` posée au
---     proxy collecteur — donc de sa table de routage — et reste une hypothèse
---     sur le chemin RETOUR. Un pare-feu, une route asymétrique, une ACL sur le
---     VLAN de management, et l'équipement émet dans le vide sans que rien ne
---     change dans sa configuration ni dans la nôtre ;
---   * `trap_seen_at` dit « un trap de cet équipement a été accepté ». Ça, ça ne
---     se discute pas : le paquet a traversé. C'est le seul fait qui transforme
---     « nous avons écrit une adresse » en « le chemin retour est établi ».
+--   * `trap_dest_addr` / `trap_dest_proxy_id` / `trap_dest_at` say "we wrote
+--     this address into this device, on this date, and it belonged to this
+--     proxy". That is a claim, even when the device answered `statusCode 0` and
+--     the verification read-back confirmed the line: it proves the device
+--     CARRIES the configuration, not that its traps arrive. The address comes
+--     from the `AskSourceAddr` question asked of the collector proxy — hence
+--     from its routing table — and remains a hypothesis about the RETURN path.
+--     A firewall, an asymmetric route, an ACL on the management VLAN, and the
+--     device emits into the void with nothing changing in its configuration or
+--     in ours;
+--   * `trap_seen_at` says "a trap from this device was accepted". That is not
+--     up for debate: the packet got through. It is the only fact that turns "we
+--     wrote an address" into "the return path is established".
 --
--- Deux colonnes de date et non un booléen d'état, précisément pour que les deux
--- ne puissent pas être confondues. Un unique drapeau « traps configurés »
--- laisserait croire à une supervision réactive dès la pose, alors que le cas le
--- plus coûteux du canal de traps est exactement celui-là : une flotte entière
--- déclarée configurée qui n'émet rien, et un exploitant qui attend une
--- réactivité qu'il n'a jamais eue. Les écrans doivent pouvoir afficher
--- « adresse écrite, jamais confirmée » — c'est l'état où l'on cherche un
--- pare-feu, et il n'existe pas si les deux notions partagent une colonne.
+-- Two date columns and not a state boolean, precisely so the two cannot be
+-- confused. A single "traps configured" flag would suggest reactive
+-- monitoring from the moment of setting, whereas the most expensive case of the
+-- trap channel is exactly that one: a whole fleet declared configured that
+-- emits nothing, and an operator waiting for a responsiveness they never had.
+-- Screens must be able to show "address written, never confirmed" — that is the
+-- state in which one looks for a firewall, and it does not exist if the two
+-- notions share a column.
 --
--- `trap_dest_proxy_id` est là pour une raison de fond et non pour l'affichage :
--- c'est lui qui rend la prétention RÉFUTABLE. Changer le collecteur d'un
--- équipement change l'adresse qu'il faut y écrire ; la destination enregistrée
--- devient alors fausse et la confirmation acquise ne vaut plus rien — elle
--- portait sur un autre chemin. Sans savoir de quel proxy l'adresse venait, on
--- ne saurait pas quand cesser de la croire. C'est `store.SetDeviceProxy` qui
--- applique la conséquence, dans le même `update` que le rattachement, pour
--- qu'aucun appelant ne puisse l'oublier.
+-- `trap_dest_proxy_id` is there for a substantive reason and not for display:
+-- it is what makes the claim REFUTABLE. Changing a device's collector changes
+-- the address that must be written into it; the recorded destination then
+-- becomes wrong and the acquired confirmation is worth nothing — it was about
+-- another path. Without knowing which proxy the address came from, we would not
+-- know when to stop believing it. `store.SetDeviceProxy` applies the
+-- consequence, in the same `update` as the attachment, so that no caller can
+-- forget it.
 --
--- `on delete set null` sur le proxy, comme en 0022 et pour la même raison :
--- retirer un boîtier ne doit rien effacer de l'inventaire. La nuance ici est
--- que `trap_dest_addr` SURVIT à ce `set null`, et c'est voulu — l'adresse est
--- toujours écrite dans l'équipement, physiquement, même si le proxy à qui elle
--- appartenait n'existe plus. Ce qu'on perd est la capacité de dire à qui elle
--- était, ce qui est précisément ce que la suppression du proxy détruit.
+-- `on delete set null` on the proxy, as in 0022 and for the same reason:
+-- removing a box must erase nothing from the inventory. The nuance here is that
+-- `trap_dest_addr` SURVIVES that `set null`, and that is intended — the address
+-- is still written into the device, physically, even if the proxy it belonged
+-- to no longer exists. What is lost is the ability to say whose it was, which
+-- is precisely what deleting the proxy destroys.
 --
--- PAS de colonne de port UDP, et il faut le dire pour qu'on ne prenne pas ça
--- pour un oubli : le port d'écoute des traps n'est pas un réglage par
--- équipement. Le contrôleur envoie `tunnel.DefaultTrapPort` (162) dans toute
--- configuration de surveillance où l'écoute est demandée, et c'est la même
--- constante que le connecteur pose. Une colonne toujours égale à 162 ne
--- porterait aucune information ; le jour où le port devient un choix, il devient
--- une colonne — et ce jour-là, la destination enregistrée devra le porter pour
--- rester réfutable, exactement comme le proxy aujourd'hui.
+-- NO UDP port column, and it must be said so nobody takes it for an oversight:
+-- the trap listening port is not a per-device setting. The controller sends
+-- `tunnel.DefaultTrapPort` (162) in every monitoring configuration where
+-- listening is requested, and it is the same constant the connector sets. A
+-- column always equal to 162 would carry no information; the day the port
+-- becomes a choice, it becomes a column — and on that day, the recorded
+-- destination will have to carry it to stay refutable, exactly like the proxy
+-- today.
 --
--- `null` partout, et c'est l'état de tout le parc existant : aucun équipement
--- n'a jamais reçu de destinataire de meshcraft. La migration est donc à
--- sémantique constante — `null` se lit « rien posé, rien prouvé », ce qui est
--- exact, et aucune supervision ne change tant que personne n'a posé.
+-- `null` everywhere, and that is the state of the whole existing fleet: no
+-- device has ever received a recipient from meshcraft. The migration's
+-- semantics are therefore constant — `null` reads "nothing set, nothing
+-- proven", which is accurate, and no monitoring changes until someone sets one.
 alter table devices
 	add column trap_dest_addr text,
 	add column trap_dest_proxy_id uuid references proxies(id) on delete set null,
 	add column trap_dest_at timestamptz,
 	add column trap_seen_at timestamptz;
 
--- L'index sert le sens de lecture « quels équipements pointent leurs traps vers
--- ce proxy ? », posée au retrait d'un proxy et sur son écran — le pendant exact
--- de `devices_proxy_idx` de la migration 0022. La confirmation d'un trap, elle,
--- part de l'identifiant d'équipement et n'en a pas besoin.
+-- The index serves the read direction "which devices point their traps at this
+-- proxy?", asked when a proxy is removed and on its screen — the exact
+-- counterpart of migration 0022's `devices_proxy_idx`. A trap confirmation
+-- starts from the device identifier and does not need it.
 create index devices_trap_dest_idx on devices (trap_dest_proxy_id);

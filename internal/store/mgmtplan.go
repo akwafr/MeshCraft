@@ -11,7 +11,7 @@ import (
 )
 
 // Site management addressing plan
-// (see docs/fr/01-Architecture/Adressage de management).
+// (see docs/en/01-Architecture/Management addressing.md).
 
 const mgmtPlanCols = `site_id::text, vlan_id, untagged,
 	subnet_v4, gateway_v4, subnet_v6, gateway_v6, dns, ntp,

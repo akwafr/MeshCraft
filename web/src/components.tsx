@@ -10,6 +10,9 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useDismissable } from "./ui/dismiss";
+import { usePicker } from "./ui/picker";
+import { Banner } from "./ui/Banner";
 import {
   ActionButton as ActionButtonBase,
   ActionIcon,
@@ -81,11 +84,22 @@ export function HelpTip({
   label,
   /** Aligns the bubble on the right edge of the button — for an icon at the end of a line. */
   align = "left",
+  /**
+   * The glyph on the button. "?" (default) announces an explanation; "i"
+   * announces a STATE the operator should know about (the port panel's
+   * "this setting overrides its profile" indicator). Same bubble, same
+   * gestures — only the promise on the button differs.
+   */
+  icon = "?",
+  /** Extra class on the button, for state-colored variants (e.g. warn tint). */
+  btnClassName,
 }: {
   children: ReactNode;
   /** What the help explains, told to the screen reader: "Help — tags". */
   label?: string;
   align?: "left" | "right";
+  icon?: ReactNode;
+  btnClassName?: string;
 }) {
   const { t } = useTranslation();
   const effectiveLabel = label ?? t("common.help");
@@ -160,7 +174,7 @@ export function HelpTip({
       <button
         ref={btnRef}
         type="button"
-        className={"helptip-btn" + (open ? " on" : "")}
+        className={"helptip-btn" + (open ? " on" : "") + (btnClassName ? " " + btnClassName : "")}
         aria-label={effectiveLabel}
         aria-expanded={open}
         aria-describedby={open ? id : undefined}
@@ -172,7 +186,7 @@ export function HelpTip({
           setOpen((v) => !v);
         }}
       >
-        ?
+        {icon}
       </button>
       {open && (
         <div
@@ -210,6 +224,13 @@ export function HelpTip({
  * On touch / no-hover devices, a click toggles the bubble (same Escape /
  * outside-click close as HelpTip) so the reason remains readable.
  *
+ * ALSO OPENS ON KEYBOARD FOCUS — `:focus-visible` on any control inside the
+ * wrapper, closing again when focus leaves. UI-GUIDE §3 ("keyboard
+ * equivalence is not optional"), and the precondition for a label that is
+ * only a tip: ADR-0019 took the mode selector's two words out of the view,
+ * so Tab has to be able to put them back. A mouse click is not keyboard
+ * focus and a form field is left alone — see the handler.
+ *
  * If `text` is empty / null / undefined, children render without a tip
  * (still wrapped when `className` is set, so layout classes apply).
  *
@@ -232,6 +253,10 @@ export function QuickTip({
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
+  // Whether the bubble that is open was opened by the KEYBOARD. Only then
+  // does losing focus close it — otherwise clicking a button inside a tip
+  // would shut the bubble while the pointer is still sitting on it.
+  const viaFocus = useRef(false);
   const id = useId();
 
   useEffect(() => {
@@ -245,10 +270,15 @@ export function QuickTip({
     const b = wrapRef.current?.getBoundingClientRect();
     if (!b) return;
     const margin = 8;
+    // A CEILING, not a width: the bubble shrinks to its text, so "Routing"
+    // gets a bubble the size of "Routing" and not a 320px slab. Clamping
+    // against the edge uses the measured width, so a short tip is not pushed
+    // left by room it does not take.
     const width = Math.min(320, window.innerWidth - 2 * margin);
+    const w = Math.min(bubbleRef.current?.offsetWidth ?? width, width);
     const h = bubbleRef.current?.offsetHeight ?? 0;
     let left = b.left;
-    left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+    left = Math.max(margin, Math.min(left, window.innerWidth - w - margin));
     const below = b.bottom + 6;
     const top = h > 0 && below + h > window.innerHeight - margin && b.top - h - 6 > margin
       ? b.top - h - 6
@@ -325,6 +355,37 @@ export function QuickTip({
         if (e.pointerType === "touch") return;
         hide();
       }}
+      // KEYBOARD EQUIVALENCE IS NOT OPTIONAL — UI-GUIDE §3, and the reason
+      // ADR-0019 can take a visible label away: a tip a pointer can read has
+      // to be readable by Tab, or the keyboard loses what the mouse gets.
+      //
+      // Capture, so the focus of any control INSIDE the wrapper counts (the
+      // wrapper itself is a div and never takes focus). Gated on
+      // `:focus-visible`, so a plain mouse click — which focuses too — does
+      // not open a second time over the hover that already handled it. And
+      // never for a field: a `<select>`'s description belongs to its label,
+      // and a bubble under an open option list is in the way.
+      onFocusCapture={(e) => {
+        const el = e.target as HTMLElement | null;
+        if (!el || typeof el.matches !== "function") return;
+        if (el.isContentEditable) return;
+        if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+        let keyboard = false;
+        try {
+          keyboard = el.matches(":focus-visible");
+        } catch {
+          /* :focus-visible is unknown to some test DOMs — then no tip, which
+             is the same thing that happened before this handler existed */
+        }
+        if (!keyboard) return;
+        viaFocus.current = true;
+        show();
+      }}
+      onBlurCapture={() => {
+        if (!viaFocus.current) return;
+        viaFocus.current = false;
+        hide();
+      }}
       onClick={(e) => {
         // Touch / coarse pointer: pin the bubble — hover never fires there.
         if (!window.matchMedia("(hover: hover)").matches) {
@@ -345,15 +406,15 @@ export function QuickTip({
           ref={bubbleRef}
           id={id}
           role="tooltip"
-          className="helptip-bubble"
+          className="helptip-bubble quicktip-bubble"
           style={
             pos
-              ? { top: pos.top, left: pos.left, width: pos.width, whiteSpace: "pre-line" }
+              ? { top: pos.top, left: pos.left, maxWidth: pos.width, whiteSpace: "pre-line" }
               : {
                   visibility: "hidden",
                   top: 0,
                   left: 0,
-                  width: Math.min(320, window.innerWidth - 16),
+                  maxWidth: Math.min(320, window.innerWidth - 16),
                   whiteSpace: "pre-line",
                 }
           }
@@ -397,6 +458,8 @@ export function Modal({
   title,
   onClose,
   help,
+  wide,
+  busy,
   children,
 }: {
   title: string;
@@ -407,12 +470,70 @@ export function Modal({
    * re-read on every opening.
    */
   help?: ReactNode;
+  /**
+   * A REPORT rather than a form. The 480 px default is sized for a column of
+   * labelled inputs; a modal that lists devices with a reason on each row wraps
+   * every sentence twice at that width, and the reasons are the content. Used
+   * by the fleet credential deployment screen and meant to stay rare — if a
+   * modal needs this AND scrolls, it wanted a page.
+   */
+  wide?: boolean;
+  /**
+   * A write in flight: Escape, backdrop and any dismissal are REFUSED until
+   * it lands. Closing a dialog mid-apply orphans the outcome the operator
+   * must read — the guard the port-action overlay carried alone for months.
+   */
+  busy?: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
+  const panelRef = useRef<HTMLDivElement>(null);
+  // The keyboard contract (UI-GUIDE §8.3), for every call site at once:
+  // Escape and drag-safe outside-mousedown through the dismissal stack…
+  useDismissable(true, onClose, { insideRef: panelRef, busy });
+  // …and focus: moved in on open, TRAPPED while open, restored on close.
+  useEffect(() => {
+    const before = document.activeElement;
+    const panel = panelRef.current;
+    if (panel) {
+      const first = panel.querySelector<HTMLElement>(
+        "[autofocus], input, select, textarea, button",
+      );
+      (first ?? panel).focus();
+    }
+    return () => {
+      if (before instanceof HTMLElement) before.focus();
+    };
+  }, []);
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        className={wide ? "modal modal-wide" : "modal"}
+        onKeyDown={(e) => {
+          if (e.key !== "Tab") return;
+          const panel = panelRef.current;
+          if (!panel) return;
+          const focusables = panel.querySelectorAll<HTMLElement>(
+            "a[href], button:not(:disabled), input:not(:disabled), " +
+              "select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
+          );
+          if (focusables.length === 0) return;
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
+      >
         <h2>
           {title}
           {help && <HelpTip label={t("common.helpFor", { title }) as string}>{help}</HelpTip>}
@@ -547,19 +668,7 @@ export function VlanCombo({
   onChange: (id: number) => void;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  // Close on outside click: without this the list stays open on the page.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   const known = vlans.find((v) => v.vlan_id === value);
   const label = known ? `${known.vlan_id} — ${known.name}` : String(value || "");
@@ -569,66 +678,88 @@ export function VlanCombo({
         (v) => String(v.vlan_id).includes(q) || v.name.toLowerCase().includes(q),
       )
     : vlans;
-  // A typed number that isn't in the list can still be proposed.
+  // A typed number that isn't in the list can still be proposed — as a real
+  // OPTION at the end of the list, so the arrows reach it like any other.
   const typed = Number(query.trim());
   const freeValue =
     Number.isInteger(typed) && typed >= 1 && typed <= 4094 &&
     !vlans.some((v) => v.vlan_id === typed)
       ? typed
       : null;
+  const entries = shown.map((v) => v.vlan_id);
+  if (freeValue !== null) entries.push(freeValue);
 
-  const pick = (id: number) => {
-    onChange(id);
-    setQuery("");
-    setOpen(false);
-  };
+  const picker = usePicker({
+    items: entries,
+    freeText: true,
+    onPick: (id) => {
+      onChange(id);
+      setQuery("");
+    },
+  });
 
   return (
-    <div className="vlan-combo" ref={boxRef}>
+    <div className="vlan-combo" ref={picker.boxRef}>
       <input
-        value={open ? query : label}
+        value={picker.open ? query : label}
         placeholder={t("common.searchVlanPlaceholder") as string}
         disabled={disabled}
         onFocus={() => {
-          setOpen(true);
           setQuery("");
+          picker.openAt();
         }}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          picker.setCursor(0);
+          picker.setOpen(true);
+        }}
         onKeyDown={(e) => {
+          picker.onKeyDown(e);
+          if (e.defaultPrevented) return;
+          // Enter with nothing under the cursor keeps its historical meaning:
+          // a single remaining match, or the free value, is accepted.
           if (e.key === "Enter") {
             e.preventDefault();
-            if (shown.length === 1) pick(shown[0].vlan_id);
-            else if (freeValue) pick(freeValue);
+            if (shown.length === 1) picker.pick(0);
+            else if (freeValue !== null) picker.pick(entries.length - 1);
           }
-          if (e.key === "Escape") setOpen(false);
         }}
       />
-      {open && (
-        <div className="vlan-combo-list">
-          {shown.map((v) => (
+      {picker.open && (
+        <div className="vlan-combo-list" role="listbox">
+          {shown.map((v, i) => (
             <button
               key={v.vlan_id}
               type="button"
-              className={v.vlan_id === value ? "sel" : ""}
-              onClick={() => pick(v.vlan_id)}
+              role="option"
+              aria-selected={v.vlan_id === value}
+              className={
+                (v.vlan_id === value ? "sel" : "") + (i === picker.cursor ? " cursor" : "")
+              }
+              onMouseEnter={() => picker.setCursor(i)}
+              onClick={() => picker.pick(i)}
             >
               <b>{v.vlan_id}</b> {v.name}
             </button>
           ))}
           {freeValue !== null && (
-            <button type="button" className="free" onClick={() => pick(freeValue)}>
+            <button
+              type="button"
+              role="option"
+              className={"free" + (picker.cursor === entries.length - 1 ? " cursor" : "")}
+              onMouseEnter={() => picker.setCursor(entries.length - 1)}
+              onClick={() => picker.pick(entries.length - 1)}
+            >
               <b>{freeValue}</b> — {t("common.notDeclaredOnSite")}
             </button>
           )}
           {shown.length === 0 && freeValue === null && (
-            <div className="note" style={{ padding: "8px 10px" }}>
-              {t("common.noVlanMatch")}
-            </div>
+            <div className="note empty">{t("common.noVlanMatch")}</div>
           )}
         </div>
       )}
       {!known && value > 0 && (
-        <div className="note" style={{ color: "var(--warn)" }}>
+        <div className="note warn-text">
           {t("common.vlanNotDeclared", { vlan: value })}
         </div>
       )}
@@ -638,7 +769,7 @@ export function VlanCombo({
 
 /**
  * Arbitration banner for a configuration drift.
- * See docs/01-Architecture/Reconciliation §6.
+ * See docs/en/01-Architecture/Reconciliation §6.
  *
  * Appears ONLY on a drift — the device was modified outside of meshcraft. A
  * meshcraft change not yet applied (blue) calls for no decision: it will
@@ -666,49 +797,48 @@ export function DriftBanner({
   const { t } = useTranslation();
   const shown = changes.slice(0, 6);
   return (
-    <div className="drift-banner">
-      <div className="drift-text">
-        <div className="drift-title">
-          {t("banners.driftTitle", { count: changes.length })}
-        </div>
-        <div className="note">{t("banners.driftNote")}</div>
-        <ul>
-          {shown.map((c, i) => (
-            <li key={i}>
-              port.{c.port}.{c.field} : {c.desired} → {c.observed}
-            </li>
-          ))}
-          {changes.length > shown.length && (
-            <li>{t("banners.andMore", { count: changes.length - shown.length })}</li>
-          )}
-        </ul>
-      </div>
-      <div className="row" style={{ gap: 8 }}>
-        <ActionButton
-          kind="apply"
-          className="secondary"
-          disabled={busy || !!forceDisabledReason}
-          title={forceDisabledReason ?? (t("banners.forceConfigTitle") as string)}
-          onClick={onForce}
-        >
-          {t("banners.forceConfig")}
-        </ActionButton>
-        <ActionButton
-          kind="import"
-          disabled={busy}
-          title={t("banners.importFromDeviceFullTitle") as string}
-          onClick={onImport}
-        >
-          {t("banners.importFromDevice")}
-        </ActionButton>
-      </div>
-    </div>
+    <Banner
+      tone="act"
+      title={t("banners.driftTitle", { count: changes.length })}
+      note={t("banners.driftNote")}
+      items={[
+        ...shown.map((c) => (
+          <>
+            port.{c.port}.{c.field} : {c.desired} → {c.observed}
+          </>
+        )),
+        ...(changes.length > shown.length
+          ? [t("banners.andMore", { count: changes.length - shown.length })]
+          : []),
+      ]}
+      actions={
+        <>
+          <ActionButton
+            kind="apply"
+            className="secondary"
+            disabled={busy || !!forceDisabledReason}
+            title={forceDisabledReason ?? (t("banners.forceConfigTitle") as string)}
+            onClick={onForce}
+          >
+            {t("banners.forceConfig")}
+          </ActionButton>
+          <ActionButton
+            kind="import"
+            disabled={busy}
+            title={t("banners.importFromDeviceFullTitle") as string}
+            onClick={onImport}
+          >
+            {t("banners.importFromDevice")}
+          </ActionButton>
+        </>
+      }
+    />
   );
 }
 
 /**
  * A tag placed on a device, with its PROVENANCE
- * (see docs/01-Architecture/Tags and identifier scope §2.1).
+ * (see docs/en/01-Architecture/Tags and credential scope §2.1).
  *
  * `source` is `manual`, `rule:<uuid>`, or one of the TECHNICAL sources the
  * controller reserves for itself (`snmp`, `pwpolicy`). The controller keeps
@@ -874,20 +1004,7 @@ export function TagInput({
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(false);
-  const [cursor, setCursor] = useState(0);
-  const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Close on outside click, otherwise the list stays posted on the page.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
 
   const wanted = normalizeTag(draft);
   const has = (tg: string) => tags.some((x) => x.tag === tg);
@@ -901,12 +1018,18 @@ export function TagInput({
     .slice(0, 8);
   const exact = wanted !== "" && !has(wanted) && !isReservedTagName(wanted);
 
+  const picker = usePicker({
+    items: shown,
+    freeText: true,
+    onPick: (tg) => commit(tg),
+  });
+
   const commit = (tag: string) => {
     const t = normalizeTag(tag);
     if (t === "" || has(t)) return;
     onAdd(t);
     setDraft("");
-    setOpen(false);
+    picker.setOpen(false);
     inputRef.current?.focus();
   };
 
@@ -922,7 +1045,7 @@ export function TagInput({
   }
 
   return (
-    <div className="tag-combo" ref={boxRef}>
+    <div className="tag-combo" ref={picker.boxRef}>
       <div
         className="tag-input"
         // Clicking anywhere in the frame gives focus to the input: the field
@@ -936,16 +1059,21 @@ export function TagInput({
           ref={inputRef}
           value={draft}
           placeholder={tags.length === 0 ? (placeholder ?? (t("devices.addTagPlaceholder") as string)) : ""}
-          onFocus={() => setOpen(true)}
+          onFocus={() => picker.openAt()}
           onChange={(e) => {
             setDraft(e.target.value);
-            setCursor(0);
-            setOpen(true);
+            picker.setCursor(0);
+            picker.setOpen(true);
           }}
           onKeyDown={(e) => {
+            picker.onKeyDown(e);
+            if (e.defaultPrevented) return;
+            // Enter with nothing under the cursor commits the DRAFT — the
+            // create-the-typed-tag half of the field (↑ past the top of the
+            // list deliberately parks the cursor there).
             if (e.key === "Enter") {
               e.preventDefault();
-              commit(shown[cursor] ?? draft);
+              commit(draft);
               return;
             }
             // Backspace on empty input: remove the last token, as any token
@@ -959,29 +1087,20 @@ export function TagInput({
                 e.preventDefault();
                 onRemove(last);
               }
-              return;
             }
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              setOpen(true);
-              setCursor((c) => Math.min(c + 1, Math.max(shown.length - 1, 0)));
-            }
-            if (e.key === "ArrowUp") {
-              e.preventDefault();
-              setCursor((c) => Math.max(c - 1, 0));
-            }
-            if (e.key === "Escape") setOpen(false);
           }}
         />
       </div>
 
-      {open && (shown.length > 0 || exact) && (
-        <div className="vlan-combo-list">
+      {picker.open && (shown.length > 0 || exact) && (
+        <div className="vlan-combo-list" role="listbox">
           {shown.map((tg, i) => (
             <button
               key={tg}
               type="button"
-              className={i === cursor ? "sel" : ""}
+              role="option"
+              className={i === picker.cursor ? "sel" : ""}
+              onMouseEnter={() => picker.setCursor(i)}
               // mousedown rather than click: the field's blur would close the
               // list before the click completes.
               onMouseDown={(e) => {
@@ -1070,21 +1189,19 @@ export function SkippedBanner({
   const [armed, setArmed] = useState<"" | "force" | "cancel">("");
   if (skipped.length === 0) return null;
   return (
-    <div className="drift-banner">
-      <div className="drift-text">
-        <div className="drift-title">
+    <Banner
+      tone="act"
+      title={
+        <>
           {device ? t("banners.deviceQuoted", { device }) + " — " : ""}
           {t("banners.skippedTitle", { count: skipped.length })}
-        </div>
-        <div className="note">{t("banners.skippedNote")}</div>
-        <ul>
-          {skipped.map((s, i) => (
-            <li key={i}>{s}</li>
-          ))}
-        </ul>
-      </div>
-      {(onForce || onCancel) && (
-        <div className="row" style={{ gap: 8 }}>
+        </>
+      }
+      note={t("banners.skippedNote")}
+      items={skipped}
+      actions={
+        (onForce || onCancel) && (
+        <>
           {armed === "" && onForce && (
             <ActionButton kind="confirm" className="secondary" onClick={() => setArmed("force")}>
               {t("banners.forceAnyway")}
@@ -1120,9 +1237,10 @@ export function SkippedBanner({
               </ActionButton>
             </>
           )}
-        </div>
-      )}
-    </div>
+        </>
+        )
+      }
+    />
   );
 }
 
@@ -1141,10 +1259,6 @@ export function PillPicker({
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState(false);
-  // hi = -1: no suggestion selected, so the Enter key validates the typed
-  // text. The arrows alone move to a suggestion.
-  const [hi, setHi] = useState(-1);
 
   // The deferred `blur` runs OUTSIDE the render that scheduled it: it can't
   // trust captured variables. Two reasons, and both bite.
@@ -1177,13 +1291,33 @@ export function PillPicker({
     setDraft(v);
   };
 
+  // The cursor opens at -1: no suggestion selected, so the Enter key
+  // validates the typed text. The arrows alone move to a suggestion.
+  const picker = usePicker({
+    items: matches,
+    freeText: true,
+    initialCursor: -1,
+    onPick: (o) => commit(o),
+    // Escape abandons the draft; a click elsewhere, or Tab away, means
+    // "moving on" and commits it. The blur timer below keeps covering the
+    // focus loss that is neither — no mousedown, no new focus target.
+    onDismiss: (reason) => {
+      if (reason === "outside") {
+        commit(draftRef.current);
+      } else {
+        window.clearTimeout(blurTimer.current);
+        updateDraft("");
+      }
+    },
+  });
+
   const commit = (v: string) => {
     // An explicit validation always takes priority over a pending `blur`.
     window.clearTimeout(blurTimer.current);
     const clean = v.trim();
     updateDraft("");
-    setOpen(false);
-    setHi(-1);
+    picker.setOpen(false);
+    picker.setCursor(-1);
     if (clean && clean !== valueRef.current) onChange(clean);
   };
 
@@ -1222,18 +1356,18 @@ export function PillPicker({
   }
 
   return (
-    <span style={{ position: "relative", display: "inline-block", minWidth: 0 }}>
+    <div className="pill-anchor" ref={picker.boxRef}>
       <input
         value={draft}
         disabled={disabled}
         placeholder={placeholder}
-        style={{ minHeight: 28, fontSize: 12 }}
+        className="pill-input"
         onChange={(e) => {
           updateDraft(e.target.value);
-          setOpen(true);
-          setHi(-1);
+          picker.setCursor(-1);
+          picker.setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => picker.openAt()}
         // `blur` remains a safety net — someone typing then clicking
         // elsewhere clearly meant to submit — but it's no longer the ONLY
         // path. Delayed, otherwise it would fire before a suggestion click.
@@ -1245,36 +1379,24 @@ export function PillPicker({
           );
         }}
         onKeyDown={(e) => {
+          picker.onKeyDown(e);
+          if (e.defaultPrevented) return;
+          // Enter with no suggestion under the cursor validates the draft.
           if (e.key === "Enter") {
             e.preventDefault();
-            commit(hi >= 0 && matches[hi] ? matches[hi] : draft);
-            return;
-          }
-          if (e.key === "Escape") {
-            window.clearTimeout(blurTimer.current);
-            updateDraft("");
-            setOpen(false);
-            return;
-          }
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setOpen(true);
-            setHi((i) => Math.min(i + 1, matches.length - 1));
-            return;
-          }
-          if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setHi((i) => Math.max(i - 1, -1));
+            commit(draft);
           }
         }}
       />
-      {open && matches.length > 0 && (
-        <div className="pill-suggest">
+      {picker.open && matches.length > 0 && (
+        <div className="pill-suggest" role="listbox">
           {matches.map((o, i) => (
             <button
               key={o}
               type="button"
-              className={i === hi ? "on" : undefined}
+              role="option"
+              className={i === picker.cursor ? "on" : undefined}
+              onMouseEnter={() => picker.setCursor(i)}
               // `onMouseDown` rather than `onClick`: the click arrives after
               // `blur`, which would already have closed the list.
               onMouseDown={(e) => {
@@ -1287,7 +1409,7 @@ export function PillPicker({
           ))}
         </div>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -1317,43 +1439,42 @@ export function IncompleteApplyBanner({
   const { t } = useTranslation();
   const shown = changes.slice(0, 6);
   return (
-    <div className="drift-banner">
-      <div className="drift-text">
-        <div className="drift-title">
-          {t("banners.incompleteTitle", { count: changes.length })}
-        </div>
-        <div className="note">{t("banners.incompleteNote")}</div>
-        <ul>
-          {shown.map((c, i) => (
-            <li key={i}>
-              port.{c.port}.{c.field} : {c.desired} → {c.observed}
-            </li>
-          ))}
-          {changes.length > shown.length && (
-            <li>{t("banners.andMore", { count: changes.length - shown.length })}</li>
-          )}
-        </ul>
-      </div>
-      <div className="row" style={{ gap: 8 }}>
-        <ActionButton
-          kind="refresh"
-          className="secondary"
-          disabled={busy}
-          title={t("banners.forceConfigTitle") as string}
-          onClick={onRetry}
-        >
-          {t("banners.reapplyConfig")}
-        </ActionButton>
-        <ActionButton
-          kind="import"
-          disabled={busy}
-          title={t("banners.importFromDeviceTitle") as string}
-          onClick={onImport}
-        >
-          {t("banners.importFromDevice")}
-        </ActionButton>
-      </div>
-    </div>
+    <Banner
+      tone="act"
+      title={t("banners.incompleteTitle", { count: changes.length })}
+      note={t("banners.incompleteNote")}
+      items={[
+        ...shown.map((c) => (
+          <>
+            port.{c.port}.{c.field} : {c.desired} → {c.observed}
+          </>
+        )),
+        ...(changes.length > shown.length
+          ? [t("banners.andMore", { count: changes.length - shown.length })]
+          : []),
+      ]}
+      actions={
+        <>
+          <ActionButton
+            kind="refresh"
+            className="secondary"
+            disabled={busy}
+            title={t("banners.forceConfigTitle") as string}
+            onClick={onRetry}
+          >
+            {t("banners.reapplyConfig")}
+          </ActionButton>
+          <ActionButton
+            kind="import"
+            disabled={busy}
+            title={t("banners.importFromDeviceTitle") as string}
+            onClick={onImport}
+          >
+            {t("banners.importFromDevice")}
+          </ActionButton>
+        </>
+      }
+    />
   );
 }
 
@@ -1385,34 +1506,33 @@ export function FailedApplyBanner({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="drift-banner">
-      <div className="drift-text">
-        <div className="drift-title">{t("banners.failedTitle")}</div>
-        <div className="note">{t("banners.failedNote")}</div>
-        <ul>
-          <li>{error}</li>
-        </ul>
-      </div>
-      <div className="row" style={{ gap: 8 }}>
-        <ActionButton
-          kind="refresh"
-          className="secondary"
-          disabled={busy}
-          title={t("banners.retryApplyTitle") as string}
-          onClick={onRetry}
-        >
-          {t("banners.retryApply")}
-        </ActionButton>
-        <ActionButton
-          kind="import"
-          disabled={busy}
-          title={t("banners.abandonAndImportTitle") as string}
-          onClick={onImport}
-        >
-          {t("banners.abandonAndImport")}
-        </ActionButton>
-      </div>
-    </div>
+    <Banner
+      tone="act"
+      title={t("banners.failedTitle")}
+      note={t("banners.failedNote")}
+      items={[error]}
+      actions={
+        <>
+          <ActionButton
+            kind="refresh"
+            className="secondary"
+            disabled={busy}
+            title={t("banners.retryApplyTitle") as string}
+            onClick={onRetry}
+          >
+            {t("banners.retryApply")}
+          </ActionButton>
+          <ActionButton
+            kind="import"
+            disabled={busy}
+            title={t("banners.abandonAndImportTitle") as string}
+            onClick={onImport}
+          >
+            {t("banners.abandonAndImport")}
+          </ActionButton>
+        </>
+      }
+    />
   );
 }
 
@@ -1433,23 +1553,36 @@ export function FailedApplyBanner({
  * unsupported intent gets implemented. Offering a button that would change
  * nothing would be worse than offering none.
  */
+/**
+ * What no force will change: the platform lacks the knob, or the device itself
+ * declined the write on the verifying re-read. Deliberately has NO force
+ * button — that is the entire difference with SkippedBanner, whose entries an
+ * operator can lift. Offering force here would be the "button that leads
+ * nowhere" the capability model exists to prevent.
+ */
+export function RefusedBanner({ notes }: { notes: string[] }) {
+  const { t } = useTranslation();
+  if (notes.length === 0) return null;
+  return (
+    <Banner
+      tone="info"
+      title={t("banners.refusedTitle", { count: notes.length })}
+      note={t("banners.refusedNote")}
+      items={notes}
+    />
+  );
+}
+
 export function UnsupportedBanner({ notes }: { notes: string[] }) {
   const { t } = useTranslation();
   if (notes.length === 0) return null;
   return (
-    <div className="info-banner">
-      <div className="drift-text">
-        <div className="info-title">
-          {t("banners.unsupportedTitle", { count: notes.length })}
-        </div>
-        <div className="note">{t("banners.unsupportedNote")}</div>
-        <ul>
-          {notes.map((n, i) => (
-            <li key={i}>{n}</li>
-          ))}
-        </ul>
-      </div>
-    </div>
+    <Banner
+      tone="info"
+      title={t("banners.unsupportedTitle", { count: notes.length })}
+      note={t("banners.unsupportedNote")}
+      items={notes}
+    />
   );
 }
 
@@ -1477,6 +1610,29 @@ export function UnsupportedBanner({ notes }: { notes: string[] }) {
  * REREADING, counted compliant, and have no effect at all. This is the only
  * place where that can still be said — after this, there's only the field.
  *
+ * # WHAT A NOTE IS NOT, because this panel filled up with both
+ *
+ * The scarce thing here is the operator's attention, and the panel spends it on
+ * whatever a connector appends. Two kinds of sentence were spending it for
+ * nothing, and the Instant On spanning-tree path produced three of them in a row
+ * on a nominal apply:
+ *
+ *   - an ECHO of the request — "SpanningTreeGlobalParam enabled=1
+ *     STPOperationMode=3", "MSTP region name="site-exec" revision=1".
+ *     Built from the plan's own fields, so it observes nothing, and already
+ *     recorded as a step by the write itself. Two copies of the request, none of
+ *     the device;
+ *   - a NON-EVENT — "MST instance 1 already maps 10-11,42,60,98-100 — nothing
+ *     written". The device agreed with the plan, which is the nominal outcome of
+ *     every idempotent apply. Presenting it as something to read is what teaches
+ *     an operator to skim the panel, and the lines worth reading are in it.
+ *
+ * The rule the connectors now follow: a note earns its place by carrying a fact
+ * the step transcript cannot — what the device WAS carrying, or that a written
+ * configuration is inert. "MST instance 1 VLANs set to 10-11,42,60,98-100
+ * (device had 42,98-100)" qualifies, and says the device was in a different MST
+ * region than the plan. "Nothing to do" does not.
+ *
  * INFORMATIVE tone and not a warning, like the banner above: there's no
  * button to offer. None of these sentences are fixed by "forcing" — neither
  * enabling `vlan-filtering` on a bridge, nor waking up a VLAN mode a guard
@@ -1485,25 +1641,59 @@ export function UnsupportedBanner({ notes }: { notes: string[] }) {
  * as-is: the screen draws no decision from them, exactly like the API layer
  * draws none.
  */
-export function ConnectorNotesBanner({ notes }: { notes: string[] }) {
+export function ConnectorNotesBanner({
+  notes,
+  /**
+   * The device is UNREACHABLE. These sentences describe what the connector
+   * read at the last apply, on hardware nobody can reach now — so they are
+   * folded rather than dropped.
+   *
+   * Dropped would be the easy call and the wrong one: on an unreachable
+   * device this is the last thing known about it, and "VLAN filtering is off
+   * on the bridge" is exactly the kind of sentence someone reads while
+   * working out why it went dark. But left open it occupies the top of a
+   * screen whose only news is that the device is gone — above the banner
+   * that says so.
+   *
+   * Folded, the summary keeps the count and adds that the reading is old:
+   * a fold that does not name what it hides is indistinguishable from a
+   * banner that silently stopped rendering.
+   */
+  collapsed,
+}: {
+  notes: string[];
+  collapsed?: boolean;
+}) {
   const { t } = useTranslation();
   const shown = notes.filter(
     (n) => !n.startsWith("Administration observed at "),
   );
   if (shown.length === 0) return null;
-  return (
-    <div className="info-banner">
-      <div className="drift-text">
-        <div className="info-title">
-          {t("banners.connectorNotesTitle", { count: shown.length })}
+  const title = t("banners.connectorNotesTitle", { count: shown.length });
+  if (collapsed) {
+    return (
+      <details className="info-banner connector-notes-fold">
+        <summary className="connector-notes-sum">
+          <span className="info-title">{title}</span>
+          <span className="note">{t("banners.connectorNotesStale")}</span>
+        </summary>
+        <div className="drift-text">
+          <div className="note">{t("banners.connectorNotesNote")}</div>
+          <ul>
+            {shown.map((n, i) => (
+              <li key={i}>{n}</li>
+            ))}
+          </ul>
         </div>
-        <div className="note">{t("banners.connectorNotesNote")}</div>
-        <ul>
-          {shown.map((n, i) => (
-            <li key={i}>{n}</li>
-          ))}
-        </ul>
-      </div>
-    </div>
+      </details>
+    );
+  }
+  return (
+    <Banner
+      tone="info"
+      title={title}
+      note={t("banners.connectorNotesNote")}
+      items={shown}
+    />
   );
 }

@@ -1,0 +1,10 @@
+show version
+Fiberstore Co., Limited Internetwork Operating System Software
+S3400-48T4SP Software, Version 2.0.2J Build 130907, RELEASE SOFTWARE
+Copyright (c) 2021 by FS.COM All Rights Reserved
+Compiled: 2024-8-23 by SYS, Image text-base: 0x80010000
+Serial num:CG2111195644N00004, ID num:20065044023
+FS S3400-48T4SP
+262144K bytes of memory,16384K bytes of flash
+Base ethernet MAC Address: 64:9d:99:29:f7:06
+Switch#

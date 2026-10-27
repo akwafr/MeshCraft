@@ -22,12 +22,12 @@ import (
 // (testdata/ip_address.json):
 //
 //	192.168.88.1/24 on bridge, comment defconf, dynamic false
-//	10.99.0.54/24   on vlan99,                  dynamic false
+//	192.0.2.54/24   on vlan99,                  dynamic false
 //
 // This CRS326 is therefore on a STATIC address, in the site's management subnet, on a
 // site whose plan says 'external DHCP'. Same finding as on both CSS326 units, and the
 // case that motivated per-device addressing mode
-// (cf. docs/01-Architecture/Adressage de management, migration 0027).
+// (cf. docs/en/01-Architecture/Management addressing.md, migration 0027).
 //
 // # WHAT IS OBSERVED AND WHAT IS NOT
 //
@@ -182,7 +182,7 @@ func dnsServers(dns []Row) []string {
 }
 
 // appendSplit adds comma-separated list elements, deduplicated and skipping empties.
-// RouterOS serves these fields as one string ('10.99.0.1,1.1.1.1').
+// RouterOS serves these fields as one string ('192.0.2.1,1.1.1.1').
 func appendSplit(out []string, csv string) []string {
 	if csv == "" {
 		return out

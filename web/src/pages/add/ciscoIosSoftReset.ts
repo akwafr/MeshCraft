@@ -22,7 +22,7 @@
  *   (reboot)                 → "…initial configuration dialog? [yes/no]:" → no
  *                            → "Press RETURN to get started!"          → CR
  *
- * The « no » to Save? is the one that matters: its default writes the running
+ * The "no" to Save? is the one that matters: its default writes the running
  * configuration back over the NVRAM that was just erased, and the reset then
  * silently does nothing.
  *
@@ -33,6 +33,7 @@
  */
 
 import type { SerialSession } from "./serialExpect";
+import { hostnameFromDeviceName } from "./hostname.ts";
 
 export type SoftResetLog = (msg: string) => void;
 
@@ -50,7 +51,7 @@ export type CiscoIosSoftResetInput = {
   mgmtIp: string;
   mgmtMask: string;
   gateway?: string;
-  /** « vlan 99 » (default « vlan 1 ») — the SVI that carries management. */
+  /** "vlan 99" (default "vlan 1") — the SVI that carries management. */
   mgmtIface?: string;
   /**
    * Every VLAN the SITE declares, created on the device during provisioning.
@@ -62,7 +63,12 @@ export type CiscoIosSoftResetInput = {
    * apply has nothing to discover.
    */
   siteVlans?: { id: number; name?: string }[];
-  /** Needed before « crypto key generate rsa », or SSH stays impossible. */
+  /**
+   * Needed before "crypto key generate rsa", or SSH stays impossible.
+   *
+   * The SITE's domain (`model.Site.LocalDomain`, served as `local_domain`).
+   * Optional: see [resolveDomainName] for what an absent one falls back to.
+   */
   domainName?: string;
   hostname?: string;
   signal?: AbortSignal;
@@ -76,7 +82,7 @@ const PROMPT_USER = />\s*$/m;
 const CONFIRM = /\[confirm\]/i;
 /** "Delete filename [vlan.dat]?" — a bare CR keeps the proposed name. */
 const FILENAME_PROMPT = /delete\s+filename\s*\[[^\]]*\]\s*\?/i;
-/** "System configuration has been modified. Save? [yes/no]:" — answer « no ». */
+/** "System configuration has been modified. Save? [yes/no]:" — answer "no". */
 const SAVE_YESNO = /save\s*\?\s*\[yes\/no\]\s*:/i;
 /** The setup dialog after a reset. It swallows every command typed at it. */
 const SETUP_DIALOG = /initial\s+configuration\s+dialog\s*\?\s*\[yes\/no\]\s*:/i;
@@ -115,7 +121,7 @@ function clipTail(text: string, n: number): string {
   return text.slice(-n).replace(/\s+/g, " ").trim();
 }
 
-/** Expand the short form « Gi1/0/28 » into the full name IOS prints back. */
+/** Expand the short form "Gi1/0/28" into the full name IOS prints back. */
 export function fullIfName(short: string): string {
   var m = /^([A-Za-z]+)([\d/]+)$/.exec(short.trim());
   if (!m) return short.trim();
@@ -129,7 +135,7 @@ export function fullIfName(short: string): string {
 }
 
 /**
- * Ports whose link is up, from « show interfaces status ».
+ * Ports whose link is up, from "show interfaces status".
  *
  * The Status word is the pivot and not the column position: the Name column is
  * free text that may contain spaces, so splitting on whitespace from the left
@@ -154,9 +160,9 @@ export function parseUpPorts(status: string): string[] {
 }
 
 /**
- * EVERY faceplate port, linked or not, from « show interfaces status ».
+ * EVERY faceplate port, linked or not, from "show interfaces status".
  *
- * Distinct from [parseUpPorts], which keeps only « connected »: that one answers
+ * Distinct from [parseUpPorts], which keeps only "connected": that one answers
  * "where is the uplink", this one answers "what does this switch have". A blanket
  * port policy has to cover the ports nothing is plugged into yet — those are
  * precisely the ones someone will patch tomorrow, when nobody is watching a
@@ -179,7 +185,7 @@ export function parseAllPorts(status: string): string[] {
 }
 
 /**
- * Group ports into « interface range » expressions, one per media family.
+ * Group ports into "interface range" expressions, one per media family.
  *
  * NOT a micro-optimisation. This console runs at 9600 8N1, and every command in
  * [runConfigCmds] waits for its prompt before the next is sent. A 48-port switch
@@ -188,7 +194,7 @@ export function parseAllPorts(status: string): string[] {
  * unconfigured. As ranges it is two commands per media family.
  *
  * One command per family rather than one comma-separated command for all: IOS
- * caps « interface range » at five ranges, and a stack with mixed media plus
+ * caps "interface range" at five ranges, and a stack with mixed media plus
  * non-contiguous numbering can exceed that. Splitting by family keeps each
  * command a single contiguous run in the overwhelming majority of cases, and
  * degrades into several runs rather than a refusal in the rest.
@@ -258,7 +264,7 @@ const UNSUPPORTED_TRANSCEIVER_LOG =
 
 /**
  * Ports the SWITCH shut by itself, with the reason, from
- * « show interfaces status err-disabled ».
+ * "show interfaces status err-disabled".
  *
  *   Port      Name               Status       Reason               Err-disabled Vlans
  *   Gi1/0/25                     err-disabled gbic-invalid
@@ -281,7 +287,7 @@ export function parseErrDisabled(status: string): { port: string; reason: string
   return out;
 }
 
-/** Turn a dotted mask (or « /nn ») into the dotted mask IOS requires. */
+/** Turn a dotted mask (or "/nn") into the dotted mask IOS requires. */
 export function toDottedMask(mask: string): string {
   var trimmed = mask.trim();
   if (/^\d+\.\d+\.\d+\.\d+$/.test(trimmed)) return trimmed;
@@ -299,7 +305,29 @@ export function toDottedMask(mask: string): string {
 }
 
 /**
- * Collect a show command's output, feeding the pager when « --More-- » shows
+ * The domain `ip domain-name` will carry, resolved from the site's own.
+ *
+ * IOS refuses "crypto key generate rsa" with no domain set, so this script
+ * cannot simply omit the line the way `aristaEosSoftReset` does — something
+ * has to be sent, and until 2026-08-09 nothing was ever passed in, so what
+ * was sent was always [DEFAULT_DOMAIN]. Every console-provisioned Catalyst
+ * landed in a domain no site had declared, and the name does not stay local:
+ * it becomes the key's subject and rides the LLDP system-name TLV, where
+ * `cisco/ios/hostname.go` has recorded it arriving.
+ *
+ * The site's `local_domain` is optional, so the fallback stays. What changes
+ * is that it is now a fallback rather than the only outcome. Mirrors
+ * `MgmtOpts.DomainName` / `DefaultDomainName` in `internal/driver/cisco/ios`,
+ * deliberately — the two provisioning paths must not name one switch two
+ * different things.
+ */
+export const DEFAULT_DOMAIN = "meshcraft.local";
+export function resolveDomainName(domain?: string): string {
+  return (domain ?? "").trim() || DEFAULT_DOMAIN;
+}
+
+/**
+ * Collect a show command's output, feeding the pager when "--More--" shows
  * up: Web Serial cannot claim a tall terminal, so output that fits a PuTTY
  * window may still paginate here and swallow every later command.
  */
@@ -375,13 +403,13 @@ async function expectReplyOrLogin(
 }
 
 /**
- * Reach the privileged « # » prompt.
+ * Reach the privileged "#" prompt.
  *
- * A factory Catalyst asks for NOTHING: the console lands on « Switch> » and
- * « enable » gives « Switch# » with no password. A configured one may ask for
+ * A factory Catalyst asks for NOTHING: the console lands on "Switch>" and
+ * "enable" gives "Switch#" with no password. A configured one may ask for
  * a username, a password, or both. All four shapes are handled, and the
- * decision is made on the LAST marker seen — a stale « Password: » earlier in
- * the buffer must not make us type the password into a fresh « Username: ».
+ * decision is made on the LAST marker seen — a stale "Password:" earlier in
+ * the buffer must not make us type the password into a fresh "Username:".
  */
 async function ensurePrivileged(
   session: SerialSession,
@@ -558,9 +586,9 @@ async function reloginAny(
 /**
  * Soft factory reset.
  *
- * « write erase » alone leaves flash:vlan.dat behind, so every VLAN survives
+ * "write erase" alone leaves flash:vlan.dat behind, so every VLAN survives
  * the reset — which is exactly the surprise that makes an operator think the
- * reset failed. Both are done, and the reload is answered « no » so the
+ * reset failed. Both are done, and the reload is answered "no" so the
  * running configuration is not written back over the NVRAM we just cleared.
  */
 async function factoryReset(session: SerialSession, log: SoftResetLog, signal?: AbortSignal) {
@@ -575,7 +603,7 @@ async function factoryReset(session: SerialSession, log: SoftResetLog, signal?: 
     await session.sendRaw("\r");
     log("write erase: confirmed");
   } else if (r1.kind === "error") {
-    log(`write erase: CLI error « ${r1.match} » — continuing`);
+    log(`write erase: CLI error "${r1.match}" — continuing`);
   }
   await session.sleep(1500);
 
@@ -608,7 +636,7 @@ async function factoryReset(session: SerialSession, log: SoftResetLog, signal?: 
 }
 
 /**
- * « reload », answering « no » to the save question.
+ * "reload", answering "no" to the save question.
  *
  * THE prompt of this whole procedure. Its default is yes, and yes writes the
  * running configuration — which still holds everything — back into the NVRAM
@@ -628,7 +656,7 @@ async function reloadAndDeclineSave(session: SerialSession, log: SoftResetLog) {
       return;
     }
     if (hit.index === 0) {
-      log("reload: « Save? » → no (yes would re-save the configuration just erased)");
+      log("reload: \"Save?\" → no (yes would re-save the configuration just erased)");
       session.mark();
       await session.send("no");
       continue;
@@ -639,7 +667,7 @@ async function reloadAndDeclineSave(session: SerialSession, log: SoftResetLog) {
       await session.sendRaw("\r");
       return;
     }
-    log(`reload: CLI error « ${hit.match} » — continuing`);
+    log(`reload: CLI error "${hit.match}" — continuing`);
     return;
   }
 }
@@ -651,7 +679,7 @@ async function waitLoginAfterReboot(
   signal?: AbortSignal,
 ): Promise<void> {
   aborted(signal);
-  // Drop ALL pre-reboot text: a stale « # » would make us declare the switch
+  // Drop ALL pre-reboot text: a stale "#" would make us declare the switch
   // back and push configuration while the boot loader is still running.
   session.mark();
   log("reload confirmed — waiting for the switch to come back (a Catalyst takes ~2 min)…");
@@ -729,7 +757,7 @@ async function waitLoginAfterReboot(
  * Run configuration commands one at a time, VERIFYING the console after each.
  * Confirmations are answered, refusals are logged with the tail that says
  * which word the caret rejected, and a fallback to login triggers re-login +
- * « configure terminal » + a retry of the same command.
+ * "configure terminal" + a retry of the same command.
  */
 export async function runConfigCmds(
   session: SerialSession,
@@ -757,9 +785,9 @@ export async function runConfigCmds(
     if (reply.kind === "login") {
       relogins++;
       if (relogins > 3) {
-        throw new Error(`console session lost repeatedly (last at « ${label} »)`);
+        throw new Error(`console session lost repeatedly (last at "${label}")`);
       }
-      log(`console fell back to login at « ${label} » — re-login and retry…`);
+      log(`console fell back to login at "${label}" — re-login and retry…`);
       await reloginAny(session, logins, log, signal);
       await enterConfig();
       continue;
@@ -780,7 +808,7 @@ export async function runConfigCmds(
       await expectReply(session, c.timeoutMs ?? 180000);
     } else if (reply.kind === "error") {
       log(
-        `${label}: CLI error « ${reply.match} » — continuing (${clipTail(session.getSinceMark(), 160)})`,
+        `${label}: CLI error "${reply.match}" — continuing (${clipTail(session.getSinceMark(), 160)})`,
       );
     } else if (reply.kind === "prompt") {
       log(`${label}: ok`);
@@ -799,7 +827,7 @@ export async function runConfigCmds(
 }
 
 /**
- * « write memory », answering whatever it asks.
+ * "write memory", answering whatever it asks.
  *
  * A failed save throws: a management configuration that does not survive a
  * reboot is worse than a refused one, because the operator believes it is in
@@ -823,7 +851,7 @@ export async function saveConfig(
         20000,
       );
     } catch {
-      throw new Error("save: no [OK] and no prompt after « write memory »");
+      throw new Error("save: no [OK] and no prompt after \"write memory\"");
     }
     // expectAny reports the RIGHTMOST pattern, and the prompt is always last
     // on the line — "[OK]\r\nswitch#" would be read as "prompt, no [OK]". So
@@ -831,7 +859,7 @@ export async function saveConfig(
     var seen = session.getSinceMark();
     var refusal = seen.match(CLI_ERROR);
     if (refusal) {
-      throw new Error(`save failed: « ${refusal[0].trim()} »`);
+      throw new Error(`save failed: "${refusal[0].trim()}"`);
     }
     if (SAVE_OK.test(seen)) {
       sawOK = true;
@@ -863,7 +891,7 @@ export async function saveConfig(
   throw new Error("save: timed out waiting for the NVRAM write result");
 }
 
-function parseVlanId(iface: string): number | null {
+export function parseVlanId(iface: string): number | null {
   var m = iface.match(/^vlan\s*(\d+)$/i);
   if (!m) return null;
   var n = Number(m[1]);
@@ -971,7 +999,7 @@ async function explainNoUplink(session: SerialSession, log: SoftResetLog): Promi
   if (UNSUPPORTED_TRANSCEIVER_LOG.test(session.getCapture())) {
     log(
       "the console reported an UNSUPPORTED TRANSCEIVER: this switch refused an optic it " +
-        "does not read as Cisco-coded. « service unsupported-transceiver » was applied and " +
+        "does not read as Cisco-coded. \"service unsupported-transceiver\" was applied and " +
         "the cage bounced — if the port is still down, the optic may also be failing to " +
         "train, or the far end is down",
     );
@@ -1035,8 +1063,29 @@ async function pushManagement(
 
   var cmds: { cmd: string; label?: string; timeoutMs?: number }[] = [];
 
+  // The system name, through the ONE shared normalizer (./hostname.ts), which
+  // mirrors internal/driver/hostname.go — the same function the reconciliation
+  // loop uses. What stood here was `.replace(/[^A-Za-z0-9_-]/g, "-")`: it kept
+  // the `_` the reconciled path can never emit, so a name normalized here and the
+  // same name normalized by the healer disagreed permanently, and it substituted
+  // silently, so "Switch étage 1" went onto the console banner as
+  // `Switch-tage-1` with nothing to trace the deleted letter back to.
+  //
+  // A REFUSAL IS REPORTED AND THE REST OF THE PUSH CONTINUES. Aborting the run
+  // over a system name would leave a factory-reset switch with no management
+  // address at all; the honest outcome is a reachable switch still carrying its
+  // factory name, with the reason on screen. This mirrors MgmtPushCmds, which
+  // returns that reason as its error alongside the commands.
   if (opts.hostname?.trim()) {
-    cmds.push({ cmd: `hostname ${opts.hostname.trim().replace(/[^A-Za-z0-9_-]/g, "-")}` });
+    var verdict = hostnameFromDeviceName(opts.hostname);
+    if (verdict.hostname) {
+      cmds.push({ cmd: `hostname ${verdict.hostname}` });
+    } else {
+      log(
+        `the system name was NOT written — ${verdict.reason}. The switch keeps the ` +
+          `name it has; nothing else in this push is affected`,
+      );
+    }
   }
 
   // 1. The VLAN before the SVI, or the SVI never comes up.
@@ -1052,7 +1101,7 @@ async function pushManagement(
   cmds.push({ cmd: "exit", label: `exit interface vlan ${vlanId}` });
 
   if (opts.gateway?.trim()) {
-    // An L2 Catalyst has no routing table: « ip route » would be refused.
+    // An L2 Catalyst has no routing table: "ip route" would be refused.
     cmds.push({ cmd: `ip default-gateway ${opts.gateway.trim()}` });
   }
 
@@ -1098,11 +1147,23 @@ async function pushManagement(
       cmd: `username ${targetUser} privilege 15 secret 0 ${opts.newPassword}`,
       label: `username ${targetUser} privilege 15 secret 0 •••`,
     });
-    cmds.push({
-      cmd: `enable secret 0 ${opts.newPassword}`,
-      label: "enable secret 0 •••",
-    });
   }
+
+  // NO ENABLE PASSWORD — the fleet's universal rule, mirroring
+  // internal/driver/cisco/ios NoEnableCmds(). APPLIED rather than merely omitted:
+  // not writing it would leave the rule true on a factory Catalyst and false on
+  // every switch that already carried one. Both forms go, because IOS has two and
+  // a device can carry either — `enable secret` (hashed) and the older
+  // `enable password` (type 7, trivially reversible).
+  //
+  // THE IOS-SPECIFIC HAZARD, which the Arista equivalent does not have: with no
+  // enable password set, IOS REFUSES "enable" from a VTY ("% No password set")
+  // while the CONSOLE still lets it through. So on a Catalyst this makes the
+  // `privilege 15` written just above the only path to a privileged SSH session.
+  // That is why these lines come LAST, in the same block, after the account
+  // exists — at no point is the device left without a privileged way in.
+  cmds.push({ cmd: "no enable secret" });
+  cmds.push({ cmd: "no enable password" });
 
   log("pushing management configuration (each command verified)…");
   await runConfigCmds(session, log, opts.logins, cmds, opts.signal);
@@ -1172,7 +1233,7 @@ export async function runCiscoIosSoftReset(input: CiscoIosSoftResetInput): Promi
   var session = input.session;
   var log = input.log;
   var iface = (input.mgmtIface || "vlan 1").trim() || "vlan 1";
-  var domainName = (input.domainName || "meshcraft.local").trim() || "meshcraft.local";
+  var domainName = resolveDomainName(input.domainName);
 
   if (!input.mgmtIp.trim() || !input.mgmtMask.trim()) {
     throw new Error("management IP and mask are required");
@@ -1186,9 +1247,9 @@ export async function runCiscoIosSoftReset(input: CiscoIosSoftResetInput): Promi
   // and the probe would then fail for a reason nothing on screen explains.
   if (parseVlanId(iface) === null) {
     throw new Error(
-      `management interface « ${iface} » is not a VLAN: on a Catalyst the address ` +
-        `goes on an SVI, so this must read « vlan N » (there is no Craft port and no ` +
-        `« management ip address » command on this platform)`,
+      `management interface "${iface}" is not a VLAN: on a Catalyst the address ` +
+        `goes on an SVI, so this must read "vlan N" (there is no Craft port and no ` +
+        `"management ip address" command on this platform)`,
     );
   }
 
@@ -1213,7 +1274,7 @@ export async function runCiscoIosSoftReset(input: CiscoIosSoftResetInput): Promi
   ];
   var seen: Record<string, boolean> = {};
   initialLogins = initialLogins.filter((l) => {
-    var key = `${l.user} ${l.pass}`;
+    var key = `${l.user}\0${l.pass}`;
     if (seen[key]) return false;
     seen[key] = true;
     return true;
@@ -1228,9 +1289,63 @@ export async function runCiscoIosSoftReset(input: CiscoIosSoftResetInput): Promi
 
   await factoryReset(session, log, input.signal);
 
+  await provisionFactoryCatalyst({
+    session,
+    log,
+    iface,
+    domainName,
+    currentUser: user,
+    currentPassword: pass,
+    enablePassword: enablePass,
+    targetUser,
+    targetPassword: input.targetPassword,
+    mgmtIp: input.mgmtIp.trim(),
+    mgmtMask: input.mgmtMask.trim(),
+    gateway: input.gateway,
+    hostname: input.hostname,
+    signal: input.signal,
+  });
+}
+
+/**
+ * Everything that happens AFTER a Catalyst boots factory-fresh — shared by
+ * the soft reset (write erase + reload) and the assisted HARDWARE reset
+ * (boot-loader wipe): wait out the boot, log in on the virgin console, push
+ * management, verify on serial. One implementation, or the two reset paths
+ * would drift apart at the first prompt change.
+ */
+export type FactoryProvisionInput = {
+  session: SerialSession;
+  log: SoftResetLog;
+  /** Validated "vlan N" spelling (cf. runCiscoIosSoftReset's guard). */
+  iface: string;
+  /** Already resolved via [resolveDomainName]. */
+  domainName: string;
+  currentUser?: string;
+  currentPassword?: string;
+  enablePassword?: string;
+  targetUser: string;
+  targetPassword: string;
+  mgmtIp: string;
+  mgmtMask: string;
+  gateway?: string;
+  hostname?: string;
+  signal?: AbortSignal;
+};
+
+export async function provisionFactoryCatalyst(input: FactoryProvisionInput): Promise<void> {
+  var session = input.session;
+  var log = input.log;
+  var iface = input.iface;
+  var domainName = input.domainName;
+  var targetUser = input.targetUser;
+  var user = input.currentUser || "";
+  var pass = input.currentPassword ?? "";
+  var enablePass = input.enablePassword ?? "";
+
   await waitLoginAfterReboot(session, log, 360000, input.signal);
 
-  // Fresh buffer for the factory console — never inherit a pre-reboot « # ».
+  // Fresh buffer for the factory console — never inherit a pre-reboot "#".
   session.clearCapture();
 
   log("factory console login (a reset Catalyst asks for nothing)…");

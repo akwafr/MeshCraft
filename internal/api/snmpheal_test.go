@@ -54,7 +54,7 @@ func TestFaceplateEmpty(t *testing.T) {
 	}{
 		{``, true}, {`null`, true}, {`[]`, true}, {`{}`, true},
 		{`[{"prefix":"ethernet 1/","count":24}]`, false},
-		{`not json`, false}, // illisible mais non vide : ne pas écraser
+		{`not json`, false}, // unreadable but not empty: do not overwrite
 	}
 	var c struct {
 		in   string

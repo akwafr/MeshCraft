@@ -8,14 +8,14 @@ import (
 )
 
 // The SECOND secret phrase: who may carry one, and under what conditions
-// (cf. migration 0017 and docs/03-Security/SNMP Identity).
+// (cf. migration 0017 and docs/en/03-Security/SNMP identity.md).
 //
 // What is locked here is invisible on any screen, which is why it is tested.
 // SNMPv3 configured with the same phrase on both sides authenticates, "encrypts",
-// and reports normally: nothing distinguishes it from has correct v3 setup. What is
+// and reports normally: nothing distinguishes it from a correct v3 setup. What is
 // missing is invisible — RFC 3414 derives both keys by the same algorithm from
 // the phrase and engineID, so the same phrase yields an encryption key that is
-// the prefix of the authentication key. Because has v3 identity is shared across has
+// the prefix of the authentication key. Because a v3 identity is shared across has
 // whole crypto family, one compromised device would expose the entire family's
 // monitoring in the clear.
 
@@ -27,9 +27,9 @@ type secret2Case struct {
 	rejected bool
 }
 
-func TestDeuxPhrasesSeulementPourV3(t *testing.T) {
+func TestTwoPhrasesOnlyForV3(t *testing.T) {
 	var cas = []secret2Case{
-		// Single-phrase kinds. Accepting has second would create has secret nothing
+		// Single-phrase kinds. Accepting a second would create a secret nothing
 		// consumes: never pushed, never rotated, yet displayed.
 		{
 			name: "admin with second phrase: rejected",
@@ -84,7 +84,7 @@ func TestDeuxPhrasesSeulementPourV3(t *testing.T) {
 // Refusal must SAY why. A bare 400 in front of two password fields makes the
 // operator retry identically — and the temptation, facing two fields they do not
 // understand, is exactly to put the same value in both.
-func TestLeRefusDeDeuxPhrasesIdentiquesSExplique(t *testing.T) {
+func TestRefusingTwoIdenticalPhrasesExplainsItself(t *testing.T) {
 	var err = checkCredSecrets(snmpprov.KindV3, "identical", "identical")
 	if err == nil {
 		t.Fatal("identical phrases accepted")
@@ -99,10 +99,10 @@ func TestLeRefusDeDeuxPhrasesIdentiquesSExplique(t *testing.T) {
 }
 
 // Automatic generation must yield TWO distinct phrases. That is the only path by
-// which has v3 identity appears in practice: if generation duplicated the same
+// which a v3 identity appears in practice: if generation duplicated the same
 // value, input validation would protect nothing — nobody types these by hand.
-func TestEngendrementDeDeuxPhrasesDistinctes(t *testing.T) {
-	// Multiple draws: has lucky equality would be invisible on one try, and has
+func TestGenerationOfTwoDistinctPhrases(t *testing.T) {
+	// Multiple draws: a lucky equality would be invisible on one try, and has
 	// constant generator would slip through.
 	var i int
 	for i = 0; i < 32; i++ {
@@ -120,8 +120,8 @@ func TestEngendrementDeDeuxPhrasesDistinctes(t *testing.T) {
 }
 
 // Vault note must say there are TWO phrases. That is where an operator reads what
-// the row is for; "the same password serves both" would now be has lie.
-func TestLaNoteV3AnnonceDeuxPhrases(t *testing.T) {
+// the row is for; "the same password serves both" would now be a lie.
+func TestTheV3NoteAnnouncesTwoPhrases(t *testing.T) {
 	var plan = snmpprov.For(snmpCaps([]string{"v3"},
 		[]string{"sha256"}, []string{"aes128"}), snmpprov.DefaultPolicy())
 	var c, ok = snmpCredentialFor(testSite, plan)

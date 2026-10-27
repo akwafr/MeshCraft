@@ -19,7 +19,7 @@ export type ProbeUntilOpts = {
   signal?: AbortSignal;
   /** Prefer login_ok; if false, reachable alone is enough. Default true. */
   requireLogin?: boolean;
-  /** Awaited before each attempt — « pause provisioning » hooks in here. */
+  /** Awaited before each attempt — "pause provisioning" hooks in here. */
   gate?: () => Promise<void>;
 };
 

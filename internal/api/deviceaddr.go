@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -14,7 +15,7 @@ import (
 
 // Per-DEVICE management addressing mode: DHCP or static, with its three fields
 // (address, gateway, DNS). Migration 0027, and
-// docs/01-Architecture/Adressage de management section 8.
+// docs/en/01-Architecture/Management addressing.md section 8.
 //
 // # THE CASE THAT MADE THIS NECESSARY
 //
@@ -186,8 +187,8 @@ func effectiveAddrMode(d model.Device, plan model.MgmtPlan) (string, string, str
 			"DHCP client, decided in meshcraft for this device."
 	}
 
-	var obs, relu = observedAddrOf(d)
-	if relu && obs.Mode != "" {
+	var obs, reread = observedAddrOf(d)
+	if reread && obs.Mode != "" {
 		if obs.Mode == driver.MgmtAddrModeStatic {
 			return model.MgmtAddrStatic, "observed",
 				"static address OBSERVED on the device, and kept: meshcraft imposes " +
@@ -205,7 +206,7 @@ func effectiveAddrMode(d model.Device, plan model.MgmtPlan) (string, string, str
 					"Nothing has been read back on this device: this is an expectation, not an observation."
 		}
 		return model.MgmtAddrDHCP, "site_plan",
-			"the site plan says « external DHCP ». Nothing has been read back on this device: " +
+			"the site plan says \"external DHCP\". Nothing has been read back on this device: " +
 				"this is an expectation, not an observation."
 	}
 
@@ -231,8 +232,8 @@ func addrDriftOf(d model.Device) string {
 	if d.MgmtAddr.Mode == model.MgmtAddrInherit || d.MgmtAddr.Mode == "" {
 		return ""
 	}
-	var obs, relu = observedAddrOf(d)
-	if !relu || obs.Mode == "" {
+	var obs, reread = observedAddrOf(d)
+	if !reread || obs.Mode == "" {
 		return ""
 	}
 	const soft = "addr_plan_mismatch"
@@ -256,7 +257,7 @@ func addrDriftOf(d model.Device) string {
 // sameAddress compares two addresses when one may carry a prefix and the other may not.
 //
 // On SwOS there is NO prefix to read (/sys.b carries `ip`, without mask), whereas
-// RouterOS returns « 10.99.0.54/24 ». Comparing raw strings would therefore report a
+// RouterOS returns "192.0.2.54/24". Comparing raw strings would therefore report a
 // permanent drift across an entire product line, for a notation difference only.
 func sameAddress(a, b string) bool {
 	return bareAddr(a) == bareAddr(b)
@@ -293,12 +294,12 @@ func pushBlockedReason(caps MgmtAddrCaps) string {
 	if caps.MigrateVLAN {
 		return "same-VLAN addressing apply is not proven on this platform yet. " +
 			"Intent is recorded and displayed. To move management onto the site plan, " +
-			"use « Conform Management » (dual-path migrate)."
+			"use \"Conform Management\" (dual-path migrate)."
 	}
 	if caps.JumpVLAN {
 		return "same-VLAN addressing apply is not proven on this platform yet. " +
 			"To move management onto the site plan on this product line, use " +
-			"« Conform Management » (single-address change with backup)."
+			"\"Conform Management\" (single-address change with backup)."
 	}
 	return "meshcraft does NOT write management addressing on this platform yet: " +
 		"no connector path has been proven on hardware for same-VLAN apply, dual-path " +
@@ -314,8 +315,8 @@ func addressingViewOf(d model.Device, plan model.MgmtPlan) MgmtAddressingView {
 	v.Drift = addrDriftOf(d)
 	v.Caps = addrCapsOf(d)
 	v.CurrentVLAN = observedMgmtVLAN(d)
-	var _, relu = observedAddrOf(d)
-	v.Readable = relu || readableAddrOf(d)
+	var _, reread = observedAddrOf(d)
+	v.Readable = reread || readableAddrOf(d)
 	v.PushBlocked = pushBlockedReason(v.Caps)
 	// Apply is only meaningful for an explicit dhcp/static intent — inherit means
 	// "impose nothing", so there is nothing to push.
@@ -362,8 +363,8 @@ func applyConfirmReason(d model.Device, plan model.MgmtPlan) string {
 				"DHCP overrides that policy for this device only"
 		}
 	}
-	var obs, relu = observedAddrOf(d)
-	if !relu || obs.Mode == "" {
+	var obs, reread = observedAddrOf(d)
+	if !reread || obs.Mode == "" {
 		return ""
 	}
 	if d.MgmtAddr.Mode == model.MgmtAddrStatic && obs.Mode == driver.MgmtAddrModeDHCP {
@@ -390,7 +391,9 @@ func applyConfirmReason(d model.Device, plan model.MgmtPlan) string {
 // (`var _ driver.MgmtAddrReader = …`).
 func readableAddrOf(d model.Device) bool {
 	switch driver.DriverNameFromExtra(d.Extra) {
-	case "mikrotik-swos", "mikrotik-routeros", "aruba-instant-on-1930":
+	case "mikrotik-swos", "mikrotik-routeros", "aruba-instant-on-1930",
+		"fs-s3400", "fs-s3900", "cisco-ios", "ubiquiti-edgeswitch",
+		"hpe-procurve", "arista-eos":
 		return true
 	}
 	return false
@@ -412,12 +415,12 @@ type deviceAddrInput struct {
 //
 // Same principle as `validateMgmtPlan` (migration 0009) and same reason to keep it here
 // rather than in a database constraint: the controller can say "gateway 10.0.0.1 is not
-// in subnet 10.99.0.0/24" where PostgreSQL would say "invalid input syntax for type
+// in subnet 192.0.2.0/24" where PostgreSQL would say "invalid input syntax for type
 // inet". Validation is more verbose than a constraint, and that is its whole value.
 //
 // # PREFIX IS COMPLETED, NEVER GUESSED
 //
-// An operator types « 10.99.0.36 », not « 10.99.0.36/24 »: the prefix is borrowed from
+// An operator types "192.0.2.36", not "192.0.2.36/24": the prefix is borrowed from
 // the site plan's subnet when the address is contained in it. When there is no plan, or
 // when the address is OUTSIDE the plan subnet, it is REQUIRED — assuming /24 would invent
 // a mask, and a wrong mask silences a device as surely as a wrong address.
@@ -450,7 +453,7 @@ func validateDeviceAddressing(in deviceAddrInput, plan model.MgmtPlan,
 	case "":
 		out.Mode = model.MgmtAddrInherit
 	default:
-		return out, "unknown addressing mode: expected « inherit », « dhcp », or « static »"
+		return out, "unknown addressing mode: expected \"inherit\", \"dhcp\", or \"static\""
 	}
 
 	if out.Mode == model.MgmtAddrDHCP && caps.Known && !caps.DHCP {
@@ -496,7 +499,7 @@ func validateDeviceAddressing(in deviceAddrInput, plan model.MgmtPlan,
 	if out.StaticGateway != "" {
 		var gw, gwErr = netip.ParseAddr(out.StaticGateway)
 		if gwErr != nil {
-			return out, "gateway « " + out.StaticGateway + " »: not an IP address"
+			return out, "gateway \"" + out.StaticGateway + "\": not an IP address"
 		}
 		if gw == prefix.Addr() {
 			return out, "the gateway is the device's own address"
@@ -511,7 +514,7 @@ func validateDeviceAddressing(in deviceAddrInput, plan model.MgmtPlan,
 	for _, srv = range out.StaticDNS {
 		var _, dnsErr = netip.ParseAddr(srv)
 		if dnsErr != nil {
-			return out, "DNS resolver « " + srv + " »: not an IP address"
+			return out, "DNS resolver \"" + srv + "\": not an IP address"
 		}
 	}
 	return out, ""
@@ -523,13 +526,13 @@ func resolvePrefix(raw string, plan model.MgmtPlan) (netip.Prefix, string) {
 	if strings.ContainsRune(raw, '/') {
 		var p, err = netip.ParsePrefix(raw)
 		if err != nil {
-			return netip.Prefix{}, "address « " + raw + "  »: unreadable prefix " +
-				"(expected e.g. « 10.99.0.36/24 »)"
+			return netip.Prefix{}, "address \"" + raw + " \": unreadable prefix " +
+				"(expected e.g. \"192.0.2.36/24\")"
 		}
 		if p.Addr() == p.Masked().Addr() && p.Bits() < 31 {
 			// Network address is not a host address. /31 and /32 are spared: they have
 			// legitimate uses (point-to-point link, host-only address).
-			return netip.Prefix{}, "address « " + raw + " »: this is the NETWORK address, " +
+			return netip.Prefix{}, "address \"" + raw + "\": this is the NETWORK address, " +
 				"not a device address"
 		}
 		return p, ""
@@ -537,23 +540,23 @@ func resolvePrefix(raw string, plan model.MgmtPlan) (netip.Prefix, string) {
 
 	var addr, err = netip.ParseAddr(raw)
 	if err != nil {
-		return netip.Prefix{}, "address « " + raw + " »: not an IP address"
+		return netip.Prefix{}, "address \"" + raw + "\": not an IP address"
 	}
 	if plan.SubnetV4 == "" {
-		return netip.Prefix{}, "address « " + raw + " » without prefix length, and the " +
-			"site has no management subnet to borrow from: write it as « " + raw + "/24 ». " +
+		return netip.Prefix{}, "address \"" + raw + "\" without prefix length, and the " +
+			"site has no management subnet to borrow from: write it as \"" + raw + "/24\". " +
 			"meshcraft does not guess a mask — a wrong mask makes a device unreachable " +
 			"as surely as a wrong address."
 	}
 	var sub, subErr = netip.ParsePrefix(plan.SubnetV4)
 	if subErr != nil {
-		return netip.Prefix{}, "the site's management subnet (« " + plan.SubnetV4 +
-			" ») is unreadable: fix the site plan, or give the prefix length with the address"
+		return netip.Prefix{}, "the site's management subnet (\"" + plan.SubnetV4 +
+			"\") is unreadable: fix the site plan, or give the prefix length with the address"
 	}
 	if !sub.Contains(addr) {
-		return netip.Prefix{}, "address « " + raw + " » outside the site's management " +
+		return netip.Prefix{}, "address \"" + raw + "\" outside the site's management " +
 			"subnet (" + plan.SubnetV4 + "): allowed, but the prefix length can no longer " +
-			"be borrowed from the plan. Write it explicitly (« " + raw + "/24 »)."
+			"be borrowed from the plan. Write it explicitly (\"" + raw + "/24\")."
 	}
 	return netip.PrefixFrom(addr, sub.Bits()), ""
 }
@@ -624,7 +627,7 @@ func (s *Server) handleSetDeviceAddressing(w http.ResponseWriter, r *http.Reques
 func addressingChangeMessage(deviceName string, a model.DeviceAddressing) string {
 	switch a.Mode {
 	case model.MgmtAddrStatic:
-		var msg = "Management addressing of « " + deviceName + " »: STATIC address " +
+		var msg = "Management addressing of \"" + deviceName + "\": STATIC address " +
 			a.StaticIP
 		if a.StaticGateway != "" {
 			msg += ", gateway " + a.StaticGateway
@@ -634,10 +637,10 @@ func addressingChangeMessage(deviceName string, a model.DeviceAddressing) string
 		}
 		return msg + ". Decision recorded — nothing was written to the device."
 	case model.MgmtAddrDHCP:
-		return "Management addressing of « " + deviceName + " »: DHCP client. Decision " +
+		return "Management addressing of \"" + deviceName + "\": DHCP client. Decision " +
 			"recorded — nothing was written to the device."
 	}
-	return "Management addressing of « " + deviceName + " »: inherited (meshcraft " +
+	return "Management addressing of \"" + deviceName + "\": inherited (meshcraft " +
 		"keeps what the device carries)."
 }
 
@@ -650,10 +653,15 @@ func (s *Server) readSpanningTree(ctx context.Context, deviceID string,
 	adm driver.Admin) (driver.SpanningTreeState, string) {
 	var reader, canRead = driver.AsSpanningTreeReader(adm)
 	if !canRead {
-		return driver.SpanningTreeState{}, "connector « " + adm.Connector().Name +
-			" » cannot read spanning tree on this product line"
+		return driver.SpanningTreeState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot read spanning tree on this product line"
 	}
 	var state, err = reader.ReadSpanningTree(ctx)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		// The wire form of a failed assertion: same sentence as above.
+		return driver.SpanningTreeState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot read spanning tree on this product line"
+	}
 	if err != nil {
 		return driver.SpanningTreeState{}, "spanning tree not read back: " + err.Error()
 	}
@@ -664,6 +672,49 @@ func (s *Server) readSpanningTree(ctx context.Context, deviceID string,
 	var saveErr = s.Store.SaveSTPObserved(ctx, deviceID, raw)
 	if saveErr != nil {
 		return state, "spanning tree not saved: " + saveErr.Error()
+	}
+	return state, ""
+}
+
+// readPoE re-reads per-port PoE scope, configured class, and measured draw,
+// and stores the observation under Extra — same shelf as spanning tree.
+//
+// Called from [Server.handleReadDeviceState], same gesture as VLANs, ports,
+// addressing and spanning tree — a caller wanting "is that camera drawing
+// power" should not need a code path of its own to ask.
+//
+// PERSISTED since the device sheet grew a PoE panel, and the earlier "not
+// persisted, this is telemetry" stance deserves its epitaph rather than a
+// silent flip: the concern was never storage, it was DRIFT — measured watts
+// must not enter anything compared for conformity, or the indicator blinks on
+// every load change. That concern still holds and is honored the same way as
+// stp_observed: Extra is not part of the diff, so nothing here can flag a
+// device. What changed is the reader on the other end — the port panel must
+// say "this jack has no PSE hardware" and "configured passive 24V" while the
+// switch is unreachable, and a live-only snapshot cannot. Per-port HISTORY
+// (draw over time) still belongs to internal/tsdb, not to a devices column.
+func (s *Server) readPoE(ctx context.Context, deviceID string,
+	adm driver.Admin) (driver.PoEState, string) {
+	var reader, canRead = driver.AsPoEReader(adm)
+	if !canRead {
+		return driver.PoEState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot read PoE on this product line"
+	}
+	var state, err = reader.ReadPoE(ctx)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		return driver.PoEState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot read PoE on this product line"
+	}
+	if err != nil {
+		return driver.PoEState{}, "PoE not read: " + err.Error()
+	}
+	var raw, marshalErr = json.Marshal(state)
+	if marshalErr != nil {
+		return state, "PoE read but not saved: " + marshalErr.Error()
+	}
+	var saveErr = s.Store.SavePoEObserved(ctx, deviceID, raw)
+	if saveErr != nil {
+		return state, "PoE read but not saved: " + saveErr.Error()
 	}
 	return state, ""
 }
@@ -681,11 +732,15 @@ func (s *Server) readMgmtAddressing(ctx context.Context, deviceID string,
 	adm driver.Admin) (driver.MgmtAddrState, string) {
 	var reader, canRead = driver.AsMgmtAddrReader(adm)
 	if !canRead {
-		return driver.MgmtAddrState{}, "connector « " + adm.Connector().Name +
-			" » cannot say how this device obtained its administration " +
-			"address: addressing mode will stay « not read back » on this range."
+		return driver.MgmtAddrState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot say how this device obtained its administration " +
+			"address: addressing mode will stay \"not read back\" on this range."
 	}
 	var state, err = reader.ReadMgmtAddressing(ctx)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		return driver.MgmtAddrState{}, "connector \"" + adm.Connector().Name +
+			"\" cannot say how this device obtained its administration address"
+	}
 	if err != nil {
 		return driver.MgmtAddrState{}, "management addressing not read back: " + err.Error()
 	}
@@ -741,6 +796,9 @@ func (s *Server) handleApplyMgmtAddressing(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var _, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm),
@@ -856,6 +914,9 @@ func (s *Server) handleJumpMgmtAddressing(w http.ResponseWriter, r *http.Request
 		}
 	}
 	var _, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm),
@@ -936,6 +997,9 @@ func (s *Server) handleProbeStaticOwner(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var _, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm),
@@ -978,7 +1042,7 @@ func intentToWriterWant(a model.DeviceAddressing) driver.MgmtAddrIntent {
 	return want
 }
 
-// mgmtHostFromAddr extracts the host from "10.99.0.36/24" or "10.99.0.36".
+// mgmtHostFromAddr extracts the host from "192.0.2.36/24" or "192.0.2.36".
 func mgmtHostFromAddr(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {

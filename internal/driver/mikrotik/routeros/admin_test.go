@@ -27,6 +27,67 @@ func TestAccountsReadFromCapture(t *testing.T) {
 	}
 }
 
+// TestContractAccountCarriesTheGroupAndNoNumber — what the widened contract
+// gets out of THIS range's single read.
+//
+// RouterOS ranks nothing from 0 to 15, so the number must come back UNKNOWN and
+// not 0: the audit reading a fleet-wide list has to be able to tell "this
+// platform does not count" from "this account has level zero". What it gets
+// instead is the group — the thing that actually decides on RouterOS — and a
+// verdict derived from it.
+func TestContractAccountCarriesTheGroupAndNoNumber(t *testing.T) {
+	var rows = fixture(t, "user.json")
+	var got = contractAccount(Account{
+		Name:  rows[0].Get("name"),
+		Group: rows[0].Get("group"),
+	})
+	if got.Name != "admin" || got.Role != "full" {
+		t.Errorf("account = %+v, want the captured admin/full", got)
+	}
+	if got.Privilege != driver.PrivilegeUnknown {
+		t.Errorf("privilege = %d — RouterOS states NO number, and reporting 0 would "+
+			"claim a level the platform cannot express", got.Privilege)
+	}
+	if got.Authority != driver.AuthorityFull {
+		t.Errorf("authority = %v — the `full` group grants `policy` (captured in "+
+			"user_group.json): it IS a full administrator, and this is the answer the "+
+			"2026-08-10 audit could not get through the old []string", got.Authority)
+	}
+}
+
+// TestGroupAuthorityRanksOnlyWhatItKnows.
+//
+// The three built-in groups are ranked from their CAPTURED policies. Anything
+// else is an operator-defined group whose policy lives in `/user/group` — a
+// SECOND request the enumeration does not make — so it stays UNKNOWN. Ranking
+// it "limited" on the strength of its name is the failure that matters: a group
+// called `readonly` that carries `policy` is exactly the unmanaged administrator
+// the audit is looking for.
+func TestGroupAuthorityRanksOnlyWhatItKnows(t *testing.T) {
+	// Every group in the capture must be ranked, and ranked the way its policy
+	// list says: `full` carries `policy`, the other two deny it.
+	var r Row
+	for _, r = range fixture(t, "user_group.json") {
+		var policies = SplitList(r.Get("policy"))
+		var want = driver.AuthorityLimited
+		if GroupAllows(policies, "policy") {
+			want = driver.AuthorityFull
+		}
+		if groupAuthority(r.Get("name")) != want {
+			t.Errorf("group %q ranked %v, its captured policy says %v",
+				r.Get("name"), groupAuthority(r.Get("name")), want)
+		}
+	}
+	if groupAuthority("noc-readonly") != driver.AuthorityUnknown {
+		t.Error("an operator-defined group must rank UNKNOWN: its policy is in " +
+			"/user/group, which this enumeration does not read, and a group named " +
+			"`readonly` may well carry `policy`")
+	}
+	if groupAuthority("") != driver.AuthorityUnknown {
+		t.Error("a record without a group says nothing about rights")
+	}
+}
+
 // TestDeniedPolicyIsNotGranted — the RouterOS policy trap.
 //
 // A group policy is a list where an entry can be DENIED by a `!` prefix. Observed:
@@ -264,7 +325,7 @@ func TestMgmtNotesMentionCPU(t *testing.T) {
 	// tagged VLAN.
 	if !mgmt.TaggedOK {
 		t.Error("management on a tagged VLAN is observed on the reference device " +
-			"(10.99.0.54 on vlan99, VLAN 99 tagged)")
+			"(192.0.2.54 on vlan99, VLAN 99 tagged)")
 	}
 	if mgmt.VlanIDs != driver.VlanAny {
 		t.Errorf("VlanIDs = %q, expected 'any'", mgmt.VlanIDs)

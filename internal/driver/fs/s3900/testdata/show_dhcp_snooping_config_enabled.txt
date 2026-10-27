@@ -1,0 +1,12 @@
+show dhcp snooping config
+Global DHCP Snooping Status: enabled
+Option82 Status: disabled
+Option82 Sub-option Format: extra subtype included
+Option82 Remote ID: MAC Address (hex encoded)
+Option82 Remote ID TR101 VLAN Field: enabled
+Option82 TR101 Board ID: none
+DHCP Snooping Information Policy: replace
+DHCP Snooping is configured on the following VLANs:
+
+Verify Source MAC-Address: enabled
+DHCP Snooping Rate Limit: unlimited

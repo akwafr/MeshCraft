@@ -39,13 +39,13 @@ import (
 
 var trapCouvrants = []model.Proxy{
 	{ID: "local", Name: "Local", Global: true, Internal: true},
-	{ID: "agence-a", Name: "Agence A"},
+	{ID: "branch-a", Name: "Branch A"},
 }
 
 func posable() trapDestInputs {
 	return trapDestInputs{
-		deviceName: "sw-labo-1930", mgmtIP: "10.99.200.101",
-		collector: "agence-a", collectorName: "Agence A",
+		deviceName: "sw-labo-1930", mgmtIP: "198.51.100.101",
+		collector: "branch-a", collectorName: "Branch A",
 		plan: planV2c(), credentialID: "cred-site", trapsPush: true,
 	}
 }
@@ -61,11 +61,11 @@ func TestTrapDestRefusesWithoutCollector(t *testing.T) {
 		t.Errorf("a refusal must designate no proxy, got %q", p.ID)
 	}
 	var msg = trapDestRefusal(verdict, in)
-	var attendu = []string{"sw-labo-1930", "collector", "Attach", "random"}
-	var mot string
-	for _, mot = range attendu {
-		if !strings.Contains(msg, mot) {
-			t.Errorf("the refusal must mention %q: %s", mot, msg)
+	var want = []string{"sw-labo-1930", "collector", "Attach", "random"}
+	var word string
+	for _, word = range want {
+		if !strings.Contains(msg, word) {
+			t.Errorf("the refusal must mention %q: %s", word, msg)
 		}
 	}
 	if strings.Contains(msg, "no proxy covers") {
@@ -75,13 +75,13 @@ func TestTrapDestRefusesWithoutCollector(t *testing.T) {
 
 func TestTrapDestRefusesNonCoveringCollector(t *testing.T) {
 	var in = posable()
-	in.collector, in.collectorName = "agence-b", "Agence B"
+	in.collector, in.collectorName = "branch-b", "Branch B"
 	var verdict, _ = judgeTrapDest(in, trapCouvrants)
 	if verdict != trapDestCollectorNotCovering {
 		t.Fatalf("an out-of-coverage collector must be refused, verdict %v", verdict)
 	}
 	var msg = trapDestRefusal(verdict, in)
-	if !strings.Contains(msg, "Agence B") || !strings.Contains(msg, "coverage") {
+	if !strings.Contains(msg, "Branch B") || !strings.Contains(msg, "coverage") {
 		t.Errorf("the refusal must name the proxy and coverage: %s", msg)
 	}
 	if !strings.Contains(msg, "anybody") {
@@ -97,11 +97,11 @@ func TestTrapDestRefusesV3(t *testing.T) {
 		t.Fatalf("a v3 device must be refused, verdict %v", verdict)
 	}
 	var msg = trapDestRefusal(verdict, in)
-	var attendu = []string{"SNMPv3", "community", "reject", "POLLED"}
-	var mot string
-	for _, mot = range attendu {
-		if !strings.Contains(msg, mot) {
-			t.Errorf("the v3 refusal must mention %q: %s", mot, msg)
+	var want = []string{"SNMPv3", "community", "reject", "POLLED"}
+	var word string
+	for _, word = range want {
+		if !strings.Contains(msg, word) {
+			t.Errorf("the v3 refusal must mention %q: %s", word, msg)
 		}
 	}
 }
@@ -146,7 +146,7 @@ func TestTrapDestAcceptable(t *testing.T) {
 	if verdict != trapDestReady {
 		t.Fatalf("everything in place, verdict %v", verdict)
 	}
-	if p.ID != "agence-a" || p.Name != "Agence A" {
+	if p.ID != "branch-a" || p.Name != "Branch A" {
 		t.Errorf("the collector must be returned with its name, got %q/%q", p.ID, p.Name)
 	}
 	var in = posable()
@@ -159,7 +159,7 @@ func TestTrapDestAcceptable(t *testing.T) {
 
 func TestTrapCommunityIsPollingCommunity(t *testing.T) {
 	var watch = tunnel.SNMPWatch{
-		DeviceID: "dev-1", IP: "10.99.200.101", Community: "s1te-labo-ro",
+		DeviceID: "dev-1", IP: "198.51.100.101", Community: "s1te-labo-ro",
 	}
 	var dest, refusal = trapDestinationFrom(watch, "10.42.0.67")
 	if refusal != "" {
@@ -185,7 +185,7 @@ func TestTrapCommunityIsPollingCommunity(t *testing.T) {
 
 func TestNoInventedCommunity(t *testing.T) {
 	var dest, refusal = trapDestinationFrom(
-		tunnel.SNMPWatch{DeviceID: "dev-1", IP: "10.99.200.101"}, "10.42.0.67")
+		tunnel.SNMPWatch{DeviceID: "dev-1", IP: "198.51.100.101"}, "10.42.0.67")
 	if refusal == "" {
 		t.Fatal("an empty community must be a refusal, not a fallback")
 	}
@@ -220,8 +220,8 @@ func TestPlacementAndConfirmationAreTwoStates(t *testing.T) {
 		t.Errorf("placement must not read like confirmation: %s", posed)
 	}
 
-	var proved = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Agence A", true)
-	if !strings.Contains(proved, "ESTABLISHED") || !strings.Contains(proved, "Agence A") {
+	var proved = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Branch A", true)
+	if !strings.Contains(proved, "ESTABLISHED") || !strings.Contains(proved, "Branch A") {
 		t.Errorf("confirmation must assert and name the proxy: %s", proved)
 	}
 	if proved == posed {
@@ -235,19 +235,19 @@ func TestPlacementAndConfirmationAreTwoStates(t *testing.T) {
 }
 
 func TestProofBelongsToWrittenDestOnly(t *testing.T) {
-	if judgeTrapProof("10.42.0.67", "agence-a", "10.42.0.67", "agence-a") != trapProofConfirms {
+	if judgeTrapProof("10.42.0.67", "branch-a", "10.42.0.67", "branch-a") != trapProofConfirms {
 		t.Error("the written destination's proxy at the written address confirms")
 	}
-	if judgeTrapProof("10.42.0.67", "agence-a", "10.42.0.67", "agence-b") != trapProofForeign {
+	if judgeTrapProof("10.42.0.67", "branch-a", "10.42.0.67", "branch-b") != trapProofForeign {
 		t.Error("another proxy does not confirm the written destination")
 	}
-	if judgeTrapProof("", "", "10.42.0.67", "agence-a") != trapProofForeign {
+	if judgeTrapProof("", "", "10.42.0.67", "branch-a") != trapProofForeign {
 		t.Error("without a written destination, there is nothing to confirm")
 	}
 }
 
 func TestProofRequiresWrittenAddrNotJustProxy(t *testing.T) {
-	var v = judgeTrapProof("10.42.0.67", "agence-a", "172.17.0.1", "agence-a")
+	var v = judgeTrapProof("10.42.0.67", "branch-a", "172.17.0.1", "branch-a")
 	if v != trapProofOtherAddr {
 		t.Fatalf("a trap arriving on another address does not confirm the written destination, verdict %v", v)
 	}
@@ -257,7 +257,7 @@ func TestProofRequiresWrittenAddrNotJustProxy(t *testing.T) {
 }
 
 func TestProofUnattributedWhenProxySilent(t *testing.T) {
-	var v = judgeTrapProof("10.42.0.67", "agence-a", "", "agence-a")
+	var v = judgeTrapProof("10.42.0.67", "branch-a", "", "branch-a")
 	if v != trapProofUnattributed {
 		t.Fatalf("unknown destination nuance the proof, it does not cancel it, verdict %v", v)
 	}
@@ -267,50 +267,50 @@ func TestProofUnattributedWhenProxySilent(t *testing.T) {
 }
 
 func TestProofSaysNoMoreThanItProves(t *testing.T) {
-	var pleine = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Akwalan", true)
-	if !strings.Contains(pleine, "ESTABLISHED") || !strings.Contains(pleine, "verified") {
-		t.Errorf("attributed proof may assert: %s", pleine)
+	var full = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Lab", true)
+	if !strings.Contains(full, "ESTABLISHED") || !strings.Contains(full, "verified") {
+		t.Errorf("attributed proof may assert: %s", full)
 	}
-	if !strings.Contains(pleine, "very address") {
-		t.Errorf("it must say WHY it asserts: %s", pleine)
+	if !strings.Contains(full, "very address") {
+		t.Errorf("it must say WHY it asserts: %s", full)
 	}
 
-	var faible = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Akwalan", false)
-	if faible == pleine {
+	var weak = trapConfirmedMessage("sw-labo-1930", "10.42.0.67", "Lab", false)
+	if weak == full {
 		t.Fatal("the two proof grades must read differently")
 	}
-	if !strings.Contains(faible, "REACH") || !strings.Contains(faible, "reactive") {
-		t.Errorf("weak proof must state the established fact: %s", faible)
+	if !strings.Contains(weak, "REACH") || !strings.Contains(weak, "reactive") {
+		t.Errorf("weak proof must state the established fact: %s", weak)
 	}
-	if strings.Contains(faible, "verified") || strings.Contains(faible, "ESTABLISHED") {
-		t.Errorf("unattributed proof must not assert the placed path: %s", faible)
+	if strings.Contains(weak, "verified") || strings.Contains(weak, "ESTABLISHED") {
+		t.Errorf("unattributed proof must not assert the placed path: %s", weak)
 	}
-	if !strings.Contains(faible, "not yet proven") || !strings.Contains(faible, "hypothesis") {
-		t.Errorf("it must name what is missing: %s", faible)
+	if !strings.Contains(weak, "not yet proven") || !strings.Contains(weak, "hypothesis") {
+		t.Errorf("it must name what is missing: %s", weak)
 	}
-	if !strings.Contains(faible, "10.42.0.67") {
-		t.Errorf("the phrase must say which address we mean: %s", faible)
+	if !strings.Contains(weak, "10.42.0.67") {
+		t.Errorf("the phrase must say which address we mean: %s", weak)
 	}
 }
 
 func TestProxyTimestampProvesNothing(t *testing.T) {
-	var maintenant = time.Date(2026, 7, 28, 10, 29, 50, 280_000_000, time.UTC)
+	var now = time.Date(2026, 7, 28, 10, 29, 50, 280_000_000, time.UTC)
 	var duParc = trapClockNote(
-		time.Date(2026, 7, 28, 10, 29, 39, 250_000_000, time.UTC), maintenant)
+		time.Date(2026, 7, 28, 10, 29, 39, 250_000_000, time.UTC), now)
 	if duParc == "" {
 		t.Fatal("eleven seconds of skew must be reported")
 	}
 	if !strings.Contains(duParc, "behind") || !strings.Contains(duParc, "11") {
 		t.Errorf("the note must state direction and measure: %s", duParc)
 	}
-	if trapClockNote(maintenant.Add(-time.Second), maintenant) != "" {
+	if trapClockNote(now.Add(-time.Second), now) != "" {
 		t.Error("one second behind is not a symptom")
 	}
-	var avance = trapClockNote(maintenant.Add(2*time.Second), maintenant)
-	if !strings.Contains(avance, "AHEAD") || !strings.Contains(avance, "diverge") {
-		t.Errorf("a future date must be stated as such: %s", avance)
+	var ahead = trapClockNote(now.Add(2*time.Second), now)
+	if !strings.Contains(ahead, "AHEAD") || !strings.Contains(ahead, "diverge") {
+		t.Errorf("a future date must be stated as such: %s", ahead)
 	}
-	if trapClockNote(time.Time{}, maintenant) != "" {
+	if trapClockNote(time.Time{}, now) != "" {
 		t.Error("an absent date is not compared to anything")
 	}
 }

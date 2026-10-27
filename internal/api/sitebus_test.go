@@ -135,7 +135,7 @@ func TestSiteBusNilTolerant(t *testing.T) {
 
 // Site must appear in the URL without a database for routes that carry it,
 // and stay empty for those that do not.
-func TestSiteOfPathSansBase(t *testing.T) {
+func TestSiteOfPathWithoutDatabase(t *testing.T) {
 	var s = &Server{}
 	var cas = map[string]string{
 		"/api/sites/abc/devices":         "abc",

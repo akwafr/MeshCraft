@@ -1,0 +1,20 @@
+Switch DHCP snooping is enabled
+Switch DHCP gleaning is disabled
+DHCP snooping is configured on following VLANs:
+999
+DHCP snooping is operational on following VLANs:
+none
+DHCP snooping is configured on the following L3 Interfaces:
+
+Insertion of option 82 is enabled
+   circuit-id default format: vlan-mod-port
+   remote-id: bcc4.93e5.7f80 (MAC)
+Option 82 on untrusted port is not allowed
+Verification of hwaddr field is enabled
+Verification of giaddr field is enabled
+DHCP snooping trust/rate is configured on the following Interfaces:
+
+Interface                  Trusted    Allow option    Rate limit (pps)
+-----------------------    -------    ------------    ----------------   
+GigabitEthernet1/0/24      yes        yes             unlimited
+  Custom circuit-ids:

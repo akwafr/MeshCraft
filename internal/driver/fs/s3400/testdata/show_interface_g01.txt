@@ -1,0 +1,26 @@
+show interface g0/1
+GigaEthernet0/1 is down, line protocol is down
+  protocolstatus upTimes 0, downTimes 0, alloc at 2000-1-1 0:0:27
+  Ifindex is 129, unique port number is 1
+  Hardware is Giga-TX, address is 649d.9922.7b96 (bia 649d.9922.7b96)
+  MTU 1500 bytes, BW 1000000 kbit, DLY 10 usec
+  Encapsulation ARPA
+  Auto-duplex,  Auto-speed,  Flow-Control Off
+  5 minutes input rate 0 bits/sec, 0 packets/sec
+  5 minutes output rate 0 bits/sec, 0 packets/sec
+  Real time input rate 0%, 0 bits/sec, 0 packets/sec
+  Real time output rate 0%, 0 bits/sec, 0 packets/sec
+     Received 0 packets, 0 bytes
+     0 broadcasts, 0 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 CRC, 0 undersize, 0 oversize
+     0 fragment, 0 jabber
+     0 Pkts64, 0 Pkts65, 0 Pkts128
+     0 Pkts256, 0 Pkts512, 0 Pkts1024
+     Transmitted 0 packets, 0 bytes
+     0 broadcasts, 0 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 collision
+     0 Pkts64, 0 Pkts65, 0 Pkts128
+     0 Pkts256, 0 Pkts512, 0 Pkts1024
+Switch#

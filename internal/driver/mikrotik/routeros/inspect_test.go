@@ -306,7 +306,7 @@ func TestUnknownModelFallsBackToFloor(t *testing.T) {
 // TestConnectorRegisteredAndRecognizes: connector must be reachable through the registry,
 // and its fingerprint must match what the probe actually observes.
 //
-// Both indices are OBSERVED on 10.99.0.54 by the controller probe: `http_title: "RouterOS"`
+// Both indices are OBSERVED on 192.0.2.54 by the controller probe: `http_title: "RouterOS"`
 // and `ssh_banner: "SSH-2.0-ROSSSH"`. The title is served WITHOUT authentication, so
 // recognition requires no credentials.
 func TestConnectorRegisteredAndRecognizes(t *testing.T) {

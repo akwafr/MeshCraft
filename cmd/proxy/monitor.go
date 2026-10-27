@@ -23,7 +23,7 @@ import (
 // sweep; the proxy pings continuously and only reports **transitions**. A
 // round trip per second per device across the WAN would deliver the same
 // information at a wildly disproportionate cost — and the proxy is the local
-// executor by design (docs/01-Architecture/Proxy).
+// executor by design (docs/en/01-Architecture/Proxy.md).
 //
 // ICMP needs a raw socket, hence CAP_NET_RAW: already granted by the
 // generated docker-compose as well as by the systemd unit. Without it,
@@ -96,6 +96,14 @@ func (m *Monitor) SetConfig(cfg tunnel.WatchConfig) {
 	if snmpCollector != nil {
 		snmpCollector.SetWatches(cfg.SNMP)
 	}
+	// Streaming telemetry follows the same config, for the same reason. The two
+	// arrays are EXCLUSIVE per device — the controller decides which protocol
+	// carries a device and zeroes the other side (cf. tunnel.WatchConfig.GNMI) —
+	// so this is not a second opinion on the same targets, it is the other half
+	// of one list.
+	if gnmiCollector != nil {
+		gnmiCollector.SetWatches(context.Background(), cfg.GNMI)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg = cfg
@@ -110,6 +118,30 @@ func (m *Monitor) SetConfig(cfg tunnel.WatchConfig) {
 		if !exists {
 			st = &targetState{}
 			m.states[t.IP] = st
+		}
+		// A DIFFERENT DEVICE AT THE SAME ADDRESS IS A NEW TARGET, and forgetting
+		// that cost a device its status for good.
+		//
+		// This map is keyed by IP, and re-using the entry is right as long as the
+		// address describes the same thing. It stops being right when the DEVICE
+		// changes underneath: `up` is then carried over from the previous
+		// occupant, the ping that follows agrees with it, no flip is announced —
+		// and the controller, which has never heard of the new device id, leaves
+		// it `unknown` for ever. The `up == nil` above exists precisely to
+		// guarantee "a device that has just been added to monitoring produces a
+		// first verdict", and recycling the entry defeated it.
+		//
+		// MEASURED on 2026-08-12: a CRS305 was re-adopted at 198.51.100.100 after
+		// the first device record was deleted. SNMP polled it, its port rates and
+		// spanning tree were live all along, and its reachability read `unknown`
+		// for six hours — until the next reconnection would have replayed a
+		// Snapshot. Same shape as the CSS326 the Snapshot comment describes, by
+		// another route.
+		//
+		// Resetting the verdict, not the entry: `misses` goes with it, and the
+		// next poll announces whatever it finds.
+		if st.deviceID != "" && st.deviceID != t.DeviceID {
+			st.up, st.misses = nil, 0
 		}
 		st.deviceID, st.name = t.DeviceID, t.Name
 	}

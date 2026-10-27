@@ -31,8 +31,8 @@ import (
 //
 // # WHAT AN EMPTY RESPONSE MEANS
 //
-// A family with no series is not an error, and silence would be the worst display: « no
-// chart » reads as « collection down ». Three causes are distinguished, and the screen can
+// A family with no series is not an error, and silence would be the worst display: "no
+// chart" reads as "collection down". Three causes are distinguished, and the screen can
 // name them:
 //
 //	`available: false`         — no series store on this instance. Nothing will ever
@@ -56,14 +56,18 @@ type telemetrySeries struct {
 	// KEY, never as a label: labels live in the UI, in French, and renaming a metric
 	// must not change a title.
 	Metric string `json:"metric"`
-	// Unit is the unit of what is returned, derivative included (« Mbit/s », « °C »).
+	// Unit is the unit of what is returned, derivative included ("Mbit/s", "°C").
 	Unit string `json:"unit"`
 	// Sensor / Port: what distinguishes two series of the same family. Empty when the
 	// family carries neither.
 	Sensor string `json:"sensor,omitempty"`
 	Port   string `json:"port,omitempty"`
+	// Lane: the transceiver physical channel, on optical families whose producer
+	// reads per-channel diagnostics (gNMI: "0"‥"3"). Empty on single-reading
+	// producers — the screen treats empty and "0" as the same, single-lane case.
+	Lane string `json:"lane,omitempty"`
 	// Last is the last known value, ABSENT when the series has no points. A pointer, not
-	// zero: « no measurement » and « zero » do not display the same — the difference
+	// zero: "no measurement" and "zero" do not display the same — the difference
 	// between a silent port and an idle port.
 	Last   *float64         `json:"last,omitempty"`
 	Points []telemetryPoint `json:"points"`
@@ -94,13 +98,34 @@ var deviceMetrics = []string{
 	metricbuf.MetricUptime,
 	metricbuf.MetricIfInErrors,
 	metricbuf.MetricIfOutErrors,
+	// Total PoE draw (gauge, watts) — history behind the PoE tile, fed by
+	// the controller's PoE sampler (poesample.go) rather than SNMP. Absent
+	// on devices the sampler never visits, like any other family a platform
+	// does not publish.
+	metricbuf.MetricPoEUsedW,
 }
 
 // portMetrics are PER-PORT families on the device page: history of both traffic directions
-// for port charts.
+// for port charts, and the optical levels of whatever sits in the cages.
+//
+// Counters and gauges mix here on purpose — which query shape a family takes is
+// the vocabulary's knowledge (queryable[..].kind), not this list's: telemetryOf
+// picks portRateQuery or portGaugeQuery from it, so adding a family is one line
+// wherever it lands.
 var portMetrics = []string{
 	metricbuf.MetricIfInOctets,
 	metricbuf.MetricIfOutOctets,
+	// Per-class packet rates, behind the port overlay's stacked graph
+	// (ADR-0028). They ride on this payload rather than on a route of their own
+	// for the reason the whole file is built on: the overlay is opened from a
+	// faceplate of fifty-two ports, and one request per device is what keeps
+	// hovering along a row from being fifty-two requests.
+	metricbuf.MetricIfInMulticastPackets,
+	metricbuf.MetricIfOutMulticastPackets,
+	metricbuf.MetricIfInBroadcastPackets,
+	metricbuf.MetricIfOutBroadcastPackets,
+	metricbuf.MetricSFPRxPowerDBM,
+	metricbuf.MetricSFPTxPowerDBM,
 }
 
 // Bounds on the requested window.
@@ -133,7 +158,7 @@ func (s *Server) handleDeviceTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.TSDB == nil {
 		// An instance without a series store WORKS, and that is a documented choice
-		// (docker-compose: « empty = no metrics store »). The screen must say why there
+		// (docker-compose: "empty = no metrics store"). The screen must say why there
 		// is nothing rather than show an empty frame that looks like a fault.
 		out.Why = "This instance has no time-series store " +
 			"(MESHCRAFT_METRICS_URL empty): collection runs, but nothing is " +
@@ -166,9 +191,15 @@ func (s *Server) telemetryOf(ctx context.Context, d model.Device, metric string,
 	from, to time.Time, step time.Duration, perPort bool) []telemetrySeries {
 	var query string
 	if perPort {
-		// Same query as inventory refresh: filtered to Ethernet interfaces, excluding
-		// VLAN and loopback interfaces.
-		query = portRateQuery([]string{d.ID}, metric)
+		// The family's kind picks the shape: counters ride the same rate query as
+		// inventory refresh, gauges (optical levels) are read as-is. Both resolve
+		// their port label against the facade below, which is the filter that
+		// keeps VLAN and loopback interfaces off the screen.
+		if queryable[metric].kind == kindGauge {
+			query = portGaugeQuery([]string{d.ID}, metric)
+		} else {
+			query = portRateQuery([]string{d.ID}, metric)
+		}
 	} else {
 		query = deviceSeriesQuery(d.ID, metric)
 	}
@@ -180,6 +211,13 @@ func (s *Server) telemetryOf(ctx context.Context, d model.Device, metric string,
 		return nil
 	}
 	var facade = facadeOf(d)
+	// Gauges keep their sign (a receive level IS negative dBm; a cold room IS a
+	// negative temperature); counter-derived rates clamp negatives, which only a
+	// misread counter reset can produce. Cf. round3 / roundSigned3.
+	var round = round3
+	if queryable[metric].kind == kindGauge {
+		round = roundSigned3
+	}
 	var out []telemetrySeries
 	var i int
 	for i = range series {
@@ -187,6 +225,7 @@ func (s *Server) telemetryOf(ctx context.Context, d model.Device, metric string,
 			Metric: metric,
 			Unit:   metricUnit(metric),
 			Sensor: series[i].Labels["sensor"],
+			Lane:   series[i].Labels["lane"],
 			Points: []telemetryPoint{},
 		}
 		if perPort {
@@ -202,12 +241,12 @@ func (s *Server) telemetryOf(ctx context.Context, d model.Device, metric string,
 		for j = range series[i].Points {
 			one.Points = append(one.Points, telemetryPoint{
 				TS:    series[i].Points[j].At,
-				Value: round3(series[i].Points[j].Value),
+				Value: round(series[i].Points[j].Value),
 			})
 		}
 		var last, hasLast = series[i].Last()
 		if hasLast {
-			var v = round3(last.Value)
+			var v = round(last.Value)
 			one.Last = &v
 		}
 		out = append(out, one)
@@ -234,7 +273,10 @@ func seriesLess(a, b telemetrySeries) bool {
 	if a.Sensor != b.Sensor {
 		return a.Sensor < b.Sensor
 	}
-	return a.Port < b.Port
+	if a.Port != b.Port {
+		return a.Port < b.Port
+	}
+	return a.Lane < b.Lane
 }
 
 // telemetryWindow reads and bounds the requested window.

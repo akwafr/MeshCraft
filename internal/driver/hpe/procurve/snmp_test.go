@@ -12,12 +12,12 @@ import (
 // running-config (2026-08-02). On this platform the configuration IS the command
 // language, so this is the write form as much as the read form.
 const snmpConfigLive = "hostname \"SW-PLAYER-79\" \n\r" +
-	"snmp-server contact \"technique@lyon-esport.fr\" \n\r" +
+	"snmp-server contact \"noc@example.org\" \n\r" +
 	"snmp-server location \"InTheKitchen\" \n\r" +
-	"snmp-server community \"les\" Operator \n\r"
+	"snmp-server community \"ops\" Operator \n\r"
 
 func TestHasCommunityFindsTheLiveLine(t *testing.T) {
-	if !hasCommunity(snmpConfigLive, "les") {
+	if !hasCommunity(snmpConfigLive, "ops") {
 		t.Error("the community the device actually carries was not found")
 	}
 	if hasCommunity(snmpConfigLive, "public") {

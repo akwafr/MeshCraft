@@ -47,9 +47,19 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 		return out, err
 	}
 	c.step(true, "running-config read", fmt.Sprintf("%d characters", len(runOut)))
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 	out.Ports = rc.Ports
 	out.MgmtVLAN = rc.MgmtVLAN
+
+	// Link aggregates: the summary table plus each Po's switchport half out
+	// of the running config already in hand. Tolerated failure — nil reads
+	// as "not read".
+	var lags, lagErr = c.readLAGs(ctx, runOut)
+	if lagErr == nil {
+		out.LAGs = lags
+	} else {
+		out.Notes = append(out.Notes, "aggregates not read: "+firstLine(lagErr.Error()))
+	}
 
 	var vlanOut string
 	vlanOut, err = c.cli.run(ctx, "show vlan brief", cmdTimeout)
@@ -72,6 +82,7 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 				"port as possibly active")
 		return out, err
 	}
+	c.learnPortStem(statusOut)
 	var ports = parseInterfacesStatus(statusOut)
 	var p statusPort
 	for _, p = range ports {
@@ -93,15 +104,22 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 	out.Notes = append(out.Notes, c.errDisabledNotes(ctx, ports)...)
 
 	// Facts the operator needs and that no other screen carries.
+	//
+	// How the management SVI was chosen comes FIRST, and it is said only when the
+	// choice was not mechanical — which is the only time it is news (cf.
+	// runConfig.MgmtSVINotes). It leads because every apply guardrail below is
+	// built on that VLAN: an operator must read which SVI meshcraft believes
+	// carries administration before reading a verdict that assumes it.
+	out.Notes = append(out.Notes, rc.MgmtSVINotes...)
 	if !rc.LLDPRun {
 		out.Notes = append(out.Notes,
-			"« lldp run » is NOT configured: this switch serves an empty LLDP-MIB, so the "+
+			"\"lldp run\" is NOT configured: this switch serves an empty LLDP-MIB, so the "+
 				"neighbour view will stay empty. This connector does not turn it on")
 	}
 	var name string
 	for name = range rc.AllowedAll {
 		out.Notes = append(out.Notes,
-			"trunk "+name+" carries no explicit « switchport trunk allowed vlan » line: on "+
+			"trunk "+name+" carries no explicit \"switchport trunk allowed vlan\" line: on "+
 				"IOS that means ALL VLANs, not none")
 	}
 	if c.dialect != dialectIOS {
@@ -149,12 +167,12 @@ func (c *Client) errDisabledNotes(ctx context.Context, ports []statusPort) []str
 		}
 		if why == "" {
 			notes = append(notes, p.Name+" was shut down BY THE SWITCH (err-disabled) and it "+
-				"did not report a reason — « show interfaces status err-disabled » on the "+
+				"did not report a reason — \"show interfaces status err-disabled\" on the "+
 				"device gives it")
 			continue
 		}
-		notes = append(notes, p.Name+" was shut down BY THE SWITCH (err-disabled), reason « "+
-			why+" » — this is not an empty port, and clearing it is an operator decision")
+		notes = append(notes, p.Name+" was shut down BY THE SWITCH (err-disabled), reason \""+
+			why+"\" — this is not an empty port, and clearing it is an operator decision")
 	}
 	if len(gbic) > 0 {
 		notes = append(notes, strings.Join(gbic, ", ")+": "+UnsupportedTransceiverNote)
@@ -177,7 +195,7 @@ func (c *Client) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, 
 	if err != nil && runOut == "" {
 		return driver.MgmtAddrState{}, err
 	}
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 	if rc.Mgmt.Interface == "" {
 		rc.Mgmt.Notes = append(rc.Mgmt.Notes,
 			"no SVI carries an address that is administratively up — administration may be "+
@@ -186,7 +204,7 @@ func (c *Client) ReadMgmtAddressing(ctx context.Context) (driver.MgmtAddrState, 
 	return rc.Mgmt, nil
 }
 
-// iosLinkState maps « show interfaces status » Status words onto the shared
+// iosLinkState maps "show interfaces status" Status words onto the shared
 // vocabulary. The words are the ones the parser keeps whole for exactly this
 // (cf. statusPort.Status).
 func iosLinkState(status string) driver.LinkState {

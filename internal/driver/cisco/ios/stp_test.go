@@ -51,7 +51,7 @@ func TestParseDetectsRapidPVSTFromTheSections(t *testing.T) {
 	}
 	var notes = strings.Join(st.Notes, " ")
 	if !strings.Contains(notes, "PVST+") {
-		t.Errorf("notes = %q: reading « protocol rstp » alone would report plain RSTP "+
+		t.Errorf("notes = %q: reading \"protocol rstp\" alone would report plain RSTP "+
 			"for a switch that is not interoperating at all", notes)
 	}
 	if !st.Enabled {
@@ -121,8 +121,8 @@ Te1/0/2             Root FWD 2000      128.28   P2p
 }
 
 func TestParseMSTRegion(t *testing.T) {
-	var r = parseMSTRegion("\nname akwa-casernelab\nrevision 1\ninstance 1 vlan 42, 98-100\n")
-	if r.Name != "akwa-casernelab" || r.Revision != 1 {
+	var r = parseMSTRegion("\nname site-lab2\nrevision 1\ninstance 1 vlan 42, 98-100\n")
+	if r.Name != "site-lab2" || r.Revision != 1 {
 		t.Errorf("region = %+v", r)
 	}
 	if !r.Configured() {
@@ -162,7 +162,7 @@ func TestSTPModeKeywords(t *testing.T) {
 }
 
 func TestRegionNameIsMadeSafeForTheCLI(t *testing.T) {
-	var got = sanitizeRegionName("akwa/CaserneLab lab")
+	var got = sanitizeRegionName("lab/Site Lab2 lab")
 	if strings.ContainsAny(got, " /") {
 		t.Errorf("region name %q still carries characters IOS refuses", got)
 	}

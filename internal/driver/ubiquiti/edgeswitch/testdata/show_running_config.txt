@@ -1,0 +1,223 @@
+show running-config
+
+!Current Configuration:
+!
+!System Description "EdgePoint S16, 1.9.3, Linux 3.6.5-03329b4a, 1.2.0.5192732"
+!System Software Version "1.9.3"
+!System Up Time          "0 days 1 hrs 34 mins 40 secs"
+!Additional Packages     QOS,IPv6 Management,Routing
+!Current SNTP Synchronized Time: Aug  5 01:03:04 2026 UTC
+!
+network protocol none
+network parms 192.0.2.4 255.255.0.0 192.0.2.1
+vlan database
+vlan 42,98-100
+vlan name 42 "LAN42_ServicesPublics"
+vlan name 98 "LAN98_ServicesInternes"
+vlan name 99 "LAN99_Management"
+vlan name 100 "LAN100_User1"
+exit
+
+network mgmt_vlan 99
+configure
+no device analytics
+username "admin" password 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 level 15 encrypted
+line console
+exit
+
+line telnet
+exit
+
+line ssh
+exit
+
+!
+snmp-server community "REDACTEDREDACTED" ro
+
+interface 0/1
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/2
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/3
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/4
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/5
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/6
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/7
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/8
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/9
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/10
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/11
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/12
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/13
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/14
+vlan pvid 100
+vlan participation exclude 99
+vlan participation include 100
+exit
+
+
+
+interface 0/15
+vlan pvid 100
+vlan participation include 42,98-100
+vlan tagging 42,98-99
+exit
+
+
+
+interface 0/16
+vlan pvid 100
+vlan participation include 42,98-100
+vlan tagging 42,98-99
+exit
+
+
+
+interface 0/17
+vlan participation include 42,98-100
+vlan tagging 42,98-100
+exit
+
+
+
+interface 0/18
+vlan participation include 42,98-100
+vlan tagging 42,98-100
+exit
+
+
+
+interface lag 1
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+
+interface lag 2
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+
+interface lag 3
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+
+interface lag 4
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+
+interface lag 5
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+
+interface lag 6
+vlan participation include 99
+vlan tagging 99
+exit
+
+
+exit
+
+
+(UBNT EdgeSwitch) #

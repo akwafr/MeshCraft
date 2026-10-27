@@ -60,12 +60,16 @@ func portNumber(name string) (int, bool) {
 
 // ReadState re-reads the device. READ ONLY, replayable.
 //
-// The running-config is the authoritative source here, as it is on the FS
-// connector and for the same reason: it states INTENT exactly, where the status
-// views summarise. What it does NOT carry is link state — that needs « show
-// interfaces brief », whose column layout has not been captured on this range, so
-// LinkUp is left empty rather than guessed. An invented link state is worse than
-// an absent one: it decides which ports an apply is allowed to touch.
+// TWO SOURCES, and each answers what the other cannot. The running-config is
+// authoritative for MEMBERSHIP: it states intent exactly, where the status views
+// summarise. "show interfaces brief" is authoritative for LINK STATE, which
+// the configuration does not carry at all — and it is the only view that
+// separates a port someone deliberately disabled from one with nothing plugged
+// in, since both print "Down" (cf. parseInterfacesBrief).
+//
+// A failure to read the faceplate is NOT a failure to read the state: membership
+// still applies, and the ports simply carry no link state. The reverse is not
+// true, which is why only the configuration read can abort this method.
 func (c *Client) ReadState(ctx context.Context) (State, error) {
 	var out = State{Ports: map[string]driver.PortState{}, Links: map[string]driver.LinkState{}}
 	if c.cli == nil {
@@ -78,18 +82,24 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 		return out, err
 	}
 	// A CONFIGURATION THIS SHORT IS NOT A CONFIGURATION. Every unit of this range
-	// prints kilobytes, starting with its « Running configuration: » header — so a
+	// prints kilobytes, starting with its "Running configuration:" header — so a
 	// handful of characters means the read desynchronised, not that the switch is
 	// empty. Returning it as state would let an apply "create" every VLAN the
 	// device already has and rewrite membership against a fiction, which is
 	// exactly what happened before the drain in cli.go was added.
 	if len(strings.TrimSpace(text)) < minRunningConfig {
+		// WHAT ARRIVED, verbatim, and not just how much of it. A length alone says
+		// the read desynchronised and nothing about where: the difference between
+		// "the command was never echoed", "the prompt was matched too early" and
+		// "the device refused the command" is visible in these few characters and
+		// in nothing else. Quoting them costs one line and has already been the
+		// whole diagnosis twice on this range.
 		c.step(false, "running-config read too short to be real",
-			fmt.Sprintf("%d characters — refusing to report this as the device state",
-				len(text)))
-		return out, fmt.Errorf("running-config read returned %d characters: "+
+			fmt.Sprintf("%d characters, %q — refusing to report this as the device state",
+				len(text), text))
+		return out, fmt.Errorf("running-config read returned %d characters (%q): "+
 			"the CLI read desynchronised, and an empty state here would be acted on "+
-			"as if the switch had no VLANs", len(text))
+			"as if the switch had no VLANs", len(text), text)
 	}
 	var rc = parseRunningConfig(text)
 	c.step(true, "running-config read",
@@ -131,6 +141,28 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 			st.Mode = "trunk"
 		}
 	}
+	// The faceplate: link state, and the ports the configuration never mentions.
+	//
+	// A port with no VLAN stanza of its own still EXISTS, and a state that
+	// omitted it would draw a switch with holes in its front panel. So the
+	// faceplate is also what completes the port map.
+	var brief, bErr = c.cli.run(ctx, "show interfaces brief", showRunTimeout)
+	if bErr != nil && strings.TrimSpace(brief) == "" {
+		out.Notes = append(out.Notes,
+			"link state not read: \"show interfaces brief\" failed ("+
+				firstLine(bErr.Error())+"). Membership below is still authoritative")
+	} else {
+		var status = parseInterfacesBrief(brief)
+		out.Links = linkStates(status, prefix)
+		for p = range status {
+			var _, seen = ports[p]
+			if !seen {
+				ports[p] = &driver.PortState{Mode: "access"}
+			}
+		}
+		c.step(true, "faceplate read", fmt.Sprintf("%d port(s)", len(status)))
+	}
+
 	for p = range ports {
 		var st = ports[p]
 		sortInts(st.Tagged)
@@ -141,13 +173,18 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 		// The runtime ceiling, surfaced where a plan that will not fit can be seen
 		// BEFORE the write that would fail on it.
 		out.Notes = append(out.Notes, fmt.Sprintf(
-			"this switch is configured for at most %d VLANs (« max-vlans »); raising it "+
+			"this switch is configured for at most %d VLANs (\"max-vlans\"); raising it "+
 				"requires a reboot", rc.MaxVLANs))
 	}
-	out.Notes = append(out.Notes,
-		"link state is not read on this range: the « show interfaces brief » column "+
-			"layout has not been captured, and a guessed link state decides which ports "+
-			"an apply may touch")
+
+	// Aggregates (trunks) — DOCUMENTED forms, the range being parked (lag.go).
+	// Tolerated failure: nil reads as "not read".
+	var lags, lagErr = c.readLAGs(ctx)
+	if lagErr == nil {
+		out.LAGs = lags
+	} else {
+		out.Notes = append(out.Notes, "trunks not read: "+firstLine(lagErr.Error()))
+	}
 	return out, nil
 }
 

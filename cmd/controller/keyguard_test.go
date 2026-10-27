@@ -95,14 +95,14 @@ func hexKey(t *testing.T, key []byte) string {
 }
 
 // sealWith fills the sample with values sealed by `key`.
-func sealWith(t *testing.T, f *fakeKeyStore, key []byte, clairs ...string) {
+func sealWith(t *testing.T, f *fakeKeyStore, key []byte, plaintexts ...string) {
 	t.Helper()
 	var box, err = secretbox.New(key, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var c string
-	for _, c = range clairs {
+	for _, c = range plaintexts {
 		var enc []byte
 		enc, err = box.Seal(c)
 		if err != nil {
@@ -137,8 +137,8 @@ func TestRefuseWhenEnvSetOnSealedDB(t *testing.T) {
 	// fingerprint yet.
 	f.fingerprint = nil
 
-	var autre = newKey(t)
-	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, autre))
+	var other = newKey(t)
+	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, other))
 	if err == nil {
 		t.Fatal("startup accepted with a key that does not open the vault")
 	}
@@ -166,8 +166,8 @@ func TestRefuseWhenFingerprintDiffers(t *testing.T) {
 	f.fingerprint = secretbox.Fingerprint(sealing)
 	sealWith(t, f, sealing, "snmp-community")
 
-	var autre = newKey(t)
-	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, autre))
+	var other = newKey(t)
+	var _, _, err = resolveVaultKey(context.Background(), f, hexKey(t, other))
 	if err == nil {
 		t.Fatal("startup accepted despite a differing fingerprint")
 	}
@@ -177,7 +177,7 @@ func TestRefuseWhenFingerprintDiffers(t *testing.T) {
 	// Both fingerprints must appear: that is what makes the diagnosis
 	// possible without guessing.
 	assertMentions(t, err.Error(),
-		secretbox.ShortID(f.fingerprint), secretbox.KeyShortID(autre),
+		secretbox.ShortID(f.fingerprint), secretbox.KeyShortID(other),
 		"MESHCRAFT_SECRET_KEY", "-rekey")
 	if f.setCalls != 0 {
 		t.Fatal("the fingerprint was rewritten despite the refusal")

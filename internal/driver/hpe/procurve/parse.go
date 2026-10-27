@@ -16,7 +16,7 @@ package procurve
 //	   exit
 //	vlan 99
 //	   name "admin"
-//	   ip address 172.16.99.79 255.255.255.0
+//	   ip address 203.0.113.79 255.255.255.0
 //	   tagged 45-52
 //	   exit
 //	vlan 200
@@ -35,11 +35,12 @@ package procurve
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
 
-// runningConfig is what a read extracts from « show running-config ».
+// runningConfig is what a read extracts from "show running-config".
 type runningConfig struct {
 	Hostname string
 	// VLANs by id, with the name the device carries.
@@ -50,14 +51,21 @@ type runningConfig struct {
 	Tagged map[int][]int
 	// MgmtVLAN: the VLAN carrying an IP address. Zero when none does.
 	MgmtVLAN int
-	// MgmtAddr: the address as written, for the record ("172.16.99.79 255.255.255.0"
+	// MgmtAddr: the address as written, for the record ("203.0.113.79 255.255.255.0"
 	// or "dhcp-bootp").
 	MgmtAddr string
-	// MaxVLANs: « max-vlans N ». This is a RUNTIME limit on this platform, not a
+	// MaxVLANs: "max-vlans N". This is a RUNTIME limit on this platform, not a
 	// product constant — the reference unit carries 30, where the family supports
 	// up to 256. A site plan with more VLANs than this will not fit until the
 	// limit is raised and the switch rebooted.
 	MaxVLANs int
+	// Gateway: "ip default-gateway", which is GLOBAL on this range and not a
+	// property of the management VLAN.
+	Gateway string
+	// LLDPOff: the configuration explicitly turns LLDP off. Absence means it is
+	// RUNNING — this platform records departures from its defaults, not its
+	// defaults (cf. lldp.go).
+	LLDPOff bool
 }
 
 // THE LINE ANCHORS TOLERATE A LEADING CARRIAGE RETURN, and that is not
@@ -88,30 +96,45 @@ var (
 	reUntagged = regexp.MustCompile(`(?m)^\s*(no\s+)?untagged\s+([0-9,\-]+)`)
 	reTagged   = regexp.MustCompile(`(?m)^\s*(no\s+)?tagged\s+([0-9,\-]+)`)
 	reIPAddr   = regexp.MustCompile(`(?m)^\s*ip address\s+(.+?)\s*$`)
+	// reNoLLDP: this range only records a DEPARTURE from its defaults, and LLDP
+	// is on by default — so the ABSENCE of this line means LLDP is running
+	// (cf. lldp.go).
+	reNoLLDP = regexp.MustCompile(`(?m)^[ \t\r]*no lldp run[ \t\r]*$`)
+	// reGateway: global, not per-VLAN (CAPTURED: "ip default-gateway 203.0.113.1"
+	// sits at the top level of the configuration).
+	reGateway = regexp.MustCompile(`(?m)^[ \t\r]*ip default-gateway\s+(\S+)`)
 )
 
 // parseRunningConfig inverts the VLAN-centric configuration into tables the rest
 // of the connector can use.
 //
-// « no untagged 1-52 » is READ AND DISCARDED for membership: it is the device
+// "no untagged 1-52" is READ AND DISCARDED for membership: it is the device
 // spelling out a removal, and treating it as an assignment would put every port
 // of the switch into VLAN 1. That line is exactly why the regexes capture the
-// optional « no » rather than matching the keyword alone.
+// optional "no" rather than matching the keyword alone.
 func parseRunningConfig(out string) runningConfig {
 	var rc = runningConfig{
 		VLANs:    map[int]string{},
 		Untagged: map[int][]int{},
 		Tagged:   map[int][]int{},
 	}
-	if m := reHostname.FindStringSubmatch(out); m != nil {
+	var m []string
+	m = reHostname.FindStringSubmatch(out)
+	if m != nil {
 		rc.Hostname = strings.TrimSpace(m[1])
 	}
-	if m := reMaxVlans.FindStringSubmatch(out); m != nil {
+	m = reMaxVlans.FindStringSubmatch(out)
+	if m != nil {
 		rc.MaxVLANs, _ = strconv.Atoi(m[1])
 	}
+	m = reGateway.FindStringSubmatch(out)
+	if m != nil {
+		rc.Gateway = strings.TrimSpace(m[1])
+	}
+	rc.LLDPOff = reNoLLDP.MatchString(out)
 
-	// Each « vlan N » opens a stanza that runs to the next one. Splitting on the
-	// opener rather than on « exit » is deliberate: the configuration uses « exit »
+	// Each "vlan N" opens a stanza that runs to the next one. Splitting on the
+	// opener rather than on "exit" is deliberate: the configuration uses "exit"
 	// for interface blocks too, and a stanza scanner keyed on it would swallow them.
 	var locs = reVlanOpen.FindAllStringSubmatchIndex(out, -1)
 	var i int
@@ -125,7 +148,7 @@ func parseRunningConfig(out string) runningConfig {
 			end = locs[i+1][0]
 		}
 		var body = out[locs[i][1]:end]
-		// Stop the stanza at its own « exit »: anything after it belongs to the
+		// Stop the stanza at its own "exit": anything after it belongs to the
 		// next block, and on this platform interface stanzas follow the VLANs.
 		// Matched as a LINE, for the same carriage-return reason as above — a
 		// plain search for "\nexit" never fires against this device.
@@ -135,10 +158,12 @@ func parseRunningConfig(out string) runningConfig {
 		}
 
 		rc.VLANs[id] = ""
-		if m := reVlanName.FindStringSubmatch(body); m != nil {
+		m = reVlanName.FindStringSubmatch(body)
+		if m != nil {
 			rc.VLANs[id] = strings.TrimSpace(m[1])
 		}
-		if m := reIPAddr.FindStringSubmatch(body); m != nil {
+		m = reIPAddr.FindStringSubmatch(body)
+		if m != nil {
 			// The FIRST VLAN carrying a real address wins as management. A
 			// dhcp-bootp line on VLAN 1 is not one: it is the factory default and
 			// naming it management would point provisioning at the wrong VLAN.
@@ -150,7 +175,7 @@ func parseRunningConfig(out string) runningConfig {
 		var mm []string
 		for _, mm = range reUntagged.FindAllStringSubmatch(body, -1) {
 			if strings.TrimSpace(mm[1]) != "" {
-				continue // « no untagged … » is a removal, not a membership
+				continue // "no untagged …" is a removal, not a membership
 			}
 			rc.Untagged[id] = append(rc.Untagged[id], parsePortRange(mm[2])...)
 		}
@@ -181,7 +206,8 @@ func parsePortRange(s string) []int {
 		}
 		var lo, hi int
 		var err error
-		if dash := strings.Index(part, "-"); dash > 0 {
+		var dash = strings.Index(part, "-")
+		if dash > 0 {
 			lo, err = strconv.Atoi(strings.TrimSpace(part[:dash]))
 			if err != nil {
 				continue
@@ -236,13 +262,4 @@ func formatPortRange(ports []int) string {
 	return strings.Join(parts, ",")
 }
 
-func sortInts(v []int) {
-	var i, j int
-	for i = 1; i < len(v); i++ {
-		var x = v[i]
-		for j = i; j > 0 && v[j-1] > x; j-- {
-			v[j] = v[j-1]
-		}
-		v[j] = x
-	}
-}
+func sortInts(v []int) { sort.Ints(v) }

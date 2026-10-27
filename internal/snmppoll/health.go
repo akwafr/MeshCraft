@@ -1,6 +1,7 @@
 package snmppoll
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +45,7 @@ import (
 // so is half the value of what follows -- stale warning costs twice: keep doubting what is
 // verified, stop believing warnings that still hold.
 //
-// Survey on July 29, 2026 on **MikroTik CSS326-24G-2S+ SwOS 2.17** (10.99.0.36), via proxy
+// Survey on July 29, 2026 on **MikroTik CSS326-24G-2S+ SwOS 2.17** (192.0.2.36), via proxy
 // diagnostic walk (`POST /api/devices/{id}/snmp-walk`, v2c) -- the exact gesture this comment
 // prescribed:
 //
@@ -173,7 +174,7 @@ type healthSensor struct {
 	// not surveyed.
 	//
 	// Temperature divide-by-10 is no longer inferred: MEASURED on hardware. CSS326-24G-2S+ SwOS
-	// 2.17 (10.99.0.36), same instant, `/sys.b temp` gives `0x45` (69 C) and `mtxrHealth.11.0`
+	// 2.17 (192.0.2.36), same instant, `/sys.b temp` gives `0x45` (69 C) and `mtxrHealth.11.0`
 	// gives `690`. Factor is 0.1, gesture done.
 	Scale float64
 	// Signed: raw value is 32-bit SIGNED integer, two's complement in `Gauge32`.
@@ -296,6 +297,196 @@ var opticalColumns = []struct {
 	{oidOpticalTxFault, metricbuf.MetricSFPTxFault, 1, false},
 }
 
+// --- Cisco DOM: a SENSOR TABLE joined to the ENTITY TABLE ---
+//
+// # Why this is not another column in `opticalColumns`
+//
+// The MikroTik family above is indexed BY INTERFACE INDEX, so a column walk is
+// already keyed by the thing the sample describes. Cisco's is not: the readings
+// live in CISCO-ENTITY-SENSOR-MIB, indexed by entPhysicalIndex, and a sensor
+// entity says nothing about which port it belongs to. The port comes from the
+// ENTITY table — the sensor's parent — so this family needs a JOIN, and a join
+// is a different shape of code rather than a wider table.
+//
+// # CAPTURED 2026-08-12 on CiscoLabFirst1 (WS-C2960X-24TD-L), and every value
+// below was read rather than assumed
+//
+//	entSensorType.1043      = 14        <- dBm
+//	entSensorValue.1043     = -39
+//	entSensorScale.1043     = 9         <- units
+//	entSensorPrecision.1043 = 1         <- one decimal
+//	entPhysicalName.1043    = "Te1/0/2 Transmit Power Sensor"
+//	entPhysicalContainedIn.1043 = 1039
+//	entPhysicalName.1039    = "TenGigabitEthernet1/0/2"  (descr SFP-10GBase-LR)
+//
+// → TX -3.9 dBm, RX -2.7 dBm on the neighbouring sensor. The connector's own
+// note used to say this tree was "never queried here"; it is populated, and the
+// STANDARD ENTITY-SENSOR-MIB (1.3.6.1.2.1.99) that would have been the obvious
+// place answers NOTHING on this switch — nor on the EdgeSwitch, nor on the FS
+// S3900, all three walked the same day.
+//
+// # THE DIRECTION IS READ, NEVER INFERRED FROM INDEX ORDER
+//
+// Transmit and receive are adjacent indices here, which makes "the lower one is
+// TX" look like a rule. It is a coincidence of one capture, and betting on it
+// would swap the two on the next platform — a perfectly credible false graph, on
+// the one screen an operator uses to decide whether a fibre is dying. The
+// sensor's own [entPhysicalName] carries the word, so the word is what decides.
+const (
+	oidCiscoSensorType      = "1.3.6.1.4.1.9.9.91.1.1.1.1.1"
+	oidCiscoSensorScale     = "1.3.6.1.4.1.9.9.91.1.1.1.1.2"
+	oidCiscoSensorPrecision = "1.3.6.1.4.1.9.9.91.1.1.1.1.3"
+	oidCiscoSensorValue     = "1.3.6.1.4.1.9.9.91.1.1.1.1.4"
+	// ENTITY-MIB, the join: who this sensor belongs to, and what things are called.
+	oidEntPhysicalName        = "1.3.6.1.2.1.47.1.1.1.1.7"
+	oidEntPhysicalContainedIn = "1.3.6.1.2.1.47.1.1.1.1.4"
+)
+
+// ciscoSensorDBm is entSensorType's value for dBm (CISCO-ENTITY-SENSOR-MIB
+// SensorDataType). 8 is celsius, 4 voltsDC, 5 amperes — all three also present
+// on a transceiver, and all three also present on the CHASSIS, which is why the
+// name match below and not the type alone decides what is published.
+const ciscoSensorDBm = 14
+
+// ciscoDOMSensors maps the word Cisco puts in a DOM sensor's name to the series
+// it belongs in.
+//
+// MATCHING ON THE NAME is what keeps a chassis thermometer out of the SFP
+// temperature series: `entSensorType` 8 is celsius wherever it appears, and a
+// 2960X has inlet and outlet sensors that are nothing to do with a cage. The
+// five names below are the device's own, verbatim from the capture.
+var ciscoDOMSensors = []struct {
+	Needle string
+	Metric string
+	// Scale is the SensorDataScale the SERIES is defined in: 9 is units (dBm,
+	// volts, degrees) and 8 is milli. The agent declares the scale IT used, and
+	// the two are not always the same — the captured switch reports laser bias at
+	// scale 8, which is already the milliamps `MetricSFPTxBiasMilliamps` wants,
+	// while it reports voltage at scale 9, which is already volts. Converting
+	// blindly to units would publish 0.0444 A of bias into a milliamp series.
+	Scale float64
+	// DBm: this reading must carry sensor type 14, and is refused otherwise. The
+	// two power sensors are the ones whose unit a mistake would invert.
+	DBm bool
+}{
+	{"Transmit Power Sensor", metricbuf.MetricSFPTxPowerDBM, 9, true},
+	{"Receive Power Sensor", metricbuf.MetricSFPRxPowerDBM, 9, true},
+	{"Module Temperature Sensor", metricbuf.MetricSFPTemperature, 9, false},
+	{"Supply Voltage Sensor", metricbuf.MetricSFPSupplyVolts, 9, false},
+	{"Bias Current Sensor", metricbuf.MetricSFPTxBiasMilliamps, 8, false},
+}
+
+// ciscoSensorValue turns a declared sensor reading into the series' own unit.
+//
+// TWO STEPS, and neither is optional:
+//
+//  1. PRECISION is a number of decimal places, so the reading in the agent's own
+//     unit is `raw / 10^precision`. The captured switch declares 1 everywhere
+//     except the voltage sensor, which declares 2 — assume either and a 3.3 V
+//     module reads 32.5 V or 0.325 V;
+//  2. SCALE is the unit the agent chose, and the series has a unit of its own.
+//     The conversion is the DIFFERENCE between the two, `10^(scale-target)`, and
+//     it is usually zero because both are units. It is not zero for laser bias:
+//     the agent declares scale 8 (milli) and the series is already milliamps, so
+//     a naive "normalise everything to units" divides a correct 44.4 mA down to
+//     0.0444 — a plausible-looking number in the wrong unit, which is the exact
+//     failure this whole file is arranged to avoid.
+func ciscoSensorValue(raw, scale, precision, target float64) float64 {
+	var v = raw
+	if precision > 0 {
+		v /= math.Pow(10, precision)
+	}
+	if scale != 0 && scale != target {
+		v *= math.Pow(10, scale-target)
+	}
+	return v
+}
+
+// ciscoOpticalSamples joins the sensor table to the entity table.
+//
+// PURE, like every other translation in this file, because the join is where
+// this family can go wrong: a sensor attributed to the wrong parent puts one
+// cage's light on another cage's graph.
+//
+// A sensor whose parent is unknown, or whose parent has no name, is DROPPED. The
+// alternative — labelling it with the sensor's own name — would publish a series
+// per sensor rather than per port, which no screen could match to a faceplate.
+func ciscoOpticalSamples(deviceID string, tables map[string]map[string]gosnmp.SnmpPDU,
+	at time.Time) []metricbuf.Sample {
+
+	var names = map[string]string{}
+	var idx string
+	var pdu gosnmp.SnmpPDU
+	for idx, pdu = range tables[oidEntPhysicalName] {
+		names[idx] = strings.TrimSpace(asString(pdu))
+	}
+	var out []metricbuf.Sample
+	for idx, pdu = range tables[oidCiscoSensorValue] {
+		var sensorName = names[idx]
+		if sensorName == "" {
+			continue
+		}
+		var kind = -1
+		var i int
+		for i = range ciscoDOMSensors {
+			if strings.Contains(sensorName, ciscoDOMSensors[i].Needle) {
+				kind = i
+				break
+			}
+		}
+		if kind < 0 {
+			continue // not a DOM sensor: a chassis probe, a PSU, a fan
+		}
+		var typ, hasType = toFloat(tables[oidCiscoSensorType][idx])
+		if ciscoDOMSensors[kind].DBm && (!hasType || int(typ) != ciscoSensorDBm) {
+			// The name says transmit/receive power and the agent does not call it
+			// dBm. Publishing anyway would put an unknown unit into a series whose
+			// whole meaning is its unit.
+			continue
+		}
+		// THE PORT IS THE SENSOR'S PARENT, and nothing else. The sensor's own name
+		// carries an abbreviated form ("Te1/0/2 …") that would have to be parsed;
+		// the parent entity carries the full interface name the rest of the
+		// product already resolves against a faceplate.
+		var parent, hasParent = tables[oidEntPhysicalContainedIn][idx]
+		if !hasParent {
+			continue
+		}
+		// THE PARENT ARRIVES AS AN INTEGER, and reading it as text is how this
+		// whole family produced nothing at all — `asString` answers "" for a
+		// numeric PDU, every lookup missed, and the walk returned samples for no
+		// port on a switch that was serving all five sensors. Caught by
+		// TestCiscoDOMJoinsSensorsToTheirPort before it ever polled anything.
+		var parentIdx, okParent = toFloat(parent)
+		if !okParent {
+			continue
+		}
+		var port = names[strconv.Itoa(int(parentIdx))]
+		if port == "" {
+			continue
+		}
+		var raw, ok = toFloat(pdu)
+		if !ok {
+			continue
+		}
+		// SIGNED, and this is the same trap the MikroTik columns document: a good
+		// link sits at -3 dBm, and an unsigned read of that is four billion.
+		raw = signed32(raw)
+		var scale, _ = toFloat(tables[oidCiscoSensorScale][idx])
+		var precision, _ = toFloat(tables[oidCiscoSensorPrecision][idx])
+		out = append(out, metricbuf.Sample{
+			Name: ciscoDOMSensors[kind].Metric,
+			// No `ifindex`: an entPhysicalIndex is NOT an interface index, and
+			// putting one in that label would make a sensor entity look like an
+			// interface to everything downstream that reads it.
+			Labels: map[string]string{"device": deviceID, "port": port},
+			Value:  ciscoSensorValue(raw, scale, precision, ciscoDOMSensors[kind].Scale),
+			TS:     at,
+		})
+	}
+	return out
+}
+
 // healthOIDs returns branches to walk for `health` set.
 func healthOIDs() []string {
 	var out = []string{oidSysUpTime, oidHrProcessorLoad,
@@ -316,7 +507,13 @@ func healthOIDs() []string {
 // only has interface index, and "RX power of index 26" tells operator nothing. Poller does NOT
 // walk `ifDescr` here -- second source for same info eventually disagrees.
 func opticalOIDs() []string {
-	var out = []string{oidOpticalName}
+	var out = []string{oidOpticalName,
+		// Cisco enterprise-9 plus the two ENTITY-MIB columns its readings have to
+		// be JOINED to. Empty on every other platform, exactly like the Cisco
+		// branches healthOIDs already walks — a device that does not serve them
+		// returns nothing and produces no samples.
+		oidCiscoSensorType, oidCiscoSensorScale, oidCiscoSensorPrecision,
+		oidCiscoSensorValue, oidEntPhysicalName, oidEntPhysicalContainedIn}
 	var i int
 	for i = range opticalColumns {
 		out = append(out, opticalColumns[i].OID)
@@ -537,6 +734,10 @@ func OpticalSamples(deviceID string, tables map[string]map[string]gosnmp.SnmpPDU
 			})
 		}
 	}
+	// The second family, and the two cannot collide: a switch serves the MikroTik
+	// table or the Cisco one, never both, and each produces nothing from the
+	// other's empty walk.
+	out = append(out, ciscoOpticalSamples(deviceID, tables, at)...)
 	return out
 }
 

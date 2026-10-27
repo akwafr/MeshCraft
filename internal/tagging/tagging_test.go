@@ -14,9 +14,9 @@ var le1930 = Device{
 
 func TestMatches(t *testing.T) {
 	var cas = []struct {
-		nom     string
-		match   Match
-		attendu bool
+		name  string
+		match Match
+		want  bool
 	}{
 		{"vendor, case ignored", Match{Vendor: "aruba"}, true},
 		{"product line in label", Match{Model: "1930"}, true},
@@ -35,19 +35,19 @@ func TestMatches(t *testing.T) {
 	}
 	var c = cas[0]
 	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
-			if Match.Matches(c.match, le1930) != c.attendu {
-				t.Errorf("Matches(%+v) = %v, expected %v", c.match, !c.attendu, c.attendu)
+		t.Run(c.name, func(t *testing.T) {
+			if Match.Matches(c.match, le1930) != c.want {
+				t.Errorf("Matches(%+v) = %v, expected %v", c.match, !c.want, c.want)
 			}
 		})
 	}
 }
 
-// TestMatchesSansAdresse : a device whose address is unknown is not "in the range".
+// TestMatchesWithoutAddress : a device whose address is unknown is not "in the range".
 // Counting it in would assign a credential based on absent information.
-func TestMatchesSansAdresse(t *testing.T) {
-	var muet = Device{Vendor: "Aruba (HPE)"}
-	if (Match{IPPrefix: "10.100.0.0/24"}).Matches(muet) {
+func TestMatchesWithoutAddress(t *testing.T) {
+	var silent = Device{Vendor: "Aruba (HPE)"}
+	if (Match{IPPrefix: "10.100.0.0/24"}).Matches(silent) {
 		t.Error("a device without an address must not fall in a range")
 	}
 }
@@ -69,7 +69,7 @@ func TestProblems(t *testing.T) {
 func TestEvaluatePose(t *testing.T) {
 	var rules = []Rule{
 		{ID: "r1", Tag: "aruba-1930", Match: Match{Model: "1930"}, Enabled: true},
-		{ID: "r2", Tag: "regie", Match: Match{Location: "lighting"}, Enabled: true},
+		{ID: "r2", Tag: "ops", Match: Match{Location: "lighting"}, Enabled: true},
 		{ID: "r3", Tag: "cisco", Match: Match{Vendor: "cisco"}, Enabled: true},
 	}
 	var plan = Evaluate(le1930, nil, rules)
@@ -91,51 +91,51 @@ func TestEvaluateIdempotent(t *testing.T) {
 	var rules = []Rule{
 		{ID: "r1", Tag: "aruba-1930", Match: Match{Model: "1930"}, Enabled: true},
 	}
-	var deja = []Tag{{Tag: "aruba-1930", Source: "rule:r1"}}
-	var plan = Evaluate(le1930, deja, rules)
+	var already = []Tag{{Tag: "aruba-1930", Source: "rule:r1"}}
+	var plan = Evaluate(le1930, already, rules)
 	if !plan.Empty() {
 		t.Errorf("re-evaluation of an up-to-date fleet: %+v", plan)
 	}
 }
 
-// TestEvaluateRetireCeQueLaRegleAPose : a disabled or wrong rule removes what it
+// TestEvaluateRemovesWhatTheRuleSet : a disabled or wrong rule removes what it
 // had placed — it does not abandon it in place.
-func TestEvaluateRetireCeQueLaRegleAPose(t *testing.T) {
+func TestEvaluateRemovesWhatTheRuleSet(t *testing.T) {
 	var rules = []Rule{
 		{ID: "r1", Tag: "aruba-1930", Match: Match{Model: "1930"}, Enabled: false},
 	}
-	var deja = []Tag{{Tag: "aruba-1930", Source: "rule:r1"}}
-	var plan = Evaluate(le1930, deja, rules)
+	var already = []Tag{{Tag: "aruba-1930", Source: "rule:r1"}}
+	var plan = Evaluate(le1930, already, rules)
 	if len(plan.Remove) != 1 || plan.Remove[0].Tag != "aruba-1930" {
 		t.Errorf("tag from a disabled rule must be removed: %+v", plan)
 	}
 }
 
-// TestEvaluateNeToucheJamaisAuManuel : the point that makes re-evaluation safe.
+// TestEvaluateNeverTouchesManual : the point that makes re-evaluation safe.
 // An operator who placed a tag by hand must find it after any rule pass.
-func TestEvaluateNeToucheJamaisAuManuel(t *testing.T) {
-	var deja = []Tag{
-		{Tag: "prestataire-externe", Source: SourceManual},
+func TestEvaluateNeverTouchesManual(t *testing.T) {
+	var already = []Tag{
+		{Tag: "external-contractor", Source: SourceManual},
 		{Tag: "aruba-1930", Source: SourceManual},
 	}
 	// No rule claims these tags, and one shares a name with a disabled rule.
 	var rules = []Rule{
 		{ID: "r1", Tag: "aruba-1930", Match: Match{Model: "1930"}, Enabled: false},
 	}
-	var plan = Evaluate(le1930, deja, rules)
+	var plan = Evaluate(le1930, already, rules)
 	if len(plan.Remove) != 0 {
 		t.Errorf("a manual tag must never be removed: %+v", plan.Remove)
 	}
 }
 
-// TestEvaluateManuelPrimeSurRegle : when both want the same tag, nothing moves —
+// TestEvaluateManualBeatsRule : when both want the same tag, nothing moves —
 // and the tag survives disabling the rule.
-func TestEvaluateManuelPrimeSurRegle(t *testing.T) {
-	var deja = []Tag{{Tag: "aruba-1930", Source: SourceManual}}
+func TestEvaluateManualBeatsRule(t *testing.T) {
+	var already = []Tag{{Tag: "aruba-1930", Source: SourceManual}}
 	var rules = []Rule{
 		{ID: "r1", Tag: "aruba-1930", Match: Match{Model: "1930"}, Enabled: true},
 	}
-	var plan = Evaluate(le1930, deja, rules)
+	var plan = Evaluate(le1930, already, rules)
 	if !plan.Empty() {
 		t.Errorf("manual source must win without changing anything: %+v", plan)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // Pipelines: state of what meshcraft is doing on the fleet.
-// See docs/fr/01-Architecture/Monitoring (unified monitoring and pipelines) §5.
+// See docs/en/01-Architecture/Unified monitoring and pipelines.md §5.
 
 // Pipeline states. `blocked` deserves to exist beside `failed`: it says
 // "waiting for something", not "it failed". Conflating them makes you restart

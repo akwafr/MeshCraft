@@ -1,7 +1,7 @@
 {
   "meshcraft_site_config": 1,
   "site": {
-    "name": "Festival Horizon",
+    "name": "Horizon Festival",
     "plan": {
       "width": 1120,
       "height": 620
@@ -12,37 +12,37 @@
       "vlan_id": 10,
       "name": "MGMT",
       "color": "#94a3b8",
-      "purpose": "Administration équipements"
+      "purpose": "Device management"
     },
     {
       "vlan_id": 20,
       "name": "DANTE PRI",
       "color": "#46a758",
-      "purpose": "Audio Dante — primaire"
+      "purpose": "Dante audio — primary"
     },
     {
       "vlan_id": 21,
       "name": "DANTE SEC",
       "color": "#14b8a6",
-      "purpose": "Audio Dante — secondaire"
+      "purpose": "Dante audio — secondary"
     },
     {
       "vlan_id": 30,
       "name": "ARTNET",
       "color": "#f5a623",
-      "purpose": "Lumière Art-Net / sACN"
+      "purpose": "Lighting Art-Net / sACN"
     },
     {
       "vlan_id": 40,
       "name": "NDI VIDEO",
       "color": "#a855f7",
-      "purpose": "Vidéo NDI / captation"
+      "purpose": "NDI video / capture"
     },
     {
       "vlan_id": 41,
       "name": "PTZ CTRL",
       "color": "#8b5cf6",
-      "purpose": "Contrôle caméras"
+      "purpose": "Camera control"
     },
     {
       "vlan_id": 50,
@@ -54,56 +54,56 @@
       "vlan_id": 55,
       "name": "VOIP",
       "color": "#0ea5e9",
-      "purpose": "Téléphonie site"
+      "purpose": "Site telephony"
     },
     {
       "vlan_id": 60,
       "name": "PROD",
       "color": "#84cc16",
-      "purpose": "Bureaux production"
+      "purpose": "Production offices"
     },
     {
       "vlan_id": 70,
       "name": "WIFI CREW",
       "color": "#4f7cff",
-      "purpose": "WiFi équipes"
+      "purpose": "Crew Wi-Fi"
     },
     {
       "vlan_id": 71,
       "name": "WIFI GUEST",
       "color": "#ec4899",
-      "purpose": "WiFi public"
+      "purpose": "Public Wi-Fi"
     },
     {
       "vlan_id": 80,
       "name": "STREAM",
       "color": "#f97316",
-      "purpose": "Streaming sortant"
+      "purpose": "Outbound streaming"
     },
     {
       "vlan_id": 90,
       "name": "CCTV",
       "color": "#e5484d",
-      "purpose": "Vidéosurveillance"
+      "purpose": "Video surveillance"
     },
     {
       "vlan_id": 100,
-      "name": "BILLET",
+      "name": "TICKETING",
       "color": "#eab308",
-      "purpose": "Billetterie / accès"
+      "purpose": "Ticketing / access control"
     },
     {
       "vlan_id": 999,
       "name": "TRANSIT",
       "color": "#64748b",
-      "purpose": "Natif des liaisons inter-switch"
+      "purpose": "Native VLAN of inter-switch links"
     }
   ],
   "port_profiles": [
     {
-      "name": "Prise artiste — Dante",
+      "name": "Artist outlet — Dante",
       "spec": {
-        "description": "Console, stagebox ou ampli sur le réseau audio primaire",
+        "description": "Console, stagebox or amplifier on the primary audio network",
         "mode": "access",
         "pvid": 20,
         "tagged": [],
@@ -111,9 +111,9 @@
       }
     },
     {
-      "name": "Dante secondaire",
+      "name": "Dante secondary",
       "spec": {
-        "description": "Réseau audio redondant (carte SEC)",
+        "description": "Redundant audio network (SEC card)",
         "mode": "access",
         "pvid": 21,
         "tagged": [],
@@ -121,9 +121,9 @@
       }
     },
     {
-      "name": "Node lumière",
+      "name": "Lighting node",
       "spec": {
-        "description": "Node Art-Net ou gateway sACN, alimenté PoE",
+        "description": "Art-Net node or sACN gateway, PoE-powered",
         "mode": "access",
         "pvid": 30,
         "tagged": [],
@@ -131,9 +131,9 @@
       }
     },
     {
-      "name": "AP WiFi site",
+      "name": "Site Wi-Fi AP",
       "spec": {
-        "description": "Borne crew + public, management natif",
+        "description": "Crew + guest access point, native management",
         "mode": "trunk",
         "pvid": 10,
         "tagged": [
@@ -145,9 +145,9 @@
       }
     },
     {
-      "name": "Caméra PTZ",
+      "name": "PTZ camera",
       "spec": {
-        "description": "Flux NDI + contrôle caméra, alimentée PoE",
+        "description": "NDI stream + camera control, PoE-powered",
         "mode": "trunk",
         "pvid": 40,
         "tagged": [
@@ -160,7 +160,7 @@
     {
       "name": "Beltpack intercom",
       "spec": {
-        "description": "Poste intercom IP, alimenté PoE",
+        "description": "IP intercom station, PoE-powered",
         "mode": "access",
         "pvid": 50,
         "tagged": [],
@@ -168,9 +168,9 @@
       }
     },
     {
-      "name": "Poste production",
+      "name": "Production workstation",
       "spec": {
-        "description": "PC bureautique équipe production",
+        "description": "Production team office PC",
         "mode": "access",
         "pvid": 60,
         "tagged": [],
@@ -178,9 +178,9 @@
       }
     },
     {
-      "name": "Encodeur streaming",
+      "name": "Streaming encoder",
       "spec": {
-        "description": "Sortie captation vers CDN",
+        "description": "Live capture out to the CDN",
         "mode": "access",
         "pvid": 80,
         "tagged": [],
@@ -188,9 +188,9 @@
       }
     },
     {
-      "name": "Caméra sécurité",
+      "name": "Security camera",
       "spec": {
-        "description": "CCTV fixe, alimentée PoE",
+        "description": "Fixed CCTV camera, PoE-powered",
         "mode": "access",
         "pvid": 90,
         "tagged": [],
@@ -198,9 +198,9 @@
       }
     },
     {
-      "name": "Liaison inter-switch",
+      "name": "Inter-switch link",
       "spec": {
-        "description": "Trunk complet, natif TRANSIT — uplinks fibre ou cuivre",
+        "description": "Full trunk, TRANSIT native — fibre or copper uplinks",
         "mode": "trunk",
         "pvid": 999,
         "tagged": "all",
@@ -228,11 +228,11 @@
   ],
   "device_groups": [
     {
-      "name": "Régies",
+      "name": "Control rooms",
       "device_profile": "switch-standard"
     },
     {
-      "name": "Plateau",
+      "name": "Stage",
       "device_profile": "switch-standard"
     }
   ],
@@ -241,8 +241,8 @@
       "name": "CORE",
       "model": "Generic-AGG-16X",
       "vendor": "generic",
-      "location": "Local technique",
-      "mgmt_ip": "10.10.0.1",
+      "location": "Equipment room",
+      "mgmt_ip": "192.0.2.1",
       "status": "ok",
       "position": {
         "x": 880,
@@ -250,7 +250,7 @@
       },
       "extra": {
         "os": "Generic OS 1.0",
-        "uptime": "3 j 06 h"
+        "uptime": "3 d 06 h"
       },
       "port_groups": [
         {
@@ -268,7 +268,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "Poste ingénieur",
+          "label": "Engineer workstation",
           "mode": "access",
           "pvid": 10,
           "tagged": [],
@@ -286,7 +286,7 @@
           "tx_mbps": 860
         },
         "sfp-sfpplus2": {
-          "label": "Uplink RÉGIE LUMIÈRE",
+          "label": "Uplink LIGHTING DESK",
           "mode": "trunk",
           "pvid": 999,
           "tagged": "all",
@@ -295,7 +295,7 @@
           "tx_mbps": 95
         },
         "sfp-sfpplus3": {
-          "label": "Uplink CAR RÉGIE",
+          "label": "Uplink OB VAN",
           "mode": "trunk",
           "pvid": 999,
           "tagged": "all",
@@ -313,7 +313,7 @@
           "tx_mbps": 120
         },
         "sfp-sfpplus5": {
-          "label": "Uplink ACCUEIL",
+          "label": "Uplink ENTRANCE",
           "mode": "trunk",
           "pvid": 999,
           "tagged": "all",
@@ -322,14 +322,14 @@
           "tx_mbps": 45
         },
         "sfp-sfpplus6": {
-          "label": "Uplink TOUR DÉLAI",
+          "label": "Uplink DELAY TOWER",
           "mode": "trunk",
           "pvid": 999,
           "tagged": "all",
           "link": null
         },
         "sfp-sfpplus7": {
-          "label": "Routeur WAN",
+          "label": "WAN router",
           "mode": "access",
           "pvid": 999,
           "tagged": [],
@@ -338,7 +338,7 @@
           "tx_mbps": 240
         },
         "sfp-sfpplus8": {
-          "label": "NAS captation",
+          "label": "Recording NAS",
           "mode": "access",
           "pvid": 80,
           "tagged": [],
@@ -347,7 +347,7 @@
           "tx_mbps": 15
         },
         "sfp-sfpplus9": {
-          "label": "Serveur production",
+          "label": "Production server",
           "mode": "access",
           "pvid": 60,
           "tagged": [],
@@ -361,10 +361,10 @@
       "name": "FOH",
       "model": "Generic-24P-4X",
       "vendor": "generic",
-      "location": "Régies façade",
-      "mgmt_ip": "10.10.0.10",
+      "location": "Front-of-house control",
+      "mgmt_ip": "192.0.2.10",
       "status": "ok",
-      "group": "Régies",
+      "group": "Control rooms",
       "poe_budget_w": 450,
       "position": {
         "x": 330,
@@ -372,7 +372,7 @@
       },
       "extra": {
         "os": "Generic OS 1.0",
-        "uptime": "2 j 14 h"
+        "uptime": "2 d 14 h"
       },
       "port_groups": [
         {
@@ -409,7 +409,7 @@
           "tx_mbps": 96
         },
         "ether3": {
-          "label": "PC régie son",
+          "label": "Sound control PC",
           "mode": "access",
           "pvid": 60,
           "tagged": [],
@@ -444,7 +444,7 @@
           "tx_mbps": 45
         },
         "ether6": {
-          "label": "Encodeur stream",
+          "label": "Stream encoder",
           "mode": "access",
           "pvid": 80,
           "tagged": [],
@@ -453,7 +453,7 @@
           "tx_mbps": 24
         },
         "ether7": {
-          "label": "Caméra PTZ FOH",
+          "label": "PTZ camera FOH",
           "mode": "trunk",
           "pvid": 40,
           "tagged": [
@@ -467,7 +467,7 @@
           "tx_mbps": 6
         },
         "ether8": {
-          "label": "Enregistreur multipiste",
+          "label": "Multitrack recorder",
           "mode": "access",
           "pvid": 20,
           "tagged": [],
@@ -476,7 +476,7 @@
           "tx_mbps": 4
         },
         "ether9": {
-          "label": "Ampli délai gauche",
+          "label": "Delay amp left",
           "mode": "access",
           "pvid": 20,
           "tagged": [],
@@ -492,7 +492,7 @@
           "tx_mbps": 540
         },
         "sfp-sfpplus2": {
-          "label": "Fibre SCÈNE JARDIN",
+          "label": "Fibre STAGE RIGHT",
           "mode": "trunk",
           "pvid": 999,
           "tagged": [
@@ -509,7 +509,7 @@
           "tx_mbps": 180
         },
         "sfp-sfpplus3": {
-          "label": "Fibre SCÈNE COUR",
+          "label": "Fibre STAGE LEFT",
           "mode": "trunk",
           "pvid": 999,
           "tagged": [
@@ -528,13 +528,13 @@
       }
     },
     {
-      "name": "SCÈNE JARDIN",
+      "name": "STAGE RIGHT",
       "model": "Generic-8P-2S",
       "vendor": "generic",
-      "location": "Plateau",
-      "mgmt_ip": "10.10.0.21",
+      "location": "Stage",
+      "mgmt_ip": "192.0.2.21",
       "status": "ok",
-      "group": "Plateau",
+      "group": "Stage",
       "poe_budget_w": 120,
       "position": {
         "x": 250,
@@ -542,7 +542,7 @@
       },
       "extra": {
         "os": "Generic OS lite",
-        "uptime": "2 j 14 h"
+        "uptime": "2 d 14 h"
       },
       "port_groups": [
         {
@@ -579,7 +579,7 @@
           "tx_mbps": 97
         },
         "ether3": {
-          "label": "Node lumière jardin",
+          "label": "Lighting node stage right",
           "mode": "access",
           "pvid": 30,
           "tagged": [],
@@ -590,7 +590,7 @@
           "tx_mbps": 1
         },
         "ether4": {
-          "label": "Antenne intercom HF",
+          "label": "Wireless intercom antenna",
           "mode": "access",
           "pvid": 50,
           "tagged": [],
@@ -601,7 +601,7 @@
           "tx_mbps": 3
         },
         "ether5": {
-          "label": "AP plateau jardin",
+          "label": "AP stage right",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -615,7 +615,7 @@
           "tx_mbps": 25
         },
         "ether6": {
-          "label": "Caméra PTZ jardin",
+          "label": "PTZ camera stage right",
           "mode": "trunk",
           "pvid": 40,
           "tagged": [
@@ -640,13 +640,13 @@
       }
     },
     {
-      "name": "SCÈNE COUR",
+      "name": "STAGE LEFT",
       "model": "Generic-8P-2S",
       "vendor": "generic",
-      "location": "Plateau",
-      "mgmt_ip": "10.10.0.22",
+      "location": "Stage",
+      "mgmt_ip": "192.0.2.22",
       "status": "ok",
-      "group": "Plateau",
+      "group": "Stage",
       "poe_budget_w": 120,
       "position": {
         "x": 700,
@@ -654,7 +654,7 @@
       },
       "extra": {
         "os": "Generic OS lite",
-        "uptime": "2 j 14 h"
+        "uptime": "2 d 14 h"
       },
       "port_groups": [
         {
@@ -691,7 +691,7 @@
           "tx_mbps": 64
         },
         "ether3": {
-          "label": "Node lumière cour",
+          "label": "Lighting node stage left",
           "mode": "access",
           "pvid": 30,
           "tagged": [],
@@ -702,7 +702,7 @@
           "tx_mbps": 1
         },
         "ether4": {
-          "label": "Écran retour plateau",
+          "label": "Stage monitor screen",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -711,7 +711,7 @@
           "tx_mbps": 2
         },
         "ether5": {
-          "label": "AP plateau cour",
+          "label": "AP stage left",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -725,7 +725,7 @@
           "tx_mbps": 22
         },
         "ether6": {
-          "label": "Caméra PTZ cour",
+          "label": "PTZ camera stage left",
           "mode": "trunk",
           "pvid": 40,
           "tagged": [
@@ -747,20 +747,20 @@
       }
     },
     {
-      "name": "RÉGIE LUMIÈRE",
+      "name": "LIGHTING DESK",
       "model": "Generic-24G-2X",
       "vendor": "generic",
-      "location": "Régies façade",
-      "mgmt_ip": "10.10.0.12",
+      "location": "Front-of-house control",
+      "mgmt_ip": "192.0.2.12",
       "status": "ok",
-      "group": "Régies",
+      "group": "Control rooms",
       "position": {
         "x": 560,
         "y": 400
       },
       "extra": {
         "os": "Generic OS 1.0",
-        "uptime": "2 j 13 h"
+        "uptime": "2 d 13 h"
       },
       "port_groups": [
         {
@@ -778,7 +778,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "Console lumière principale",
+          "label": "Main lighting console",
           "mode": "access",
           "pvid": 30,
           "tagged": [],
@@ -787,7 +787,7 @@
           "tx_mbps": 8
         },
         "ether2": {
-          "label": "Unité de processing lumière",
+          "label": "Lighting processing unit",
           "mode": "access",
           "pvid": 30,
           "tagged": [],
@@ -796,7 +796,7 @@
           "tx_mbps": 12
         },
         "ether3": {
-          "label": "PC poursuites / trackers",
+          "label": "Followspot / tracker PC",
           "mode": "access",
           "pvid": 30,
           "tagged": [],
@@ -823,7 +823,7 @@
           "tx_mbps": 1
         },
         "ether6": {
-          "label": "Serveur média mapping",
+          "label": "Media mapping server",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -832,7 +832,7 @@
           "tx_mbps": 10
         },
         "ether7": {
-          "label": "Poste prod lumière",
+          "label": "Lighting production PC",
           "mode": "access",
           "pvid": 60,
           "tagged": [],
@@ -852,20 +852,20 @@
       }
     },
     {
-      "name": "CAR RÉGIE",
+      "name": "OB VAN",
       "model": "Generic-AGG-16X",
       "vendor": "generic",
-      "location": "Car régie",
-      "mgmt_ip": "10.10.0.13",
+      "location": "OB van",
+      "mgmt_ip": "192.0.2.13",
       "status": "ok",
-      "group": "Régies",
+      "group": "Control rooms",
       "position": {
         "x": 900,
         "y": 120
       },
       "extra": {
         "os": "Generic OS 1.0",
-        "uptime": "1 j 20 h"
+        "uptime": "1 d 20 h"
       },
       "port_groups": [
         {
@@ -883,7 +883,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "Management car",
+          "label": "OB van management",
           "mode": "access",
           "pvid": 10,
           "tagged": [],
@@ -901,7 +901,7 @@
           "tx_mbps": 980
         },
         "sfp-sfpplus2": {
-          "label": "Mélangeur — NDI",
+          "label": "Vision mixer — NDI",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -910,7 +910,7 @@
           "tx_mbps": 790
         },
         "sfp-sfpplus3": {
-          "label": "Serveur replay",
+          "label": "Replay server",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -919,7 +919,7 @@
           "tx_mbps": 610
         },
         "sfp-sfpplus4": {
-          "label": "Encodeur stream 4K",
+          "label": "4K stream encoder",
           "mode": "access",
           "pvid": 80,
           "tagged": [],
@@ -928,7 +928,7 @@
           "tx_mbps": 38
         },
         "sfp-sfpplus5": {
-          "label": "Caméra fibre 1",
+          "label": "Fibre camera 1",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -937,7 +937,7 @@
           "tx_mbps": 2
         },
         "sfp-sfpplus6": {
-          "label": "Caméra fibre 2",
+          "label": "Fibre camera 2",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -946,7 +946,7 @@
           "tx_mbps": 2
         },
         "sfp-sfpplus7": {
-          "label": "Caméra fibre 3",
+          "label": "Fibre camera 3",
           "mode": "access",
           "pvid": 40,
           "tagged": [],
@@ -959,9 +959,9 @@
       "model": "Generic-8P-2S",
       "vendor": "generic",
       "location": "Backstage",
-      "mgmt_ip": "10.10.0.14",
+      "mgmt_ip": "192.0.2.14",
       "status": "warn",
-      "status_note": "budget PoE à 94 %",
+      "status_note": "PoE budget at 94%",
       "poe_budget_w": 66,
       "position": {
         "x": 60,
@@ -969,7 +969,7 @@
       },
       "extra": {
         "os": "Generic OS lite",
-        "uptime": "2 j 14 h"
+        "uptime": "2 d 14 h"
       },
       "port_groups": [
         {
@@ -988,7 +988,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "AP loges",
+          "label": "AP dressing rooms",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -1003,7 +1003,7 @@
           "tx_mbps": 30
         },
         "ether2": {
-          "label": "AP couloir technique",
+          "label": "AP service corridor",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -1018,7 +1018,7 @@
           "tx_mbps": 26
         },
         "ether3": {
-          "label": "CCTV loge artistes",
+          "label": "CCTV artist dressing room",
           "mode": "access",
           "pvid": 90,
           "tagged": [],
@@ -1029,7 +1029,7 @@
           "tx_mbps": 1
         },
         "ether4": {
-          "label": "CCTV quai déchargement",
+          "label": "CCTV loading dock",
           "mode": "access",
           "pvid": 90,
           "tagged": [],
@@ -1040,7 +1040,7 @@
           "tx_mbps": 1
         },
         "ether5": {
-          "label": "Écran planning",
+          "label": "Schedule display",
           "mode": "access",
           "pvid": 60,
           "tagged": [],
@@ -1051,7 +1051,7 @@
           "tx_mbps": 1
         },
         "ether6": {
-          "label": "Intercom loges",
+          "label": "Intercom dressing rooms",
           "mode": "access",
           "pvid": 50,
           "tagged": [],
@@ -1062,7 +1062,7 @@
           "tx_mbps": 2
         },
         "ether7": {
-          "label": "Imprimante production",
+          "label": "Production printer",
           "mode": "access",
           "pvid": 60,
           "tagged": [],
@@ -1082,11 +1082,11 @@
       }
     },
     {
-      "name": "ACCUEIL",
+      "name": "ENTRANCE",
       "model": "Generic-8P-2S",
       "vendor": "generic",
-      "location": "Accueil public",
-      "mgmt_ip": "10.10.0.15",
+      "location": "Public entrance",
+      "mgmt_ip": "192.0.2.15",
       "status": "ok",
       "poe_budget_w": 120,
       "position": {
@@ -1095,7 +1095,7 @@
       },
       "extra": {
         "os": "Generic OS lite",
-        "uptime": "2 j 12 h"
+        "uptime": "2 d 12 h"
       },
       "port_groups": [
         {
@@ -1114,7 +1114,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "Caisse billetterie 1",
+          "label": "Box office till 1",
           "mode": "access",
           "pvid": 100,
           "tagged": [],
@@ -1123,7 +1123,7 @@
           "tx_mbps": 1
         },
         "ether2": {
-          "label": "Caisse billetterie 2",
+          "label": "Box office till 2",
           "mode": "access",
           "pvid": 100,
           "tagged": [],
@@ -1132,7 +1132,7 @@
           "tx_mbps": 1
         },
         "ether3": {
-          "label": "Portique de scan",
+          "label": "Ticket scanning gate",
           "mode": "access",
           "pvid": 100,
           "tagged": [],
@@ -1143,7 +1143,7 @@
           "tx_mbps": 1
         },
         "ether4": {
-          "label": "AP accueil public",
+          "label": "AP public entrance",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -1157,7 +1157,7 @@
           "tx_mbps": 60
         },
         "ether5": {
-          "label": "CCTV parvis",
+          "label": "CCTV forecourt",
           "mode": "access",
           "pvid": 90,
           "tagged": [],
@@ -1179,13 +1179,13 @@
       }
     },
     {
-      "name": "TOUR DÉLAI",
+      "name": "DELAY TOWER",
       "model": "Generic-16P-2X",
       "vendor": "generic",
-      "location": "Fosse",
-      "mgmt_ip": "10.10.0.16",
+      "location": "Pit",
+      "mgmt_ip": "192.0.2.16",
       "status": "off",
-      "status_note": "Uplink CORE sfp-sfpplus6 down — fibre à contrôler.",
+      "status_note": "Uplink CORE sfp-sfpplus6 down — fibre to be checked.",
       "poe_budget_w": 240,
       "position": {
         "x": 490,
@@ -1212,7 +1212,7 @@
       ],
       "ports": {
         "ether1": {
-          "label": "Ampli délai droit",
+          "label": "Delay amp right",
           "mode": "access",
           "pvid": 20,
           "tagged": [],
@@ -1221,7 +1221,7 @@
           "tx_mbps": 3
         },
         "ether2": {
-          "label": "Ampli délai gauche",
+          "label": "Delay amp left",
           "mode": "access",
           "pvid": 20,
           "tagged": [],
@@ -1230,7 +1230,7 @@
           "tx_mbps": 3
         },
         "ether3": {
-          "label": "AP fosse",
+          "label": "AP pit",
           "mode": "trunk",
           "pvid": 10,
           "tagged": [
@@ -1245,7 +1245,7 @@
           "tx_mbps": 35
         },
         "ether4": {
-          "label": "CCTV fosse",
+          "label": "CCTV pit",
           "mode": "access",
           "pvid": 90,
           "tagged": [],
@@ -1279,7 +1279,7 @@
     {
       "a": "CORE",
       "a_port": "sfp-sfpplus2",
-      "b": "RÉGIE LUMIÈRE",
+      "b": "LIGHTING DESK",
       "b_port": "sfp-sfpplus1",
       "speed": "10G",
       "status": "up"
@@ -1287,11 +1287,11 @@
     {
       "a": "CORE",
       "a_port": "sfp-sfpplus3",
-      "b": "CAR RÉGIE",
+      "b": "OB VAN",
       "b_port": "sfp-sfpplus1",
       "speed": "10G",
       "status": "warn",
-      "note": "Affaiblissement optique côté CAR RÉGIE : RX −21,4 dBm (seuil −18 dBm), TX côté CORE nominal — connecteur à nettoyer / fibre pincée au panneau du car."
+      "note": "Optical loss on the OB VAN side: RX −21.4 dBm (threshold −18 dBm), TX on the CORE side nominal — connector to clean or fibre pinched at the van's patch panel."
     },
     {
       "a": "CORE",
@@ -1304,7 +1304,7 @@
     {
       "a": "CORE",
       "a_port": "sfp-sfpplus5",
-      "b": "ACCUEIL",
+      "b": "ENTRANCE",
       "b_port": "sfp1",
       "speed": "1G",
       "status": "up"
@@ -1312,16 +1312,16 @@
     {
       "a": "CORE",
       "a_port": "sfp-sfpplus6",
-      "b": "TOUR DÉLAI",
+      "b": "DELAY TOWER",
       "b_port": "sfp-sfpplus1",
       "speed": "1G",
       "status": "down",
-      "note": "LOS côté CORE : aucune lumière reçue — fibre sectionnée ou débranchée sur le cheminement fosse."
+      "note": "LOS on the CORE side: no light received — fibre cut or unplugged along the pit cable run."
     },
     {
       "a": "FOH",
       "a_port": "sfp-sfpplus2",
-      "b": "SCÈNE JARDIN",
+      "b": "STAGE RIGHT",
       "b_port": "sfp1",
       "speed": "10G",
       "status": "up"
@@ -1329,7 +1329,7 @@
     {
       "a": "FOH",
       "a_port": "sfp-sfpplus3",
-      "b": "SCÈNE COUR",
+      "b": "STAGE LEFT",
       "b_port": "sfp1",
       "speed": "10G",
       "status": "up"

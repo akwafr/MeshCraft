@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ageMs, viewerDate } from "../ui/clock";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,13 +16,14 @@ import {
   type Site,
 } from "../api";
 import { useAdminSiteIDs, useAuth } from "../auth";
-import { ActionButton, ActionIcon, DeleteButton, ErrorMsg, Field, HelpTip, Modal, QuickTip, useToast } from "../components";
+import { ActionButton, ActionIcon, ErrorMsg, Field, HelpTip, Modal, QuickTip, useToast } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 import { ProxyPrefixesModal } from "./ProxyPrefixes";
 
 function human(size: number): string {
-  if (size > 1 << 20) return (size / (1 << 20)).toFixed(1) + " Mio";
-  if (size > 1 << 10) return (size / (1 << 10)).toFixed(0) + " Kio";
-  return size + " o";
+  if (size > 1 << 20) return (size / (1 << 20)).toFixed(1) + " MiB";
+  if (size > 1 << 10) return (size / (1 << 10)).toFixed(0) + " KiB";
+  return size + " B";
 }
 
 function lastSeenLabel(p: ProxyInfo, t: (k: string, o?: Record<string, unknown>) => string): { text: string; color: string } {
@@ -30,13 +32,33 @@ function lastSeenLabel(p: ProxyInfo, t: (k: string, o?: Record<string, unknown>)
   if (p.revoked) return { text: t("proxyPage.revoked"), color: "var(--danger)" };
   // Local (internal) proxy is the controller itself — never heartbeats over WSS.
   if (p.internal) return { text: t("proxyPage.thisInstance"), color: "var(--ok)" };
-  if (!p.last_seen) return { text: t("proxyPage.neverSeen"), color: "var(--warn)" };
-  const age = Date.now() - new Date(p.last_seen).getTime();
+  // A proxy that has never checked in is NOT an alert (settled 2026-08-08,
+  // UI-GUIDE §7). Nothing is wrong that a human can go and fix on the proxy —
+  // what is true is that meshcraft has no vantage point through it, which is
+  // the one meaning `--indeterminate` carries. A proxy is *the observer*, so
+  // its absence is the archetype of "we cannot see". Orange said "something is
+  // wrong here", and this page is where an operator decides whether to chase a
+  // fault or finish an install.
+  if (!p.last_seen)
+    return { text: t("proxyPage.neverSeen"), color: "var(--indeterminate)" };
+  const age = ageMs(p.last_seen) ?? 0;
   if (age < 90_000) return { text: t("proxyPage.online"), color: "var(--ok)" };
   const mins = Math.round(age / 60000);
+  // A proxy that WAS seen and has gone quiet is a FAULT, not an alert (settled
+  // 2026-08-08, UI-GUIDE §7). It was `--warn` until then, and the argument that
+  // moved it is proportion: a DEVICE silent for hours is already `--danger`
+  // (network.ts statusColor), and a proxy silent for hours takes a WHOLE SITE's
+  // observability with it. Something strictly worse cannot be painted more
+  // gently than the thing it contains.
+  //
+  // It is NOT `--indeterminate`, and the line between the two is the whole
+  // reason the branch above reads differently: a proxy that never checked in may
+  // simply not be installed yet — nothing is broken, we just have no vantage
+  // point. One that answered and then stopped HAS broken. We can see that it is
+  // gone, which is knowledge, not blindness.
   return {
     text: mins < 60 ? t("proxyPage.silentSince", { mins }) : t("proxyPage.offlineSince", { hours: Math.round(mins / 60) }),
-    color: "var(--warn)",
+    color: "var(--danger)",
   };
 }
 
@@ -88,7 +110,7 @@ function CodeBlock({
  * Choice of proxy coverage to deploy. An instance administrator can turn
  * it into an instance proxy; a site-admin only sees their own sites here,
  * and must check at least one — an empty coverage would cover nothing
- * (see docs/01-Architecture/Proxy).
+ * (see docs/en/01-Architecture/Proxy).
  */
 function CoveragePicker({
   admin,
@@ -161,7 +183,7 @@ function CoveragePicker({
 
 /**
  * Proxies page — site coverage is the proxy rights boundary
- * (see docs/01-Architecture/Proxy and docs/01-Architecture/Docker and IPv6 deployment).
+ * (see docs/en/01-Architecture/Proxy and docs/en/01-Architecture/Docker deployment and IPv6).
  */
 export default function ProxyPage() {
   const { t, i18n } = useTranslation();
@@ -170,7 +192,7 @@ export default function ProxyPage() {
   const admin = !!user?.is_global_admin;
   const adminSites = useAdminSiteIDs();
   // Deploy requires being an administrator of at least one site; the cover
-  // of the created proxy will be limited to these sites (see docs/01-Architecture/Proxy).
+  // of the created proxy will be limited to these sites (see docs/en/01-Architecture/Proxy).
   const canDeploy = admin || adminSites.length > 0;
   const [migrating, setMigrating] = useState<ProxyInfo | null>(null);
   const [covering, setCovering] = useState<ProxyInfo | null>(null);
@@ -277,7 +299,7 @@ export default function ProxyPage() {
             {t("proxyPage.noProxies")}
           </div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div className="scroll-x scroll-cue">
             <table>
               <thead>
                 <tr>
@@ -285,7 +307,7 @@ export default function ProxyPage() {
                   <th>{t("proxyPage.coverageCol")}</th>
                   <th>{t("common.stateCol")}</th>
                   <th>{t("proxyPage.versionCol")}</th>
-                  <th style={{ width: 300 }}></th>
+                  <th className="col-actions"></th>
                 </tr>
               </thead>
               <tbody>
@@ -364,55 +386,70 @@ export default function ProxyPage() {
                           onEdit={() => setUpgrading(p)}
                         />
                       </td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {/* FIVE labelled verbs used to live here — "Sites",
+                          "Ranges", "Migrate", "Revoke", "Delete" —
+                          behind a 300 px fixed column, which is why the site
+                          chips two columns to the left wrapped three deep. The
+                          verbs are now glyphs with their name in `aria-label`
+                          and an instant tip (ui/IconAction.tsx, §3). */}
+                      <td className="col-actions">
                         {p.internal ? (
                           <span className="note">{t("proxyPage.followsController")}</span>
                         ) : (
-                          <>
+                          <div className="icon-actions">
                             {(admin || p.sites.some((s) => adminSites.includes(s.id))) &&
                               !p.migrated_at && (
-                                <ActionButton kind="sites" className="ghost" onClick={() => setCovering(p)}>
-                                  {t("proxyPage.sitesButton")}
-                                </ActionButton>
+                                <IconAction
+                                  kind="sites"
+                                  label={t("proxyPage.sitesButton") as string}
+                                  onClick={() => setCovering(p)}
+                                />
                               )}
                             {/* A range belongs to the PROXY, not a site: this is where
-                                you ask what it scans. The « Add » flow screen was
+                                you ask what it scans. The "Add" flow screen was
                                 impossible to find for someone looking at a proxy. */}
                             {(admin || p.sites.some((s) => adminSites.includes(s.id))) && (
-                              <ActionButton kind="scan" className="ghost" onClick={() => setPrefixing(p)}>
-                                {t("proxyPage.prefixesButton")}
-                              </ActionButton>
+                              <IconAction
+                                kind="scan"
+                                label={t("proxyPage.prefixesButton") as string}
+                                onClick={() => setPrefixing(p)}
+                              />
                             )}
                             {canAdminWhole(p) && (
                               <>
                                 {p.migrate_url && !p.migrated_at ? (
-                                  <ActionButton
+                                  <IconAction
                                     kind="cancel"
-                                    className="ghost"
+                                    label={t("proxyPage.cancelMigration") as string}
                                     onClick={() => cancelMigration.mutate(p)}
-                                  >
-                                    {t("proxyPage.cancelMigration")}
-                                  </ActionButton>
+                                  />
                                 ) : (
                                   !p.migrated_at && (
-                                    <ActionButton kind="migrate" className="ghost" onClick={() => setMigrating(p)}>
-                                      {t("proxyPage.migrate")}
-                                    </ActionButton>
+                                    <IconAction
+                                      kind="migrate"
+                                      label={t("proxyPage.migrate") as string}
+                                      onClick={() => setMigrating(p)}
+                                    />
                                   )
                                 )}
+                                {/* Two verbs, two glyphs: the check RE-opens,
+                                    the slashed circle revokes. The toggle has
+                                    to change shape and not only its tip. */}
                                 {!p.migrated_at && (
-                                  <ActionButton
+                                  <IconAction
                                     kind={p.revoked ? "check" : "ban"}
-                                    className="ghost"
+                                    label={
+                                      (p.revoked
+                                        ? t("proxyPage.reactivate")
+                                        : t("proxyPage.revoke")) as string
+                                    }
                                     onClick={() => revoke.mutate(p)}
-                                  >
-                                    {p.revoked ? t("proxyPage.reactivate") : t("proxyPage.revoke")}
-                                  </ActionButton>
+                                  />
                                 )}
-                                <DeleteButton onConfirm={() => remove.mutate(p)} />
+                                <IconDeleteButton onConfirm={() => remove.mutate(p)} />
                               </>
                             )}
-                          </>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -578,7 +615,7 @@ export default function ProxyPage() {
               {(events ?? []).map((e) => (
                 <tr key={e.id}>
                   <td className="note mono" style={{ whiteSpace: "nowrap", width: 150 }}>
-                    {new Date(e.ts).toLocaleString(i18n.language)}
+                    {(viewerDate(e.ts) ?? new Date(e.ts)).toLocaleString(i18n.language)}
                   </td>
                   <td className="note mono" style={{ width: 190 }}>
                     {e.type}
@@ -657,7 +694,7 @@ export default function ProxyPage() {
 /**
  * Version of a proxy, read at a glance. The badge states the gap from the
  * instance's version: a half-upgraded fleet must be visible, not guessed
- * at (see docs/01-Architecture/Version and update of the proxy).
+ * at (see docs/en/01-Architecture/Proxy versioning and updates).
  */
 function UpgradeCell({
   p,

@@ -49,7 +49,7 @@ import (
 //  3. Address is not DEDUCED, it is ASKED. One might think it suffices to search, among
 //     addresses the proxy declares (`proxies.ifaces`), for one on the device's subnet. That
 //     is false as soon as the proxy reaches it by ROUTING: on the lab fleet, the proxy
-//     exposes 10.42.0.67/24 and 172.17.0.1/16 for a device at 10.99.200.101 — none of its
+//     exposes 10.42.0.67/24 and 172.17.0.1/16 for a device at 198.51.100.101 — none of its
 //     addresses is on the right network, and the obvious algorithm returns nothing. Only the
 //     proxy kernel has the routing table, hence the `tunnel.AskSourceAddr` question.
 //  4. A declared COLLECTOR is required. A device in `null` mode (empty `devices.proxy_id`)
@@ -569,6 +569,9 @@ func (s *Server) applyTrapDestToDevice(ctx context.Context,
 		return out, nil, refusal, err
 	}
 	var conn, adm, _, admErr = s.adminFor(ctx, d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if admErr != nil {
 		return out, transcriptOf(adm), "", admErr
 	}
@@ -580,7 +583,7 @@ func (s *Server) applyTrapDestToDevice(ctx context.Context,
 	// noTrapPushRefusal).
 	var pusher, canPush = adm.(driver.TrapPusher)
 	if !canPush {
-		return out, adm.Transcript(), noTrapPushRefusal("« " + d.Name + " » (" +
+		return out, adm.Transcript(), noTrapPushRefusal("\"" + d.Name + "\" (" +
 			conn.Info().Name + ")"), nil
 	}
 	if out, err = pusher.ApplyTrapReceiver(ctx, pose.dest); err != nil {

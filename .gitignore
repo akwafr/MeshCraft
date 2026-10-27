@@ -33,7 +33,16 @@ web/dist/
 *~
 .DS_Store
 .cursor/
+# Agent instructions and working notes: kept on the maintainer's machine,
+# not published.
 .claude/
+CLAUDE.md
+TODO.md
+docs/fr/06-Décisions/Reprise — *.md
+scripts/englishify_drivers_batch.py
+scripts/gen_driver_aliases.py
+web/scripts/translate_locales.py
+web/scripts/i18n_metrics.py
 .idea/
 .vscode/
 
@@ -46,3 +55,16 @@ graphify-out/
 # Local build artefacts / scratch
 /controller
 *.log
+
+# Compiled lab exploration tools (tools/lab*).
+#
+# Their SOURCE is tracked on purpose — `go build ./...` covers it, which is what
+# keeps them compiling against the same x/crypto/ssh and internal/gnmipoll the
+# product uses, so a capture taken with them is taken over the code path the
+# product takes. The BINARIES are not: they are 3 to 20 MB each, they are rebuilt
+# from source in one command, and a committed binary teaches a reader nothing
+# while making every diff that touches them unreadable.
+tools/labssh/labssh
+tools/labfwd/labfwd
+tools/labgnmi/labgnmi
+tools/labattach/labattach

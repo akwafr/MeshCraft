@@ -432,11 +432,18 @@ func dialAskSNMP(req tunnel.AskRequest) (askWalker, error) {
 	// DeviceID stays empty: the proxy doesn't know the controller's
 	// identifiers (see tunnel.AskRequest.IP) and Dial has no use for it —
 	// it doesn't tag anything with it.
-	var s, err = snmppoll.Dial(snmppoll.Target{
+	var t = snmppoll.Target{
 		IP:        req.IP,
 		Port:      req.Port,
 		Community: req.Community,
-	})
+	}
+	// Same derivation as targetOf: a USM identity means v3, and the flag is
+	// never shipped separately so the two cannot disagree.
+	if req.V3User != "" {
+		t.Version = "v3"
+		t.V3User, t.V3AuthAlg, t.V3AuthSecret = req.V3User, req.V3AuthAlg, req.V3AuthSecret
+	}
+	var s, err = snmppoll.Dial(t)
 	if err != nil {
 		// EXPLICIT nil, not "return s, err": a nil *Session boxed into an
 		// interface produces a non-nil askWalker, which a future "if w !=
@@ -454,7 +461,7 @@ func dialAskSNMP(req tunnel.AskRequest) (askWalker, error) {
 // The obvious method — looking, among the proxy's declared addresses, for
 // the one on the device's subnet — is WRONG whenever the proxy reaches it
 // via routing. Observed on the real installation: the proxy exposes
-// 10.42.0.67/24 and 172.17.0.1/16, the lab device sits at 10.99.200.101 — no
+// 10.42.0.67/24 and 172.17.0.1/16, the lab device sits at 198.51.100.101 — no
 // match at all, and yet it reaches it. The obvious algorithm would return
 // nothing, and an operator would conclude the proxy can't see the device.
 //

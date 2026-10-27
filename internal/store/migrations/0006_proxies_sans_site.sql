@@ -1,17 +1,16 @@
--- Un proxy est un point de présence réseau de l'INSTANCE : il n'a ni site de
--- rattachement, ni liste de sites couverts
--- (cf. docs/01-Architecture/Proxy — « Un proxy n'est lié ni à un site, ni à un
--- équipement »).
+-- A proxy is a network point of presence of the INSTANCE: it has neither a home
+-- site nor a list of covered sites
+-- (see docs/en/01-Architecture/Proxy.md — "A proxy is bound neither to a site,
+-- nor to a device").
 --
--- La couverture ne décidait rien : elle ne restreignait ni les scans, ni le
--- site des équipements découverts, ni les chemins d'accès. Elle obligeait
--- seulement l'opérateur à répondre, au déploiement, à une question dont il n'a
--- pas la réponse. Ce qu'un proxy joint est OBSERVÉ (device_paths) ; le site
--- d'un équipement vient de l'adoption.
+-- Coverage decided nothing: it restricted neither scans, nor the site of
+-- discovered devices, nor access paths. It only forced the operator to answer,
+-- at deployment, a question they do not have the answer to. What a proxy
+-- reaches is OBSERVED (device_paths); a device's site comes from adoption.
 drop table if exists proxy_sites;
 alter table proxies drop column if exists site_id;
 
--- Conséquence directe : le token d'enrollment devient de portée instance.
--- Enrôler un point de présence dans l'instance n'est plus une prérogative
--- d'administrateur de site (cf. docs/03-Sécurité/RBAC).
+-- Direct consequence: the enrollment token becomes instance-scoped. Enrolling a
+-- point of presence into the instance is no longer a site administrator's
+-- prerogative (see docs/en/03-Security/RBAC.md).
 alter table enroll_tokens drop column if exists site_id;

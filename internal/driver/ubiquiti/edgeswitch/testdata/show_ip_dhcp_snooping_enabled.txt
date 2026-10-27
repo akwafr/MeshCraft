@@ -1,0 +1,10 @@
+show ip dhcp snooping
+
+DHCP snooping is Enabled
+DHCP snooping source MAC verification is enabled
+DHCP snooping is enabled on the following VLANs:
+4002
+
+ Interface    Trusted     Log Invalid Pkts
+-----------  ----------   ----------------
+0/2          Yes          No

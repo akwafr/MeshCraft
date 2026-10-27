@@ -15,14 +15,14 @@ import (
 )
 
 // Device tags and automatic tagging.
-// See docs/01-Architecture/Tags and identifier scope.
+// See docs/en/01-Architecture/Tags and credential scope.md.
 //
 // A tag can decide which admin password a device receives. It is therefore not
 // decorative labeling, and writes require `site_admin`, like credentials themselves.
 
 // normalizeTag formats a tag. Case and leading/trailing spaces are the first cause
 // of duplicates in this kind of free-text field: without normalization, a fleet ends
-// up with "regie", "Regie", and "regie  ", meaning the same thing but never matching.
+// up with "ops", "Ops", and "ops  ", meaning the same thing but never matching.
 func normalizeTag(tag string) string {
 	return strings.ToLower(strings.Join(strings.Fields(tag), " "))
 }
@@ -64,7 +64,7 @@ func (s *Server) handleSetDeviceTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitDeviceEvent(r, d, "tag.assigned", model.SevInfo,
-		"Tag « "+tag+" » assigned to « "+d.Name+" »")
+		"Tag \""+tag+"\" assigned to \""+d.Name+"\"")
 	var out = map[string]any{"tag": tag, "source": tagging.SourceManual}
 	var apply = s.applySwitchProfileByTag(r.Context(), d, tag)
 	if apply != nil {
@@ -90,7 +90,7 @@ func (s *Server) handleDeleteDeviceTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitDeviceEvent(r, d, "tag.removed", model.SevInfo,
-		"Tag « "+tag+" » removed from « "+d.Name+" »")
+		"Tag \""+tag+"\" removed from \""+d.Name+"\"")
 	respond(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -147,7 +147,7 @@ func (s *Server) handleUpsertTagRule(w http.ResponseWriter, r *http.Request) {
 	}
 	var problems = in.Match.Problems()
 	if len(problems) > 0 {
-		respondErr(w, http.StatusUnprocessableEntity, strings.Join(problems, " ; "))
+		respondErr(w, http.StatusUnprocessableEntity, strings.Join(problems, "; "))
 		return
 	}
 	// Modifying another site's rule by guessing its ID would tag a fleet you do not
@@ -170,7 +170,7 @@ func (s *Server) handleUpsertTagRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, siteID, "tag.rule_changed", model.SevNotice,
-		"Tagging rule « "+saved.Tag+" » saved. Tags change only on re-evaluation.", nil)
+		"Tagging rule \""+saved.Tag+"\" saved. Tags change only on re-evaluation.", nil)
 	respond(w, http.StatusOK, saved)
 }
 
@@ -193,7 +193,7 @@ func (s *Server) handleDeleteTagRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, siteID, "tag.rule_changed", model.SevNotice,
-		"Tagging rule « "+existing.Tag+" » deleted, along with tags it had assigned.", nil)
+		"Tagging rule \""+existing.Tag+"\" deleted, along with tags it had assigned.", nil)
 	respond(w, http.StatusOK, map[string]any{"ok": true})
 }
 

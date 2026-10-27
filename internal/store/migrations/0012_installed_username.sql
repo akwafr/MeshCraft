@@ -1,9 +1,9 @@
--- Le nom de compte RÉELLEMENT posé sur l'équipement.
+-- The account name ACTUALLY set on the device.
 --
--- meshcraft souhaite poser `mcadmin` partout, pour que l'accès direct soit
--- prévisible. Beaucoup de switchs d'entrée de gamme n'admettent qu'un seul
--- compte, `admin`, dont seul le mot de passe change. Enregistrer le nom
--- souhaité plutôt que le nom posé enverrait l'administrateur se connecter avec
--- un compte qui n'existe pas sur l'équipement.
+-- meshcraft wants to set `mcadmin` everywhere, so that direct access is
+-- predictable. Many entry-level switches only allow one account, `admin`,
+-- whose password alone changes. Recording the desired name rather than the one
+-- set would send the administrator to log in with an account that does not
+-- exist on the device.
 alter table device_credential_state
   add column if not exists installed_username text not null default '';

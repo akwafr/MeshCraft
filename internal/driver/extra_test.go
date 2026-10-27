@@ -13,10 +13,12 @@ func TestDriverNameFromExtraWithNestedObjects(t *testing.T) {
 		"stp_observed":{"mode":"rstp","enabled":true},
 		"discovered_id":"5fd5dd4c-d22a-4c0f-b473-05b0e1509983"
 	}`)
-	if got := driver.DriverNameFromExtra(raw); got != "aruba-instant-on-1930" {
+	var got = driver.DriverNameFromExtra(raw)
+	if got != "aruba-instant-on-1930" {
 		t.Fatalf("driver=%q", got)
 	}
-	if got := driver.ExtraString(raw, "discovered_id"); got != "5fd5dd4c-d22a-4c0f-b473-05b0e1509983" {
+	got = driver.ExtraString(raw, "discovered_id")
+	if got != "5fd5dd4c-d22a-4c0f-b473-05b0e1509983" {
 		t.Fatalf("discovered_id=%q", got)
 	}
 	// Old fragile decode: map[string]string rejects nested objects.

@@ -14,14 +14,31 @@ import {
   type ProxyInfo,
   type ResetProcedure,
   type ScanPrefix,
+  type Vlan,
 } from "../../api";
-import { ActionButton, ErrorMsg, Field, useToast } from "../../components";
+import { ActionButton, ErrorMsg, Field, HelpTip, useToast } from "../../components";
 import { useAuth } from "../../auth";
+import SearchSelect from "../../ui/SearchSelect";
+import {
+  AUTO_BRAND_ID,
+  AUTO_KEY,
+  SERIAL_BRANDS,
+  brandOfKey,
+  modelOfKey,
+  softResetDrivers,
+} from "./serialCatalog";
 import { sitePath } from "../../paths";
 import { useSite, useSiteId } from "../../useSite";
 import AdoptModal from "./AdoptModal";
+import { runAristaEosSoftReset } from "./aristaEosSoftReset";
 import { resolveAutoProxy } from "./autoProxy";
 import { runCiscoIosSoftReset } from "./ciscoIosSoftReset";
+import { runCiscoIosHardReset, type HardResetStage } from "./ciscoIosHardReset";
+import { HardResetSteps, JunosResetSteps } from "./HardResetSteps";
+import { runEdgeSwitchSoftReset } from "./edgeSwitchSoftReset";
+import { runJuniperExHardReset } from "./juniperExHardReset";
+import { runJuniperExSoftReset, type JuniperExStage } from "./juniperExSoftReset";
+import { runFsS3400SoftReset } from "./fsS3400SoftReset";
 import { runFsS3900SoftReset } from "./fsS3900SoftReset";
 import { probeUntilReachable } from "./probeUntil";
 import { autodetectSerialParams } from "./serialAutodetect";
@@ -64,6 +81,26 @@ const FS_S3900_SERIAL: SerialParams = {
   flowControl: "none",
 };
 
+/** EdgeSwitch / UniFi Switch console: 115200 8N1 per the CLI reference
+ * ("serial baudrate" can change it, so a re-baud-rated unit needs its own). */
+const EDGESWITCH_SERIAL: SerialParams = {
+  baudRate: 115200,
+  dataBits: 8,
+  stopBits: 1,
+  parity: "none",
+  flowControl: "none",
+};
+
+/** The S3400 PoE+ console is documented at the same 115200 8N1 as the S3900
+ * (PoE+ series reset guide) — the CLI behind it is unrelated (BDCOM-style). */
+const FS_S3400_SERIAL: SerialParams = {
+  baudRate: 115200,
+  dataBits: 8,
+  stopBits: 1,
+  parity: "none",
+  flowControl: "none",
+};
+
 /**
  * A Catalyst console is 9600 8N1, NOT the 115200 the FS S3900 uses. Opening at
  * the wrong speed produces a screenful of garbage that reads like a dead
@@ -78,13 +115,84 @@ const CISCO_IOS_SERIAL: SerialParams = {
   flowControl: "none",
 };
 
+/**
+ * An Arista console is 9600 8N1 — the same end of the range as the Catalyst, and
+ * NOT the 115200 the FS and Ubiquiti ranges use.
+ */
+const ARISTA_EOS_SERIAL: SerialParams = {
+  baudRate: 9600,
+  dataBits: 8,
+  stopBits: 1,
+  parity: "none",
+  flowControl: "none",
+};
+
+/**
+ * A Juniper EX console is 9600 8N1 with NO flow control, across the whole range.
+ * Juniper's quick starts for the EX2300, EX2300-C, EX3400, EX4300 and EX4600 all
+ * print the same block, and the Junos overview states "the console port is
+ * enabled by default, and its speed is 9600 baud" — so the EX4300 and EX4600
+ * are 9600 like the rest, not the 115200 their datasheet era might suggest.
+ *
+ * Juniper lists a sixth setting, "DCD state — Disregard", which Web Serial has
+ * no knob for; it is recorded in juniperExSoftReset.ts beside the console
+ * statement that makes it matter (`log-out-on-disconnect`).
+ */
+const JUNIPER_JUNOS_SERIAL: SerialParams = {
+  baudRate: 9600,
+  dataBits: 8,
+  stopBits: 1,
+  parity: "none",
+  flowControl: "none",
+};
+
 function equipmentDriver(equipment: string): string {
+  if (
+    equipment === "juniper" ||
+    equipment === "juniper-junos" ||
+    equipment === "junos" ||
+    equipment === "ex2200" ||
+    equipment === "ex2300" ||
+    equipment === "ex3400" ||
+    equipment === "ex4200" ||
+    equipment === "ex4300"
+  ) {
+    // The key the rest of the product already uses for this platform:
+    // internal/discovery/fingerprint.go classifies "JUNOS|Juniper" as
+    // `juniper-junos`, and internal/discovery/reset.go carries the reset
+    // procedure under the same name. Inventing a second spelling here would
+    // split the one platform in two across the API boundary.
+    return "juniper-junos";
+  }
+  if (
+    equipment === "arista" ||
+    equipment === "arista-eos" ||
+    equipment === "eos" ||
+    equipment === "dcs7050"
+  ) {
+    return "arista-eos";
+  }
   if (
     equipment === "fs3900" ||
     equipment === "fs-s3900" ||
     equipment === "s3900"
   ) {
     return "fs-s3900";
+  }
+  if (
+    equipment === "fs3400" ||
+    equipment === "fs-s3400" ||
+    equipment === "s3400"
+  ) {
+    return "fs-s3400";
+  }
+  if (
+    equipment === "edgeswitch" ||
+    equipment === "ubiquiti-edgeswitch" ||
+    equipment === "unifis16" ||
+    equipment === "us16"
+  ) {
+    return "ubiquiti-edgeswitch";
   }
   if (
     equipment === "cisco2960x" ||
@@ -101,11 +209,12 @@ function equipmentDriver(equipment: string): string {
 function serialDefaultsFor(equipment: string): SerialParams {
   var driver = equipmentDriver(equipment);
   if (driver === "cisco-ios") return CISCO_IOS_SERIAL;
+  if (driver === "arista-eos") return ARISTA_EOS_SERIAL;
+  if (driver === "juniper-junos") return JUNIPER_JUNOS_SERIAL;
+  if (driver === "fs-s3400") return FS_S3400_SERIAL;
+  if (driver === "ubiquiti-edgeswitch") return EDGESWITCH_SERIAL;
   return FS_S3900_SERIAL;
 }
-
-/** Platforms whose soft reset is scripted end to end. */
-const SOFT_RESET_DRIVERS = ["fs-s3900", "cisco-ios"];
 
 export default function Serial() {
   const { t } = useTranslation();
@@ -118,6 +227,11 @@ export default function Serial() {
 
   const [step, setStep] = useState<WizardStep>("equipment");
   const [equipment, setEquipment] = useState("fs3900");
+  // The brand is UI state only: `equipment` stays the single key the rest of
+  // the wizard switches on, so nothing downstream ever learns about brands.
+  const [brandId, setBrandId] = useState(
+    () => brandOfKey("fs3900")?.id ?? AUTO_BRAND_ID,
+  );
   const [action, setAction] = useState<SerialAction>("soft");
 
   const [params, setParams] = useState<SerialParams>(FS_S3900_SERIAL);
@@ -125,6 +239,22 @@ export default function Serial() {
   const [manualOverride, setManualOverride] = useState(false);
   const [connected, setConnected] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  // ASSISTED HARDWARE RESET: only the 2960-X flow exists today — the
+  // boot-loader recipe is per-platform by nature (cf. ciscoIosHardReset.ts).
+  const [hardStage, setHardStage] = useState<HardResetStage | null>(null);
+  // The Junos assisted reset's own stage, kept separate because its stage
+  // vocabulary is its own (loader / single-user / amnesiac / ztp-off): the
+  // Junos runner already emitted these and nothing was listening, so the
+  // screen could only ever show the log.
+  const [junosStage, setJunosStage] = useState<JuniperExStage | null>(null);
+  // AUTOMATIC line test verdict: null = not run, true = console answered the
+  // Enter poke, false = silent (a powered-off switch — tolerated). It fires
+  // on its own the moment the speed locks; gating it behind the start button
+  // left "test the line" unticked forever for an operator who had only
+  // connected and detected — the third "blocked" field report.
+  const [lineHeard, setLineHeard] = useState<boolean | null>(null);
+  const lineTestBusyRef = useRef(false);
+
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [capture, setCapture] = useState("");
@@ -180,6 +310,23 @@ export default function Serial() {
   });
 
   var driverKey = equipmentDriver(equipment);
+  // The assisted hardware reset exists for the Catalyst alone today: its
+  // boot-loader dialogue is captured in ciscoIosHardReset.ts. Other platforms
+  // keep the passive recipe card.
+  var assistedHard = action === "hardware" && driverKey === "cisco-ios";
+  // The Junos assisted path is kept APART from `assistedHard` on purpose, and
+  // not out of timidity: `assistedHard` also drives the Catalyst's live
+  // checklist (HardResetSteps / hardResetStepsModel), whose steps are that
+  // platform's physical gestures — unplug, HOLD MODE, replug, release. A Junos
+  // reset has none of them: the operator's single gesture is the power cycle,
+  // and the wizard catches a one-to-ten-second boot window the operator could
+  // not aim at by hand. Folding the two together would make the checklist lie
+  // about which hand does what, which is the one thing a checklist must not do.
+  var assistedHardJunos = action === "hardware" && driverKey === "juniper-junos";
+  // Everything that is TRUE OF BOTH: the site's management plan, the probe
+  // proxy, the credential — an assisted hardware reset ends in the same
+  // management push a soft reset does, whichever platform it is on.
+  var assistedAny = assistedHard || assistedHardJunos;
 
   // Follow the selected platform's documented console speed while the port is
   // still closed. Once params are locked (autodetected or opened by hand) the
@@ -205,18 +352,18 @@ export default function Serial() {
     queryKey: ["mgmt-plan", siteId],
     queryFn: () =>
       get<{ plan: MgmtPlan; pool: MgmtPoolUsage }>(`/api/sites/${siteId}/mgmt-plan`),
-    enabled: !!siteId && action === "soft",
+    enabled: !!siteId && (action === "soft" || assistedAny),
   });
   const { data: siteDevices } = useQuery({
     queryKey: ["devices", siteId],
     queryFn: () => get<Device[]>(`/api/sites/${siteId}/devices`),
-    enabled: !!siteId && action === "soft",
+    enabled: !!siteId && (action === "soft" || assistedAny),
   });
 
   // The reachability probe originates from a PROXY, and the choice decides the
   // outcome: the mgmt VLAN configured over serial is usually NOT reachable from
   // the controller container (2026-08-01: everything pushed and saved, then
-  // « no administration port open » — the probe was leaving from « Local »).
+  // "no administration port open" — the probe was leaving from "Local").
   //
   // Default is AUTO: the proxy whose DECLARED range contains the management
   // address (longest prefix wins — a /24 subnet is covered by a declared /16).
@@ -225,12 +372,27 @@ export default function Serial() {
   const { data: discoveryProxies } = useQuery({
     queryKey: ["discovery-proxies", siteId],
     queryFn: () => get<ProxyInfo[]>(`/api/sites/${siteId}/discovery-proxies`),
-    enabled: !!siteId && action === "soft",
+    enabled: !!siteId && (action === "soft" || assistedAny),
   });
   const { data: scanPrefixes } = useQuery({
     queryKey: ["scan-prefixes"],
     queryFn: () => get<ScanPrefix[]>("/api/discovery/prefixes"),
-    enabled: action === "soft",
+    enabled: action === "soft" || assistedAny,
+  });
+  // The site's VLANs, created ON THE DEVICE during provisioning.
+  //
+  // A switch coming out of a factory reset has VLAN 1 and nothing else, so any
+  // port profile applied later — access on VLAN 30, trunk carrying 40 — lands on
+  // a VLAN the device has never heard of and the apply fails on a name nothing
+  // on screen explains. Creating them here means the switch leaves provisioning
+  // already able to carry the site.
+  //
+  // Read-only and best-effort: a site with no VLAN declared yet provisions
+  // perfectly well with the management VLAN alone.
+  const { data: siteVlans } = useQuery({
+    queryKey: ["vlans", siteId],
+    queryFn: () => get<Vlan[]>(`/api/sites/${siteId}/vlans`),
+    enabled: !!siteId && (action === "soft" || assistedAny),
   });
   var autoProxyChoice = useMemo(() => {
     if (!mgmtIp.trim()) return null;
@@ -288,7 +450,7 @@ export default function Serial() {
   };
 
   useEffect(() => {
-    return () => {
+  return () => {
       abortRef.current?.abort();
       void disconnect();
     };
@@ -313,11 +475,25 @@ export default function Serial() {
     void (async () => {
       // USB-serial often drops readable during switch reboot; keep re-attaching
       // until disconnect() bumps the generation or the port is cleared.
+      var deafSince = 0;
       while (portRef.current === port && myGen === (startReadLoop as unknown as { _gen?: number })._gen) {
         if (!port.readable) {
+          // Say it ONCE per stretch: a port whose readable never comes back is
+          // a wizard that hears nothing while its writes still leave — the
+          // shape of the cancelled-reader bug (cf. serialAutodetect), and
+          // undiagnosable from the screen while this loop waited in silence.
+          if (deafSince === 0) deafSince = Date.now();
+          if (deafSince > 0 && Date.now() - deafSince > 5000) {
+            appendLog(
+              "serial read stream is not available — the console cannot be HEARD " +
+                "(writes may still leave). Disconnect and reconnect the port.",
+            );
+            deafSince = -1; // said once
+          }
           await new Promise((r) => setTimeout(r, 400));
           continue;
         }
+        deafSince = 0;
         var reader = port.readable.getReader();
         readerRef.current = reader;
         try {
@@ -374,8 +550,59 @@ export default function Serial() {
     sessionRef.current = null;
     setConnected(false);
     setParamsLocked(false);
+    setLineHeard(null);
     setTtyOpen(false);
   };
+
+  // THE AUTOMATIC LINE TEST — an Enter poke through the real session and the
+  // real read loop, the moment the speed locks. Two things at once: it ticks
+  // "test the line" without waiting for the start button, and it exercises
+  // the exact path the cancelled-reader bug silenced (autodetect's probe
+  // proves the wiring on ITS OWN open; this proves the one the wizard will
+  // actually listen on). Fire-and-forget on the write, raw setTimeout on the
+  // pacing — the same two lessons the runner's line check paid for.
+  var autoLineTest = async () => {
+    var session = sessionRef.current;
+    if (!session || lineTestBusyRef.current) return;
+    lineTestBusyRef.current = true;
+    try {
+      appendLog(t("serialAdd.lineTestStart"), "line-test");
+      session.mark();
+      void session.send("").then(
+        () => {},
+        () => {},
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 400));
+      void session.send("").then(
+        () => {},
+        () => {},
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 2100));
+      var heard = session.getSinceMark().trim();
+      // Only conclude if the wizard is still on the same session — a
+      // disconnect mid-poke must not stamp a verdict on the next port.
+      if (sessionRef.current !== session) return;
+      if (heard.length > 0) {
+        setLineHeard(true);
+        appendLog(t("serialAdd.lineTestAlive"), "line-test");
+      } else {
+        setLineHeard(false);
+        appendLog(t("serialAdd.lineTestSilent"), "line-test");
+      }
+    } finally {
+      lineTestBusyRef.current = false;
+    }
+  };
+
+  // `assistedAny`, not `assistedHard`: the Junos screen now shows the same
+  // numbered checklist, and a "test the line" step that nothing ever ticks is
+  // the exact design hole the Catalyst flow paid three field reports for.
+  useEffect(() => {
+    if (!assistedAny || !connected || !paramsLocked || running || detecting) return;
+    if (lineHeard !== null) return;
+    void autoLineTest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistedAny, connected, paramsLocked, running, detecting, lineHeard]);
 
   var openManual = async () => {
     setErr("");
@@ -495,7 +722,7 @@ export default function Serial() {
     var seq = "";
     if (e.key === "Enter") seq = "\r";
     // \x08 (BS / Ctrl-H), NOT \x7f (DEL): network-device serial consoles — Cisco
-    // IOS, HP ProCurve, FS — edit their line with Ctrl-H and echo « ^? » for DEL
+    // IOS, HP ProCurve, FS — edit their line with Ctrl-H and echo "^?" for DEL
     // instead of erasing, which is the "backspace does nothing" symptom on a raw
     // TTY. Web terminals default to DEL; this line is the correction.
     else if (e.key === "Backspace") seq = "\x08";
@@ -598,8 +825,138 @@ export default function Serial() {
       // One script per platform, chosen by connector. The two CLIs disagree on
       // almost every prompt — a single "console script" with conditionals would
       // be unreadable exactly when a run fails and someone has to say why.
-      if (driverKey === "cisco-ios") {
+      if (assistedHard) {
+        setHardStage(null);
+        await runCiscoIosHardReset({
+          session: script,
+          log: (m) => appendLog(m, "hard-reset"),
+          onStage: (s) => setHardStage(s),
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          domainName: site?.local_domain,
+          signal: ac.signal,
+        });
+      } else if (assistedHardJunos) {
+        // The ASSISTED path on this platform: the operator power-cycles, the
+        // wizard catches the one-to-ten-second boot window with both interrupt
+        // keys, drives the loader (or the EX2300/EX3400 boot MENU, which takes
+        // a different key entirely), and zeroizes from recovery mode. No
+        // credential is needed, which is the whole point — it is the door for a
+        // switch whose root password nobody has.
+        setJunosStage(null);
+        await runJuniperExHardReset({
+          session: script,
+          log: (m) => appendLog(m, "hard-reset"),
+          // The runner has always emitted these; nothing was listening, so the
+          // screen had nothing to show but prose and the log. This is what the
+          // numbered checklist is driven from.
+          onStage: (s) => setJunosStage(s),
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          siteVlans: (siteVlans ?? []).map((v) => ({ id: v.vlan_id, name: v.name })),
+          signal: ac.signal,
+        });
+      } else if (driverKey === "juniper-junos") {
+        await runJuniperExSoftReset({
+          session: script,
+          log: (m) => appendLog(m, "soft-reset"),
+          currentUser,
+          currentPassword,
+          // NO enablePassword, and its absence is a platform fact rather than an
+          // omission: Junos has no "enable". Operational mode is where a
+          // login lands, and configuration mode is reached with `configure`,
+          // with authorisation coming from the account's CLASS. The wizard's
+          // enable field is simply meaningless here.
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          siteVlans: (siteVlans ?? []).map((v) => ({ id: v.vlan_id, name: v.name })),
+          signal: ac.signal,
+        });
+      } else if (driverKey === "arista-eos") {
+        await runAristaEosSoftReset({
+          session: script,
+          log: (m) => appendLog(m, "soft-reset"),
+          currentUser,
+          currentPassword,
+          enablePassword,
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          // Created on the device, and used as the allowed list every faceplate
+          // trunk is given. Empty is fine: the management VLAN alone still
+          // produces a switch that answers.
+          siteVlans: (siteVlans ?? []).map((v) => ({ id: v.vlan_id, name: v.name })),
+          signal: ac.signal,
+        });
+      } else if (driverKey === "cisco-ios") {
         await runCiscoIosSoftReset({
+          session: script,
+          log: (m) => appendLog(m, "soft-reset"),
+          currentUser,
+          currentPassword,
+          enablePassword,
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          // THE SITE'S DOMAIN, not the compiled-in one (2026-08-09).
+          //
+          // `ip domain-name` has to be set before "crypto key generate rsa"
+          // or the key ceremony is refused, so this script has always sent
+          // one — and, with nothing passed here, it has always sent the
+          // fallback `meshcraft.local`. Every Catalyst provisioned from a
+          // console therefore ended up in a domain no site declares, and the
+          // consequence is not cosmetic: the key's subject and the device's
+          // LLDP system-name TLV both carry it (`cisco/ios/hostname.go`
+          // records "CiscoLabFirst1.meshcraft.local" arriving in exactly
+          // that TLV), so the fabricated domain travels into topology data.
+          //
+          // `site.local_domain` is the field that exists for this
+          // (`model.Site.LocalDomain`). It is optional: an empty one falls
+          // through to the same default as before, so a site that has not set
+          // one is no worse off than it was.
+          //
+          // arista-eos above is deliberately NOT given this. That platform is
+          // keyed from first boot and sends no `ip domain-name` at all — its
+          // test asserts the absence of the line — so a domain would be a
+          // command with nowhere to go.
+          domainName: site?.local_domain,
+          signal: ac.signal,
+        });
+      } else if (driverKey === "ubiquiti-edgeswitch") {
+        await runEdgeSwitchSoftReset({
+          session: script,
+          log: (m) => appendLog(m, "soft-reset"),
+          currentUser,
+          currentPassword,
+          enablePassword,
+          targetUser: material.username,
+          targetPassword: material.secret,
+          mgmtIp,
+          mgmtMask,
+          gateway: mgmtGateway,
+          mgmtIface,
+          signal: ac.signal,
+        });
+      } else if (driverKey === "fs-s3400") {
+        await runFsS3400SoftReset({
           session: script,
           log: (m) => appendLog(m, "soft-reset"),
           currentUser,
@@ -693,10 +1050,52 @@ export default function Serial() {
       setPaused(false);
       releasePausedSteps();
       setRunning(false);
+      setHardStage(null);
     }
   };
 
-  var softSupported = SOFT_RESET_DRIVERS.includes(driverKey);
+  var softSupported = softResetDrivers().includes(driverKey);
+
+  const brandOptions = [
+  {
+    id: AUTO_BRAND_ID,
+    label: t("serialAdd.brandAuto"),
+    detail: t("serialAdd.brandAutoDetail"),
+  },
+  ...SERIAL_BRANDS.map((b) => ({
+    id: b.id,
+    label: b.label,
+    // The model names ride in the detail line so the BRAND field is
+    // searchable by the number on the lid — which is what the operator is
+    // holding, and the step they came here to skip.
+    detail: b.models.map((m) => t(m.labelKey)).join(" \u00b7 "),
+  })),
+  ];
+  const brand = SERIAL_BRANDS.find((b) => b.id === brandId);
+  const modelOptions = (brand?.models ?? []).map((m) => ({
+  id: m.key,
+  label: t(m.labelKey),
+  detail: t(m.detailKey),
+  }));
+  const chosenModel = modelOfKey(equipment);
+  const chosenDetail =
+  brandId === AUTO_BRAND_ID
+    ? t("serialAdd.brandAutoDetail")
+    : chosenModel
+      ? t(chosenModel.detailKey)
+      : "";
+  // A brand with ONE model selects it outright: a list with a single answer
+  // is ceremony, not a choice.
+  const pickBrand = (id: string) => {
+  setBrandId(id);
+  if (id === AUTO_BRAND_ID) {
+    setEquipment(AUTO_KEY);
+    return;
+  }
+  const b = SERIAL_BRANDS.find((x) => x.id === id);
+  setEquipment(b && b.models.length === 1 ? b.models[0].key : "");
+  };
+  const ready = brandId === AUTO_BRAND_ID || !!chosenModel;
 
   return (
     <div>
@@ -724,38 +1123,37 @@ export default function Serial() {
         <div className="card">
           <div className="kicker">{t("serialAdd.stepEquipment")}</div>
           <p className="note">{t("serialAdd.stepEquipmentHint")}</p>
-          <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 12, alignItems: "stretch" }}>
-            <Choice
-              selected={equipment === "auto"}
-              onClick={() => setEquipment("auto")}
-              title={t("serialAdd.equipmentAuto")}
-              detail={t("serialAdd.equipmentAutoDetail")}
+          {/* BRAND, THEN MODEL — ADR-0005. The tile grid this replaces poured
+              every driver the API returned into the page, so `huawei-vrp` and
+              `extreme-exos` were clickable and led to an assistant with
+              nothing to send. The catalogue lists only what has a written
+              procedure, and the note below says so, because a platform that
+              simply vanishes reads as "meshcraft does not know this vendor". */}
+          <div className="serialpick">
+            <SearchSelect
+              id="serial-brand"
+              label={t("serialAdd.brandLabel")}
+              placeholder={t("serialAdd.brandPlaceholder")}
+              value={brandId}
+              options={brandOptions}
+              onChange={pickBrand}
             />
-            <Choice
-              selected={equipment === "fs3900"}
-              onClick={() => setEquipment("fs3900")}
-              title={t("serialAdd.equipmentFs3900")}
-              detail={t("serialAdd.equipmentFs3900Detail")}
-            />
-            <Choice
-              selected={equipment === "cisco2960x"}
-              onClick={() => setEquipment("cisco2960x")}
-              title={t("serialAdd.equipmentCisco2960x")}
-              detail={t("serialAdd.equipmentCisco2960xDetail")}
-            />
-            {(drivers ?? []).map((d) => (
-                <Choice
-                  key={d.driver}
-                  selected={equipment === d.driver}
-                  onClick={() => setEquipment(d.driver)}
-                  title={d.driver}
-                  detail={d.vendor || ""}
-                />
-              ))}
+            {brandId !== AUTO_BRAND_ID && (
+              <SearchSelect
+                id="serial-model"
+                label={t("serialAdd.modelLabel")}
+                placeholder={t("serialAdd.modelPlaceholder")}
+                value={chosenModel?.key ?? ""}
+                options={modelOptions}
+                onChange={setEquipment}
+              />
+            )}
           </div>
+          {chosenDetail && <p className="note serialpick-detail">{chosenDetail}</p>}
+          <p className="note serialpick-note">{t("serialAdd.catalogueNote")}</p>
           <div className="actions">
-            <ActionButton kind="confirm" onClick={() => setStep("action")}>
-              {t("serialAdd.continue")}
+            <ActionButton kind="connect" onClick={() => setStep("action")} disabled={!ready}>
+              {t("serialAdd.startLink")}
             </ActionButton>
           </div>
         </div>
@@ -813,11 +1211,19 @@ export default function Serial() {
               <span className="chip">
                 {equipment === "fs3900"
                   ? t("serialAdd.equipmentFs3900")
+                  : equipment === "fs3400"
+                    ? t("serialAdd.equipmentFs3400")
+                    : equipment === "edgeswitch"
+                    ? t("serialAdd.equipmentEdgeSwitch")
                   : equipment === "cisco2960x"
-                    ? t("serialAdd.equipmentCisco2960x")
-                    : equipment === "auto"
-                      ? t("serialAdd.equipmentAuto")
-                      : equipment}
+                      ? t("serialAdd.equipmentCisco2960x")
+                      : equipment === "arista"
+                        ? t("serialAdd.equipmentArista")
+                        : equipment === "juniper"
+                          ? t("juniperSerial.equipment")
+                        : equipment === "auto"
+                          ? t("serialAdd.equipmentAuto")
+                          : equipment}
               </span>
               <span className="chip">
                 {action === "hardware"
@@ -993,7 +1399,11 @@ export default function Serial() {
             )}
           </div>
 
-          {(log.length > 0 || action === "soft") && (
+          {/* `assistedHardJunos` joins the condition because the run log is now
+              one of the two things that screen is FOR, and a panel that appears
+              only once there is something in it reads as "nothing is being
+              recorded" for the whole of the setup. */}
+          {(log.length > 0 || action === "soft" || assistedHardJunos) && (
             <div className="card" style={{ marginTop: 12 }}>
               <div className="kicker">{t("serialAdd.runLog")}</div>
               <pre
@@ -1009,7 +1419,80 @@ export default function Serial() {
           {action === "hardware" && (
             <div className="card" style={{ marginTop: 12 }}>
               <div className="kicker">{t("serialAdd.hardwareGuide")}</div>
-              {!procedure ? (
+              {assistedHard && (
+                <p className="note">{t("serialAdd.hardAssistedHint")}</p>
+              )}
+              {assistedHard && (
+                <HardResetSteps
+                  connected={connected}
+                  baudLocked={paramsLocked}
+                  lineHeard={lineHeard}
+                  running={running}
+                  stage={hardStage}
+                  verified={!!candidate}
+                />
+              )}
+              {/* THE JUNOS SCREEN IS THE CHECKLIST AND THE LOG, AND NOTHING
+                  ELSE. It used to carry this hint as a paragraph, the whole
+                  passive recipe card below, and a five-bullet warning block —
+                  three explanations of a procedure that drives itself. The
+                  operator's words were "I just want to see the run log, and
+                  the numbered steps executed one after the other in the
+                  switch". Everything that was prose is behind the HelpTip; it
+                  is not deleted, because the zeroize really is irreversible and
+                  the management-interface choice really does decide which cable
+                  answers. It is just not in the way. */}
+              {assistedHardJunos && (
+                <>
+                  <JunosResetSteps
+                    connected={connected}
+                    baudLocked={paramsLocked}
+                    lineHeard={lineHeard}
+                    running={running}
+                    stage={junosStage}
+                    verified={!!candidate}
+                  />
+                  <div className="hard-steps-about">
+                    <span className="note">{t("juniperSerial.aboutThisRun")}</span>
+                    <HelpTip label={t("juniperSerial.aboutThisRun") as string}>
+                      <p>{t("juniperSerial.hardAssistedHint")}</p>
+                      <p>
+                        <b>{t("juniperSerial.warnTitle")}</b>
+                      </p>
+                      <ul>
+                        <li>{t("juniperSerial.warnZeroize")}</li>
+                        <li>{t("juniperSerial.warnMgmtIface")}</li>
+                        <li>{t("juniperSerial.warnZtp")}</li>
+                        <li>{t("juniperSerial.warnAtomic")}</li>
+                        <li>{t("juniperSerial.warnNoDriver")}</li>
+                      </ul>
+                    </HelpTip>
+                  </div>
+                </>
+              )}
+              {assistedHard && hardStage && (
+                <div
+                  className={
+                    hardStage === "await-power-cycle" ||
+                    hardStage === "power-restored" ||
+                    hardStage === "bootloader"
+                      ? "hard-stage hard-stage-act"
+                      : "hard-stage"
+                  }
+                >
+                  <div className="hard-stage-title">
+                    {t(`serialAdd.hardStage.${hardStage}.title`)}
+                  </div>
+                  <div>{t(`serialAdd.hardStage.${hardStage}.body`)}</div>
+                </div>
+              )}
+              {/* THE PASSIVE RECIPE CARD — the by-hand hardware and CLI steps
+                  the API serves per driver. It is the right thing to show for a
+                  platform with no assisted flow, and noise next to one that has
+                  it: on Junos the wizard performs these very steps and reports
+                  each as it goes, so printing them again as a to-do list asks
+                  the operator to decide which of two lists is the truth. */}
+              {assistedHardJunos ? null : !procedure ? (
                 <div className="note">{t("serialAdd.noProcedure")}</div>
               ) : (
                 <>
@@ -1051,10 +1534,38 @@ export default function Serial() {
             </div>
           )}
 
-          {action === "soft" && (
+          {(action === "soft" || assistedAny) && (
             <div className="card" style={{ marginTop: 12 }}>
-              <div className="kicker">{t("serialAdd.softResetForm")}</div>
+              <div className="kicker">{assistedAny ? t("serialAdd.hardResetForm") : t("serialAdd.softResetForm")}</div>
               <p className="note">{t("serialAdd.softResetFormHint")}</p>
+              {driverKey === "juniper-junos" && !assistedHardJunos && (
+                // ANNOUNCED BEFORE, NOT AFTER. `request system zeroize` cannot
+                // be undone from the console or anywhere else, and the one
+                // input that decides whether the switch is reachable at the end
+                // — in-band "vlan N" versus the out-of-band "me0" / "vme"
+                // port, two different cables — is a field above this notice.
+                // This product has a scar from a management-addressing gesture
+                // that cut the device, and the lesson taken from it was that an
+                // irreversible step belongs on screen before it runs.
+                //
+                // STILL TRUE ON THE ASSISTED PATH, WHICH IS WHY THIS IS A GATE
+                // AND NOT A DELETION: there the same five bullets live in the
+                // checklist's HelpTip, reachable before the run starts, and the
+                // engine ALSO writes the irreversibility notice into the run log
+                // at "power-cycle the switch now" — before anything is wiped,
+                // with a cancel still available. The warning did not get
+                // quieter; it stopped being the third copy of it on one screen.
+                <div>
+                  <p className="warn-text">{t("juniperSerial.warnTitle")}</p>
+                  <ul className="warn-list">
+                    <li>{t("juniperSerial.warnZeroize")}</li>
+                    <li>{t("juniperSerial.warnMgmtIface")}</li>
+                    <li>{t("juniperSerial.warnZtp")}</li>
+                    <li>{t("juniperSerial.warnAtomic")}</li>
+                    <li>{t("juniperSerial.warnNoDriver")}</li>
+                  </ul>
+                </div>
+              )}
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <div style={{ width: 160 }}>
                   <Field label={t("serialAdd.currentUser") as string}>
@@ -1118,7 +1629,11 @@ export default function Serial() {
                       disabled={running}
                       onChange={(e) => setProbeProxyId(e.target.value)}
                     >
-                      <option value={AUTO_PROXY}>{t("serialAdd.probeProxyAuto")}</option>
+                      {/* "By declared range", not "Automatic": this
+                          resolves ONE proxy from the declared prefixes, where
+                          /add/manual-ip's option sweeps them all. Both were
+                          called automatic, on two screens of the same flow. */}
+                      <option value={AUTO_PROXY}>{t("serialAdd.probeProxyByRange")}</option>
                       <option value="">{t("common.localInstance")}</option>
                       {(discoveryProxies ?? [])
                         .filter((p) => !p.internal)
@@ -1133,7 +1648,7 @@ export default function Serial() {
               </div>
               {probeProxyId === AUTO_PROXY && autoProxyChoice && (
                 <p className="note" style={{ marginTop: 6 }}>
-                  {t("serialAdd.probeProxyAutoResolved", {
+                  {t("serialAdd.probeProxyByRangeResolved", {
                     proxy: autoProxyChoice.proxyName,
                     prefix: autoProxyChoice.prefix,
                   })}
@@ -1141,7 +1656,7 @@ export default function Serial() {
               )}
               {probeProxyId === AUTO_PROXY && !autoProxyChoice && mgmtIp.trim() !== "" && (
                 <p className="note" style={{ marginTop: 6 }}>
-                  {t("serialAdd.probeProxyAutoNone", {
+                  {t("serialAdd.probeProxyByRangeNone", {
                     ip: mgmtIp.trim(),
                     fallback: effectiveProxyName,
                   })}
@@ -1286,7 +1801,9 @@ export default function Serial() {
                   }
                   onClick={() => void runSoftReset()}
                 >
-                  {running ? t("serialAdd.softResetRunning") : t("serialAdd.softResetStart")}
+                  {running
+                    ? t(assistedAny ? "serialAdd.hardResetRunning" : "serialAdd.softResetRunning")
+                    : t(assistedAny ? "serialAdd.hardResetStart" : "serialAdd.softResetStart")}
                 </ActionButton>
                 {running && (
                   <ActionButton

@@ -76,7 +76,7 @@ func sectionName(s string) string {
 // `PortGroups` as a FIELD, whereas this package returned it via a method. The
 // faceplate is therefore computed by [portGroups] and FILLED IN by everything
 // that produces an identity — [ParseLoginPage] and [identityFromSystemInfo].
-// Without it, adoption produced a device WITH NO PORTS, which is not « blank »
+// Without it, adoption produced a device WITH NO PORTS, which is not "blank"
 // but wrong.
 
 var (
@@ -90,6 +90,12 @@ var (
 	reCopper    = regexp.MustCompile(`(\d+)p\s+(?:Gigabit|Gig|G\b)`)
 	reSFPPlus   = regexp.MustCompile(`(\d+)p\s+SFP\+`)
 	reSFP       = regexp.MustCompile(`(\d+)p\s+SFP\b`)
+	// The Aruba product name counts without the "p": "Aruba Instant On 1930
+	// 48G 4SFP/SFP+ Switch" (provisioning API). Fallbacks only, tried after
+	// the sysDescr forms above: they are looser, and "10G" in a sysDescr
+	// would otherwise read as ten copper ports.
+	reCopperG  = regexp.MustCompile(`\b(\d+)G\b`)
+	reSFPGlued = regexp.MustCompile(`\b(\d+)SFP\b`)
 )
 
 // unescape turns UI non-breaking spaces and entities into readable text.
@@ -122,18 +128,7 @@ func ParseLoginPage(body string) (Identity, error) {
 	if v != nil {
 		id.Firmware, id.Build = v[1], v[2]
 	}
-	var pCopper = reCopper.FindStringSubmatch(descr)
-	if pCopper != nil {
-		id.CopperPorts, _ = strconv.Atoi(pCopper[1])
-	}
-	var pSFP = reSFPPlus.FindStringSubmatch(descr)
-	if pSFP != nil {
-		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
-		id.SFPPlus = true
-	} else if pSFP = reSFP.FindStringSubmatch(descr); pSFP != nil {
-		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
-	}
-	id.PoE = strings.Contains(strings.ToUpper(descr), "POE")
+	parsePorts(&id, descr)
 
 	var n = reSysName.FindStringSubmatch(body)
 	if n != nil {
@@ -151,6 +146,34 @@ func ParseLoginPage(body string) (Identity, error) {
 	// adoption without a model catalog.
 	id.PortGroups = portGroups(id)
 	return id, nil
+}
+
+// parsePorts fills copper/SFP counts and PoE from a model label. Both identity
+// producers go through here: two copies of this parsing eventually deduced
+// different faceplates from the same hardware — the provisioning API names the
+// device "Aruba Instant On 1930 48G 4SFP/SFP+ Switch", no regex matched, and
+// the 4 SFP+ cages were adopted as copper (flat 52-port facade, so switch
+// profile rules aimed at "sfp" media missed the uplinks).
+func parsePorts(id *Identity, label string) {
+	var pCopper = reCopper.FindStringSubmatch(label)
+	if pCopper == nil {
+		pCopper = reCopperG.FindStringSubmatch(label)
+	}
+	if pCopper != nil {
+		id.CopperPorts, _ = strconv.Atoi(pCopper[1])
+	}
+	var pSFP = reSFPPlus.FindStringSubmatch(label)
+	if pSFP != nil {
+		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
+		id.SFPPlus = true
+	} else if pSFP = reSFP.FindStringSubmatch(label); pSFP != nil {
+		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
+	} else if pSFP = reSFPGlued.FindStringSubmatch(label); pSFP != nil {
+		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
+		// "4SFP/SFP+": cages that also take SFP+. The plus decides the speed.
+		id.SFPPlus = strings.Contains(label, "SFP+")
+	}
+	id.PoE = strings.Contains(strings.ToUpper(label), "POE")
 }
 
 // identityFromSystemInfo translates the provisioning UI response (port 4443)
@@ -174,16 +197,7 @@ func identityFromSystemInfo(info SystemInfo) Identity {
 	if f != nil {
 		id.Family = f[1] + "30"
 	}
-	var pCopper = reCopper.FindStringSubmatch(info.Model)
-	if pCopper != nil {
-		id.CopperPorts, _ = strconv.Atoi(pCopper[1])
-	}
-	var pSFP = reSFPPlus.FindStringSubmatch(info.Model)
-	if pSFP != nil {
-		id.SFPPorts, _ = strconv.Atoi(pSFP[1])
-		id.SFPPlus = true
-	}
-	id.PoE = strings.Contains(strings.ToUpper(info.Model), "POE")
+	parsePorts(&id, info.Model)
 	// numberOfPorts is authoritative when the label is silent.
 	if id.CopperPorts == 0 && info.NumberOfPorts > 0 {
 		id.CopperPorts = info.NumberOfPorts - id.SFPPorts

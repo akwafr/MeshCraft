@@ -7,8 +7,8 @@ package ios
 // IOS carries SNMPv3, and good SNMPv3 at that (SHA / AES). This connector
 // still declares v1/v2c only, and the reason is a rule this codebase applies
 // everywhere: nothing is taken as written on the strength of a return code.
-// v3 users do NOT appear in « show running-config » on IOS — they live in a
-// separate store and are read with « show snmp user », a command nobody here
+// v3 users do NOT appear in "show running-config" on IOS — they live in a
+// separate store and are read with "show snmp user", a command nobody here
 // has run against a 2960-X. Declaring v3 would mean either verifying with a
 // read that has never been exercised, or skipping verification for one version
 // and not the others.
@@ -20,7 +20,7 @@ package ios
 //
 // # What this platform does NOT carry, said out loud
 //
-// A source restriction IS expressible on IOS — « snmp-server community S RO 99 »
+// A source restriction IS expressible on IOS — "snmp-server community S RO 99"
 // binds the community to access-list 99 — and it is NOT written here, because
 // writing an ACL number without creating the ACL binds the community to an
 // empty list and silences the agent completely. The bound the caller asked for
@@ -45,9 +45,9 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	if want.User != "" {
 		return out, driver.NotSupported("cisco-ios", "pose an SNMPv3 identity",
 			"IOS does carry SNMPv3, and this connector declares v1/v2c only — because a v3 "+
-				"user is not visible in « show running-config » and would therefore be the one "+
+				"user is not visible in \"show running-config\" and would therefore be the one "+
 				"write this connector could not verify it made. Posing a v2c community instead "+
-				"would silently downgrade what the caller asked for. Exercise « show snmp user » "+
+				"would silently downgrade what the caller asked for. Exercise \"show snmp user\" "+
 				"on this platform and the refusal can be lifted")
 	}
 	if want.Community == "" {
@@ -68,7 +68,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	if err != nil && runOut == "" {
 		return out, fmt.Errorf("pre-write read failed: %v", err)
 	}
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 	// On IOS the agent is off until a community exists, and on as soon as one
 	// does — there is no separate enable switch.
 	out.Enabled = len(rc.Communities) > 0
@@ -102,7 +102,7 @@ func (c *Client) ApplySNMP(ctx context.Context, want SNMPIdentity) (SNMPResult, 
 	if err != nil && runOut == "" {
 		return out, fmt.Errorf("post-write re-read failed: %v", err)
 	}
-	rc = parseRunningConfig(runOut)
+	rc = parseRunningConfig(runOut, c.host)
 	if rc.Communities[want.Community] != "ro" {
 		c.step(false, "SNMP community absent after write",
 			"the CLI accepted the command but the running-config does not carry it")

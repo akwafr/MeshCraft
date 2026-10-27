@@ -49,7 +49,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 		return out, fmt.Errorf("pre-write read failed: %v", err)
 	}
 	out.Backup = runOut
-	var rc = parseRunningConfig(runOut)
+	var rc = parseRunningConfig(runOut, c.host)
 
 	var briefOut string
 	briefOut, err = c.cli.run(ctx, "show interfaces brief", cmdTimeout)
@@ -77,7 +77,7 @@ func (c *Client) ApplyPorts(ctx context.Context, plan PortPlan) (ApplyResult, er
 				"VLAN %d: both stay protected", plan.MgmtVLAN, current.MgmtVLAN))
 	}
 
-	// 1. Les VLAN manquants d'abord — un port ne se place pas dans un VLAN absent.
+	// 1. Missing VLANs first — a port cannot be placed in a VLAN that is absent.
 	var missing = missingVLANs(current.VLANs, plan.SiteVLANs, plan.MgmtVLAN, desired)
 	if len(missing) > 0 {
 		var applied, detail = c.runWithFallbacks(ctx, []cmdGroup{{

@@ -1,0 +1,15 @@
+  SSH Enabled     : Yes                 Secure Copy Enabled : No 
+  TCP Port Number : 22                  Timeout (sec)       : 120  
+  Host Key Type   : RSA                 Host Key Size       : 2048
+
+  Ciphers : aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,3des-cbc,aes192-cbc,
+            aes256-cbc,rijndael-cbc@lysator.liu.se
+  MACs    : hmac-md5,hmac-sha1,hmac-sha1-96,hmac-md5-96
+
+  Ses Type     | Protocol  Source IP and Port   
+  --- -------- + --------- ---------------------
+  1   console  |
+  2   ssh      | SSH v2    203.0.113.3:55374    
+  3   ssh      | SSH v2    203.0.113.2:60040    
+  4   inactive |
+ 

@@ -13,7 +13,7 @@ export type SiteMgmtProposal = {
   gateway: string;
   vlanId: number;
   untagged: boolean;
-  /** CLI interface hint for FS S3900: « vlan N ». */
+  /** CLI interface hint for FS S3900: "vlan N". */
   iface: string;
   subnet: string;
   source: MgmtPlan["source"];

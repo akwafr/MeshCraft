@@ -29,6 +29,20 @@ type Site struct {
 	Name      string    `json:"name"`
 	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at"`
+	// LocalDomain is the DNS domain this site's equipment belongs to.
+	//
+	// It used to be a constant compiled into the Cisco connector
+	// (`meshcraft.local`), pushed onto every switch of every site — and it is not
+	// an internal detail: the device carries it in its own FQDN afterwards, which
+	// the lab's LLDP neighbours show verbatim ("CiscoLabFirst1.meshcraft.local").
+	// A site that already has a domain was getting equipment announcing one that
+	// resolves nowhere.
+	//
+	// EMPTY IS LEGITIMATE and means "this site has no domain". Connectors that
+	// require one — IOS, whose "crypto key generate rsa" refuses without it —
+	// fall back to their own default rather than writing an empty line, which
+	// would make SSH silently impossible.
+	LocalDomain string `json:"local_domain"`
 }
 
 type Vlan struct {
@@ -98,7 +112,7 @@ type Device struct {
 
 	// Observed: configuration ACTUALLY read on the device, as opposed to `Ports`
 	// which carries what meshcraft wants. Conflating them would never let you say
-	// which of the two is behind (cf. docs/01-Architecture/Reconciliation).
+	// which of the two is behind (cf. docs/en/01-Architecture/Reconciliation.md).
 	Observed json.RawMessage `json:"observed,omitempty"`
 	// ObservedAt: nil = never re-read. We do not pretend to know.
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
@@ -114,6 +128,29 @@ type Device struct {
 	// database would lie on the next change.
 	Sync  string `json:"sync,omitempty"`
 	Drift []any  `json:"drift,omitempty"`
+	// ModelKey / ModelLabel / ModelSKU: the CANONICAL IDENTITY of the hardware,
+	// derived from `Model` on read and never stored (cf. ADR-0014 and
+	// internal/modelid).
+	//
+	// `Model` stays exactly as the device — or an operator — declared it, because
+	// that string is a piece of evidence: the day a faceplate is wrong, the first
+	// question is which naming grammar arrived, and it only has an answer while
+	// the raw label is intact. What was missing is not a reading but an identity:
+	// one vendor publishing two grammars for one switch put the same twelve
+	// machines in the inventory under three different model strings.
+	//
+	// `ModelLabel` is what a screen must NAME the device — the canonical form
+	// when a family rule recognized the label, the raw string otherwise. It is
+	// never a shortened form: fitting a label into a tile is a different job, and
+	// web/src/modelLabel.ts does it over this value.
+	//
+	// Derived rather than stored for the reason every field on this shelf is: a
+	// persisted copy would freeze the derivation of the day it was written, while
+	// a computed one improves for every existing row the day it learns one more
+	// grammar.
+	ModelKey   string `json:"model_key,omitempty"`
+	ModelLabel string `json:"model_label,omitempty"`
+	ModelSKU   string `json:"model_sku,omitempty"`
 	// ApplyStalled: an apply ALREADY happened since the last change, yet gaps remain.
 	//
 	// Distinguishes the two "in progress" states the blue indicator conflates. Intent
@@ -140,6 +177,24 @@ type Device struct {
 	// exactly what it tried to avoid: a device with no indicator, no explanation,
 	// looking like a meshcraft failure. Computed on read, never stored.
 	WatchExcluded string `json:"watch_excluded,omitempty"`
+	// CollectKind: WHICH PROTOCOL collects this device — "snmp" or "gnmi".
+	//
+	// Computed on read from the connector's declared monitoring channels, never
+	// stored: a device's collector changes when its connector's declaration
+	// does, and a persisted copy would keep naming the old one.
+	//
+	// It exists because `SnmpStatus` is misnamed for half its meaning. That field
+	// carries COLLECTION reachability whatever protocol collects — the proxy's
+	// gNMI supervisor deliberately reuses the same up/down events, so that a
+	// screen asking "is this device being collected" gets one answer rather than
+	// two. What it cannot do is say which protocol was tried, and a pill reading
+	// "snmp" on an Arista is simply false: that platform declares no SNMP
+	// channel at all and nothing in the product has ever polled it.
+	//
+	// Renaming the status field itself would be the tidier fix and is not worth
+	// it: `snmp_status` is in the API, in the frontend, and in the stored device
+	// rows, and the rename would touch all three to change a label.
+	CollectKind string `json:"collect_kind,omitempty"`
 	// AddressDomainID: the network in which this device's management address makes
 	// sense (cf. internal/netscope). Empty for a manually entered device that never
 	// declared one — it stays watched while alone on its address, and loses
@@ -219,11 +274,11 @@ type DeviceLink struct {
 
 // --- LLDP neighborhood: OBSERVATION, beside intent above ---
 //
-// See docs/01-Architecture/Voisinage LLDP.md and migration 0028, which carry the
-// observation and reasoning. A `DeviceLink` is what an operator DECLARED and that
-// survives unplugging; what follows is what a device SAW thirty seconds ago.
-// Conflating them would erase a entered link because a switch was unplugged ten
-// seconds ago.
+// See docs/en/01-Architecture/LLDP neighbours.md and migration 0028, which carry
+// the observation and reasoning. A `DeviceLink` is what an operator DECLARED and
+// that survives unplugging; what follows is what a device SAW thirty seconds
+// ago. Conflating them would erase an entered link because a switch was
+// unplugged ten seconds ago.
 
 // LLDPNeighbor is ONE dated observation: this port saw that neighbor.
 type LLDPNeighbor struct {
@@ -262,6 +317,18 @@ type LLDPNeighbor struct {
 	// devices may share. A link traced on a name deserves to be read as less certain,
 	// and hiding that would present both as equivalent.
 	PeerVia string `json:"peer_via,omitempty"`
+	// Refuted / RefutedBy: this observation claims a remote port that somebody ELSE
+	// demonstrably occupies in a STRICTLY fresher observation, so it no longer
+	// produces a topology edge. RefutedBy names the device now found on that far
+	// port. See `api.markRefutedObservations` for the rule and its four refusals.
+	//
+	// COMPUTED on read, never stored — same reason as PeerDevice/PeerPort above, and
+	// here it is even stronger: the verdict depends on the OTHER device's next
+	// snapshot, so freezing it in the table would keep contradicting an observation
+	// the far end has already withdrawn. The row itself stays listed, because the
+	// device really did report that neighbor; only the derived link disappears.
+	Refuted   bool   `json:"refuted,omitempty"`
+	RefutedBy string `json:"refuted_by,omitempty"`
 }
 
 // LLDPSelf is the LLDP identity a device ANNOUNCES — its business card, as opposed
@@ -278,6 +345,45 @@ type LLDPSelf struct {
 	// Served: does this device serve the LLDP-MIB? False != "zero neighbors".
 	Served bool      `json:"served"`
 	SeenAt time.Time `json:"seen_at"`
+	// Source: which collection path wrote this snapshot — "snmp" (the proxy's
+	// periodic LLDP-MIB walk) or "cli" (the controller's read-state gesture,
+	// over the admin session). See migration 0037: without this word, the
+	// poller's next EMPTY walk of an agent that serves no LLDP-MIB would
+	// silently erase what the CLI just observed, thirty seconds after every
+	// read-state — the FS S3400 case, measured.
+	Source string `json:"source,omitempty"`
+}
+
+// MACSighting is one row of a device's CURRENT forwarding table: this bridge,
+// at last_seen, still testified that this MAC lives behind this port in this
+// VLAN. Replaced snapshot by snapshot, like LLDPNeighbor; the durable per-MAC
+// record is [Client].
+type MACSighting struct {
+	DeviceID string `json:"device_id"`
+	SiteID   string `json:"site_id"`
+	// Port: FACADE name, resolved at ingest — same rule as LLDPNeighbor.LocalPort.
+	Port string `json:"port"`
+	// VLAN: 0 = the platform did not say (flat BRIDGE-MIB), never "VLAN 0".
+	VLAN int `json:"vlan"`
+	// MAC in canonical spelling: lowercase colon-separated hex.
+	MAC       string    `json:"mac"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// Client is the durable per-MAC ledger of a site: identity plus the bandwidth
+// bucket that survives unplugs and reboots and re-attaches when the FDB shows
+// the MAC again (the "waiting for rediscovery" the Clients page promises).
+type Client struct {
+	SiteID    string    `json:"site_id"`
+	MAC       string    `json:"mac"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	// RxBytes: toward the client (its port's egress). TxBytes: from it (the
+	// port's ingress).
+	RxBytes  int64      `json:"rx_bytes"`
+	TxBytes  int64      `json:"tx_bytes"`
+	BucketAt *time.Time `json:"bucket_at,omitempty"`
 }
 
 // LLDPLink is a link DERIVED from one or two observations. Never stored: computed
@@ -340,7 +446,7 @@ type Event struct {
 //
 //	MgmtSourceDHCPExternal: meshcraft configures the DHCP client and allocates nothing.
 //	MgmtSourceMeshcraft:    meshcraft ALLOCATES from the pool and pushes a STATIC
-//	                        configuration. Not a DHCP server — see docs/01-Architecture/Adressage de management.
+//	                        configuration. Not a DHCP server — see docs/en/01-Architecture/Management addressing.md.
 const (
 	MgmtSourceDHCPExternal = "dhcp_external"
 	MgmtSourceMeshcraft    = "meshcraft"
@@ -377,7 +483,7 @@ const (
 type DeviceAddressing struct {
 	// Mode: inherit | dhcp | static.
 	Mode string `json:"mode"`
-	// StaticIP carries the PREFIX ("10.99.0.36/24") not just the address.
+	// StaticIP carries the PREFIX ("192.0.2.36/24") not just the address.
 	//
 	// Prefix is mandatory in what is STORED, never in what is entered: the API
 	// completes it from the site plan subnet when the operator types a bare address,
@@ -452,17 +558,38 @@ type SiteCredential struct {
 	// PerDevice: distinct secret per device instead of shared secret.
 	PerDevice bool `json:"per_device"`
 	// Tag: credential applies only to devices carrying this tag. Empty = no tag
-	// scope (site default, or group scope). Cf. docs/01-Architecture/Etiquettes et portee des identifiants.
+	// scope (site default, or group scope). See docs/en/01-Architecture/Tags and credential scope.md.
 	Tag string `json:"tag"`
 	// Priority breaks ties between two tag credentials targeting the same device:
 	// highest wins.
 	Priority int `json:"priority"`
+	// TransportTLS: how a collector connecting WITH this credential protects it on
+	// the wire. `verify` | `skip-verify` | `plaintext`, and `verify` is the
+	// default (migration 0039).
+	//
+	// Read only by the `gnmi` kind today, because it is the only one that carries
+	// a DEVICE LOGIN over a connection whose encryption is optional. An SNMP
+	// community has no TLS to configure, and an `admin` password rides SSH, which
+	// is never in the clear.
+	//
+	// Three values rather than two booleans so that "plaintext and skip-verify"
+	// — which means nothing — cannot be written down. See the migration for why
+	// `skip-verify` exists at all rather than being refused: an unverified TLS
+	// session still defeats a passive listener, and refusing it outright would
+	// push a site with no CA to `plaintext`, which defeats nothing.
+	TransportTLS string `json:"transport_tls,omitempty"`
+	// CAPEM: the authority the target's certificate must chain to, PEM-encoded.
+	//
+	// Not a secret and deliberately not in the vault: a CA certificate is public
+	// by construction — distributing it is the point. Empty means the system
+	// pool, which on a proxy image holds no switch's issuer.
+	CAPEM string `json:"ca_pem,omitempty"`
 	// Generations: history, most recent first.
 	Generations []CredentialGeneration `json:"generations,omitempty"`
 }
 
 // CredentialGeneration: one secret version. APPEND-ONLY — never overwrite, always
-// add (cf. docs/03-Security/Identite de service et rotation section 3).
+// add (see docs/en/03-Security/Service identity and rotation.md section 3).
 type CredentialGeneration struct {
 	ID           string `json:"id"`
 	CredentialID string `json:"credential_id"`
@@ -537,7 +664,7 @@ type WatchedDevice struct {
 
 	// ProxyID / ProxyName: DECLARED reference collector for this device, regardless
 	// of which proxy this list is destined for. Empty = no attachment. Name is for
-	// operator messages: "collected by proxy-akwalan" reads; a UUID does not.
+	// operator messages: "collected by proxy-lab" reads; a UUID does not.
 	ProxyID   string `json:"-"`
 	ProxyName string `json:"-"`
 
@@ -592,7 +719,7 @@ type SiteRef struct {
 }
 
 // Proxy: network presence point. Its COVERAGE governs who sees it, who administers
-// it, and for which sites it may serve — see docs/01-Architecture/Proxy.
+// it, and for which sites it may serve — see docs/en/01-Architecture/Proxy.md.
 //
 //	Global = true  -> instance proxy, usable everywhere (global-admin).
 //	Global = false -> restricted to Sites. Empty Sites = covers NOTHING, never
@@ -617,7 +744,7 @@ type Proxy struct {
 	CreatedAt time.Time  `json:"created_at"`
 	LastSeen  *time.Time `json:"last_seen"`
 
-	// Upgrade (cf. docs/01-Architecture/Versionnage et mise a jour du proxy).
+	// Upgrade (see docs/en/01-Architecture/Proxy versioning and updates.md).
 	AutoUpgrade      bool       `json:"auto_upgrade"`
 	PinVersion       string     `json:"pin_version"`
 	UpgradeRequested bool       `json:"upgrade_requested"`
@@ -675,7 +802,7 @@ type Sighting struct {
 }
 
 // Discovered: discovery candidate. NO SITE by construction — site is chosen at
-// adoption (cf. docs/01-Architecture/Discovery).
+// adoption (cf. docs/en/01-Architecture/Discovery.md).
 type Discovered struct {
 	ID        string `json:"id"`
 	Source    string `json:"source"` // scan | manual | serial
@@ -719,4 +846,329 @@ type EnrollToken struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	UsedAt    *time.Time `json:"used_at"`
+}
+
+// APIToken is one personal API credential AS ITS OWNER'S LIST SHOWS IT, and
+// that is the whole point of the type: there is no field here that could carry
+// the secret, so no handler, log line, or later refactor can leak it by
+// forgetting a `json:"-"`. The clear value exists once, in the body of the
+// response that created it (cf. ADR-0011 and migration 0045).
+//
+// Prefix is the token's visible head (`mct_` plus the first characters of the
+// selector). It is NOT a secret and not enough to authenticate — it exists so
+// an owner looking at three tokens can tell which one is on which machine.
+type APIToken struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+	// ReadOnly / SiteIDs / ExpiresAt: the scope, which can only REDUCE what the
+	// owner may do. An empty SiteIDs means "no site restriction", not "no
+	// site"; a nil ExpiresAt means "never expires".
+	ReadOnly   bool       `json:"read_only"`
+	SiteIDs    []string   `json:"site_ids"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+// APITokenRecord is what AUTHENTICATION needs, and nothing a screen needs: the
+// stored verifier hash, the owner it resolves to, and the view above.
+//
+// Separate from APIToken, and with NO json tags anywhere, so that the only type
+// which ever touches the hash is a type no response can be built from. The
+// nullable fields are pointers because the judgement is made on them directly
+// (cf. auth.judgeAPIToken): "revoked" must not be confused with "revoked at the
+// zero instant".
+type APITokenRecord struct {
+	Token        APIToken
+	User         User
+	VerifierHash []byte
+}
+
+// APITokenMark heads every meshcraft API token. It makes a leaked value
+// recognisable on sight — in a log, a pasted snippet, a wrong form field — as
+// "somebody exposed a token" rather than as noise.
+const APITokenMark = "mct_"
+
+// apiTokenPrefixHint: how much of the (public) selector a token's visible head
+// carries. Enough to tell three tokens apart in a list.
+const apiTokenPrefixHint = 8
+
+// APITokenPrefix builds the visible head shown beside a token's name.
+//
+// It lives in `model` rather than in `auth` because BOTH sides need it and the
+// import arrow only goes one way (auth imports store imports model). One
+// implementation, so a list and the thing that mints it cannot disagree about
+// what a token looks like.
+func APITokenPrefix(selector string) string {
+	if len(selector) > apiTokenPrefixHint {
+		selector = selector[:apiTokenPrefixHint]
+	}
+	return APITokenMark + selector
+}
+
+// --- Site extensions and the inventory they mirror (ADR-0015, ADR-0016) ---
+
+// Extension kinds. A DATA value and not a Go `switch`, so that the second
+// incarnation costs a row and a client, not a refactor of every call site.
+const (
+	ExtUniFiOS = "unifi_os"
+)
+
+// Extension transports. `direct` is the controller's own egress; `proxy` goes
+// out through the proxy already posted on a site, which is what spared us a
+// container for an HTTP client (ADR-0015 §3).
+const (
+	ExtTransportDirect = "direct"
+	ExtTransportProxy  = "proxy"
+)
+
+// Mirror classes (ADR-0016). `access_point` is the one that justified the
+// whole decision: it has radios, bands, channels and associated clients, and
+// an access port has none of those.
+const (
+	ExtClassAccessPoint = "access_point"
+	ExtClassSwitch      = "switch"
+	ExtClassGateway     = "gateway"
+	ExtClassOther       = "other"
+)
+
+// SiteExtension is one foreign controller backing a meshcraft site, AS A
+// SCREEN SEES IT — so there is no field here that could carry the token. Like
+// APIToken above, the absence is the safety: no handler or later refactor can
+// leak the secret by forgetting a `json:"-"`. Presence is `HasToken`, and the
+// clear value is reachable only through the traced reveal route.
+type SiteExtension struct {
+	ID     string `json:"id"`
+	SiteID string `json:"site_id"`
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+
+	BaseURL   string `json:"base_url"`
+	HasToken  bool   `json:"has_token"`
+	VerifyTLS bool   `json:"verify_tls"`
+	Transport string `json:"transport"`
+	ProxyID   string `json:"proxy_id,omitempty"`
+	Enabled   bool   `json:"enabled"`
+
+	// The pairing. RemoteSiteID is the key; RemoteSiteName is a cached label
+	// that will be renamed and must never be matched on (ADR-0015 §6).
+	RemoteSiteID   string     `json:"remote_site_id"`
+	RemoteSiteRef  string     `json:"remote_site_ref"`
+	RemoteSiteName string     `json:"remote_site_name"`
+	PairedAt       *time.Time `json:"paired_at"`
+	// OrphanedAt is set only when the foreign controller ANSWERED and the
+	// paired id was absent from its list. A pointer because "orphaned" must
+	// not be confused with "orphaned at the zero instant" — and because an
+	// unreachable controller is a different, non-orphaning event.
+	OrphanedAt *time.Time `json:"orphaned_at"`
+
+	LastSyncAt *time.Time `json:"last_sync_at"`
+	LastError  string     `json:"last_error"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ExtRadio is one 802.11 radio of an imported access point. The field names are
+// the standard's, not UniFi's, because this shape is what a second Wi-Fi vendor
+// will have to fill (ADR-0016). A radio is a SNAPSHOT: nothing references it,
+// which is why it is a JSON child and not a table.
+type ExtRadio struct {
+	// "802.11n", "802.11ac", "802.11ax"… verbatim from the vendor.
+	Standard string `json:"standard,omitempty"`
+	// Band in GHz (2.4, 5, 6) — the band, not a port speed.
+	BandGHz  float64 `json:"band_ghz,omitempty"`
+	Channel  int     `json:"channel,omitempty"`
+	WidthMHz int     `json:"width_mhz,omitempty"`
+	// TxRetriesPct is radio quality, deliberately NOT fed through the traffic
+	// ramp of ADR-0003: a radio capacity is not a port capacity and the same
+	// ramp would state something false.
+	TxRetriesPct *float64 `json:"tx_retries_pct,omitempty"`
+}
+
+// ExtPort is one copper port of an imported box — two, on an AC Pro. Enough to
+// show an uplink speed; emphatically not a faceplate.
+type ExtPort struct {
+	Index        int    `json:"index"`
+	State        string `json:"state,omitempty"`
+	Connector    string `json:"connector,omitempty"`
+	SpeedMbps    int    `json:"speed_mbps,omitempty"`
+	MaxSpeedMbps int    `json:"max_speed_mbps,omitempty"`
+}
+
+// ExtDevice is one row of the read-only mirror. It is NOT a Device and never
+// becomes one: `devices` carries the invariant "something meshcraft configures,
+// with a connector", and an imported box already has a master (ADR-0015 §5).
+type ExtDevice struct {
+	ID          string `json:"id"`
+	ExtensionID string `json:"extension_id"`
+	SiteID      string `json:"site_id"`
+	ExternalID  string `json:"external_id"`
+	Class       string `json:"class"`
+	Name        string `json:"name"`
+	Model       string `json:"model"`
+	Firmware    string `json:"firmware"`
+	// The foreign controller's own word, lowercased. NOT mapped onto
+	// Device.Status (ok|warn|off|unknown): mapping it would invent a judgement
+	// meshcraft has no basis to make on a box it does not poll itself.
+	State  string     `json:"state"`
+	MgmtIP string     `json:"mgmt_ip"`
+	MAC    string     `json:"mac"`
+	Radios []ExtRadio `json:"radios"`
+	Ports  []ExtPort  `json:"ports"`
+	SeenAt time.Time  `json:"seen_at"`
+}
+
+// ExtSSID is a service set of the SITE, not of an access point: UniFi
+// configures them at site level and every access point broadcasts them. One row
+// per access point would create N copies to reconcile, and the first divergence
+// would be indistinguishable from a real configuration drift (ADR-0016).
+//
+// No passphrase field exists, and that is deliberate: reading a controller does
+// not mean copying the PSKs of a production network into a second database.
+type ExtSSID struct {
+	ID          string    `json:"id"`
+	ExtensionID string    `json:"extension_id"`
+	SiteID      string    `json:"site_id"`
+	ExternalID  string    `json:"external_id"`
+	Name        string    `json:"name"`
+	Enabled     bool      `json:"enabled"`
+	Security    string    `json:"security"`
+	WPAMode     string    `json:"wpa_mode"`
+	Bands       []string  `json:"bands"`
+	SeenAt      time.Time `json:"seen_at"`
+}
+
+// ExtRemoteSite is a site OFFERED by the foreign controller, for the pairing
+// screen to choose from. Transient: it is never stored, because storing the
+// catalogue would be storing a name as if it were a key.
+type ExtRemoteSite struct {
+	ID   string `json:"id"`
+	Ref  string `json:"ref"`
+	Name string `json:"name"`
+	// Paired tells the screen this remote site is already taken by an
+	// extension, so the operator does not back two meshcraft sites with one
+	// UniFi site without noticing.
+	Paired bool `json:"paired"`
+}
+
+// ExtSyncReport is what one import pass did. Counted per class because "12
+// imported" is useless when the question is whether the switches arrived.
+type ExtSyncReport struct {
+	RemoteSiteName string `json:"remote_site_name"`
+	AccessPoints   int    `json:"access_points"`
+	Switches       int    `json:"switches"`
+	Others         int    `json:"others"`
+	SSIDs          int    `json:"ssids"`
+	// Removed counts mirror rows the foreign controller no longer lists. They
+	// are deleted, unlike an orphaned PAIRING: a box absent from a site that
+	// still answers has genuinely left that site.
+	Removed  int       `json:"removed"`
+	SyncedAt time.Time `json:"synced_at"`
+}
+
+// --- Alerting (ADR-0024) ---
+
+// Alert classes. A channel subscribes to a subset, and a port event that falls
+// in NO class produces nothing — that exclusion is the whole point of ADR-0024.
+const (
+	// AlertClassDevice: the equipment itself went unreachable or came back.
+	AlertClassDevice = "device"
+	// AlertClassInterco: a port facing another device of the fleet. Derived,
+	// never stored — a recognized LLDP peer, or a declared device_links row.
+	AlertClassInterco = "interco"
+	// AlertClassDescribed: a port carrying an operator description
+	// (devices.ports.<port>.label). "Described" means described IN MESHCRAFT,
+	// by someone who opened the Ports screen to do it — not ifAlias, which no
+	// connector reads (ADR-0024, Context).
+	AlertClassDescribed = "described"
+)
+
+// Delivery states. `held` is the only non-terminal one.
+const (
+	// NotifyHeld: retained, not yet delivered. ReleaseAt says when.
+	NotifyHeld = "held"
+	// NotifySent: accepted by the channel.
+	NotifySent = "sent"
+	// NotifyFailed: attempts exhausted. THE ALERT EXISTED — this row is the
+	// product's ability to say so when Telegram was unreachable.
+	NotifyFailed = "failed"
+	// NotifyCoalesced: absorbed into another delivery of the same key. This is
+	// what a flapping port produces instead of six messages.
+	NotifyCoalesced = "coalesced"
+	// NotifySuppressed: dropped on purpose — attributable to a meshcraft
+	// gesture, most often. SuppressedReason says which.
+	NotifySuppressed = "suppressed"
+)
+
+// Channel kinds.
+const (
+	NotifyKindTelegram = "telegram"
+	NotifyKindSlack    = "slack"
+)
+
+// NotifyChannel is one notification destination AS A SCREEN SEES IT — so there
+// is no field here that could carry the token, exactly like SiteExtension and
+// APIToken above. The absence is the safety: no handler or later refactor can
+// leak the secret by forgetting a `json:"-"`. Presence is HasToken.
+type NotifyChannel struct {
+	ID string `json:"id"`
+	// SiteID empty = instance channel: it receives events from every site.
+	SiteID  string `json:"site_id,omitempty"`
+	Kind    string `json:"kind"`
+	Label   string `json:"label"`
+	Enabled bool   `json:"enabled"`
+	// Target is the non-secret addressing: a Telegram chat id. Empty for Slack,
+	// whose webhook URL is addressing and credential at once and therefore
+	// lives entirely in the vault.
+	Target   string `json:"target"`
+	HasToken bool   `json:"has_token"`
+
+	Classes     []string `json:"classes"`
+	MinSeverity int      `json:"min_severity"`
+
+	// Channel health — the answer to "silence means what?" without sending a
+	// heartbeat nobody reads (ADR-0024, Rejected alternatives).
+	LastOKAt            *time.Time `json:"last_ok_at"`
+	LastError           string     `json:"last_error"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	// DroppedUninteresting counts port events refused for want of a description
+	// and of a known neighbour. ADR-0024's blind spot, turned into a number
+	// somebody can read.
+	DroppedUninteresting int64 `json:"dropped_uninteresting"`
+
+	// Pending / Failed are computed on read from notify_deliveries, never
+	// stored: they are what makes a mute channel readable as healthy or broken.
+	Pending int `json:"pending"`
+	Failed  int `json:"failed"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// NotifyDelivery is the delivery slip of ONE journal line to ONE channel. It is
+// not an alert record: the alert IS the events row it points at (ADR-0024).
+type NotifyDelivery struct {
+	ID        int64  `json:"id"`
+	EventID   int64  `json:"event_id"`
+	ChannelID string `json:"channel_id"`
+	State     string `json:"state"`
+	// AlertKey is (class, device, port), frozen at write time. Unlike
+	// "interco", which is derived on read, this one MUST be stored: grouping
+	// compares slips written at different instants, and a port described
+	// mid-episode would otherwise change key halfway through.
+	AlertKey    string     `json:"alert_key"`
+	ReleaseAt   time.Time  `json:"release_at"`
+	FirstAt     time.Time  `json:"first_at"`
+	Transitions int        `json:"transitions"`
+	Attempts    int        `json:"attempts"`
+	NextAttempt *time.Time `json:"next_attempt_at"`
+	LastError   string     `json:"last_error"`
+	// SuppressedReason names the gesture an alert was attributed to, so a
+	// silence is explainable after the fact.
+	SuppressedReason string     `json:"suppressed_reason"`
+	CreatedAt        time.Time  `json:"created_at"`
+	SentAt           *time.Time `json:"sent_at"`
 }

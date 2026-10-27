@@ -18,7 +18,7 @@ const runningConfig2610 = `Running configuration:
 ; J9088A Configuration Editor; Created on release #R.11.121
 
 hostname "SW-PLAYER-79" 
-snmp-server contact "technique@lyon-esport.fr" 
+snmp-server contact "noc@example.org" 
 snmp-server location "InTheKitchen" 
 max-vlans 30 
 time timezone 1 
@@ -26,9 +26,9 @@ time daylight-time-rule Western-Europe
 interface 1 
    disable
 exit
-ip default-gateway 172.16.99.1 
+ip default-gateway 203.0.113.1 
 timesync sntp 
-snmp-server community "les" Operator 
+snmp-server community "ops" Operator 
 vlan 1 
    name "DEFAULT_VLAN" 
    ip address dhcp-bootp 
@@ -64,7 +64,7 @@ vlan 10
    exit 
 vlan 99 
    name "admin" 
-   ip address 172.16.99.79 255.255.255.0 
+   ip address 203.0.113.79 255.255.255.0 
    tagged 45-52 
    exit 
 vlan 200 
@@ -179,11 +179,11 @@ func TestParseRunningConfigFromTheReferenceUnit(t *testing.T) {
 		t.Errorf("VLAN 200 name = %q, want joueurs", rc.VLANs[200])
 	}
 
-	// THE TRAP: « no untagged 1-52 » under VLAN 1 is a REMOVAL. Reading it as
+	// THE TRAP: "no untagged 1-52" under VLAN 1 is a REMOVAL. Reading it as
 	// membership would put all 52 ports into VLAN 1 and make every one of them
 	// look like drift.
 	if len(rc.Untagged[1]) != 0 {
-		t.Errorf("VLAN 1 has %d untagged ports: « no untagged » was read as membership",
+		t.Errorf("VLAN 1 has %d untagged ports: \"no untagged\" was read as membership",
 			len(rc.Untagged[1]))
 	}
 	// VLAN 200 genuinely carries them all.
@@ -195,12 +195,12 @@ func TestParseRunningConfigFromTheReferenceUnit(t *testing.T) {
 		t.Errorf("VLAN 99 tagged = %v, want 45-52", rc.Tagged[99])
 	}
 
-	// Management is the VLAN with a REAL address. VLAN 1 carries « ip address
-	// dhcp-bootp », which is the factory default and must not win.
+	// Management is the VLAN with a REAL address. VLAN 1 carries "ip address
+	// dhcp-bootp", which is the factory default and must not win.
 	if rc.MgmtVLAN != 99 {
 		t.Errorf("management VLAN = %d, want 99", rc.MgmtVLAN)
 	}
-	if !strings.HasPrefix(rc.MgmtAddr, "172.16.99.79") {
+	if !strings.HasPrefix(rc.MgmtAddr, "203.0.113.79") {
 		t.Errorf("management address = %q", rc.MgmtAddr)
 	}
 }

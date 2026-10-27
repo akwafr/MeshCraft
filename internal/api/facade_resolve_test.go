@@ -56,11 +56,13 @@ func TestFacadeRefusesWhatTheFaceplateDoesNotCarry(t *testing.T) {
 
 	// Port 40 does not exist on a 28-port faceplate: the connector's
 	// translation must not conjure an inventory port out of a sample.
-	if got := f.resolve("Ethernet1/40"); got != "" {
+	var got = f.resolve("Ethernet1/40")
+	if got != "" {
 		t.Errorf("resolve(Ethernet1/40) = %q, want \"\" (not on this faceplate)", got)
 	}
 	// Stacking unit 2 is outside this connector's coverage.
-	if got := f.resolve("Ethernet2/1"); got != "" {
+	got = f.resolve("Ethernet2/1")
+	if got != "" {
 		t.Errorf("resolve(Ethernet2/1) = %q, want \"\"", got)
 	}
 	// A logical interface must never be taken for a physical port. These are
@@ -69,7 +71,8 @@ func TestFacadeRefusesWhatTheFaceplateDoesNotCarry(t *testing.T) {
 	var notPorts = []string{"Vlan99", "Console port", "Loopback Interface 0", "VLAN ID 0042"}
 	var n string
 	for _, n = range notPorts {
-		if got := f.resolve(n); got != "" {
+		got = f.resolve(n)
+		if got != "" {
 			t.Errorf("resolve(%q) = %q, want \"\"", n, got)
 		}
 	}
@@ -85,10 +88,12 @@ func TestFacadeWithoutConnectorStillResolvesTextually(t *testing.T) {
 		PortGroups: json.RawMessage(`[{"prefix":"ether","from":1,"count":8}]`),
 	}
 	var f = facadeOf(d)
-	if got := f.resolve("ether3"); got != "ether3" {
+	var got = f.resolve("ether3")
+	if got != "ether3" {
 		t.Errorf("resolve(ether3) = %q, want ether3", got)
 	}
-	if got := f.resolve("Ether 3"); got != "ether3" {
+	got = f.resolve("Ether 3")
+	if got != "ether3" {
 		t.Errorf("normalized match lost: resolve(Ether 3) = %q", got)
 	}
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // Site management addressing plan
-// (cf. docs/01-Architecture/Management addressing).
+// (cf. docs/en/01-Architecture/Management addressing.md).
 //
 // Read open to site roles; write reserved for `site_admin` — a decision that
 // affects reachability of the entire site fleet ([[RBAC]]).

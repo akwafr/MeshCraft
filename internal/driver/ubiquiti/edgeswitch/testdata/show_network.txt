@@ -1,0 +1,15 @@
+show network
+
+Interface Status............................... Up
+IP Address..................................... 192.0.2.4
+Subnet Mask.................................... 255.255.0.0
+Default Gateway................................ 192.0.2.1
+IPv6 Administrative Mode....................... Enabled
+IPv6 Prefix is ................................ fe80::9e05:d6ff:fef5:f137/64
+Burned In MAC Address.......................... 9C:05:D6:F5:F1:37
+Locally Administered MAC address............... 00:00:00:00:00:00
+MAC Address Type............................... Burned In
+Configured IPv4 Protocol....................... None
+Configured IPv6 Protocol....................... None
+IPv6 AutoConfig Mode........................... Disabled
+Management VLAN ID............................. 99

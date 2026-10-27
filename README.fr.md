@@ -46,26 +46,53 @@ fonctionne sans `insecure-registries`. En local sans domaine, laisser
 
 ## Captures d'écran
 
+Prises sur le [site de démonstration](#site-de-démonstration) (festival fictif,
+switchs génériques, télémétrie synthétique) ; interface en anglais.
+
+**Dashboard** — compteurs du parc, trafic du site sur 24 h, ports par VLAN, alertes actives, événements récents.
+
 ![Dashboard](docs/screenshots/dashboard.png)
 
-![Équipements](docs/screenshots/devices.png)
-
-![Ports](docs/screenshots/ports.png)
-
-![Topologie](docs/screenshots/topology.png)
+**Monitoring** — état du parc avec durées de joignabilité, ports les plus chargés, journal.
 
 ![Monitoring](docs/screenshots/monitoring.png)
 
-![Configuration](docs/screenshots/configuration.png)
+**Équipements** — une carte par switch : bandeau de ports coloré par VLAN, débit, PoE, état.
+
+![Équipements](docs/screenshots/devices.png)
+
+**Détail d'un switch** — la façade de ports colorée par VLAN, avec le résumé du switch.
+
+![Détail d'un switch](docs/screenshots/switch-detail.png)
+
+**Ports** — tous les ports du site, groupés par switch : VLAN, lien, trafic, PoE, voisin.
+
+![Ports](docs/screenshots/ports.png)
+
+**Topologie** — le plan du site : cadres par emplacement, vitesses, débits bidirectionnels et diagnostics de liaison.
+
+![Topologie](docs/screenshots/topology.png)
+
+**Profils de switch** — des règles qui transforment une façade en configuration de ports, prévisualisées sur un vrai équipement avant toute écriture.
+
+![Profils de switch](docs/screenshots/switch-profiles.png)
+
+**Profils de port** — réglages de port réutilisables, à côté du plan de VLANs du site.
+
+![Profils de port](docs/screenshots/port-profiles.png)
+
+**Thème sombre** — la même topologie, en palette sombre.
+
+![Topologie, thème sombre](docs/screenshots/topology-dark.png)
 
 ## Documentation
 
 La conception complète vit dans le vault Obsidian :
 
-- Français : [`docs/fr/`](docs/fr/) (entrée : `Meshcraft - Index.md`)
-- Anglais : [`docs/en/`](docs/en/)
+- Anglais (référence) : [`docs/en/`](docs/en/) — entrée [`docs/en/Index.md`](docs/en/Index.md)
+- Français (traduction) : [`docs/fr/`](docs/fr/) (entrée : `Meshcraft - Index.md`)
 
-Conventions de code : [`CLAUDE.md`](CLAUDE.md). Contribuer : [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Règles de contribution et conventions de code : [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## L'interface (aperçu)
 
@@ -77,6 +104,48 @@ Onglets principaux (menu latéral uniquement sous Configuration) :
 - **Plan** — synoptique ; les cadres suivent les places ; liaisons avec débit bidirectionnel
 - **Monitoring** — journal, état du parc, ports chargés
 - **Configuration** — VLANs, profils, groupes, sites, utilisateurs, proxys
+
+## Plateformes prises en charge
+
+Neuf connecteurs, chacun écrit contre l'interface d'administration propre à une
+plateforme — il n'y a pas de repli SNMP générique qui prétendrait configurer un
+commutateur qu'il ne connaît pas.
+
+| Connecteur | Gamme | Atteinte par | Télémétrie | Vérifié sur matériel |
+|---|---|---|---|---|
+| `arista-eos` | Arista EOS (7000 / 720 / 750) | SSH, série | **gNMI en flux** | lectures + télémétrie |
+| `cisco-ios` | Catalyst 2960 / 2960-X / 2960-XR (IOS 12.2–15.2) | SSH, série, Telnet | SNMP + traps | oui |
+| `aruba-instant-on-1930` | Aruba (HPE) Instant On 1930 | web (`wcd`), SNMP | SNMP + web + traps | oui |
+| `mikrotik-routeros` | MikroTik RouterOS (CRS…) | API binaire, SSH, Telnet, série, SNMP | API + SNMP + web, traps | oui |
+| `mikrotik-swos` | MikroTik SwOS (CSS…) | web, SNMP | SNMP + web | oui |
+| `ubiquiti-edgeswitch` | EdgeSwitch / UniFi Switch (FASTPATH) | SSH, série, HTTP | SNMP | oui |
+| `fs-s3400` | FS.com S3400 PoE+ (CLI façon BDCOM) | SSH, série, HTTP | SNMP | oui |
+| `fs-s3900` | FS.com S3900 / S3900-R | SSH, série, HTTP | SNMP | oui |
+| `hpe-procurve` | HPE ProCurve 2600 | SSH, Telnet, web, SNMP | SNMP | **en pause** |
+
+**Arista est la seule gamme collectée en télémétrie de flux**, et la seule sans
+aucun canal SNMP : `internal/gnmipoll` s'abonne en gNMI/gRPC pour l'état des
+interfaces, les compteurs, le LLDP et la santé. Tout le reste est interrogé par
+`internal/snmppoll` depuis le proxy.
+
+### Ce que « vérifié » veut dire ici, et ce que ça ne veut pas dire
+
+La dernière colonne dit qu'un équipement réel a répondu — pas que chaque geste a
+été exécuté sur un. La règle du projet est qu'un connecteur ne livre une forme de
+commande qu'une fois observée, et ne déclare l'ÉCRITURE (`WritesExtra`) qu'une
+fois cette écriture-là exercée : une écriture déclarée met un bouton à l'écran
+dont le premier usage se ferait sur le commutateur de production de quelqu'un.
+
+Donc aujourd'hui : huit gammes déclarent l'écriture d'état administratif par
+port et six déclarent celle du spanning tree, tandis qu'**aucun connecteur ne
+déclare le DHCP snooping** — les neuf en portent le code, aucun n'en a la
+capture. La moitié télémétrie du connecteur Arista est capturée (EOS 4.28.13.1M),
+ses écritures de configuration ne le sont pas. Chaque déclaration restante
+attend la capture de cette écriture-là sur du matériel réel.
+
+Le ProCurve 2600 est **en pause** : le connecteur existe, l'unité de labo
+authentifie puis refuse le canal au-delà de quatre sessions simultanées, et il
+n'est pas à reprendre sans décision explicite.
 
 ## Découverte et adoption
 
@@ -97,7 +166,7 @@ make web-dev      # serveur Vite avec hot reload (API sur :8080)
 ## Site de démonstration
 
 Importer [`samples/site-demo.json`](samples/site-demo.json) depuis la page parc
-(festival fictif : switchs Generic, VLANs, profils, topologie).
+(festival fictif : switchs génériques, VLANs, profils, topologie).
 
 ## Structure du dépôt
 
@@ -107,5 +176,5 @@ cmd/proxy/        proxy (enrollment + heartbeat + accès équipements)
 cmd/mkoci/        layout OCI multi-arch du proxy sans buildx
 internal/         api, auth, store (PostgreSQL), drivers, …
 web/              SPA React + TypeScript (Vite), embarquée via go:embed
-docs/fr, docs/en  vault d'architecture (bilingue)
+docs/en, docs/fr  vault d'architecture (anglais de référence, traduction française)
 ```

@@ -2,7 +2,7 @@
 // from a set of RULES and that device's facade.
 //
 // This is the "Compile" step of the reconciliation pipeline
-// (docs/01-Architecture/Reconciliation section 1), restricted to ports and made
+// (docs/en/01-Architecture/Reconciliation.md section 1), restricted to ports and made
 // PURE: a facade and a spec enter, a port-by-port assignment exits. No database,
 // no device, no clock — because this is the decision an operator re-reads before
 // applying it to forty-eight ports, and a decision that cannot be replayed
@@ -180,7 +180,7 @@ func speedMbps(s string) int {
 // Config is what a rule places on a port.
 //
 // Exactly the four fields the rest of the system expects — `mode`, `pvid`,
-// `tagged`, `poe` (docs/01-Architecture/Modele de donnees standard) — and
+// `tagged`, `poe` (docs/en/01-Architecture/Standard data model.md) — and
 // nothing more. Adding fields no connector writes would make the preview screen
 // look like it announces configuration that would never arrive.
 type Config struct {
@@ -197,6 +197,34 @@ type Config struct {
 	// stays unresolved and apply does not strip tagged membership.
 	TaggedAll bool
 	PoE       bool
+	// StormControl is the declared storm-control limit, or nil for "this profile
+	// has no opinion".
+	//
+	// NIL AND "DISABLED" ARE DIFFERENT, and the distinction is the whole reason
+	// this is a pointer. A profile carrying an explicit disabled block asserts
+	// that meshcraft wants NO limiter, which makes an apply remove one an
+	// operator set by hand on the switch. Nil asserts nothing — which is what
+	// every profile written before this field existed means, and must keep
+	// meaning after it.
+	StormControl *StormControl
+}
+
+// StormControl is the per-port storm-control intent as a profile declares it.
+//
+// ONE RATE FOR THE THREE CLASSES, and that is the hardware's shape rather than a
+// simplification: RouterOS and SwOS carry a single `storm-rate` field per port
+// with the classes as booleans beside it (captured on a CRS326-24G-2S+). A
+// profile offering three independent rates would describe a port those platforms
+// cannot produce, and the mismatch would only surface as a refusal at apply time.
+type StormControl struct {
+	Broadcast      bool    `json:"broadcast"`
+	Multicast      bool    `json:"multicast"`
+	UnknownUnicast bool    `json:"unknown_unicast"`
+	Rate           float64 `json:"rate"`
+	// Unit: "percent" or "pps". Percent is portable — the ranges whose field is
+	// packets per second convert it from the port's own line rate — while pps
+	// pins a number that means a different share of a 1 G port than of a 10 G one.
+	Unit string `json:"unit"`
 }
 
 // configJSON is the serialized form of a Config.
@@ -211,6 +239,14 @@ type configJSON struct {
 	PVID   *int            `json:"pvid,omitempty"`
 	Tagged json.RawMessage `json:"tagged,omitempty"`
 	PoE    bool            `json:"poe"`
+	// StormControl rides under `security`, which is where the standard data
+	// model reserved it — the per-port endpoint's own header named that path
+	// before the profile could express it.
+	Security *securityJSON `json:"security,omitempty"`
+}
+
+type securityJSON struct {
+	StormControl *StormControl `json:"storm_control,omitempty"`
 }
 
 func (c *Config) UnmarshalJSON(b []byte) error {
@@ -220,10 +256,17 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*c = Config{Mode: raw.Mode, PoE: raw.PoE}
+	if raw.Security != nil {
+		c.StormControl = raw.Security.StormControl
+	}
 	if raw.PVID != nil {
 		c.PVID = *raw.PVID
 	}
 	if len(raw.Tagged) == 0 {
+		// EARLY RETURN, and storm control is read ABOVE it for that reason. The
+		// two branches below return on their own, so anything parsed after them
+		// would be silently dropped for a port with no tagged list — which is
+		// every access port, i.e. most of a site.
 		return nil
 	}
 	// `tagged` is either the string "all" or a list. Try the string first, like
@@ -265,6 +308,14 @@ func (c Config) Fields() map[string]json.RawMessage {
 	var out = map[string]json.RawMessage{}
 	out["mode"] = mustJSON(c.Mode)
 	out["poe"] = mustJSON(c.PoE)
+	// EMITTED ONLY WHEN THE PROFILE DECLARES ONE. Fields() is merged into the
+	// port object key by key, so omitting the key leaves whatever the port
+	// already carries — which is exactly the "no opinion" the nil pointer means.
+	// Emitting a disabled block instead would make every profile that never
+	// mentioned storm control start deleting limiters set by hand.
+	if c.StormControl != nil {
+		out["security"] = mustJSON(securityJSON{StormControl: c.StormControl})
+	}
 	// An "libre" port is not managed: writing PVID or a VLAN list would leave
 	// residue that reappears on the next pass to access.
 	if c.Mode == "libre" || c.Mode == "" {
@@ -333,7 +384,7 @@ const (
 // # What was ruled out
 //
 //   - regular expression on port name: same reason as tagging rules
-//     (docs/01-Architecture/Etiquettes et portee des identifiants section 4) — a
+//     (docs/en/01-Architecture/Tags and credential scope.md section 4) — a
 //     wrong regex does not say it is wrong, it matches nothing;
 //   - selection on OBSERVED state (active link, negotiated speed, LLDP neighbor):
 //     telemetry is not intent (cf. recon.PortIntent). A profile whose result
@@ -466,8 +517,8 @@ type Rule struct {
 	// PortProfileID : the rule applies an EXISTING PORT PROFILE rather than
 	// configuration written in the rule.
 	//
-	// This is the reason port profiles exist (docs/02-Frontend/Profils et
-	// groupes): describe configuration once, here as in the switch view. A rule
+	// This is the reason port profiles exist (docs/en/02-Frontend/Profiles and
+	// groups.md): describe configuration once, here as in the switch view. A rule
 	// that copied the profile configuration would drift on the first profile edit,
 	// with nothing signaling it.
 	PortProfileID string `json:"port_profile_id,omitempty"`
@@ -515,6 +566,19 @@ type Assignment struct {
 	Rule      int    `json:"rule"`
 	RuleLabel string `json:"rule_label"`
 	Config    Config `json:"config"`
+	// PortProfileID : the port profile whose values this assignment carries,
+	// when the winning rule references one AND the port receives those values
+	// unchanged. Apply stamps it into the port's `profile_id`: the port then
+	// FOLLOWS the group, exactly as if the operator had applied it by hand
+	// from the port panel.
+	//
+	// Empty in two cases, both deliberate. A rule with INLINE configuration
+	// has no profile to follow. And a port whose configuration fit() ADJUSTED
+	// (PoE refused on a cage) does not hold the profile's values — stamping
+	// it anyway would make the panel claim a provenance the values
+	// contradict, and its "override" indicator would flag a divergence nobody
+	// chose. The choice is therefore: stamp only what equals the profile.
+	PortProfileID string `json:"port_profile_id,omitempty"`
 	// Warn : what the rule asked for and the port cannot do. Rendered configuration
 	// already accounts for the refusal — Warn only says it happened, otherwise the
 	// guard would look like a bug.
@@ -643,15 +707,23 @@ func Evaluate(spec Spec, ports []Port, profiles map[string]Config) Plan {
 			continue
 		}
 		var cfg, warn = fit(configs[owner[i]], ports[i])
+		// The follow-link rides only when fit changed nothing: `warn` is
+		// non-empty exactly when it did (cf. fit), so it doubles as the
+		// values-equal-the-profile test without a field-by-field compare.
+		var followed = ""
+		if warn == "" {
+			followed = spec.Rules[owner[i]].PortProfileID
+		}
 		plan.Ports = append(plan.Ports, Assignment{
-			Port:      ports[i].Name,
-			Group:     ports[i].Group,
-			Media:     ports[i].Media,
-			PoECap:    ports[i].PoE,
-			Rule:      owner[i],
-			RuleLabel: ruleLabel(spec.Rules[owner[i]], owner[i]),
-			Config:    cfg,
-			Warn:      warn,
+			Port:          ports[i].Name,
+			Group:         ports[i].Group,
+			Media:         ports[i].Media,
+			PoECap:        ports[i].PoE,
+			Rule:          owner[i],
+			RuleLabel:     ruleLabel(spec.Rules[owner[i]], owner[i]),
+			Config:        cfg,
+			Warn:          warn,
+			PortProfileID: followed,
 		})
 	}
 	return plan

@@ -8,346 +8,347 @@ import (
 	"testing"
 )
 
-// L'analyseur des pages `*.b`, verified sur les CAPTURES REELLES de the device.
+// The `*.b` page parser, verified on the device's REAL CAPTURES.
 //
-// Les fichiers de testdata/ ne sont pas des exemples rediges : ce sont les responses
-// telles que le MikroTik CSS326-24G-2S+ de reference (SwOS 2.17, 10.99.0.36) les a
-// servies, rapatriees a travers le tunnel du proxy. C'est ce qui donne leur valeur a
-// ces tests — un analyseur valide sur une syntaxe qu'on a soi-same written ne prouve
-// rien de ce que the device envoie actually.
+// The files in testdata/ are not written examples: they are the responses as
+// the reference MikroTik CSS326-24G-2S+ (SwOS 2.17, 192.0.2.36) served them,
+// brought back through the proxy's tunnel. That is what gives these tests
+// their value — a parser validated on a syntax one wrote oneself proves
+// nothing about what the device actually sends.
 //
-// La seule retouche faite a ces captures est la COMMUNITY SNMP de the device de
-// production, remplacee par un motif de same forme dans snmp.b et backup.swb : un
-// secret de production n'a rien a faire dans un depot.
+// The only edit made to these captures is the production device's SNMP
+// COMMUNITY, replaced with a placeholder of the same shape in snmp.b and
+// backup.swb: a production secret has no business in a repository.
 
-// capture lit une real capture.
+// capture reads a real capture.
 func capture(t *testing.T, name string) string {
 	t.Helper()
 	var b, err = os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
-		t.Fatalf("capture %s illisible : %v", name, err)
+		t.Fatalf("capture %s unreadable: %v", name, err)
 	}
 	return string(b)
 }
 
-// TestParseSysReel : la page la plus dense de la plateforme, telle que servie.
-func TestParseSysReel(t *testing.T) {
+// TestParseRealSys: the densest page of the platform, as served.
+func TestParseRealSys(t *testing.T) {
 	var page, err = ParseObject(capture(t, "sys.b"))
 	if err != nil {
-		t.Fatalf("/sys.b refused : %v", err)
+		t.Fatalf("/sys.b refused: %v", err)
 	}
 
-	// Les strings sont de l'UTF-8 hex-encoded, et c'est ce decoding qui donne au
-	// connecteur son identification.
-	var cas = []struct {
-		champ, expected string
+	// Strings are hex-encoded UTF-8, and this decoding is what gives the
+	// connector its identification.
+	var cases = []struct {
+		field, expected string
 	}{
 		{FieldBoard, "CSS326-24G-2S+"},
 		{FieldVersion, "2.17"},
 		{FieldIdentity, "lan-m6"},
 		{FieldSerial, "945809C232D5"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		var got, ok = page.Text(c.champ)
+	var c = cases[0]
+	for _, c = range cases {
+		var got, ok = page.Text(c.field)
 		if !ok || got != c.expected {
-			t.Errorf("%s = %q (ok=%v), expected %q", c.champ, got, ok, c.expected)
+			t.Errorf("%s = %q (ok=%v), expected %q", c.field, got, ok, c.expected)
 		}
 	}
 
-	// L'ADRESSE, et l'ordre des octets. C'est le decoding qui ferait afficher — puis
-	// write — une adresse fausse s'il was inverse.
+	// THE ADDRESS, and the byte order. This decoding is what would display —
+	// then write — a wrong address if it were reversed.
 	var ip, ipOK = page.Num(FieldIP)
 	if !ipOK {
-		t.Fatalf("/sys.b ne porte pas %q", FieldIP)
+		t.Fatalf("/sys.b does not carry %q", FieldIP)
 	}
-	if ip != 0x2400630a {
-		t.Fatalf("valeur brute de %s = %#x, la capture porte 0x2400630a", FieldIP, ip)
+	if ip != 0x240200c0 {
+		t.Fatalf("raw value of %s = %#x, the capture carries 0x240200c0", FieldIP, ip)
 	}
-	var pointe = DecodeIPv4(ip)
-	if pointe != "10.99.0.36" {
-		t.Errorf("DecodeIPv4(%#x) = %q, expected 10.99.0.36 — c'est l'adresse par "+
-			"laquelle the device a repondu a cette capture same", ip, pointe)
+	var dotted = DecodeIPv4(ip)
+	if dotted != "192.0.2.36" {
+		t.Errorf("DecodeIPv4(%#x) = %q, expected 192.0.2.36 — it is the address "+
+			"the device answered this very capture on", ip, dotted)
 	}
 
-	// La MAC, sans inversion.
-	var brut, brutOK = page.Value(FieldMAC)
-	if !brutOK || brut.Kind != KindStr {
-		t.Fatalf("%s absent ou de type inattendu", FieldMAC)
+	// The MAC, without reversal.
+	var raw, rawOK = page.Value(FieldMAC)
+	if !rawOK || raw.Kind != KindStr {
+		t.Fatalf("%s missing or of unexpected type", FieldMAC)
 	}
-	var mac, macOK = DecodeMAC(brut.Raw)
+	var mac, macOK = DecodeMAC(raw.Raw)
 	if !macOK || mac != "b8:69:f4:5f:14:a8" {
-		t.Errorf("DecodeMAC(%q) = %q (ok=%v), expected b8:69:f4:5f:14:a8", brut.Raw, mac, macOK)
+		t.Errorf("DecodeMAC(%q) = %q (ok=%v), expected b8:69:f4:5f:14:a8", raw.Raw, mac, macOK)
 	}
 
-	// Le VLAN de management de cet device.
+	// This device's management VLAN.
 	var avln, has = page.Num(FieldAllowVLAN)
 	if !has || avln != 99 {
-		t.Errorf("%s = %d (ok=%v), expected 99 — c'est le VLAN par lequel cet "+
-			"device est administre", FieldAllowVLAN, avln, has)
+		t.Errorf("%s = %d (ok=%v), expected 99 — it is the VLAN this "+
+			"device is administered through", FieldAllowVLAN, avln, has)
 	}
-	// Adressage statique.
+	// Static addressing.
 	var iptp, iptpOK = page.Num(FieldAddrMode)
 	if !iptpOK || iptp != AddrStatic {
-		t.Errorf("%s = %d, expected %d (statique)", FieldAddrMode, iptp, AddrStatic)
+		t.Errorf("%s = %d, expected %d (static)", FieldAddrMode, iptp, AddrStatic)
 	}
 }
 
-// TestChampAbsentNestPasZero : le parti pris central de l'analyseur.
+// TestMissingFieldIsNotZero: the parser's central stance.
 //
-// L'interface de the device fait l'INVERSE — son accesseur rend la valeur par
-// default declared dans la definition du champ quand la page ne porte pas la key.
-// C'est acceptable pour dessiner un formulaire et inacceptable ici : « ce port est
-// dans le VLAN 0 » et « la page ne dit rien de ce port » menent a des ecritures
-// opposees, et l'une des deux coupe un uplink.
-func TestChampAbsentNestPasZero(t *testing.T) {
+// The device's UI does the OPPOSITE — its accessor returns the default value
+// declared in the field definition when the page does not carry the key. That
+// is acceptable for drawing a form and unacceptable here: "this port is in
+// VLAN 0" and "the page says nothing about this port" lead to opposite writes,
+// and one of the two cuts an uplink.
+func TestMissingFieldIsNotZero(t *testing.T) {
 	var page, err = ParseObject(capture(t, "sys.b"))
 	if err != nil {
-		t.Fatalf("/sys.b refused : %v", err)
+		t.Fatalf("/sys.b refused: %v", err)
 	}
 
-	// Tous les accesseurs doivent refuser, et pour deux raisons distinctes : la key
-	// n'existe pas, ou elle existe mais porte une AUTRE FORME. Lire un tableau comme
-	// un scalaire donnerait un masque de ports faux, donc une write sur les
-	// mauvais ports.
-	var refus = []struct {
-		quoi string
-		lu   func() bool // rend le second retour de l'accesseur
+	// Every accessor must refuse, for two distinct reasons: the key does not
+	// exist, or it exists but carries ANOTHER SHAPE. Reading an array as a
+	// scalar would give a wrong port mask, hence a write on the wrong ports.
+	var refusals = []struct {
+		what string
+		read func() bool // returns the accessor's second return value
 	}{
-		{"Num sur une key absente — le champ serait lu comme zero",
-			func() bool { var _, ok = page.Num("nexistepas"); return ok }},
-		{"Text sur une key absente",
-			func() bool { var _, ok = page.Text("nexistepas"); return ok }},
-		{"Nums sur une key absente",
-			func() bool { var _, ok = page.Nums("nexistepas"); return ok }},
-		{"Bit sur une key absente — le masque serait lu comme « aucun port »",
-			func() bool { var _, ok = page.Bit("nexistepas", 0); return ok }},
-		{"NumAt sur une key absente",
-			func() bool { var _, ok = page.NumAt("nexistepas", 0); return ok }},
-		{"Num sur une string",
+		{"Num on a missing key — the field would be read as zero",
+			func() bool { var _, ok = page.Num("doesnotexist"); return ok }},
+		{"Text on a missing key",
+			func() bool { var _, ok = page.Text("doesnotexist"); return ok }},
+		{"Nums on a missing key",
+			func() bool { var _, ok = page.Nums("doesnotexist"); return ok }},
+		{"Bit on a missing key — the mask would be read as \"no port\"",
+			func() bool { var _, ok = page.Bit("doesnotexist", 0); return ok }},
+		{"NumAt on a missing key",
+			func() bool { var _, ok = page.NumAt("doesnotexist", 0); return ok }},
+		{"Num on a string",
 			func() bool { var _, ok = page.Num(FieldBoard); return ok }},
-		{"Text sur un nombre",
+		{"Text on a number",
 			func() bool { var _, ok = page.Text(FieldIP); return ok }},
-		{"Nums sur un scalaire",
+		{"Nums on a scalar",
 			func() bool { var _, ok = page.Nums(FieldIP); return ok }},
-		{"Obj sur un nombre",
+		{"Obj on a number",
 			func() bool { var _, ok = page.Obj(FieldIP); return ok }},
 	}
 	var r struct {
-		quoi string
-		lu   func() bool
+		what string
+		read func() bool
 	}
-	for _, r = range refus {
-		if r.lu() {
-			t.Errorf("%s : l'accesseur a rendu ok=true", r.quoi)
+	for _, r = range refusals {
+		if r.read() {
+			t.Errorf("%s: the accessor returned ok=true", r.what)
 		}
 	}
-	if page.Has("nexistepas") {
-		t.Error("Has d'une key absente rend true")
+	if page.Has("doesnotexist") {
+		t.Error("Has on a missing key returns true")
 	}
-	// Un index hors bornes d'un tableau n'est pas un zero non plus.
-	var _, dansLesBornes = page.NumAt(FieldAllowVLAN, 99)
-	if dansLesBornes {
-		t.Error("NumAt hors bornes rend ok=true")
+	// An out-of-bounds array index is not a zero either.
+	var _, inBounds = page.NumAt(FieldAllowVLAN, 99)
+	if inBounds {
+		t.Error("out-of-bounds NumAt returns ok=true")
 	}
 
-	// Et un zero ACTUALLY present se distingue d'une absence : c'est l'autre
-	// half de la property, sans laquelle « prudent » deviendrait « aveugle ».
+	// And a zero ACTUALLY present is distinct from an absence: that is the
+	// other half of the property, without which "cautious" would become
+	// "blind".
 	var alla, allaOK = page.Num(FieldAllowFrom)
 	if !allaOK {
-		t.Fatalf("%s devrait be present dans la capture", FieldAllowFrom)
+		t.Fatalf("%s should be present in the capture", FieldAllowFrom)
 	}
 	if alla != 0 {
-		t.Errorf("%s = %#x, la capture porte 0 (aucune restriction d'adresse)",
+		t.Errorf("%s = %#x, the capture carries 0 (no address restriction)",
 			FieldAllowFrom, alla)
 	}
 }
 
-// TestParseLinkGeometrieEtMasques : la geometry du model et l'ordre des bits.
+// TestParseLinkGeometryAndMasks: the model's geometry and the bit order.
 //
-// Se tromper d'ordre de bits donne un masque de ports OFFSET, i.e. une
-// configuration applied sur les mauvais ports. Sur la capture, un seul port porte un
-// lien, et c'est verifiable de trois ways independantes.
-func TestParseLinkGeometrieEtMasques(t *testing.T) {
+// Getting the bit order wrong gives a SHIFTED port mask, i.e. a configuration
+// applied to the wrong ports. On the capture, a single port carries a link,
+// and it can be verified three independent ways.
+func TestParseLinkGeometryAndMasks(t *testing.T) {
 	var page, err = ParseObject(capture(t, "link.b"))
 	if err != nil {
-		t.Fatalf("/link.b refused : %v", err)
+		t.Fatalf("/link.b refused: %v", err)
 	}
 
 	var ports, sfp, first, geoErr = geometryOf(page)
 	if geoErr != nil {
-		t.Fatalf("geometry illisible : %v", geoErr)
+		t.Fatalf("geometry unreadable: %v", geoErr)
 	}
 	if ports != 26 || sfp != 2 || first != 24 {
-		t.Errorf("geometry = %d ports, %d SFP, first cage a %d ; expected 26/2/24 "+
-			"pour un CSS326-24G-2S+", ports, sfp, first)
+		t.Errorf("geometry = %d ports, %d SFP, first cage at %d; expected 26/2/24 "+
+			"for a CSS326-24G-2S+", ports, sfp, first)
 	}
 
-	// Le masque de liens : `lnk:0x02000000`, donc le bit 25, donc le port 26 —
-	// i.e. la SECONDE cage SFP. Bit 0 = port 1.
+	// The link mask: `lnk:0x02000000`, hence bit 25, hence port 26 — i.e. the
+	// SECOND SFP cage. Bit 0 = port 1.
 	var i int
 	for i = 0; i < ports; i++ {
 		var up, ok = page.Bit(FieldLink, i)
 		if !ok {
-			t.Fatalf("bit %d du masque de liens illisible", i)
+			t.Fatalf("bit %d of the link mask unreadable", i)
 		}
 		if up != (i == 25) {
-			t.Errorf("lien du port %d (index %d) = %v ; seul l'index 25 (cage SFP2) "+
-				"porte un lien dans cette capture", i+1, i, up)
+			t.Errorf("link of port %d (index %d) = %v; only index 25 (cage SFP2) "+
+				"carries a link in this capture", i+1, i, up)
 		}
 	}
 
-	// Tous les ports sont enabled (`en:0x03ffffff` = 26 bits a 1). C'est ce qui
-	// prouve que le masque est bien lu jusqu'au bout, et qu'on ne stops pas a 24.
+	// All ports are enabled (`en:0x03ffffff` = 26 bits at 1). That is what
+	// proves the mask is read to the end, and does not stop at 24.
 	for i = 0; i < ports; i++ {
 		var on, onOK = page.Bit(FieldEnabled, i)
 		if !onOK || !on {
-			t.Errorf("port %d : enabled = %v (ok=%v), la capture les active tous", i+1, on, onOK)
+			t.Errorf("port %d: enabled = %v (ok=%v), the capture enables them all", i+1, on, onOK)
 		}
 	}
-	// Et le bit 26 (index 26), qui n'existe pas sur ce model, est bien a zero : le
-	// masque ne deborde pas.
-	var horsFacade, horsFacadeOK = page.Bit(FieldEnabled, 26)
-	if !horsFacadeOK || horsFacade {
-		t.Errorf("bit 26 du masque d'activation = %v : le masque de 26 ports deborderait",
-			horsFacade)
+	// And bit 26 (index 26), which does not exist on this model, is indeed
+	// zero: the mask does not overflow.
+	var offFacade, offFacadeOK = page.Bit(FieldEnabled, 26)
+	if !offFacadeOK || offFacade {
+		t.Errorf("bit 26 of the enable mask = %v: the 26-port mask would overflow",
+			offFacade)
 	}
 
-	// Le RATE n'a de sens que sur un port qui porte un lien. Les 25 autres portent
-	// l'index 7, hors table : rendre « 10M » pour eux serait inventer une valeur.
+	// The RATE only makes sense on a port that carries a link. The other 25
+	// carry index 7, outside the table: returning "10M" for them would invent
+	// a value.
 	var spd, spdOK = page.Nums(FieldSpeed)
 	if !spdOK || len(spd) != ports {
-		t.Fatalf("%s = %v (ok=%v), expected %d valeurs", FieldSpeed, spd, spdOK, ports)
+		t.Fatalf("%s = %v (ok=%v), expected %d values", FieldSpeed, spd, spdOK, ports)
 	}
 	var label, labelOK = SpeedLabel(spd[25])
 	if !labelOK || label != "10G" {
-		t.Errorf("rate de la cage SFP2 = %q (ok=%v), expected 10G", label, labelOK)
+		t.Errorf("rate of cage SFP2 = %q (ok=%v), expected 10G", label, labelOK)
 	}
-	var _, hors = SpeedLabel(spd[0])
-	if hors {
-		t.Errorf("le port 1 est sans lien et porte l'index %d : SpeedLabel doit refuser "+
-			"rather que d'inventer un rate", spd[0])
+	var _, outOfTable = SpeedLabel(spd[0])
+	if outOfTable {
+		t.Errorf("port 1 has no link and carries index %d: SpeedLabel must refuse "+
+			"rather than invent a rate", spd[0])
 	}
 
-	// Les noms de ports, hex-encoded : « Port1 »… « SFP2 ».
-	var noms []string
-	var nomsOK bool
-	noms, nomsOK = page.Texts(FieldPortName)
-	if !nomsOK || len(noms) != ports {
-		t.Fatalf("%s illisible (ok=%v, %d noms)", FieldPortName, nomsOK, len(noms))
+	// The port names, hex-encoded: "Port1"… "SFP2".
+	var names []string
+	var namesOK bool
+	names, namesOK = page.Texts(FieldPortName)
+	if !namesOK || len(names) != ports {
+		t.Fatalf("%s unreadable (ok=%v, %d names)", FieldPortName, namesOK, len(names))
 	}
-	if noms[0] != "Port1" || noms[23] != "Port24" || noms[24] != "SFP1" || noms[25] != "SFP2" {
-		t.Errorf("noms de ports = [%q … %q %q %q]", noms[0], noms[23], noms[24], noms[25])
+	if names[0] != "Port1" || names[23] != "Port24" || names[24] != "SFP1" || names[25] != "SFP2" {
+		t.Errorf("port names = [%q … %q %q %q]", names[0], names[23], names[24], names[25])
 	}
 }
 
-// TestParseTableVLANReelle : la table des VLAN de the device.
-func TestParseTableVLANReelle(t *testing.T) {
+// TestParseRealVLANTable: the device's VLAN table.
+func TestParseRealVLANTable(t *testing.T) {
 	var rows, err = ParseTable(capture(t, "vlan.b"))
 	if err != nil {
-		t.Fatalf("/vlan.b refused : %v", err)
+		t.Fatalf("/vlan.b refused: %v", err)
 	}
 	if len(rows) != 2 {
-		t.Fatalf("%d ligne(s), la capture en porte 2 (VLAN 99 et 100)", len(rows))
+		t.Fatalf("%d row(s), the capture carries 2 (VLANs 99 and 100)", len(rows))
 	}
-	var attendus = []uint32{99, 100}
+	var expected = []uint32{99, 100}
 	var i int
 	for i = 0; i < 2; i++ {
 		var vid, ok = rows[i].Num(FieldVLANID)
-		if !ok || vid != attendus[i] {
-			t.Errorf("ligne %d : vid = %d (ok=%v), expected %d", i+1, vid, ok, attendus[i])
+		if !ok || vid != expected[i] {
+			t.Errorf("row %d: vid = %d (ok=%v), expected %d", i+1, vid, ok, expected[i])
 		}
-		// Les 26 ports sont membres des deux VLAN (`mbr:0x03ffffff`).
+		// All 26 ports are members of both VLANs (`mbr:0x03ffffff`).
 		var p int
 		for p = 0; p < 26; p++ {
 			var member, bitOK = rows[i].Bit(FieldVLANMembers, p)
 			if !bitOK || !member {
-				t.Errorf("VLAN %d : port %d membre = %v (ok=%v), la capture les rend tous "+
-					"membres", attendus[i], p+1, member, bitOK)
+				t.Errorf("VLAN %d: port %d member = %v (ok=%v), the capture makes them all "+
+					"members", expected[i], p+1, member, bitOK)
 			}
 		}
 	}
 }
 
-// TestTableVideEstUnResultat : `[]` veut dire « aucune rule », pas « je n'ai pas su
-// lire ». Confondre les deux ferait signaler une panne sur un device dont la
-// table d'ACL est simplement vide, ce qui est le cas normal.
-func TestTableVideEstUnResultat(t *testing.T) {
-	var nom string
-	for _, nom = range []string{"acl.b", "host.b"} {
-		var rows, err = ParseTable(capture(t, nom))
+// TestEmptyTableIsAResult: `[]` means "no rule", not "I could not read it".
+// Confusing the two would flag a fault on a device whose ACL table is simply
+// empty, which is the normal case.
+func TestEmptyTableIsAResult(t *testing.T) {
+	var name string
+	for _, name = range []string{"acl.b", "host.b"} {
+		var rows, err = ParseTable(capture(t, name))
 		if err != nil {
-			t.Errorf("%s : %v", nom, err)
+			t.Errorf("%s: %v", name, err)
 			continue
 		}
 		if rows == nil {
-			t.Errorf("%s rend une table nulle : une table vide doit be une tranche "+
-				"vide, pour que l'appelant n'ait pas a distinguer les deux", nom)
+			t.Errorf("%s returns a nil table: an empty table must be an empty "+
+				"slice, so the caller does not have to tell the two apart", name)
 		}
 		if len(rows) != 0 {
-			t.Errorf("%s : %d ligne(s), la capture est vide", nom, len(rows))
+			t.Errorf("%s: %d row(s), the capture is empty", name, len(rows))
 		}
 	}
 }
 
-// TestPageHTMLRefusee : le trap le plus couteux de cette plateforme.
+// TestHTMLPageRefused: the most expensive trap of this platform.
 //
-// Sur SwOS, un chemin qui n'existe pas ne rend PAS 404 : il rend l'interface web
-// complete, en HTTP 200. Un analyseur qui accepterait ce corps, ou qui rendrait une
-// page vide, ferait conclure « cette fonction n'est pas configuree » there where la vraie
-// cause est une faute de frappe dans le nom de la page.
-func TestPageHTMLRefusee(t *testing.T) {
+// On SwOS, a path that does not exist does NOT return 404: it returns the
+// complete web UI, as HTTP 200. A parser that accepted this body, or that
+// returned an empty page, would conclude "this feature is not configured"
+// where the real cause is a typo in the page name.
+func TestHTMLPageRefused(t *testing.T) {
 	var html = `<!doctype html><style>html{height:100%}</style><script>let l={};</script>`
 	var _, _, err = Parse(html)
 	if err == nil {
-		t.Fatal("l'interface web de the device a been accepted comme une page de data")
+		t.Fatal("the device's web UI was accepted as a data page")
 	}
-	// Le message doit porter un extrait : sans lui, « ce n'est pas une page SwOS »
-	// n'aide personne a comprendre que le chemin est faux.
+	// The message must carry an excerpt: without it, "this is not a SwOS page"
+	// helps nobody understand that the path is wrong.
 	if !strings.Contains(err.Error(), "doctype") {
-		t.Errorf("le message d'erreur doit citer ce qui a been recu, obtenu : %v", err)
+		t.Errorf("the error message must quote what was received, got: %v", err)
 	}
 }
 
-// TestSyntaxesRefusees : ce que l'analyseur doit rejeter rather que d'interpreter.
-func TestSyntaxesRefusees(t *testing.T) {
-	var cas = []struct {
-		nom, src string
+// TestRefusedSyntaxes: what the parser must reject rather than interpret.
+func TestRefusedSyntaxes(t *testing.T) {
+	var cases = []struct {
+		name, src string
 	}{
-		{"vide", ""},
-		{"objet non closed", "{a:0x01"},
-		{"tableau non closed", "{a:[0x01,0x02"},
-		{"apostrophe non fermee", "{a:'6162"},
-		{"deux-points manquant", "{a 0x01}"},
-		{"valeur manquante", "{a:}"},
-		{"key repetee", "{a:0x01,a:0x02}"},
-		{"residu after l'objet", "{a:0x01} parasite"},
-		{"nombre hors 32 bits", "{a:0x1ffffffff}"},
-		{"table de non-objets", "[0x01,0x02]"},
+		{"empty", ""},
+		{"unclosed object", "{a:0x01"},
+		{"unclosed array", "{a:[0x01,0x02"},
+		{"unclosed quote", "{a:'6162"},
+		{"missing colon", "{a 0x01}"},
+		{"missing value", "{a:}"},
+		{"repeated key", "{a:0x01,a:0x02}"},
+		{"residue after the object", "{a:0x01} garbage"},
+		{"number beyond 32 bits", "{a:0x1ffffffff}"},
+		{"table of non-objects", "[0x01,0x02]"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
 			var _, _, err = Parse(c.src)
 			if err == nil {
-				t.Errorf("Parse(%q) accepted : une page qu'on ne sait pas lire doit se "+
-					"signaler, pas se deviner", c.src)
+				t.Errorf("Parse(%q) accepted: a page we cannot read must report itself, "+
+					"not be guessed", c.src)
 			}
 		})
 	}
 }
 
-// TestEncodageIdentiqueALinterface : le corps produit en write doit be celui que
-// l'interface de the device produirait.
+// TestEncodingIdenticalToTheUI: the body produced on write must be the one the
+// device's UI would produce.
 //
-// L'encodage des nombres reproduit sa fonction `Pa` : hexadecimal minuscule,
-// rembourre a un nombre PAIR de chiffres. Rien ne prouve que the device y soit
-// sensible ; reproduire a la lettre la seule forme dont on sait qu'elle est accepted
-// est le choix qui ne costs rien.
-func TestEncodageIdentiqueALinterface(t *testing.T) {
-	var cas = []struct {
-		v      uint32
-		attend string
+// The number encoding reproduces its `Pa` function: lower-case hexadecimal,
+// padded to an EVEN number of digits. Nothing proves the device is sensitive
+// to it; reproducing to the letter the only shape known to be accepted is the
+// choice that costs nothing.
+func TestEncodingIdenticalToTheUI(t *testing.T) {
+	var cases = []struct {
+		v    uint32
+		want string
 	}{
 		{0, "0x00"},
 		{1, "0x01"},
@@ -357,222 +358,222 @@ func TestEncodageIdentiqueALinterface(t *testing.T) {
 		{0x03ffffff, "0x03ffffff"},
 		{0xffffffff, "0xffffffff"},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got = EncodeNum(c.v)
-		if got != c.attend {
-			t.Errorf("EncodeNum(%#x) = %q, expected %q", c.v, got, c.attend)
+		if got != c.want {
+			t.Errorf("EncodeNum(%#x) = %q, expected %q", c.v, got, c.want)
 		}
 	}
 }
 
-// TestAllerRetourSurCapturesReelles : relire ce qu'on vient to write doit rendre ce
-// qu'on avait lu.
+// TestRoundTripOnRealCaptures: re-reading what was just written must return
+// what had been read.
 //
-// C'est la property qui rend le LIRE-MODIFIER-REWRITE sur : si l'encodeur perdait
-// ou alterait un champ, une write d'appartenance VLAN emporterait avec elle
-// l'isolation de ports ou les limites de storm, en silence.
-func TestAllerRetourSurCapturesReelles(t *testing.T) {
-	var nom string
-	for _, nom = range []string{"sys.b", "link.b", "fwd.b", "snmp.b", "rstp.b", "lacp.b", "sfp.b", "stats.b"} {
-		t.Run(nom, func(t *testing.T) {
-			var page, err = ParseObject(capture(t, nom))
+// That is the property that makes READ-MODIFY-REWRITE safe: if the encoder
+// lost or altered a field, a VLAN membership write would silently take port
+// isolation or storm limits with it.
+func TestRoundTripOnRealCaptures(t *testing.T) {
+	var name string
+	for _, name = range []string{"sys.b", "link.b", "fwd.b", "snmp.b", "rstp.b", "lacp.b", "sfp.b", "stats.b"} {
+		t.Run(name, func(t *testing.T) {
+			var page, err = ParseObject(capture(t, name))
 			if err != nil {
-				t.Fatalf("%s refused : %v", nom, err)
+				t.Fatalf("%s refused: %v", name, err)
 			}
-			var relu *Page
-			relu, err = ParseObject(page.Encode())
+			var reread *Page
+			reread, err = ParseObject(page.Encode())
 			if err != nil {
-				t.Fatalf("le corps reencoded de %s n'est pas relisible : %v", nom, err)
+				t.Fatalf("the re-encoded body of %s cannot be read back: %v", name, err)
 			}
-			if !reflect.DeepEqual(page.Keys(), relu.Keys()) {
-				t.Fatalf("les keys de %s ont changed a l'aller-retour", nom)
+			if !reflect.DeepEqual(page.Keys(), reread.Keys()) {
+				t.Fatalf("the keys of %s changed in the round trip", name)
 			}
 			var k string
 			for _, k = range page.Keys() {
 				var a, _ = page.Value(k)
-				var b, _ = relu.Value(k)
+				var b, _ = reread.Value(k)
 				if !reflect.DeepEqual(a, b) {
-					t.Errorf("%s : champ %q altere par l'aller-retour (%+v → %+v)", nom, k, a, b)
+					t.Errorf("%s: field %q altered by the round trip (%+v → %+v)", name, k, a, b)
 				}
 			}
 		})
 	}
 }
 
-// TestSauvegardeReelle : /backup.swb, la configuration entire en une request.
+// TestRealBackup: /backup.swb, the entire configuration in one request.
 //
-// C'est la source qui a permis d'establish le jeu de champs INSCRIPTIBLE de chaque
-// page — l'information qu'aucune documentation ne donne, et sans laquelle une
-// write partielle laisserait the device remettre des champs a zero.
-func TestSauvegardeReelle(t *testing.T) {
+// It is the source that made it possible to establish each page's WRITABLE
+// field set — the information no documentation gives, and without which a
+// partial write would let the device reset fields to zero.
+func TestRealBackup(t *testing.T) {
 	var page, err = ParseBackup(capture(t, "backup.swb"))
 	if err != nil {
-		t.Fatalf("/backup.swb refused : %v", err)
+		t.Fatalf("/backup.swb refused: %v", err)
 	}
-	// Les keys sont des NOMS DE PAGE, point et point d'exclamation compris.
-	var attendues = []string{"vlan.b", "lacp.b", ".pwd.b", "snmp.b", "rstp.b",
+	// The keys are PAGE NAMES, dot and exclamation mark included.
+	var expected = []string{"vlan.b", "lacp.b", ".pwd.b", "snmp.b", "rstp.b",
 		"link.b", "fwd.b", "sys.b", "acl.b", "host.b"}
 	var k string
-	for _, k = range attendues {
+	for _, k = range expected {
 		if !page.Has(k) {
-			t.Errorf("la sauvegarde ne porte pas la page %q", k)
+			t.Errorf("the backup does not carry page %q", k)
 		}
 	}
 
-	// LA property qui compte : le jeu de champs declared pour /fwd.b doit be
-	// exactement celui que the device stocke. Un ecart voudrait dire qu'une
-	// write enverrait une page truncated — ou des champs qu'il n'attend pas.
+	// THE property that matters: the field set declared for /fwd.b must be
+	// exactly the one the device stores. A gap would mean a write would send a
+	// truncated page — or fields it does not expect.
 	var fwd, ok = page.Obj("fwd.b")
 	if !ok {
-		t.Fatal("la sauvegarde ne porte pas /fwd.b comme un objet")
+		t.Fatal("the backup does not carry /fwd.b as an object")
 	}
-	var declares = FwdWritableFields(26)
-	if !reflect.DeepEqual(fwd.Keys(), declares) {
-		t.Errorf("le jeu inscriptible de /fwd.b declared par le connecteur differe de "+
-			"celui que the device stocke.\n  sauvegarde : %v\n  declared    : %v",
-			fwd.Keys(), declares)
+	var declared = FwdWritableFields(26)
+	if !reflect.DeepEqual(fwd.Keys(), declared) {
+		t.Errorf("the /fwd.b writable set declared by the connector differs from "+
+			"the one the device stores.\n  backup   : %v\n  declared : %v",
+			fwd.Keys(), declared)
 	}
 
 	var snmp *Page
 	snmp, ok = page.Obj("snmp.b")
 	if !ok {
-		t.Fatal("la sauvegarde ne porte pas /snmp.b comme un objet")
+		t.Fatal("the backup does not carry /snmp.b as an object")
 	}
-	var champs, known = WritableFields(PageSNMP)
+	var fields, known = WritableFields(PageSNMP)
 	if !known {
-		t.Fatal("jeu inscriptible de /snmp.b non declared")
+		t.Fatal("writable set of /snmp.b not declared")
 	}
-	if !reflect.DeepEqual(snmp.Keys(), champs) {
-		t.Errorf("jeu inscriptible de /snmp.b : sauvegarde %v, declared %v",
-			snmp.Keys(), champs)
+	if !reflect.DeepEqual(snmp.Keys(), fields) {
+		t.Errorf("writable set of /snmp.b: backup %v, declared %v",
+			snmp.Keys(), fields)
 	}
 
-	// AUCUN nom d'utilisateur dans la configuration entire de the device : c'est
-	// ce qui establishes qu'il n'y a pas de compte a nommer sur SwOS.
+	// NO user name in the device's entire configuration: that is what
+	// establishes there is no account to name on SwOS.
 	var pwd *Page
 	pwd, ok = page.Obj(".pwd.b")
 	if !ok {
-		t.Fatal("la sauvegarde ne porte pas la page du mot de passe")
+		t.Fatal("the backup does not carry the password page")
 	}
 	if !reflect.DeepEqual(pwd.Keys(), []string{"pwd"}) {
-		t.Errorf("la page du mot de passe porte %v : s'il y avait un nom de compte, "+
-			"il serait there, et AdminAccount.Custom devrait passer a vrai", pwd.Keys())
+		t.Errorf("the password page carries %v: if there were an account name, "+
+			"it would be there, and AdminAccount.Custom should become true", pwd.Keys())
 	}
 }
 
-// TestDecodageTexteCommeLequipement : le decoding des strings hex-encodees.
-func TestDecodageTexteCommeLequipement(t *testing.T) {
-	var cas = []struct {
-		nom, raw, attend string
-		ok               bool
+// TestTextDecodingLikeTheDevice: decoding hex-encoded strings.
+func TestTextDecodingLikeTheDevice(t *testing.T) {
+	var cases = []struct {
+		name, raw, want string
+		ok              bool
 	}{
-		{"vide", "", "", true},
+		{"empty", "", "", true},
 		{"ASCII", "506f727431", "Port1", true},
-		// L'octet NUL TERMINE : ces champs sont des tampons de taille fixe, et ce qui
-		// suit est du residu que l'interface de the device n'affiche pas non plus.
-		{"NUL terminateur", "506f7274310041424344", "Port1", true},
-		// Le rembourrage par ESPACES est conserve : c'est ainsi que les champs
-		// SFF-8472 d'un transceiver sont written, et c'est a l'appelant de le rogner.
-		{"espaces conserves", "465320", "FS ", true},
+		// The NUL byte TERMINATES: these fields are fixed-size buffers, and what
+		// follows is residue the device's UI does not display either.
+		{"NUL terminator", "506f7274310041424344", "Port1", true},
+		// SPACE padding is kept: that is how a transceiver's SFF-8472 fields are
+		// written, and it is up to the caller to trim it.
+		{"spaces kept", "465320", "FS ", true},
 		// UTF-8 multi-byte: switch identity may carry non-ASCII.
 		{"UTF-8", "6d6574656f", "meteo", true},
-		// Un nombre impair de chiffres perd le dernier, comme dans le decoder de
-		// the device.
-		{"impair", "506f7274315", "Port1", true},
-		{"non hexadecimal", "zzzz", "", false},
+		// An odd number of digits loses the last one, as in the device's
+		// decoder.
+		{"odd", "506f7274315", "Port1", true},
+		{"non-hexadecimal", "zzzz", "", false},
 	}
-	var c = cas[0]
-	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+	var c = cases[0]
+	for _, c = range cases {
+		t.Run(c.name, func(t *testing.T) {
 			var got, ok = decodeHexText(c.raw)
-			if ok != c.ok || got != c.attend {
-				t.Errorf("decodeHexText(%q) = %q,%v ; expected %q,%v",
-					c.raw, got, ok, c.attend, c.ok)
+			if ok != c.ok || got != c.want {
+				t.Errorf("decodeHexText(%q) = %q,%v; expected %q,%v",
+					c.raw, got, ok, c.want, c.ok)
 			}
 		})
 	}
 }
 
-// TestMasqueEnTableauDeMots : l'ordre des mots d'un masque de plus de 32 ports.
+// TestMaskAsAnArrayOfWords: the word order of a mask of more than 32 ports.
 //
-// Aucun model SwOS connu ne depasse 32 ports, et c'est precisely pourquoi ce test
-// existe : le jour where l'un en depassera, l'ordre des mots ne sera pas devine mais
-// verified. Il est observed dans le JavaScript de the device, qui parcourt le tableau
-// A L'ENVERS — le DERNIER element porte les bits 0 a 31.
-func TestMasqueEnTableauDeMots(t *testing.T) {
-	// [mot haut, mot bas] : le port 1 est le bit 0 du DERNIER mot.
+// No known SwOS model exceeds 32 ports, and that is precisely why this test
+// exists: the day one does, the word order will not be guessed but verified.
+// It is observed in the device's JavaScript, which walks the array BACKWARDS —
+// the LAST element carries bits 0 to 31.
+func TestMaskAsAnArrayOfWords(t *testing.T) {
+	// [high word, low word]: port 1 is bit 0 of the LAST word.
 	var page, err = ParseObject("{mbr:[0x00000003,0x80000001]}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
-	var cas = []struct {
-		index  int
-		attend bool
+	var cases = []struct {
+		index int
+		want  bool
 	}{
-		{0, true},   // bit 0 du mot bas
+		{0, true},   // bit 0 of the low word
 		{1, false},  //
-		{31, true},  // bit 31 du mot bas
-		{32, true},  // bit 0 du mot haut
-		{33, true},  // bit 1 du mot haut
+		{31, true},  // bit 31 of the low word
+		{32, true},  // bit 0 of the high word
+		{33, true},  // bit 1 of the high word
 		{34, false}, //
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		var got, ok = page.Bit("mbr", c.index)
-		if !ok || got != c.attend {
-			t.Errorf("Bit(index %d) = %v (ok=%v), expected %v", c.index, got, ok, c.attend)
+		if !ok || got != c.want {
+			t.Errorf("Bit(index %d) = %v (ok=%v), expected %v", c.index, got, ok, c.want)
 		}
 	}
-	// Et writing conserve la FORME : renvoyer un scalaire there where the device
-	// attend un tableau, c'est renvoyer un masque qu'il ne lira pas comme written.
-	// Le port 35 est le bit 2 du mot HAUT, qui portait already les bits 0 et 1 : il doit
-	// passer de 0x03 a 0x07, et le mot BAS ne doit pas be touche.
+	// And the write keeps the SHAPE: sending back a scalar where the device
+	// expects an array means sending a mask it will not read as written. Port
+	// 35 is bit 2 of the HIGH word, which already carried bits 0 and 1: it must
+	// go from 0x03 to 0x07, and the LOW word must not be touched.
 	if !page.SetBit("mbr", 34, true) {
-		t.Fatal("SetBit refused sur un masque en tableau")
+		t.Fatal("SetBit refused on an array mask")
 	}
-	var pointe = page.Encode()
-	if pointe != "{mbr:[0x07,0x80000001]}" {
-		t.Errorf("after SetBit(34) : %q, expected {mbr:[0x07,0x80000001]}", pointe)
+	var encoded = page.Encode()
+	if encoded != "{mbr:[0x07,0x80000001]}" {
+		t.Errorf("after SetBit(34): %q, expected {mbr:[0x07,0x80000001]}", encoded)
 	}
 }
 
-// TestSetBitRefuseUneCleAbsente : ne jamais create un masque de rien.
+// TestSetBitRefusesAMissingKey: never create a mask from nothing.
 //
-// Un masque fabrique a partir de zero vaut « aucun port ». Sur `allp` (« Allow From
-// Ports »), cela suffit a rendre the device injoignable — et ce serait fait en
-// croyant simplement autoriser un port de plus.
-func TestSetBitRefuseUneCleAbsente(t *testing.T) {
+// A mask made from zero means "no port". On `allp` ("Allow From Ports"), that
+// is enough to make the device unreachable — and it would be done while
+// believing one was simply allowing one more port.
+func TestSetBitRefusesAMissingKey(t *testing.T) {
 	var page = NewPage()
 	if page.SetBit("allp", 3, true) {
-		t.Error("SetBit a created un masque qui n'existait pas dans la page lue")
+		t.Error("SetBit created a mask that did not exist in the read page")
 	}
 	if page.Has("allp") {
-		t.Error("une key absente a been created")
+		t.Error("a missing key was created")
 	}
 }
 
-// TestOnlySignaleLesChampsManquants : le filtre write ne complete jamais.
+// TestOnlyFlagsMissingFields: the write filter never fills in.
 //
-// Renvoyer a the device une page truncated d'un champ qu'il attend, c'est le laisser
-// le remettre a zero. Un champ requested mais absent de la page lue doit donc STOP
-// writing, pas be invented.
-func TestOnlySignaleLesChampsManquants(t *testing.T) {
+// Sending the device a page missing a field it expects means letting it reset
+// that field to zero. A field requested but missing from the read page must
+// therefore STOP the write, not be invented.
+func TestOnlyFlagsMissingFields(t *testing.T) {
 	var page, err = ParseObject("{a:0x01,b:0x02}")
 	if err != nil {
-		t.Fatalf("page refused : %v", err)
+		t.Fatalf("page refused: %v", err)
 	}
 	var out, missing = page.Only([]string{"a", "b", "c"})
 	if !reflect.DeepEqual(missing, []string{"c"}) {
-		t.Errorf("champs manquants = %v, expected [c]", missing)
+		t.Errorf("missing fields = %v, expected [c]", missing)
 	}
 	if out.Has("c") {
-		t.Error("Only a invented le champ absent")
+		t.Error("Only invented the missing field")
 	}
-	// L'ordre requested est respecte : reproduire l'ordre que the device sert rend
-	// deux transcripts comparables ligne a ligne.
+	// The requested order is respected: reproducing the order the device
+	// serves makes two transcripts comparable line by line.
 	out, missing = page.Only([]string{"b", "a"})
 	if len(missing) != 0 || out.Encode() != "{b:0x02,a:0x01}" {
-		t.Errorf("Only ne respecte pas l'ordre requested : %q", out.Encode())
+		t.Errorf("Only does not respect the requested order: %q", out.Encode())
 	}
 }

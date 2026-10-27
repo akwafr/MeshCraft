@@ -1,0 +1,27 @@
+ SNMP Communities
+
+  Community Name   MIB View Write Access
+  ---------------- -------- ------------
+  meshcraft-ro     Operator Restricted  
+  les              Operator Restricted  
+ 
+ Trap Receivers
+
+  Link-Change Traps Enabled on Ports [All] : All
+
+  Send Authentication Traps [No] : No 
+
+  Address               Community       Events Sent Notify Type Retry Timeout
+  --------------------- --------------- ----------- ----------- ----- -------
+ 
+
+ Excluded MIBs
+
+ Snmp Response Pdu Source-IP Information
+
+  Selection Policy   : rfc1517             
+
+ Trap Pdu Source-IP Information
+
+  Selection Policy   : rfc1517             
+

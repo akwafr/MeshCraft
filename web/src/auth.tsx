@@ -58,7 +58,7 @@ export const useAuth = () => useContext(AuthContext);
 
 /**
  * Sites where the user is site_admin. Used to bound what they can do on a
- * proxy: touch only their sites (see docs/01-Architecture/Proxy). A
+ * proxy: touch only their sites (see docs/en/01-Architecture/Proxy). A
  * global-admin is unaffected — they act everywhere.
  */
 export function useAdminSiteIDs(): string[] {

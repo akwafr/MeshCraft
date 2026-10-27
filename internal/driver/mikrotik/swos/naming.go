@@ -6,105 +6,111 @@ import (
 	"strings"
 )
 
-// LE NOM DES PORTS : celui que l'DEVICE emploie, et l'ancien qui reste accepted.
+// PORT NAMES: the one the DEVICE uses, and the old one that stays accepted.
 //
-// # CE QUI A CHANGED, ET POURQUOI
+// # WHAT CHANGED, AND WHY
 //
-// La first livraison nommait les ports « GE1 »… « GE26 », par emprunt a la gamme
-// Instant On dont le connecteur a servi de model. Le CSS326, lui, nomme ses prises
-// « Port1 »… « Port24 », « SFP1 », « SFP2 » — c'est ce que /link.b sert dans son champ
-// `nm`, c'est ce que son interface web affiche, et c'est donc le nom que l'exploitant
-// lit sur les deux ecrans qu'il compare. Un port designe « GE25 » par meshcraft et
-// « SFP1 » par le switch est un rapprochement laisse a faire de tete, sur la seule
-// data qui decide where une write atterrit.
+// The first delivery named the ports "GE1"… "GE26", borrowing from the Instant
+// On range whose connector served as the model. The CSS326, for its part,
+// names its sockets "Port1"… "Port24", "SFP1", "SFP2" — that is what /link.b
+// serves in its `nm` field, it is what its web UI displays, and it is
+// therefore the name the operator reads on the two screens they compare. A
+// port called "GE25" by meshcraft and "SFP1" by the switch is a mapping left
+// to be done in one's head, on the one piece of data that decides where a
+// write lands.
 //
-// Le connecteur RouterOS voisin avait already tranche dans ce sens sans avoir a le
-// decider : les noms de meshcraft y SONT ceux de the device (`ether3`,
-// `sfp-sfpplus1`), parce que cette plateforme les publie. SwOS les publie aussi.
+// The neighbouring RouterOS connector had already settled this without having
+// to decide it: meshcraft's names there ARE the device's (`ether3`,
+// `sfp-sfpplus1`), because that platform publishes them. SwOS publishes them
+// too.
 //
-// # DEUX FAMILLES, ET C'EST LE POINT DE PRUDENCE DE CE FICHIER
+// # TWO FAMILIES, AND THAT IS THIS FILE'S POINT OF CAUTION
 //
-// [Facade.Index] reconnait les DEUX conventions :
+// [Facade.Index] recognises BOTH conventions:
 //
-//	« Port12 », « SFP1 »  la famille de l'DEVICE, celle qui est now written.
-//	                      Deux compteurs distincts : le cuivre d'un cote, les cages de
-//	                      l'autre, chacun a partir de 1 ;
-//	« GE12 », « GE25 »    la famille NUMEROTEE de meshcraft, cages comprises et d'un
-//	                      seul tenant. C'est celle des intentions already enregistrees en
-//	                      base, et de tout UI qui les affiche encore.
+//	"Port12", "SFP1"  the DEVICE's family, the one now written. Two separate
+//	                  counters: copper on one side, cages on the other, each
+//	                  starting at 1;
+//	"GE12", "GE25"    meshcraft's NUMBERED family, cages included and in one
+//	                  run. It is the one of intents already recorded in the
+//	                  database, and of any UI that still displays them.
 //
-// Refuser l'ancienne famille aurait fait ignorer EN SILENCE les intentions d'un parc
-// already configure — `PlanPorts` range un nom inconnu dans ses `Skipped`, donc une
-// configuration de port aurait cesse d'be applied sans qu'aucune erreur ne le dise.
-// Sur les deux devices de reference, `devices.ports` est vide et rien n'aurait
-// been perdu ; ce n'est pas une raison de construire une traduction qui n'accepte
-// qu'un seul sens, puisque la base d'un parc en service, elle, ne l'est pas.
+// Refusing the old family would have SILENTLY ignored the intents of an
+// already-configured fleet — `PlanPorts` files an unknown name under its
+// `Skipped`, so a port configuration would have stopped being applied
+// without any error saying so. On the two reference devices, `devices.ports`
+// is empty and nothing would have been lost; that is no reason to build a
+// translation that accepts only one direction, since the database of a fleet
+// in service is not empty.
 //
-// THE DEVICE PASSE EN PREMIER, et l'ordre a une consequence a connaitre : quand la
-// front panel a been relue depuis the device, son prefix de groupe vaut « Port », et la
-// famille numerotee devient donc « Port1 »… « Port26 ». « Port25 » designe alors la
-// first cage par l'ancienne convention, alors que the device l'appelle « SFP1 ».
-// Les deux lectures tombent sur le SAME index — 24 — parce que la numerotation
-// continue et la front panel decrivent la same front panel ; c'est un hasard heureux, pas une
-// garantie, et c'est pourquoi la famille de the device est essayee d'abord.
+// THE DEVICE COMES FIRST, and the order has a consequence to be aware of: when
+// the faceplate has been re-read from the device, its group prefix is "Port",
+// and the numbered family therefore becomes "Port1"… "Port26". "Port25" then
+// designates the first cage by the old convention, while the device calls it
+// "SFP1". Both readings land on the SAME index — 24 — because the continuous
+// numbering and the faceplate describe the same faceplate; it is a happy
+// coincidence, not a guarantee, and that is why the device's family is tried
+// first.
 //
-// # CE QUE `nm` NE DEVIENT PAS : UNE CLEF
+// # WHAT `nm` DOES NOT BECOME: A KEY
 //
-// Le champ `nm` est du TEXTE LIBRE. L'interface de the device le laisse renommer
-// port par port, il n'a aucune contrainte d'unicite, et rien ne suit un renommage.
-// En faire la clef du model standard donnerait trois defauts d'un coup :
+// The `nm` field is FREE TEXT. The device's UI lets it be renamed port by
+// port, it has no uniqueness constraint, and nothing follows a rename. Making
+// it the standard model's key would bring three defects at once:
 //
-//   - deux ports named pareil s'ecraseraient dans les cartes de [State] — une
-//     appartenance VLAN affichee pour un port serait celle d'un autre ;
-//   - `port_groups` ne sait pas exprimer une liste de noms quelconques : la front panel
-//     s'y written en prefix + compte, et c'est elle que l'interface web deplie pour
-//     enumerate les prises. Un port named « Uplink » deviendrait invisible a the UI
-//     tout en existant dans state lu ;
-//   - une intention enregistree cesserait de designer un port au premier renommage
-//     fait depuis l'interface du switch.
+//   - two ports with the same name would overwrite each other in the [State]
+//     maps — a VLAN membership displayed for one port would be another's;
+//   - `port_groups` cannot express a list of arbitrary names: the faceplate is
+//     written there as prefix + count, and it is what the web UI expands to
+//     enumerate the sockets. A port named "Uplink" would become invisible to
+//     the UI while existing in the read state;
+//   - a recorded intent would stop designating a port at the first rename
+//     made from the switch's UI.
 //
-// Ce fichier retient donc la CONVENTION de the device — deux familles, `Port` pour
-// le cuivre et `SFP` pour les cages, telles que /link.b les sert par default — et non
-// les strings elles-memes. Les strings, elles, restent servies there where elles ne
-// decident de rien : [PortTelemetry.DeviceName] pour le diagnostic, et
-// [renamedPorts] qui SIGNALE les ports dont le nom observed differe du nom de front panel —
-// sans quoi l'ecart entre les deux ecrans reviendrait, a l'envers et sans explication.
+// This file therefore keeps the device's CONVENTION — two families, `Port`
+// for copper and `SFP` for cages, as /link.b serves them by default — and not
+// the strings themselves. The strings remain served where they decide
+// nothing: [PortTelemetry.DeviceName] for diagnosis, and [renamedPorts], which
+// FLAGS the ports whose observed name differs from the faceplate name —
+// otherwise the gap between the two screens would come back, the other way
+// round and unexplained.
 
 const (
-	// CopperPortPrefix nomme les prises cuivre. OBSERVED dans `nm` sur le
-	// CSS326-24G-2S+ de reference : « Port1 »… « Port24 ».
+	// CopperPortPrefix names the copper sockets. OBSERVED in `nm` on the
+	// reference CSS326-24G-2S+: "Port1"… "Port24".
 	CopperPortPrefix = "Port"
-	// SFPPortPrefix nomme les cages optiques, NUMEROTEES A PART et repartant de 1.
-	// OBSERVED : « SFP1 », « SFP2 » pour les ports d'index 24 et 25.
+	// SFPPortPrefix names the optical cages, NUMBERED SEPARATELY and starting
+	// again at 1. OBSERVED: "SFP1", "SFP2" for the ports of index 24 and 25.
 	//
-	// Le prefix ne distingue pas SFP de SFP+ : the device ne le fait pas non plus
-	// (ses deux cages 10 gigabits s'appellent « SFP1 » et « SFP2 »), et le rate de la
-	// front panel dit already ce que la cage accepte.
+	// The prefix does not distinguish SFP from SFP+: the device does not
+	// either (its two 10-gigabit cages are called "SFP1" and "SFP2"), and the
+	// faceplate speed already says what the cage accepts.
 	SFPPortPrefix = "SFP"
 )
 
-// Facade est la front panel NOMMEE d'un device SwOS : sa geometry, plus les deux
-// conventions de nommage qui traduisent un nom en index.
+// Facade is the NAMED faceplate of a SwOS device: its geometry, plus the two
+// naming conventions that translate a name into an index.
 //
-// UN TYPE ET NON DEUX PARAMETRES, et c'est la lecon du commentaire de [PortsInput] :
-// « un parameter positionnel ajoute au milieu d'une liste est exactement la faute qui
-// fait passer `ports` there where le code attend `prefix` ». La geometry et le nommage sont
-// now indissociables — savoir where commencent les cages est ce qui decide si
-// l'index 24 s'appelle « SFP1 » ou « Port25 » — et les separate laisserait deux valeurs
-// dont l'une peut mentir sur l'autre.
+// ONE TYPE AND NOT TWO PARAMETERS, and that is the lesson of the comment on
+// [PortsInput]: "a positional parameter added in the middle of a list is
+// exactly the mistake that passes `ports` where the code expects `prefix`".
+// Geometry and naming are now inseparable — knowing where the cages start is
+// what decides whether index 24 is called "SFP1" or "Port25" — and separating
+// them would leave two values one of which can lie about the other.
 type Facade struct {
 	ports    int
 	sfp      int
 	sfpFirst int
-	// legacy est le prefix de la famille numerotee, tel que la CIBLE le porte
-	// (cf. Admin.portPrefix). Il ne nomme plus rien : il ne sert only RELIRE.
+	// legacy is the prefix of the numbered family, as the TARGET carries it
+	// (cf. Admin.portPrefix). It no longer names anything: it serves only for
+	// READING.
 	legacy string
 }
 
-// NewFacade construit la front panel named d'un device.
+// NewFacade builds the named faceplate of a device.
 //
-// `legacyPrefix` est le prefix de la famille numerotee a accepter en lecture. Vide,
-// c'est [DefaultPortPrefix] qui s'applique — la famille historique du projet.
+// `legacyPrefix` is the prefix of the numbered family to accept on read.
+// Empty, [DefaultPortPrefix] applies — the project's historical family.
 func NewFacade(ports, sfp, sfpFirst int, legacyPrefix string) Facade {
 	if legacyPrefix == "" {
 		legacyPrefix = DefaultPortPrefix
@@ -112,40 +118,42 @@ func NewFacade(ports, sfp, sfpFirst int, legacyPrefix string) Facade {
 	return Facade{ports: ports, sfp: sfp, sfpFirst: sfpFirst, legacy: legacyPrefix}
 }
 
-// Ports rend le nombre de ports de la front panel.
+// Ports returns the number of ports on the faceplate.
 func (f Facade) Ports() int { return f.ports }
 
-// SFPFirst rend l'index de la first cage optique.
+// SFPFirst returns the index of the first optical cage.
 func (f Facade) SFPFirst() int { return f.sfpFirst }
 
-// isCage dit si l'index tombe dans la PLAGE de cages declared par /link.b.
+// isCage says whether the index falls within the RANGE of cages declared by
+// /link.b.
 //
-// Une plage et non « les derniers ports » : `sfpo` place la first cage where il veut,
-// et l'reference device la met a la fin (`sfpo:0x18` pour 26 ports) sans que
-// rien ne l'y oblige. Un model qui placerait ses cages at the top verrait donc ses
-// prises cuivre numerotees a partir de 1 quand same, ce qui est le comportement
-// expected de deux compteurs independants.
+// A range and not "the last ports": `sfpo` puts the first cage wherever it
+// likes, and the reference device puts it at the end (`sfpo:0x18` for 26
+// ports) without anything forcing it to. A model that placed its cages at the
+// start would therefore still see its copper sockets numbered from 1, which is
+// the expected behaviour of two independent counters.
 func (f Facade) isCage(i int) bool {
 	return f.sfp > 0 && i >= f.sfpFirst && i < f.sfpFirst+f.sfp
 }
 
-// Name rend le nom de front panel du port d'index `i` (base 0).
+// Name returns the faceplate name of the port of index `i` (0-based).
 //
-// Les deux compteurs sont independants : le cuivre compte les ports qui NE SONT PAS
-// des cages, dans l'ordre de la front panel, les cages comptent les cages. C'est ce que
-// l'reference device sert dans `nm`, et [renamedPorts] le verifies sur la
-// real capture rather que sur cette phrase.
+// The two counters are independent: copper counts the ports that are NOT
+// cages, in faceplate order, cages count cages. That is what the reference
+// device serves in `nm`, and [renamedPorts] verifies it on the real capture
+// rather than on this sentence.
 func (f Facade) Name(i int) string {
 	if i < 0 || i >= f.ports {
-		// Un index hors front panel ne se nomme pas : le nommer quand same fabriquerait un
-		// port que the device n'a pas, et le silence d'un nom vide ferait chercher
-		// l'erreur dans la page rather que dans l'appel.
-		return fmt.Sprintf("port#%d(hors front panel de %d ports)", i, f.ports)
+		// An index outside the faceplate is not named: naming it anyway would
+		// invent a port the device does not have, and the silence of an empty
+		// name would send someone looking for the error in the page rather
+		// than in the call.
+		return fmt.Sprintf("port#%d(outside a faceplate of %d ports)", i, f.ports)
 	}
 	if f.isCage(i) {
 		return SFPPortPrefix + strconv.Itoa(i-f.sfpFirst+1)
 	}
-	// Le rang du port parmi les prises qui ne sont pas des cages.
+	// The port's rank among the sockets that are not cages.
 	var rank = i + 1
 	if f.sfp > 0 && i >= f.sfpFirst+f.sfp {
 		rank = i + 1 - f.sfp
@@ -153,7 +161,7 @@ func (f Facade) Name(i int) string {
 	return CopperPortPrefix + strconv.Itoa(rank)
 }
 
-// Names rend les noms de front panel, dans l'ordre des index.
+// Names returns the faceplate names, in index order.
 func (f Facade) Names() []string {
 	var out = make([]string, 0, f.ports)
 	var i int
@@ -163,12 +171,12 @@ func (f Facade) Names() []string {
 	return out
 }
 
-// Index traduit un nom de port en index SwOS (base 0), dans l'une ou l'autre famille.
+// Index translates a port name into a SwOS index (0-based), in either family.
 //
-// Un nom qui ne suit aucune des deux conventions, ou qui designe un port que
-// the device n'a pas, est REFUSED rather que devine : envoyer un number de port faux
-// est une write au mauvais endroit, et sur cette plateforme, celle qui coupe
-// l'uplink.
+// A name that follows neither convention, or that designates a port the
+// device does not have, is REFUSED rather than guessed: sending a wrong port
+// number is a write in the wrong place, and on this platform, the one that
+// cuts the uplink.
 func (f Facade) Index(name string) (int, bool) {
 	var i, ok = f.deviceIndex(name)
 	if ok {
@@ -177,7 +185,7 @@ func (f Facade) Index(name string) (int, bool) {
 	return f.legacyIndex(name)
 }
 
-// deviceIndex lit la famille de l'DEVICE : « Port12 », « SFP1 ».
+// deviceIndex reads the DEVICE's family: "Port12", "SFP1".
 func (f Facade) deviceIndex(name string) (int, bool) {
 	var n, ok = suffixNum(name, SFPPortPrefix)
 	if ok {
@@ -189,9 +197,9 @@ func (f Facade) deviceIndex(name string) (int, bool) {
 	if n, ok = suffixNum(name, CopperPortPrefix); !ok {
 		return 0, false
 	}
-	// Le n-ieme port qui n'est pas une cage. Compte rather que calcule : c'est la same
-	// rule que Name, prise dans l'autre sens, et une formule dupliquee est une formule
-	// qui divergera.
+	// The n-th port that is not a cage. Counted rather than computed: it is
+	// the same rule as Name, taken the other way, and a duplicated formula is
+	// a formula that will diverge.
 	var seen int
 	var i int
 	for i = 0; i < f.ports; i++ {
@@ -206,7 +214,7 @@ func (f Facade) deviceIndex(name string) (int, bool) {
 	return 0, false
 }
 
-// legacyIndex lit la famille NUMEROTEE de meshcraft : « GE12 », cages comprises.
+// legacyIndex reads meshcraft's NUMBERED family: "GE12", cages included.
 func (f Facade) legacyIndex(name string) (int, bool) {
 	var n, ok = suffixNum(name, f.legacy)
 	if !ok || n > f.ports {
@@ -215,13 +223,13 @@ func (f Facade) legacyIndex(name string) (int, bool) {
 	return n - 1, true
 }
 
-// suffixNum lit le number qui suit `prefix` dans `name`. Faux from que la forme n'est
-// pas exactement « prefix + entier positif ».
+// suffixNum reads the number following `prefix` in `name`. False as soon as
+// the shape is not exactly "prefix + positive integer".
 //
-// La comparaison est SENSIBLE A LA CASSE, comme elle l'was avant ce lot : les deux
-// familles sont engendrees par du code — l'une par the device, l'autre par
-// `port_groups` — et accepter « port3 » ferait accepter aussi bien « pOrT3 », c'est-a-
-// dire tolerer une saisie a la main there where la seule source legitime est une machine.
+// The comparison is CASE-SENSITIVE, as it was before this batch: both
+// families are generated by code — one by the device, the other by
+// `port_groups` — and accepting "port3" would just as well accept "pOrT3",
+// i.e. tolerate hand typing where the only legitimate source is a machine.
 func suffixNum(name, prefix string) (int, bool) {
 	if prefix == "" || !strings.HasPrefix(name, prefix) {
 		return 0, false
@@ -230,11 +238,11 @@ func suffixNum(name, prefix string) (int, bool) {
 	if num == "" {
 		return 0, false
 	}
-	// CHIFFRES SEULEMENT, et le control est explicite parce que `strconv.Atoi` est plus
-	// tolerant qu'il n'y parait : il accepte le signe, donc « Port+1 » et « Port-1 »
-	// rendraient 1 et −1. Le premier designerait le port 1 sous un nom que rien
-	// n'engendre ; ce qui compte n'est pas ce cas-there mais la rule, qui est de ne
-	// traduire que ce qu'on reconnait.
+	// DIGITS ONLY, and the check is explicit because `strconv.Atoi` is more
+	// tolerant than it looks: it accepts a sign, so "Port+1" and "Port-1"
+	// would return 1 and −1. The first would designate port 1 under a name
+	// nothing generates; what matters is not that case but the rule, which is
+	// to translate only what we recognise.
 	var i int
 	for i = 0; i < len(num); i++ {
 		if num[i] < '0' || num[i] > '9' {
@@ -248,25 +256,26 @@ func suffixNum(name, prefix string) (int, bool) {
 	return n, true
 }
 
-// renamedPorts rend, en phrases pour un exploitant, les ports dont le nom PORTE PAR
-// THE DEVICE differe du nom de front panel de meshcraft.
+// renamedPorts returns, as sentences for an operator, the ports whose name AS
+// CARRIED BY THE DEVICE differs from meshcraft's faceplate name.
 //
-// Pourquoi le dire : le nom de front panel est une CONVENTION (cf. l'encadre at the top de
-// fichier), donc un port renomme « Uplink » dans l'interface du switch continue de
-// s'afficher « Port5 » dans meshcraft. C'est le bon choix pour la clef, et c'est
-// exactement l'ecart entre deux ecrans que ce fichier existe pour supprimer : le
-// taire ferait chercher « Uplink » dans une liste qui ne le contient pas.
+// Why say so: the faceplate name is a CONVENTION (cf. the box at the top of
+// the file), so a port renamed "Uplink" in the switch's UI keeps being
+// displayed as "Port5" in meshcraft. It is the right choice for the key, and
+// it is exactly the gap between two screens this file exists to remove:
+// keeping quiet about it would send someone looking for "Uplink" in a list
+// that does not contain it.
 //
-// Vide quand tous les noms concordent — ce qui est le cas de the device de
-// reference, et ce que le test sur la real capture verifies.
+// Empty when all names agree — which is the case of the reference device, and
+// what the test on the real capture verifies.
 //
-// Fonction PURE, verifiable sur testdata/link.b.
+// A PURE function, verifiable on testdata/link.b.
 func renamedPorts(link *Page, f Facade) []string {
 	var names, ok = link.Texts(FieldPortName)
 	if !ok {
-		// Champ absent : rien a comparer, et surtout rien a signaler. Ce n'est pas une
-		// panne — un firmware qui ne sert pas `nm` laisse simplement la front panel seule a
-		// nommer, ce qu'elle sait faire.
+		// Field missing: nothing to compare, and above all nothing to flag. It
+		// is not a fault — a firmware that does not serve `nm` simply leaves
+		// the faceplate alone to do the naming, which it can.
 		return nil
 	}
 	var out []string
@@ -276,21 +285,22 @@ func renamedPorts(link *Page, f Facade) []string {
 		if got == "" || got == f.Name(i) {
 			continue
 		}
-		out = append(out, f.Name(i)+" est named « "+got+" » sur the device")
+		out = append(out, f.Name(i)+" is named \""+got+"\" on the device")
 	}
 	return out
 }
 
-// renamedNote assemble la note state, ou rend la string vide s'il n'y a rien a dire.
+// renamedNote assembles the state note, or returns the empty string if there
+// is nothing to say.
 func renamedNote(link *Page, f Facade) string {
 	var diffs = renamedPorts(link, f)
 	if len(diffs) == 0 {
 		return ""
 	}
-	return "NOMS DE PORTS RENOMMES SUR THE DEVICE : " + joinComma(diffs) + ". meshcraft " +
-		"garde les noms de front panel (« " + CopperPortPrefix + "1 », « " + SFPPortPrefix +
-		"1 »), qui sont ceux que SwOS emploie par default : le champ « " + FieldPortName +
-		" » de /link.b est du texte libre, sans unicite, et en faire la clef d'un port " +
-		"ferait perdre une intention au premier renommage. Ce qui est affiche designe " +
-		"donc bien la prise physique ; c'est son tag locale qui differe."
+	return "PORTS RENAMED ON THE DEVICE: " + joinComma(diffs) + ". meshcraft " +
+		"keeps the faceplate names (\"" + CopperPortPrefix + "1\", \"" + SFPPortPrefix +
+		"1\"), which are the ones SwOS uses by default: the \"" + FieldPortName +
+		"\" field of /link.b is free text, without uniqueness, and making it a port's key " +
+		"would lose an intent at the first rename. What is displayed therefore does " +
+		"designate the physical socket; it is its local label that differs."
 }

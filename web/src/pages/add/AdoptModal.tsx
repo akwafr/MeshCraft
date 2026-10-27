@@ -91,7 +91,23 @@ export default function AdoptModal({
     onSuccess: (res) => onDone(res.device.name, siteId),
   });
 
-  const canImport = candidate.has_config || pasted.trim().length > 0;
+  // WHAT MAKES THE IMPORT POSSIBLE, in the order the server will actually try.
+  //
+  // `has_config` alone used to gate this choice, and that made the option
+  // permanently grey on every range discovery cannot SCRAPE a config from — the
+  // web-only ones, and RouterOS, whose shell answers the probe with terminal
+  // escape sequences until it times out. Those are exactly the devices meshcraft
+  // identifies confidently and can log into, so "we know what you are and we
+  // have your password, but you may not import your configuration" was the
+  // wrong answer.
+  //
+  // A resolved connector is now enough: the server adopts, then READS the device
+  // through it and absorbs what it finds (importFromDevice). If that read fails
+  // the device is still adopted and the reason comes back as a warning, which is
+  // why offering the choice here costs nothing it cannot explain afterwards.
+  const canReadLive = !!candidate.driver;
+  const canImport =
+    candidate.has_config || pasted.trim().length > 0 || canReadLive;
 
   return (
     <Modal title={t("adoptModal.title", { name: candidate.hostname || candidate.ip }) as string} onClose={onClose}>
@@ -145,9 +161,11 @@ export default function AdoptModal({
           <span>
             <b>{t("adoptModal.importLocalConfig")}</b>
             <span className="note">
-              {canImport
+              {candidate.has_config
                 ? t("adoptModal.importLocalConfigNoteReady")
-                : t("adoptModal.importLocalConfigNotePaste")}
+                : canReadLive
+                  ? t("adoptModal.importLocalConfigNoteLive")
+                  : t("adoptModal.importLocalConfigNotePaste")}
             </span>
           </span>
         </label>
@@ -155,7 +173,7 @@ export default function AdoptModal({
 
       {mode === "import" && (
         <>
-          {!candidate.has_config && (
+          {!candidate.has_config && !canReadLive && (
             <Field label={t("adoptModal.configToImport") as string}>
               <textarea
                 rows={6}

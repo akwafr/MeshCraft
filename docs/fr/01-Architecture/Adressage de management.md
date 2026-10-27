@@ -390,7 +390,7 @@ Sur l'installation de référence, **les deux CSS326 et le CRS326** portent une 
 | Équipement | Plateforme | Ce que la capture dit | Où |
 |---|---|---|---|
 | CSS326-24G-2S+ | SwOS 2.17 | `iptp:0x01` — « static » | `swos/testdata/sys.b`, `backup.swb` |
-| CRS326-24G-2S+ | RouterOS 7.21 | `"dynamic":"false"` sur `10.99.0.54/24` | `routeros/testdata/ip_address.json` |
+| CRS326-24G-2S+ | RouterOS 7.21 | `"dynamic":"false"` sur `192.0.2.54/24` | `routeros/testdata/ip_address.json` |
 
 Ces équipements sont **conformes** au plan : leur adresse est dans le sous-réseau, ils répondent, la §12 les affiche en vert. Et pourtant meshcraft ne savait ni dire par quel moyen ils l'avaient obtenue, ni afficher les trois champs d'une configuration statique, ni enregistrer la décision de les y laisser. Un équipement en bail et un équipement en adresse fixe se présentaient **identiquement** — alors que ce qui se passe le jour où le serveur DHCP change n'a rien de commun entre les deux.
 
@@ -448,7 +448,7 @@ Trois précisions du connecteur SwOS méritent d'être ici, parce qu'elles se pa
 
 `api.addrDriftOf` ne se calcule **que** sur une intention explicite **et** un observé relevé. Un `inherit` ne peut pas dériver — il n'exige rien — et un équipement jamais relu ne peut pas être déclaré en écart : ce serait transformer une ignorance en reproche, sur un parc largement pas encore relu. C'est le même arbitrage que celui du chemin de VLAN (§5), et il vaut d'être tenu deux fois.
 
-L'**adresse** compte autant que le mode, et c'est l'écart le plus fréquent : une intention statique dont l'adresse ne correspond pas à celle que l'équipement porte veut dire que la décision n'a jamais été posée, ou que quelqu'un est passé derrière. La comparaison ignore le **préfixe** — SwOS ne le porte pas (`/sys.b` a `ip`, sans masque) là où RouterOS rend `10.99.0.54/24` — sinon toute une gamme serait signalée en écart permanent pour une différence de notation.
+L'**adresse** compte autant que le mode, et c'est l'écart le plus fréquent : une intention statique dont l'adresse ne correspond pas à celle que l'équipement porte veut dire que la décision n'a jamais été posée, ou que quelqu'un est passé derrière. La comparaison ignore le **préfixe** — SwOS ne le porte pas (`/sys.b` a `ip`, sans masque) là où RouterOS rend `192.0.2.54/24` — sinon toute une gamme serait signalée en écart permanent pour une différence de notation.
 
 ### 8.6 Les capabilities sont enfin INTERROGÉES
 
@@ -487,7 +487,7 @@ DNS     bool // … et des RÉSOLVEURS ?
 
 `validateDeviceAddressing` refuse donc **à la saisie** : un mode que la plateforme n'admet pas, une passerelle ou un DNS sur une plateforme qui n'en porte pas, une passerelle hors du sous-réseau de l'équipement (elle serait inatteignable), une passerelle égale à l'adresse de l'équipement, une adresse de réseau, un résolveur qui n'est pas une adresse IP.
 
-**Le préfixe est complété, jamais deviné.** Un exploitant tape `10.99.0.36` : le préfixe est emprunté au sous-réseau du plan quand l'adresse y est contenue, et **exigé** sinon — pas de plan, ou adresse hors du sous-réseau. Supposer `/24` serait inventer un masque, et un masque faux rend un équipement muet aussi sûrement qu'une adresse fausse. Une adresse **hors** du sous-réseau reste acceptée : c'est l'équipement hors plan du §1, que la §12 signale déjà en orange ; refuser ici ferait un mur là où le produit veut un avertissement.
+**Le préfixe est complété, jamais deviné.** Un exploitant tape `192.0.2.36` : le préfixe est emprunté au sous-réseau du plan quand l'adresse y est contenue, et **exigé** sinon — pas de plan, ou adresse hors du sous-réseau. Supposer `/24` serait inventer un masque, et un masque faux rend un équipement muet aussi sûrement qu'une adresse fausse. Une adresse **hors** du sous-réseau reste acceptée : c'est l'équipement hors plan du §1, que la §12 signale déjà en orange ; refuser ici ferait un mur là où le produit veut un avertissement.
 
 **Un connecteur inconnu n'interdit rien**, et c'est l'exception assumée à la règle « une capability inconnue est supposée absente ». Cette règle protège les **écritures** sur l'équipement ; pour l'intention d'adressage seule (enregistrement sans pose), refuser toute annotation sur un switch saisi à la main n'éviterait aucun dégât en rendant l'écran inutilisable. Les écritures, elles, passent par `ApplySameVLAN` / `MigrateVLAN` / `JumpVLAN`.
 
@@ -595,7 +595,7 @@ tout en étant hors du plan : il n'est pas en panne, il est **à migrer**.
 
 - rouge = ne répond plus (constaté par la surveillance ICMP, [[Monitoring]]) ;
 - **orange = hors plan**, avec la raison en clair (« adresse 10.100.0.10 hors du
-  sous-réseau de management du site 10.99.0.0/16 ») et un bouton
+  sous-réseau de management du site 192.0.2.0/24 ») et un bouton
   **Migrer le management** ;
 - la conformité est **calculée à la lecture**, jamais stockée : le plan du site
   peut changer à tout moment, et un booléen figé en base mentirait dès la

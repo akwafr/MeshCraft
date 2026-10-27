@@ -35,9 +35,9 @@ sous-réseau du plan du site — et un proxy qui atteint le réseau de managemen
 
 > [!bug] Communauté conforme, agent actif, walk MUET — relevé du 29 juillet 2026
 > Sur le CRS326-24G-2S+ du parc, `snmp-apply` répondait « communauté déjà conforme :
-> sources 10.99.0.0/16, lecture seule, agent actif », et le walk expirait. Le journal de
+> sources 192.0.2.0/24, lecture seule, agent actif », et le walk expirait. Le journal de
 > l'équipement a donné la réponse : le proxy l'interroge depuis **10.42.0.67**, hors de
-> `10.99.0.0/16`. Un agent qui refuse une source **se tait**, il ne proteste pas — et le
+> `192.0.2.0/24`. Un agent qui refuse une source **se tait**, il ne proteste pas — et le
 > silence ne distingue pas « pas d'agent » de « mauvaise source ».
 >
 > Le CSS326 voisin, lui, répondait : SwOS n'a aucun champ de borne de source. Deux
@@ -187,7 +187,7 @@ canal d'événements du [[Protocole contrôleur-proxy]].
 > Un canal qui ne transmet que des différences fait de chaque perte une divergence
 > **permanente**. C'est la leçon de ce défaut, et elle dépasse le ping.
 >
-> **Le constat.** `lab-css326` (CSS326-24G-2S+, 10.99.0.36), adopté le 28/07, est
+> **Le constat.** `lab-css326` (CSS326-24G-2S+, 192.0.2.36), adopté le 28/07, est
 > resté `unknown` **dix-neuf heures** alors qu'il répondait au ping sans faute. Il
 > était bien dans la consigne poussée au proxy (« surveillance transmise,
 > équipements : 12 »), et `lab-crs326`, adopté dans la même session, avait bien reçu
@@ -614,5 +614,33 @@ Une **fin** de battement ne peut pas être décidée par un événement entrant 
 
 C'est le renversement qui donne son intérêt au lot : ce n'est pas la transition qui est intéressante, c'est sa **répétition**.
 
-## Alerting (v1, simple)
-Règles par site : device unreachable > N min, port critique down, drift détecté, proxy déconnecté → notification (email/webhook). Pas de moteur d'alerting complexe au départ ; le [[Journal d'événements]] est la source unique.
+## Alerting
+
+Décidé et construit par [[ADR-0024 — Une alerte se mérite : le journal décide, la description et l'interco qualifient]]. La phrase que cette section portait depuis le début — « le [[Journal d'événements]] est la source unique » — a tenu : l'alerting est un **abonné** du journal, pas un second modèle d'événement. `notify_deliveries.event_id` est une clé étrangère vers `events(id)`, donc chaque message est traçable jusqu'à la ligne qui l'a causé, et il n'existe aucune table `alerts`.
+
+**Six types alertables**, tous déjà émis : `device.unreachable`, `device.recovered`, `port.down`, `port.up`, `port.flapping`, `port.flap_cleared`. Rien de neuf n'est observé.
+
+**Trois classes, et une règle d'exclusion qui est le cœur du sujet.** Un canal s'abonne parmi `device`, `interco` (port faisant face à un équipement de la flotte) et `described` (port portant un libellé d'opérateur). Un événement de port qui n'est **ni** interco **ni** décrit ne produit **aucun** message : il reste au journal, visible sur la fiche du port. C'est le même raisonnement que `portManaged` un cran plus loin — sur deux mille prises, tout alerter produit un canal que personne ne lit — et le prix est inscrit : un port critique que personne n'a décrit reste muet. Chaque refus incrémente `notify_channels.dropped_uninteresting`, pour que le trou soit un chiffre à l'écran et non un silence.
+
+> [!warning] « Description » ne veut pas dire `ifAlias`
+> **Aucun connecteur ne lit `ifAlias`** : l'OID `1.3.6.1.2.1.31.1.1.1.18` n'est walké nulle part, `mdpv1.PortState` n'a pas le champ, et MDP v1 ne saurait pas le transporter. Ce que l'écran Ports appelle « description » est `devices.ports.<port>.label`, une **intention d'opérateur** que la migration `0019` et `recon_handlers.go` protègent activement des lectures d'équipement. C'est le meilleur signal des deux : `ifAlias` dit « quelqu'un a écrit un texte sur ce commutateur », souvent un prédécesseur ; `label` dit « quelqu'un a décrit ce port dans meshcraft, dans l'écran qui sert à ça ».
+
+**Le battement est traité par retenue, pas par un second corrélateur.** `portevents.go` ci-dessus garde la décision « ce port bat » ; l'alerting ne fait qu'**attendre que la question soit tranchée**. Une clé qui bouge n'alerte pas : chaque transition repousse l'échéance (`alertHold` 45 s pour un port, `alertDeviceHold` 20 s pour un équipement), plafonnée à `alertHoldMax` 5 min. Six allers-retours en deux minutes produisent **un** message. Le plafond n'est pas décoratif — voir le trou gNMI ci-dessous.
+
+**On n'alerte pas sur nos propres gestes.** Le journal sait déjà que nous avons agi, horodaté, par équipement : un candidat dont l'équipement porte un événement de geste (`config.applied`, `device.stp_apply`, `mgmt.applied`, `credential.installed`, `device.adopted`…) dans les 10 min précédentes est **différé**, pas annoncé. Un balayage le **ré-arme** si l'état est toujours mauvais à la fermeture de la fenêtre, donc la suppression ne retarde que les mauvaises nouvelles — la doctrine de `holdReach`. Une fenêtre de maintenance manuelle aurait supposé qu'on pense à l'ouvrir, et la nuit du 2026-10-24 personne ne l'aurait fait avant de réécrire huit régions MSTP.
+
+**La livraison est un effet, pas une condition.** Le bordereau est écrit en base avant tout appel sortant : un canal injoignable ne peut pas ralentir la détection, il peut seulement ne pas être prévenu. Chaque canal porte `last_ok_at`, `last_error`, `consecutive_failures`, et l'écran compte les livraisons retenues et échouées — c'est ainsi que « le canal n'a rien envoyé » devient une question à laquelle on répond, **sans battement de cœur** que personne ne lit. Un **test d'envoi** explicite existe, parce qu'une intégration qu'on ne peut pas essayer avant l'incident est une intégration dont on découvre la mauvaise configuration pendant l'incident.
+
+Canaux : **Telegram** (jeton de bot + `chat_id`) et **Slack** (URL de webhook entrant, qui est adresse et secret à la fois). Les deux secrets vont au coffre `internal/secretbox` et sont inscrits dans `store.SealedColumns()` — sans cette inscription, ils seraient détruits à la prochaine rotation de clé.
+
+| Question | État |
+|---|---|
+| Classification, règle d'exclusion, clé d'alerte | **livré** — `internal/api/alerting.go` (fonctions pures, testées sans base) |
+| Dépôt des bordereaux, regroupement du battement en SQL | **livré** — `Store.FileDelivery`, index unique partiel `(channel_id, alert_key) where state='held'` |
+| Attribution à nos propres gestes + ré-armement | **livré** — `attributedToGesture`, `Server.reArmPass` |
+| Envoi, reprises exponentielles, santé du canal | **livré** — `internal/notify`, `Server.RunNotifyQueue` |
+| Écran d'administration, test d'envoi, révélation tracée | **livré** — `web/src/pages/Alerting.tsx`, `/api/sites/{id}/notify-channels` |
+| Transitions de port collectées en **gNMI** | **trou connu, antérieur à l'alerting** — `cmd/proxy/gnmi.go` émet ses transitions **sans `IfIndex`**, et `portFlaps.observe` rejette tout ce qui a `IfIndex <= 0`. Aucun `port.up`/`port.down`/`port.flapping` n'est donc jamais écrit pour un Arista : la colonne `link` se met à jour (ce chemin apparie par nom), les écrans sont justes, et le journal est muet. L'alerting hérite du trou tel quel et le rend **visible** ; `alertHoldMax` est ce qui évite qu'un port Arista instable soit en plus retenu indéfiniment, puisque le `port.flapping` qui devrait le libérer n'arrivera jamais |
+| Battement de cœur périodique, par canal | **décidé non construit** — écarté comme *défaut* (un message quotidien « tout va bien » s'apprend à ne plus voir), légitime en option pour qui surveille son alerting de l'extérieur |
+| Fenêtre de maintenance manuelle | **décidé non construit** — utile pour un geste **hors** meshcraft (un électricien, un déménagement de baie), inutile pour les nôtres que le journal connaît déjà |
+| Purge du journal | **non construit, et plus coûteux qu'avant** — `events` se déclare append-only et aucune migration n'a jamais ajouté de TTL. Brancher l'alerting dessus rend cette absence plus chère |

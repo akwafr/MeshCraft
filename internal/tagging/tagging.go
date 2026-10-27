@@ -2,8 +2,8 @@
 //
 // Everything that decides is here, and everything that decides is PURE: no
 // database, no network, no clock. A tagging rule can move a device from one admin
-// credential to another (cf. docs/01-Architecture/Etiquettes et portee des
-// identifiants) — getting the side wrong is therefore not a cosmetic detail, and
+// credential to another (see docs/en/01-Architecture/Tags and credential
+// scope.md) — getting the side wrong is therefore not a cosmetic detail, and
 // logic testable in a table beats a SQL query.
 package tagging
 

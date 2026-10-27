@@ -4,7 +4,7 @@
 // reappears in another subnet, at an address the controller does not know (DHCP
 // lease). Finding it again is essential — otherwise the cutover "succeeds" and
 // the device is lost
-// (docs/fr/01-Architecture/Adressage de management §5).
+// (docs/en/01-Architecture/Management addressing.md §5).
 //
 // Two paths run IN PARALLEL, and the first to succeed wins:
 //

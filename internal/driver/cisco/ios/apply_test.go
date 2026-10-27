@@ -97,7 +97,7 @@ func TestVlanCreateOmitsTheDefaultName(t *testing.T) {
 func TestTrunkCarriesTheEncapsulationFallback(t *testing.T) {
 	var want = PortState{Mode: "trunk", PVID: 99, Tagged: []int{100, 200}}
 	var now = PortState{Mode: "access", PVID: 1}
-	var groups = portCmdCandidates("GE28", want, now, false)
+	var groups = portCmdCandidates("GE28", "GigabitEthernet1/0/28", want, now, false)
 	if len(groups) != 1 || len(groups[0].alternatives) != 2 {
 		t.Fatalf("groups=%v", groups)
 	}
@@ -125,14 +125,14 @@ func TestTrunkCarriesTheEncapsulationFallback(t *testing.T) {
 }
 
 func TestExactIntentUsesTheSetFormNotAdd(t *testing.T) {
-	// On an all-allowed trunk, « add » changes nothing (everything was already
+	// On an all-allowed trunk, "add" changes nothing (everything was already
 	// allowed) and the port would report drift for ever.
 	var want = PortState{Mode: "trunk", PVID: 1, Tagged: []int{99}}
 	var now = PortState{Mode: "trunk", PVID: 1}
-	var groups = portCmdCandidates("GE3", want, now, true)
+	var groups = portCmdCandidates("GE3", "GigabitEthernet1/0/3", want, now, true)
 	var joined = strings.Join(groups[0].alternatives[0], " ; ")
 	if strings.Contains(joined, "allowed vlan add") {
-		t.Errorf("an exact intent must RESTRICT, and « add » never restricts: %v", joined)
+		t.Errorf("an exact intent must RESTRICT, and \"add\" never restricts: %v", joined)
 	}
 	if !strings.Contains(joined, "switchport trunk allowed vlan 1,99") {
 		t.Errorf("set form missing: %v", joined)
@@ -143,13 +143,13 @@ func TestAtLeastIntentNeverRestricts(t *testing.T) {
 	var want = PortState{Mode: "trunk", PVID: 1, Tagged: []int{99}, TaggedAtLeast: true}
 	var now = PortState{Mode: "trunk", PVID: 1}
 	// Everything is already allowed: there is nothing to add and nothing to do.
-	var groups = portCmdCandidates("GE3", want, now, true)
+	var groups = portCmdCandidates("GE3", "GigabitEthernet1/0/3", want, now, true)
 	var joined = strings.Join(groups[0].alternatives[0], " ; ")
 	if strings.Contains(joined, "allowed vlan") {
 		t.Errorf("an all-allowed trunk needs no VLAN command on an at-least intent: %v", joined)
 	}
 	// With an explicit list, only what is missing is added.
-	groups = portCmdCandidates("GE3", PortState{Mode: "trunk", PVID: 1,
+	groups = portCmdCandidates("GE3", "GigabitEthernet1/0/3", PortState{Mode: "trunk", PVID: 1,
 		Tagged: []int{99, 100}, TaggedAtLeast: true},
 		PortState{Mode: "trunk", PVID: 1, Tagged: []int{99}}, false)
 	joined = strings.Join(groups[0].alternatives[0], " ; ")
@@ -283,8 +283,8 @@ func TestSNMPv3IsRefusedNotApproximated(t *testing.T) {
 }
 
 func TestWritesAreRefusedOnUnknownDialect(t *testing.T) {
-	// A lookalike CLI: many platforms answer « show version » and accept
-	// « conf t » without meaning the same thing by « switchport ».
+	// A lookalike CLI: many platforms answer "show version" and accept
+	// "conf t" without meaning the same thing by "switchport".
 	var c = &Client{dialect: dialectUnknown, cli: &cliConn{}}
 	var _, err = c.ApplyPorts(t.Context(), PortPlan{MgmtVLAN: 99})
 	if err == nil {
@@ -311,11 +311,13 @@ func TestMonitoringDeclarationIsCoherent(t *testing.T) {
 	// 2026-08-02 and served through the health channel — so they must no longer be
 	// declared unavailable. Leaving a stale Unavailable("cpu") behind would tell
 	// the UI a curve is impossible while the poller is drawing it.
-	if _, declared := caps.Monitoring.WhyUnavailable("cpu"); declared {
+	var _, cpuDeclared = caps.Monitoring.WhyUnavailable("cpu")
+	if cpuDeclared {
 		t.Error("cpu is collected from the Cisco enterprise-9 tree: it must not be " +
 			"declared unavailable")
 	}
-	if _, declared := caps.Monitoring.WhyUnavailable("memory"); declared {
+	var _, memDeclared = caps.Monitoring.WhyUnavailable("memory")
+	if memDeclared {
 		t.Error("memory is collected: stale Unavailable declaration")
 	}
 	var _, health = caps.Monitoring.BestOfKind("snmp", "health")
@@ -323,15 +325,29 @@ func TestMonitoringDeclarationIsCoherent(t *testing.T) {
 		t.Error("the health channel must be declared, or cpu/memory/temperature are " +
 			"collected by the poller but shown by nothing")
 	}
-	// Optical power remains genuinely unavailable on this connector and must stay
-	// declared: it lives under CISCO-ENTITY-SENSOR-MIB, which the poller does not
-	// query.
-	var why, declared = caps.Monitoring.WhyUnavailable("optical_power")
-	if !declared {
-		t.Fatal("optical_power is not collected here and its absence must be declared")
+	// OPTICAL POWER IS COLLECTED SINCE 2026-08-12, and this assertion inverted on
+	// that day rather than being deleted: it used to require the absence to be
+	// DECLARED, on the reason that CISCO-ENTITY-SENSOR-MIB "is not queried by the
+	// poller". It is queried now — internal/snmppoll walks it and joins it to
+	// ENTITY-MIB — and the capture that settled it is quoted on the channel
+	// itself (TX -3.9 dBm / RX -2.7 dBm off a WS-C2960X-24TD-L).
+	//
+	// Both halves are asserted because either one alone would lie on screen: a
+	// channel with a stale Unavailable beside it makes the device page say the
+	// metric is impossible while the poller collects it.
+	var _, stillDeclaredAbsent = caps.Monitoring.WhyUnavailable("optical_power")
+	if stillDeclaredAbsent {
+		t.Error("optical_power is collected from CISCO-ENTITY-SENSOR-MIB: a stale " +
+			"Unavailable would tell an operator to stop waiting for a curve that " +
+			"is already arriving")
 	}
-	if !strings.Contains(why.Source, "CISCO-ENTITY-SENSOR-MIB") {
-		t.Errorf("the reason must name where the metric actually lives: %q", why.Source)
+	var optical, hasOptical = caps.Monitoring.BestOfKind("snmp", "optical_power")
+	if !hasOptical {
+		t.Fatal("the optical channel must be declared, or the controller never " +
+			"resolves a cadence and the poller is never asked for the walk")
+	}
+	if !strings.Contains(optical.Note, "CISCO-ENTITY-SENSOR-MIB") {
+		t.Errorf("the note must name the tree the readings come from: %q", optical.Note)
 	}
 }
 
@@ -344,16 +360,16 @@ func TestResetProcedureIsMarkedUnconfirmed(t *testing.T) {
 	}
 	var joined = strings.Join(rp.Pitfalls, " | ")
 	if !strings.Contains(joined, "Save?") {
-		t.Error("the reload « Save? » trap must be stated: answering yes re-saves what was erased")
+		t.Error("the reload \"Save?\" trap must be stated: answering yes re-saves what was erased")
 	}
 	if !strings.Contains(joined, "vlan.dat") {
-		t.Error("« write erase » leaving the VLAN database behind must be stated")
+		t.Error("\"write erase\" leaving the VLAN database behind must be stated")
 	}
 }
 
 func TestMgmtPushOrderIsLoadBearing(t *testing.T) {
-	var cmds = MgmtPushCmds(MgmtOpts{
-		VlanID: 99, IP: "10.99.0.240", PrefixLen: 16, Gateway: "10.99.0.1",
+	var cmds, _ = MgmtPushCmds(MgmtOpts{
+		VlanID: 99, IP: "192.0.2.240", PrefixLen: 16, Gateway: "192.0.2.1",
 		Hostname: "lab cat", Username: "mcadmin", Password: "s3cret",
 		TrunkPorts: []string{"GigabitEthernet1/0/28"},
 	})
@@ -377,17 +393,17 @@ func TestMgmtPushOrderIsLoadBearing(t *testing.T) {
 		t.Error("the VLAN must exist before the SVI, or the SVI never comes up")
 	}
 	if at("ip domain-name") > at("crypto key generate") {
-		t.Error("« crypto key generate rsa » is refused until a domain name is set")
+		t.Error("\"crypto key generate rsa\" is refused until a domain name is set")
 	}
 	if at("no shutdown") < 0 {
 		t.Error("an SVI created in configuration mode comes up SHUTDOWN")
 	}
 	// IOS takes a dotted mask, not the CIDR form the FS connector uses.
-	if !strings.Contains(joined, "ip address 10.99.0.240 255.255.0.0") {
+	if !strings.Contains(joined, "ip address 192.0.2.240 255.255.0.0") {
 		t.Errorf("dotted mask expected: %v", cmds)
 	}
-	// An L2 switch has no routing table: « ip route » would be refused.
-	if !strings.Contains(joined, "ip default-gateway 10.99.0.1") {
+	// An L2 switch has no routing table: "ip route" would be refused.
+	if !strings.Contains(joined, "ip default-gateway 192.0.2.1") {
 		t.Errorf("default gateway form: %v", cmds)
 	}
 	// Credentials LAST: the console session can drop at the password change of
@@ -396,13 +412,51 @@ func TestMgmtPushOrderIsLoadBearing(t *testing.T) {
 		t.Error("credentials must come after everything else")
 	}
 	if !strings.Contains(joined, "username mcadmin privilege 15 secret 0 s3cret") {
-		t.Error("« secret » and never « password »: type 7 is trivially reversible")
+		t.Error("\"secret\" and never \"password\": type 7 is trivially reversible")
 	}
 	if strings.Contains(joined, "username mcadmin password") {
-		t.Error("« password » stores the secret reversibly and must never be used")
+		t.Error("\"password\" stores the secret reversibly and must never be used")
 	}
 	// The hostname is sanitized: a space would split the command.
 	if !strings.Contains(joined, "hostname lab-cat") {
 		t.Errorf("hostname sanitizing: %v", cmds)
+	}
+
+	// NO ENABLE PASSWORD, by fleet rule — and APPLIED rather than merely omitted:
+	// not writing it would leave the rule true on a factory Catalyst and false on
+	// every switch that already carried one. BOTH forms go, because IOS has two
+	// and a device can carry either.
+	if strings.Contains(joined, "enable secret 0") || strings.Contains(joined, "enable password 0") {
+		t.Errorf("an enable password was written: %v", cmds)
+	}
+	if !strings.Contains(joined, "no enable secret") ||
+		!strings.Contains(joined, "no enable password") {
+		t.Errorf("both \"no enable\" forms must be written: %v", cmds)
+	}
+	// ORDER IS LOAD-BEARING ON THIS PLATFORM, more than on Arista: with no enable
+	// password set, IOS refuses "enable" from a vty ("% No password set"), so
+	// "privilege 15" on the account becomes the only path to a privileged SSH
+	// session. It has to be written BEFORE the password is removed.
+	if at("username mcadmin") > at("no enable secret") {
+		t.Error("the enable password is removed before the privilege-15 account exists: " +
+			"between those two lines the device has no privileged path over the network")
+	}
+}
+
+// The refusal IOS gives when "enable" is attempted from a vty with no enable
+// password configured. Matching it by name is what turns a 15-second timeout into
+// a message naming the actual remedy — and the remedy is "privilege 15", not a
+// password, because setting one back would break the fleet rule.
+func TestNoPasswordSetIsRecognised(t *testing.T) {
+	var out = "lab-cat2960x>enable\r\n% No password set\r\nlab-cat2960x>"
+	if !reNoPasswordSet.MatchString(out) {
+		t.Fatal("\"% No password set\" is not recognised: the connector would time out " +
+			"waiting for a password prompt that IOS is never going to print")
+	}
+	// And it must not be mistaken for an ordinary CLI refusal by the generic
+	// parser, which would report it as a failed command rather than a failed
+	// privilege escalation.
+	if reNoPasswordSet.MatchString("% Invalid input detected at '^' marker.") {
+		t.Error("the pattern is too loose")
 	}
 }

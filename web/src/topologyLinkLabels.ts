@@ -33,6 +33,27 @@ const PAD_X = 5;
 const PAD_Y = 2.5;
 const COLLIDE_PAD = 4;
 
+/**
+ * How far a MID-SEGMENT pill must sit off the stroke.
+ *
+ * ADR-0026 put two meeting points at the midpoint of every forwarding link,
+ * reaching ±5.4 px off the line — which is exactly where the speed pill used
+ * to sit, and the pill's opaque `--bg-panel` backing would have hidden the one
+ * detail the request insisted on.
+ *
+ * 17 is 5.4 (the point's half-width) + 7 (a 14 px pill's own half-height) +
+ * COLLIDE_PAD: the pill ends up as far from the point as the resolver keeps
+ * pills from each other, rather than merely not touching it. Measured at 200 %
+ * zoom, where "merely not touching" still read as crowded.
+ *
+ * The number is DUPLICATED from `LINK_HEAD_HALF_W` rather than imported: this
+ * module imports nothing so the framework-free node suite can run it (same
+ * reason as `topologyLinks.ts` and `lowBandwidth.ts`), and the two files
+ * cannot see each other without an extension-bearing import the bundler does
+ * not use. If the point gets wider, this grows with it.
+ */
+const MID_CLEAR = 17;
+
 /** Hide order when space is tight (first = drops first). */
 const HIDE_ORDER: LinkLabelLayer[] = ["ports", "bw", "extra", "speed"];
 
@@ -101,13 +122,14 @@ function reflowSpecs(specs: LinkLabelSpec[]): LinkLabelSpec[] {
     out.push({ ...bw[0], t: 0.35, offset: 12 });
   }
 
+  // The two mid pills sit on OPPOSITE sides of the stroke and never on it:
+  // the points live there now (MID_CLEAR).
   if (speed.length) {
-    const offset = bw.length || extra.length ? -8 : 0;
-    out.push({ ...speed[0], t: 0.5, offset });
+    out.push({ ...speed[0], t: 0.5, offset: -MID_CLEAR });
   }
 
   if (extra.length) {
-    out.push({ ...extra[0], t: 0.5, offset: speed.length ? 14 : 0 });
+    out.push({ ...extra[0], t: 0.5, offset: speed.length ? MID_CLEAR + 1 : -MID_CLEAR });
   }
 
   return out;
@@ -268,7 +290,7 @@ export function buildLinkLabelSpecs(opts: {
       letterSpacing: opts.speedLetterSpacing,
       fontSize: 9,
       t: 0.5,
-      offset: -7,
+      offset: -MID_CLEAR,
     });
   }
   if (opts.extraText) {
@@ -277,7 +299,7 @@ export function buildLinkLabelSpecs(opts: {
       text: opts.extraText,
       fontSize: 9,
       t: 0.5,
-      offset: 14,
+      offset: MID_CLEAR + 1,
     });
   }
   return out;

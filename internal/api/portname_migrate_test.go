@@ -46,13 +46,16 @@ func TestRemapPortNamesIfStale_RenamesRawPlatformKeys(t *testing.T) {
 	if len(decoded) != 2 {
 		t.Fatalf("renamed map must keep the same port count, got %v", decoded)
 	}
-	if _, ok := decoded["GE1"]; !ok {
+	var _, ok = decoded["GE1"]
+	if !ok {
 		t.Error("GE1 missing after remap")
 	}
-	if _, ok := decoded["GE25"]; !ok {
+	_, ok = decoded["GE25"]
+	if !ok {
 		t.Error("GE25 missing after remap")
 	}
-	if _, ok := decoded["ethernet 1/1"]; ok {
+	_, ok = decoded["ethernet 1/1"]
+	if ok {
 		t.Error("the stale raw key must be GONE, not merely duplicated")
 	}
 }
@@ -84,10 +87,12 @@ func TestRemapPortNamesIfStale_UnmappableKeyPassesThrough(t *testing.T) {
 	if json.Unmarshal(out, &decoded) != nil {
 		t.Fatalf("output is not valid JSON: %s", out)
 	}
-	if _, ok := decoded["ethernet 2/1"]; !ok {
+	var _, ok = decoded["ethernet 2/1"]
+	if !ok {
 		t.Error("an unmappable key must pass through unchanged, not be dropped")
 	}
-	if _, ok := decoded["GE5"]; !ok {
+	_, ok = decoded["GE5"]
+	if !ok {
 		t.Error("the mappable key must still be renamed")
 	}
 }
@@ -100,30 +105,45 @@ func TestRemapPortNamesIfStale_EmptyIsNoOp(t *testing.T) {
 	}
 }
 
-// facadeNamingStale must catch a facade left behind by a PRIOR read: on such
-// a device, devices.ports has already been renamed (so remapPortNamesIfStale
-// finds nothing left to do), but port_groups can still carry the connector's
-// old prefix — the exact production sequence observed on 2026-08-02.
-func TestFacadeNamingStale_DetectsOldPrefixEvenAfterPortsAlreadyRenamed(t *testing.T) {
-	var namer = fsS3900Namer(t)
-	var old = json.RawMessage(
-		`[{"prefix":"ethernet 1/","from":1,"count":24},{"prefix":"ethernet 1/","from":25,"count":4}]`)
-	if !facadeNamingStale(namer, old) {
-		t.Fatal("a facade still using the raw platform prefix must be reported stale")
-	}
-
-	var current = json.RawMessage(
-		`[{"prefix":"GE","from":1,"count":24,"silk":"1/"},{"prefix":"GE","from":25,"count":4,"silk":"1/"}]`)
-	if facadeNamingStale(namer, current) {
-		t.Fatal("a facade already using the standard prefix must not be reported stale")
+// faceplateDiffers is the pure decision behind the facade half of the
+// read-state catch-up: persist the freshly read faceplate only when it says
+// something the stored one does not. The shapes below are the production case
+// that motivated it (observed 2026-08-05): an EdgeSwitch adopted before its
+// connector split copper from SFP+ cages stored ONE uniform "GE" group — a
+// facade under perfectly current names, structurally stale, on which the
+// prefix-based staleness probe this replaces had nothing to say. Same story
+// on the FS S3400, whose "XG" group gained its "SFP+" label after adoption.
+func TestFaceplateDiffers_UniformGroupVsCopperSFPSplit(t *testing.T) {
+	// devices.port_groups as adopted (unifimoule1, 192.0.2.4).
+	var stored = json.RawMessage(`[{"from": 1, "silk": "0/", "count": 18, "prefix": "GE"}]`)
+	// What the connector's ReadFaceplate answers today.
+	var fresh = json.RawMessage(`[` +
+		`{"prefix":"GE","from":1,"count":16,"silk":"0/","poe":true,"row":0},` +
+		`{"prefix":"GE","from":17,"count":2,"silk":"0/","label":"SFP+","speed":"10G","poe":false,"row":0}]`)
+	if !faceplateDiffers(stored, fresh) {
+		t.Fatal("a pre-split uniform facade must differ from the connector's current copper+SFP shape")
 	}
 }
 
-func TestFacadeNamingStale_EmptyIsNotStale(t *testing.T) {
-	// Empty is a DIFFERENT case (faceplateEmpty), not staleness — conflating
-	// them would make an adopted-with-no-facade device look "stale" instead of
-	// "never read".
-	if facadeNamingStale(fsS3900Namer(t), nil) {
-		t.Error("empty port_groups must not be reported as stale")
+func TestFaceplateDiffers_SameContentDifferentEncodingIsEqual(t *testing.T) {
+	// jsonb re-orders keys and strips whitespace: byte comparison would call
+	// every stored facade stale forever, rewriting the row on each read.
+	var stored = json.RawMessage(`[{"from": 1, "count": 48, "silk": "g0/", "prefix": "GE"}]`)
+	var fresh = json.RawMessage(`[{"prefix":"GE","from":1,"count":48,"silk":"g0/"}]`)
+	if faceplateDiffers(stored, fresh) {
+		t.Fatal("identical content under a different key order/whitespace must not differ")
+	}
+}
+
+func TestFaceplateDiffers_EmptyOrUnreadableStored(t *testing.T) {
+	var fresh = json.RawMessage(`[{"prefix":"GE","from":1,"count":8}]`)
+	if !faceplateDiffers(nil, fresh) {
+		t.Error("an empty stored facade must accept any fresh read")
+	}
+	if !faceplateDiffers(json.RawMessage(`not json`), fresh) {
+		t.Error("an unreadable stored facade must yield to a good fresh read")
+	}
+	if faceplateDiffers(json.RawMessage(`[{"prefix":"GE","count":8}]`), json.RawMessage(`not json`)) {
+		t.Error("an unreadable FRESH read must never be reported as a difference to write")
 	}
 }

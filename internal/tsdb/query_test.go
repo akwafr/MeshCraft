@@ -17,15 +17,15 @@ import (
 // follows covers the two faults that would produce silent charts or, worse, values
 // attached to the wrong labels.
 
-// TestDecodeUnVecteurEtUneMatrice : BOTH result shapes.
+// TestDecodeAVectorAndAMatrix : BOTH result shapes.
 //
 // `vector` carries `value` (one point), `matrix` carries `values` (a list).
 // Accepting only one would fail half the queries with a message blaming storage.
-func TestDecodeUnVecteurEtUneMatrice(t *testing.T) {
-	var vecteur = `{"status":"success","data":{"resultType":"vector","result":[
+func TestDecodeAVectorAndAMatrix(t *testing.T) {
+	var vector = `{"status":"success","data":{"resultType":"vector","result":[
 	  {"metric":{"__name__":"meshcraft_if_in_octets_total","device":"d1","port":"SFP2"},
 	   "value":[1769000000,"0.003"]}]}}`
-	var series, err = decodeQuery([]byte(vecteur))
+	var series, err = decodeQuery([]byte(vector))
 	if err != nil {
 		t.Fatalf("vector refused: %v", err)
 	}
@@ -44,9 +44,9 @@ func TestDecodeUnVecteurEtUneMatrice(t *testing.T) {
 		t.Errorf("timestamp = %v", p.At)
 	}
 
-	var matrice = `{"status":"success","data":{"resultType":"matrix","result":[
+	var matrix = `{"status":"success","data":{"resultType":"matrix","result":[
 	  {"metric":{"device":"d1"},"values":[[1769000000,"1.5"],[1769000060,"2.5"]]}]}}`
-	series, err = decodeQuery([]byte(matrice))
+	series, err = decodeQuery([]byte(matrix))
 	if err != nil {
 		t.Fatalf("matrix refused: %v", err)
 	}
@@ -63,12 +63,12 @@ func TestDecodeUnVecteurEtUneMatrice(t *testing.T) {
 	}
 }
 
-// TestUneSerieVideNEstPasUnZero : that distinction decides what a screen tells.
+// TestAnEmptySeriesIsNotAZero : that distinction decides what a screen tells.
 //
 // A series with no points is what a range returns on a device not yet collected.
 // Confusing it with zero would show "no traffic" where "no measurement" is correct
 // — and the caller resets rates to zero on that basis.
-func TestUneSerieVideNEstPasUnZero(t *testing.T) {
+func TestAnEmptySeriesIsNotAZero(t *testing.T) {
 	var body = `{"status":"success","data":{"resultType":"matrix","result":[
 	  {"metric":{"device":"d1"},"values":[]}]}}`
 	var series, err = decodeQuery([]byte(body))
@@ -84,12 +84,12 @@ func TestUneSerieVideNEstPasUnZero(t *testing.T) {
 	}
 }
 
-// TestNaNEtValeursIllisiblesSontEcartees
+// TestNaNAndUnreadableValuesAreDropped
 //
 // `NaN` is what VictoriaMetrics uses for "no data at this instant". Publishing it
 // would make a gap the screen draws as zero, therefore as absent traffic — a dip in
 // the chart exactly where the measurement is missing.
-func TestNaNEtValeursIllisiblesSontEcartees(t *testing.T) {
+func TestNaNAndUnreadableValuesAreDropped(t *testing.T) {
 	var body = `{"status":"success","data":{"resultType":"matrix","result":[
 	  {"metric":{"device":"d1"},"values":[
 	     [1769000000,"NaN"],[1769000060,"3"],[1769000120,"not-a-number"],
@@ -103,13 +103,13 @@ func TestNaNEtValeursIllisiblesSontEcartees(t *testing.T) {
 	}
 }
 
-// TestUnRefusDuStockageEstUneErreur : "status: error" must not pass for an empty
+// TestAStorageRefusalIsAnError : "status: error" must not pass for an empty
 // response.
 //
 // The two look alike to the caller — no series — and do not call for the same
 // action: an empty response resets rates to zero, a refusal must touch NOTHING.
 // The storage message is kept because it names the fault.
-func TestUnRefusDuStockageEstUneErreur(t *testing.T) {
+func TestAStorageRefusalIsAnError(t *testing.T) {
 	var body = `{"status":"error","error":"unsupported duration \"2m0s\""}`
 	var _, err = decodeQuery([]byte(body))
 	if err == nil {
@@ -125,7 +125,7 @@ func TestUnRefusDuStockageEstUneErreur(t *testing.T) {
 // POST is not a detail: a query excluding uplinks from two hundred devices reaches
 // several kilobytes, and in GET it would be truncated by a proxy — a truncated sum
 // yields a plausible and false chart.
-func TestLaRequeteAPILaFormeAttendue(t *testing.T) {
+func TestTheAPIQueryHasTheExpectedShape(t *testing.T) {
 	var vu struct {
 		method, path, query, start, end, step string
 	}
@@ -169,9 +169,9 @@ func TestLaRequeteAPILaFormeAttendue(t *testing.T) {
 	}
 }
 
-// TestUnClientSansStockageRefuseAuLieuDeMentir : a controller without
+// TestAClientWithoutStorageRefusesInsteadOfLying : a controller without
 // MESHCRAFT_METRICS_URL yields a nil client, and querying it must say why.
-func TestUnClientSansStockageRefuseAuLieuDeMentir(t *testing.T) {
+func TestAClientWithoutStorageRefusesInsteadOfLying(t *testing.T) {
 	var c = New("  ")
 	if c != nil {
 		t.Fatal("empty URL must yield an inactive client")
@@ -185,9 +185,9 @@ func TestUnClientSansStockageRefuseAuLieuDeMentir(t *testing.T) {
 	}
 }
 
-// TestUnCodeHTTPDErreurPorteLeCorps : the storage message is in the body, not the
+// TestAnHTTPErrorCodeCarriesTheBody : the storage message is in the body, not the
 // code.
-func TestUnCodeHTTPDErreurPorteLeCorps(t *testing.T) {
+func TestAnHTTPErrorCodeCarriesTheBody(t *testing.T) {
 	var srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(422)
 		_, _ = w.Write([]byte(`cannot parse query: unexpected token "}"`))

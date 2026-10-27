@@ -6,6 +6,21 @@
  * topology nodes show this compact form, with the full string in `title`.
  */
 
+/**
+ * The model as a screen must NAME a device: the canonical identity the
+ * controller derived (ADR-0014), falling back to the raw declared label when it
+ * derived none — an older payload, or a device with no model at all.
+ *
+ * Distinct from `modelShort` below, and the distinction is the whole point.
+ * This one decides WHICH label; that one only makes a label FIT. They compose:
+ * `modelShort(modelOf(d), d.vendor)`. Overloading the shortener with identity
+ * would break both — it only fires past a length, and it reduces two of the
+ * three Instant On forms to "Aruba 1930" but the third to "Aruba JL685A".
+ */
+export function modelOf(d: { model?: string; model_label?: string }): string {
+  return (d.model_label ?? "") || (d.model ?? "");
+}
+
 const SHORT_MAX = 28;
 
 /** HPE/Aruba Instant On part numbers: JL685A, JL682A, … */

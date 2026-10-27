@@ -8,8 +8,8 @@ import (
 
 // PER-SITE change bus: the mechanism that replaces periodic polling of fleet screens.
 //
-// See docs/01-Architecture/Monitoring ("Hub WS -> real-time UI") and
-// docs/02-Frontend/Interface web section Real-time.
+// See docs/en/01-Architecture/Monitoring.md ("Hub WS -> real-time UI") and
+// docs/en/02-Frontend/Web interface.md section Real-time.
 //
 // # What the bus carries, and especially what it does not
 //

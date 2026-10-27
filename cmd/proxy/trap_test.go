@@ -16,18 +16,18 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// OID des tables lues par snmppoll. Recopies a la main, et c'est le but : ce
-// test est le CONTRAT entre le poller et la detection de transitions. Si
-// snmppoll renomme sa metrique ou son tag `ifindex`, c'est ici que ca
-// casse — pas en production, six mois plus tard, sous la forme d'evenements de
-// port qui ne partent plus.
+// OIDs of the tables read by snmppoll. Copied by hand, and that is the point:
+// this test is the CONTRACT between the poller and transition detection. If
+// snmppoll renames its metric or its `ifindex` tag, this is where it breaks —
+// not in production, six months later, in the form of port events that no
+// longer go out.
 const (
 	tOidIfDescr      = "1.3.6.1.2.1.2.2.1.2"
 	tOidIfType       = "1.3.6.1.2.1.2.2.1.3"
 	tOidIfOperStatus = "1.3.6.1.2.1.2.2.1.8"
 )
 
-func TestObservedPortsSuitLeContratDeSnmppoll(t *testing.T) {
+func TestObservedPortsFollowsTheSnmppollContract(t *testing.T) {
 	var tables = map[string]map[string]gosnmp.SnmpPDU{
 		tOidIfDescr: {
 			"1": {Type: gosnmp.OctetString, Value: []byte("GE1")},
@@ -44,7 +44,7 @@ func TestObservedPortsSuitLeContratDeSnmppoll(t *testing.T) {
 	}
 	var got = observedPorts(snmppoll.Samples("sw1", tables, time.Now(), 0))
 	if len(got) != 2 {
-		t.Fatalf("2 ports attendus, obtenu %d : %+v", len(got), got)
+		t.Fatalf("2 ports expected, got %d: %+v", len(got), got)
 	}
 	if got[1].status != ifOperUp || got[1].name != "GE1" {
 		t.Errorf("port 1 : %+v", got[1])
@@ -54,7 +54,7 @@ func TestObservedPortsSuitLeContratDeSnmppoll(t *testing.T) {
 	}
 }
 
-// operSample fabrique l'sample que snmppoll rendrait pour un port.
+// operSample builds the sample snmppoll would return for a port.
 func operSample(ifindex, port string, status float64) metricbuf.Sample {
 	var labels = map[string]string{"device": "sw1", "ifindex": ifindex}
 	if port != "" {
@@ -63,9 +63,9 @@ func operSample(ifindex, port string, status float64) metricbuf.Sample {
 	return metricbuf.Sample{Name: metricIfOperStatus, Labels: labels, Value: status}
 }
 
-func TestObservedPortsIgnoreCeQuiNIdentifiePas(t *testing.T) {
+func TestObservedPortsIgnoresWhatDoesNotIdentify(t *testing.T) {
 	var samples = []metricbuf.Sample{
-		operSample("3", "", ifOperUp), // sans nom : l'index suffit a identifier
+		operSample("3", "", ifOperUp), // no name: the index is enough to identify it
 		{Name: "meshcraft_if_speed_mbps",
 			Labels: map[string]string{"device": "sw1", "ifindex": "3"}, Value: 1000},
 		{Name: metricIfOperStatus, Labels: map[string]string{"device": "sw1"}, Value: 1},
@@ -74,7 +74,7 @@ func TestObservedPortsIgnoreCeQuiNIdentifiePas(t *testing.T) {
 	}
 	var got = observedPorts(samples)
 	if len(got) != 1 {
-		t.Fatalf("un seul port exploitable expected, obtenu %+v", got)
+		t.Fatalf("a single usable port expected, got %+v", got)
 	}
 	if got[3].status != ifOperUp || got[3].name != "" {
 		t.Errorf("port 3 : %+v", got[3])
@@ -83,46 +83,46 @@ func TestObservedPortsIgnoreCeQuiNIdentifiePas(t *testing.T) {
 
 func TestDiffPorts(t *testing.T) {
 	type cas struct {
-		nom       string
+		name      string
 		prev, cur map[int]portObs
 		expected  []portChange
 	}
 	var cases = []cas{{
-		nom: "first observation : muette",
-		cur: map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperDown}},
+		name: "first observation: silent",
+		cur:  map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperDown}},
 	}, {
-		nom:      "up vers down",
+		name:     "up to down",
 		prev:     map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
 		cur:      map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
 		expected: []portChange{{ifIndex: 1, name: "GE1", up: false, status: ifOperDown}},
 	}, {
-		nom:      "down vers up",
+		name:     "down to up",
 		prev:     map[int]portObs{1: {status: ifOperDown, name: "GE1"}},
 		cur:      map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
 		expected: []portChange{{ifIndex: 1, name: "GE1", up: true, status: ifOperUp}},
 	}, {
-		nom:  "port disparu de la table : muet",
+		name: "port gone from the table: silent",
 		prev: map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperUp}},
 		cur:  map[int]portObs{1: {status: ifOperUp}},
 	}, {
-		nom:      "valeur exotique : down, avec la valeur conservee",
+		name:     "exotic value: down, with the value kept",
 		prev:     map[int]portObs{5: {status: ifOperUp}},
 		cur:      map[int]portObs{5: {status: 3}},
 		expected: []portChange{{ifIndex: 5, up: false, status: 3}},
 	}, {
-		nom:  "down vers lowerLayerDown : same etat, donc muet",
+		name: "down to lowerLayerDown: same state, so silent",
 		prev: map[int]portObs{5: {status: ifOperDown}},
 		cur:  map[int]portObs{5: {status: ifOperLowerLayerDown}},
 	}, {
-		nom:  "renommage sans changement state : muet",
+		name: "rename without a state change: silent",
 		prev: map[int]portObs{1: {status: ifOperUp, name: "GE1"}},
 		cur:  map[int]portObs{1: {status: ifOperUp, name: "uplink"}},
 	}, {
-		nom:  "notPresent vers down : same etat, donc muet",
+		name: "notPresent to down: same state, so silent",
 		prev: map[int]portObs{9: {status: 6}},
 		cur:  map[int]portObs{9: {status: ifOperDown}},
 	}, {
-		nom:  "rafale ordonnee par index",
+		name: "burst ordered by index",
 		prev: map[int]portObs{1: {status: ifOperUp}, 2: {status: ifOperUp}, 3: {status: ifOperUp}},
 		cur:  map[int]portObs{1: {status: ifOperDown}, 2: {status: ifOperDown}, 3: {status: ifOperDown}},
 		expected: []portChange{
@@ -133,16 +133,16 @@ func TestDiffPorts(t *testing.T) {
 
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
+		t.Run(k.name, func(t *testing.T) {
 			var got = diffPorts(k.prev, k.cur)
 			if len(got) != len(k.expected) {
-				t.Fatalf("%d transitions attendues, obtenu %d : %+v",
+				t.Fatalf("%d transitions expected, got %d: %+v",
 					len(k.expected), len(got), got)
 			}
 			var i int
 			for i = range got {
 				if got[i] != k.expected[i] {
-					t.Errorf("transition %d : obtenu %+v, expected %+v",
+					t.Errorf("transition %d: got %+v, expected %+v",
 						i, got[i], k.expected[i])
 				}
 			}
@@ -152,283 +152,283 @@ func TestDiffPorts(t *testing.T) {
 
 func TestPortDetail(t *testing.T) {
 	if portDetail(portChange{status: ifOperDown}, "") != "" {
-		t.Error("un down ordinaire sans trap n'a rien a preciser")
+		t.Error("an ordinary down without a trap has nothing to add")
 	}
 	if portDetail(portChange{status: ifOperUp}, "linkUp") != "linkUp" {
-		t.Error("le label du trap doit accompagner l'evenement")
+		t.Error("the trap label must accompany the event")
 	}
 	var got = portDetail(portChange{status: 5}, "linkDown")
 	if got != "ifOperStatus=5 (dormant) ; linkDown" {
-		t.Errorf("detail compose inattendu : %q", got)
+		t.Errorf("unexpected composed detail: %q", got)
 	}
 }
 
-// --- Le collecteur, de bout en bout, sans socket ni device ---
+// --- The collector, end to end, without a socket or a device ---
 
-type collecte struct{ evs []tunnel.Event }
+type eventRecorder struct{ evs []tunnel.Event }
 
-func (r *collecte) note(ev tunnel.Event) { r.evs = append(r.evs, ev) }
+func (r *eventRecorder) note(ev tunnel.Event) { r.evs = append(r.evs, ev) }
 
-func nouveauCollecteur(t *testing.T) (*SNMPCollector, *collecte) {
+func freshCollector(t *testing.T) (*SNMPCollector, *eventRecorder) {
 	t.Helper()
-	var c = NewSNMPCollector("http://exemple.invalid", "px1", "s3cr3t")
-	var rec = &collecte{}
+	var c = NewSNMPCollector("http://example.invalid", "px1", "s3cr3t")
+	var rec = &eventRecorder{}
 	c.SetEmitter(rec.note)
 	c.SetWatches([]tunnel.SNMPWatch{
-		{DeviceID: "sw1", IP: "10.0.0.5", Community: "lecture", StateIntervalS: 30},
+		{DeviceID: "sw1", IP: "10.0.0.5", Community: "readonly", StateIntervalS: 30},
 	})
 	return c, rec
 }
 
 func TestNotePortStatesSuiteDeCycles(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
+	var c, rec = freshCollector(t)
 
-	// 1er cycle : deux ports up. Aucune transition — on n'annonce pas un
-	// changement au premier passage.
+	// 1st cycle: two ports up. No transition — a change is not announced on the
+	// first pass.
 	c.notePortStates("sw1", []metricbuf.Sample{
 		operSample("1", "GE1", ifOperUp), operSample("2", "GE2", ifOperUp),
 	}, triggerPoll, "")
 	if len(rec.evs) != 0 {
-		t.Fatalf("first observation muette attendue, obtenu %+v", rec.evs)
+		t.Fatalf("silent first observation expected, got %+v", rec.evs)
 	}
 
-	// 2e cycle : le port 2 tombe, sur un poll avance par un linkDown.
+	// 2nd cycle: port 2 goes down, on a poll brought forward by a linkDown.
 	c.notePortStates("sw1", []metricbuf.Sample{
 		operSample("1", "GE1", ifOperUp), operSample("2", "GE2", ifOperDown),
 	}, triggerTrap, "linkDown")
 	if len(rec.evs) != 1 {
-		t.Fatalf("une transition attendue, obtenu %+v", rec.evs)
+		t.Fatalf("one transition expected, got %+v", rec.evs)
 	}
 	var ev = rec.evs[0]
 	if ev.Type != tunnel.EventPortDown || ev.IfIndex != 2 || ev.PortName != "GE2" {
-		t.Errorf("evenement inattendu : %+v", ev)
+		t.Errorf("unexpected event: %+v", ev)
 	}
 	if ev.DeviceID != "sw1" || ev.IP != "10.0.0.5" {
-		t.Errorf("identity de the device perdue : %+v", ev)
+		t.Errorf("device identity lost: %+v", ev)
 	}
 	if ev.Trigger != triggerTrap || ev.Detail != "linkDown" {
-		t.Errorf("declencheur ou detail inattendu : %+v", ev)
+		t.Errorf("unexpected trigger or detail: %+v", ev)
 	}
 
-	// 3e cycle : lecture partielle (aucun ifOperStatus). L'observation previous
-	// est conservee, sinon le cycle suivant serait une « first observation » et
-	// tairait la remontee du port.
+	// 3rd cycle: partial read (no ifOperStatus). The previous observation is kept,
+	// otherwise the next cycle would be a "first observation" and would hide the
+	// port coming back up.
 	rec.evs = nil
 	c.notePortStates("sw1", []metricbuf.Sample{{
 		Name:   "meshcraft_if_speed_mbps",
 		Labels: map[string]string{"device": "sw1", "ifindex": "2"}, Value: 1000,
 	}}, triggerPoll, "")
 	if len(rec.evs) != 0 {
-		t.Fatalf("lecture partielle : aucun evenement expected, obtenu %+v", rec.evs)
+		t.Fatalf("partial read: no event expected, got %+v", rec.evs)
 	}
 
-	// 4e cycle : le port 2 remonte. C'est there que la conservation ci-dessus se voit.
+	// 4th cycle: port 2 comes back up. This is where the retention above shows.
 	c.notePortStates("sw1", []metricbuf.Sample{
 		operSample("1", "GE1", ifOperUp), operSample("2", "GE2", ifOperUp),
 	}, triggerPoll, "")
 	if len(rec.evs) != 1 || rec.evs[0].Type != tunnel.EventPortUp ||
 		rec.evs[0].IfIndex != 2 {
-		t.Fatalf("remontee du port 2 attendue, obtenu %+v", rec.evs)
+		t.Fatalf("port 2 coming back up expected, got %+v", rec.evs)
 	}
 	if rec.evs[0].Trigger != triggerPoll {
-		t.Errorf("declencheur expected %q : %+v", triggerPoll, rec.evs[0])
+		t.Errorf("trigger expected %q: %+v", triggerPoll, rec.evs[0])
 	}
 
-	// 5e cycle : le port 2 quitte la table (membre de pile retire). Muet.
+	// 5th cycle: port 2 leaves the table (stack member removed). Silent.
 	rec.evs = nil
 	c.notePortStates("sw1", []metricbuf.Sample{
 		operSample("1", "GE1", ifOperUp),
 	}, triggerPoll, "")
 	if len(rec.evs) != 0 {
-		t.Fatalf("port disparu : aucun evenement expected, obtenu %+v", rec.evs)
+		t.Fatalf("port gone: no event expected, got %+v", rec.evs)
 	}
 
-	// 6e cycle : valeur exotique sur le port 1 — down, avec la valeur en clair.
+	// 6th cycle: exotic value on port 1 — down, with the value spelled out.
 	c.notePortStates("sw1", []metricbuf.Sample{
 		operSample("1", "GE1", 4),
 	}, triggerPoll, "")
 	if len(rec.evs) != 1 || rec.evs[0].Type != tunnel.EventPortDown {
-		t.Fatalf("valeur exotique : un down expected, obtenu %+v", rec.evs)
+		t.Fatalf("exotic value: a down expected, got %+v", rec.evs)
 	}
 	if rec.evs[0].Detail != "ifOperStatus=4 (unknown)" {
-		t.Errorf("detail expected avec la valeur brute : %+v", rec.evs[0])
+		t.Errorf("detail expected with the raw value: %+v", rec.evs[0])
 	}
 }
 
-func TestSetWatchesOublieLesEquipementsRetires(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
+func TestSetWatchesForgetsRemovedDevices(t *testing.T) {
+	var c, rec = freshCollector(t)
 	c.notePortStates("sw1", []metricbuf.Sample{operSample("1", "GE1", ifOperUp)},
 		triggerPoll, "")
 	if len(c.portStates) != 1 {
-		t.Fatalf("etat de port expected pour sw1, obtenu %+v", c.portStates)
+		t.Fatalf("port state expected for sw1, got %+v", c.portStates)
 	}
 
 	c.SetWatches(nil)
 	if len(c.portStates) != 0 {
-		t.Fatalf("sw1 retire de la surveillance doit sortir de la carte : %+v",
+		t.Fatalf("sw1 removed from monitoring must leave the map: %+v",
 			c.portStates)
 	}
 	if len(rec.evs) != 0 {
-		t.Errorf("un retrait de surveillance n'est pas une panne : %+v", rec.evs)
+		t.Errorf("removal from monitoring is not an outage: %+v", rec.evs)
 	}
 
-	// Reintegrated : on repart d'une first observation, donc muet, same si le port
-	// est maintenant down.
+	// Reinstated: we start again from a first observation, so silent, even if the
+	// port is now down.
 	c.SetWatches([]tunnel.SNMPWatch{{DeviceID: "sw1", IP: "10.0.0.5"}})
 	c.notePortStates("sw1", []metricbuf.Sample{operSample("1", "GE1", ifOperDown)},
 		triggerPoll, "")
 	if len(rec.evs) != 0 {
-		t.Errorf("reintegration : first observation muette attendue, obtenu %+v",
+		t.Errorf("reinstatement: silent first observation expected, got %+v",
 			rec.evs)
 	}
 }
 
-// --- Filtre identity ---
+// --- Identity filter ---
 
 func TestClassifyTrap(t *testing.T) {
 	var watches = []tunnel.SNMPWatch{
-		{DeviceID: "sw1", IP: "10.0.0.5", Community: "lecture"},
-		{DeviceID: "sw2", IP: "10.0.0.6"}, // sans community : « public » expected
-		{DeviceID: "bogus", IP: "pas-une-ip"},
+		{DeviceID: "sw1", IP: "10.0.0.5", Community: "readonly"},
+		{DeviceID: "sw2", IP: "10.0.0.6"}, // no community: "public" expected
+		{DeviceID: "bogus", IP: "not-an-ip"},
 	}
 	type cas struct {
-		nom, ip, community string
-		device             string
-		expected           trapVerdict
+		name, ip, community string
+		device              string
+		expected            trapVerdict
 	}
 	var cases = []cas{
-		{nom: "bonne paire", ip: "10.0.0.5", community: "lecture",
+		{name: "matching pair", ip: "10.0.0.5", community: "readonly",
 			device: "sw1", expected: trapAccepted},
-		{nom: "community vide vaut public", ip: "10.0.0.6", community: "public",
+		{name: "empty community means public", ip: "10.0.0.6", community: "public",
 			device: "sw2", expected: trapAccepted},
-		{nom: "IP en forme mappee IPv6", ip: "::ffff:10.0.0.5", community: "lecture",
+		{name: "IP in IPv6-mapped form", ip: "::ffff:10.0.0.5", community: "readonly",
 			device: "sw1", expected: trapAccepted},
-		{nom: "IP inconnue", ip: "192.168.1.1", community: "lecture",
+		{name: "unknown IP", ip: "192.168.1.1", community: "readonly",
 			expected: trapUnknownSource},
-		{nom: "mauvaise community", ip: "10.0.0.5", community: "public",
+		{name: "wrong community", ip: "10.0.0.5", community: "public",
 			expected: trapBadCommunity},
-		{nom: "community absente (v3)", ip: "10.0.0.5", community: "",
+		{name: "community absent (v3)", ip: "10.0.0.5", community: "",
 			expected: trapBadCommunity},
-		{nom: "community absente sur watch sans community", ip: "10.0.0.6",
+		{name: "community absent on a watch without community", ip: "10.0.0.6",
 			community: "", expected: trapBadCommunity},
-		{nom: "source illisible", ip: "", community: "lecture",
+		{name: "unreadable source", ip: "", community: "readonly",
 			expected: trapUnknownSource},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
+		t.Run(k.name, func(t *testing.T) {
 			var w, verdict = classifyTrap(watches, k.ip, k.community)
 			if verdict != k.expected {
-				t.Fatalf("verdict %v expected, obtenu %v", k.expected, verdict)
+				t.Fatalf("verdict %v expected, got %v", k.expected, verdict)
 			}
 			if w.DeviceID != k.device {
-				t.Errorf("device %q expected, obtenu %q", k.device, w.DeviceID)
+				t.Errorf("device %q expected, got %q", k.device, w.DeviceID)
 			}
 		})
 	}
 }
 
 func TestTrapOIDLabel(t *testing.T) {
-	var paquet = func(oid string) *gosnmp.SnmpPacket {
+	var packet = func(oid string) *gosnmp.SnmpPacket {
 		return &gosnmp.SnmpPacket{Variables: []gosnmp.SnmpPDU{
 			{Name: ".1.3.6.1.2.1.1.3.0", Type: gosnmp.TimeTicks, Value: uint32(42)},
 			{Name: ".1.3.6.1.6.3.1.1.4.1.0", Type: gosnmp.ObjectIdentifier, Value: oid},
 		}}
 	}
-	var oid, label = trapOIDLabel(paquet(".1.3.6.1.6.3.1.1.5.3"))
+	var oid, label = trapOIDLabel(packet(".1.3.6.1.6.3.1.1.5.3"))
 	if oid != oidLinkDown || label != "linkDown" {
-		t.Errorf("linkDown expected, obtenu %q / %q", oid, label)
+		t.Errorf("linkDown expected, got %q / %q", oid, label)
 	}
-	oid, label = trapOIDLabel(paquet("1.3.6.1.6.3.1.1.5.4"))
+	oid, label = trapOIDLabel(packet("1.3.6.1.6.3.1.1.5.4"))
 	if oid != oidLinkUp || label != "linkUp" {
-		t.Errorf("linkUp expected, obtenu %q / %q", oid, label)
+		t.Errorf("linkUp expected, got %q / %q", oid, label)
 	}
-	// Un trap constructeur reste journalisable sans be named : on ne construit
-	// pas de table de traps par gamme.
-	oid, label = trapOIDLabel(paquet("1.3.6.1.4.1.11.2.14.11.5.1.7.1.29.1"))
+	// A vendor trap remains loggable without being named: we do not build a trap
+	// table per product line.
+	oid, label = trapOIDLabel(packet("1.3.6.1.4.1.11.2.14.11.5.1.7.1.29.1"))
 	if oid == "" || label != "" {
-		t.Errorf("trap constructeur : OID conserve, label vide ; obtenu %q / %q",
+		t.Errorf("vendor trap: OID kept, label empty; got %q / %q",
 			oid, label)
 	}
-	// Un trap v1 ne porte pas snmpTrapOID.0 : rien a en dire, et ce n'est pas une
-	// erreur.
+	// A v1 trap does not carry snmpTrapOID.0: nothing to say about it, and it is
+	// not an error.
 	oid, label = trapOIDLabel(&gosnmp.SnmpPacket{})
 	if oid != "" || label != "" {
-		t.Errorf("paquet sans snmpTrapOID : %q / %q", oid, label)
+		t.Errorf("packet without snmpTrapOID: %q / %q", oid, label)
 	}
 }
 
-// --- Amortissement ---
+// --- Throttling ---
 
 var refTime = time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 
-func TestTrapGateAbsorbeUneRafale(t *testing.T) {
+func TestTrapGateAbsorbsABurst(t *testing.T) {
 	var g = newTrapGate()
 
-	// Le premier trap ouvre la fenetre.
+	// The first trap opens the window.
 	var delay, schedule = g.admit("sw1", "", refTime)
 	if !schedule || delay != tunnel.TrapCoalesce {
-		t.Fatalf("un poll expected dans %v, obtenu %v / %v",
+		t.Fatalf("a poll expected in %v, got %v / %v",
 			tunnel.TrapCoalesce, delay, schedule)
 	}
 
-	// Les 95 suivants — un 48 ports qui redemarre — sont absorbes par lui.
+	// The next 95 — a 48-port switch rebooting — are absorbed by it.
 	var i int
 	for i = 0; i < 95; i++ {
 		var d, s = g.admit("sw1", "", refTime.Add(time.Duration(i)*time.Millisecond))
 		if s {
-			t.Fatalf("trap %d : un second poll programme dans %v", i, d)
+			t.Fatalf("trap %d: a second poll scheduled in %v", i, d)
 		}
 	}
 
-	// Un autre device n'est pas amorti par celui-there : l'amortissement est PAR
-	// device, sinon un switch bavard masquerait la panne du voisin.
-	var _, autre = g.admit("sw2", "", refTime)
-	if !autre {
-		t.Error("sw2 doit obtenir son propre poll")
+	// Another device is not throttled by this one: throttling is PER device,
+	// otherwise a chatty switch would mask its neighbour's outage.
+	var _, other = g.admit("sw2", "", refTime)
+	if !other {
+		t.Error("sw2 must get its own poll")
 	}
 
-	// La rafale a adopte le premier label exploitable, pas le dernier vide.
+	// The burst adopted the first usable label, not the last empty one.
 	g.admit("sw1", "linkDown", refTime.Add(10*time.Millisecond))
 	if g.release("sw1", refTime.Add(tunnel.TrapCoalesce)) != "linkDown" {
-		t.Error("le label de la rafale doit remonter au poll")
+		t.Error("the burst label must reach the poll")
 	}
 	if len(g.pending) != 1 || !g.pending["sw2"] {
-		t.Errorf("la fenetre de sw1 doit be refermee : %+v", g.pending)
+		t.Errorf("sw1's window must be closed: %+v", g.pending)
 	}
 }
 
-func TestTrapGateRespecteLePlancher(t *testing.T) {
+func TestTrapGateHonoursTheFloor(t *testing.T) {
 	var g = newTrapGate()
 	g.admit("sw1", "", refTime)
 	var poll = refTime.Add(tunnel.TrapCoalesce)
 	g.release("sw1", poll)
 
-	// Un trap juste after le poll : RETARDE au plancher, pas jete — l'abandonner
-	// perdrait une transition reelle jusqu'au prochain cycle ordinaire.
-	var arrivee = poll.Add(10 * time.Millisecond)
-	var delay, schedule = g.admit("sw1", "", arrivee)
+	// A trap right after the poll: DELAYED to the floor, not discarded — dropping
+	// it would lose a real transition until the next ordinary cycle.
+	var arrival = poll.Add(10 * time.Millisecond)
+	var delay, schedule = g.admit("sw1", "", arrival)
 	if !schedule {
-		t.Fatal("le trap doit be programme, pas abandonne")
+		t.Fatal("the trap must be scheduled, not dropped")
 	}
-	var expected = poll.Add(tunnel.TrapMinPollGap).Sub(arrivee)
+	var expected = poll.Add(tunnel.TrapMinPollGap).Sub(arrival)
 	if delay != expected {
-		t.Fatalf("delai %v expected (plancher), obtenu %v", expected, delay)
+		t.Fatalf("delay %v expected (floor), got %v", expected, delay)
 	}
 	if delay < tunnel.TrapCoalesce {
-		t.Fatalf("le plancher ne peut pas raccourcir la fenetre : %v", delay)
+		t.Fatalf("the floor cannot shorten the window: %v", delay)
 	}
 
-	// Bien after le plancher, on retombe sur la coalescence simple.
-	g.release("sw1", arrivee.Add(delay))
-	var tard = arrivee.Add(delay).Add(10 * tunnel.TrapMinPollGap)
-	delay, schedule = g.admit("sw1", "", tard)
+	// Well after the floor, we fall back to simple coalescing.
+	g.release("sw1", arrival.Add(delay))
+	var late = arrival.Add(delay).Add(10 * tunnel.TrapMinPollGap)
+	delay, schedule = g.admit("sw1", "", late)
 	if !schedule || delay != tunnel.TrapCoalesce {
-		t.Fatalf("coalescence simple attendue, obtenu %v / %v", delay, schedule)
+		t.Fatalf("simple coalescing expected, got %v / %v", delay, schedule)
 	}
 }
 
-func TestTrapGateOublieLesEquipementsRetires(t *testing.T) {
+func TestTrapGateForgetsRemovedDevices(t *testing.T) {
 	var g = newTrapGate()
 	g.admit("sw1", "linkUp", refTime)
 	g.admit("sw2", "", refTime)
@@ -438,30 +438,30 @@ func TestTrapGateOublieLesEquipementsRetires(t *testing.T) {
 
 	g.forget(map[string]bool{"sw2": true})
 	if len(g.pending) != 0 || len(g.label) != 0 {
-		t.Errorf("sw1 doit be oublie : %+v / %+v", g.pending, g.label)
+		t.Errorf("sw1 must be forgotten: %+v / %+v", g.pending, g.label)
 	}
 	if len(g.lastPoll) != 1 {
-		t.Errorf("sw2 reste surveille, son plancher doit tenir : %+v", g.lastPoll)
+		t.Errorf("sw2 stays watched, its floor must hold: %+v", g.lastPoll)
 	}
-	// La preuve du chemin retour suit la same rule : elle se rearme pour sw1, elle
-	// tient pour sw2 — sinon un device toujours surveille re-prouverait son
-	// chemin a chaque WatchConfig recue.
+	// The return-path proof follows the same rule: it re-arms for sw1, it holds for
+	// sw2 — otherwise a device still watched would re-prove its path on every
+	// WatchConfig received.
 	if len(g.seen) != 1 || !g.seen["sw2"] {
-		t.Errorf("preuve : sw1 rearme, sw2 conserve ; obtenu %+v", g.seen)
+		t.Errorf("proof: sw1 re-armed, sw2 kept; got %+v", g.seen)
 	}
 	if !g.firstSeen("sw1") {
-		t.Error("sw1 reintegrated doit pouvoir re-prouver son chemin retour")
+		t.Error("reinstated sw1 must be able to re-prove its return path")
 	}
 	if g.firstSeen("sw2") {
-		t.Error("sw2 n'a pas quitte la surveillance : rien a re-prouver")
+		t.Error("sw2 never left monitoring: nothing to re-prove")
 	}
 }
 
-// --- Preuve du chemin retour (tunnel.EventTrapSeen) ---
+// --- Return-path proof (tunnel.EventTrapSeen) ---
 
-// paquetTrap fabrique un trap v2c tel que gosnmp le rend a onTrap : la community
-// au niveau du paquet, l'OID du trap dans `snmpTrapOID.0`.
-func paquetTrap(oid, community string) *gosnmp.SnmpPacket {
+// trapPacket builds a v2c trap as gosnmp hands it to onTrap: the community at
+// packet level, the trap OID in `snmpTrapOID.0`.
+func trapPacket(oid, community string) *gosnmp.SnmpPacket {
 	return &gosnmp.SnmpPacket{
 		Version: gosnmp.Version2c, Community: community,
 		Variables: []gosnmp.SnmpPDU{
@@ -475,257 +475,257 @@ func sourceUDP(ip string) *net.UDPAddr {
 	return &net.UDPAddr{IP: net.ParseIP(ip), Port: 41234}
 }
 
-// viseeLocale : l'adresse locale a laquelle le datagramme was adresse, telle que
-// le noyau la rend a la lecture. C'est celle du proxy de labo, celle-there same que le
-// controleur written dans les devices — le controleur seul sait la comparer.
-var viseeLocale = netip.MustParseAddr("10.42.0.67")
+// localTarget: the local address the datagram was sent to, as the kernel returns
+// it on read. It is the lab proxy's, the very one the controller writes into
+// devices — only the controller knows how to compare it.
+var localTarget = netip.MustParseAddr("10.42.0.67")
 
-// desamorce coupe le poll qu'un trap accepted a programme, sans attendre ses 250 ms.
+// defuse cancels the poll an accepted trap scheduled, without waiting its 250 ms.
 //
-// trapPoll relit la liste de surveillance au moment de partir et renonce quand la
-// cible n'y est plus (c'est ce qui le rend sur face a une WatchConfig qui change
-// pendant la fenetre). Vider la liste suffit donc a garantir qu'aucun de ces tests
-// n'ouvre de socket vers une IP de documentation after sa propre fin. A appeler
-// AFTER les verifications : la purge rearme la preuve.
-func desamorce(c *SNMPCollector) { c.SetWatches(nil) }
+// trapPoll re-reads the watch list when it leaves and gives up when the target
+// is no longer there (that is what makes it safe against a WatchConfig changing
+// during the window). Emptying the list is therefore enough to guarantee none of
+// these tests opens a socket towards a documentation IP after its own end. Call
+// it AFTER the checks: the purge re-arms the proof.
+func defuse(c *SNMPCollector) { c.SetWatches(nil) }
 
-func TestOnTrapProuveLeCheminRetourUneSeuleFois(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
-	defer desamorce(c)
+func TestOnTrapProvesTheReturnPathOnlyOnce(t *testing.T) {
+	var c, rec = freshCollector(t)
+	defer defuse(c)
 
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 {
-		t.Fatalf("un evenement de preuve expected, obtenu %+v", rec.evs)
+		t.Fatalf("a proof event expected, got %+v", rec.evs)
 	}
 	var ev = rec.evs[0]
 	if ev.Type != tunnel.EventTrapSeen {
-		t.Errorf("type %q expected, obtenu %+v", tunnel.EventTrapSeen, ev)
+		t.Errorf("type %q expected, got %+v", tunnel.EventTrapSeen, ev)
 	}
 	if ev.DeviceID != "sw1" || ev.IP != "10.0.0.5" {
-		t.Errorf("la preuve doit nommer the device et son adresse : %+v", ev)
+		t.Errorf("the proof must name the device and its address: %+v", ev)
 	}
 	if ev.Detail != "linkDown" {
-		t.Errorf("detail expected %q, obtenu %q", "linkDown", ev.Detail)
+		t.Errorf("detail expected %q, got %q", "linkDown", ev.Detail)
 	}
 
-	// Deuxieme trap de la same rafale : ABSORBE par la fenetre de regroupement,
-	// donc sans poll — et sans preuve non plus, puisqu'elle est already acquise. Ce cas
-	// est le plus important des deux : il verifies que le point transmit depend du
-	// filtre identity et pas de l'ordonnancement.
-	c.onTrap(paquetTrap(oidLinkUp, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	// Second trap of the same burst: ABSORBED by the grouping window, hence no poll
+	// — and no proof either, since it is already acquired. This case is the more
+	// important of the two: it checks that the emission point depends on the
+	// identity filter and not on scheduling.
+	c.onTrap(trapPacket(oidLinkUp, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 {
-		t.Fatalf("la preuve ne se repete pas, obtenu %+v", rec.evs)
+		t.Fatalf("the proof does not repeat, got %+v", rec.evs)
 	}
 	c.mu.Lock()
 	var stats = c.trapStats
 	c.mu.Unlock()
 	if stats.received != 2 || stats.accepted != 1 || stats.absorbed != 1 {
-		t.Errorf("le second trap devait be absorbe, pas recompte : %+v", stats)
+		t.Errorf("the second trap should have been absorbed, not recounted: %+v", stats)
 	}
 }
 
-// TestOnTrapProuveDepuisUnTrapAbsorbe : le tout premier trap d'un device peut
-// tomber dans une fenetre already ouverte — un poll par trap ayant been programme pour
-// lui a la milliseconde previous. Il a pourtant traverse le same chemin, et sans
-// ca the device resterait « adresse applied, chemin non verified » a the UI jusqu'a
-// sa prochaine rafale.
-func TestOnTrapProuveDepuisUnTrapAbsorbe(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
+// TestOnTrapProvesFromAnAbsorbedTrap: a device's very first trap may fall into
+// an already open window — a poll per trap having been scheduled for it the
+// previous millisecond. It still went through the same path, and without this
+// the device would stay "address applied, path not verified" in the UI until
+// its next burst.
+func TestOnTrapProvesFromAnAbsorbedTrap(t *testing.T) {
+	var c, rec = freshCollector(t)
 
-	// Fenetre ouverte a la main : aucun minuteur ne part, donc rien a desamorcer.
-	var _, ouverte = c.trapGate.admit("sw1", "linkDown", time.Now())
-	if !ouverte {
-		t.Fatal("la fenetre devait s'ouvrir")
+	// Window opened by hand: no timer starts, so nothing to cancel.
+	var _, open = c.trapGate.admit("sw1", "linkDown", time.Now())
+	if !open {
+		t.Fatal("the window should have opened")
 	}
 
-	c.onTrap(paquetTrap(oidLinkUp, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	c.onTrap(trapPacket(oidLinkUp, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 || rec.evs[0].Type != tunnel.EventTrapSeen {
-		t.Fatalf("un trap absorbe prouve le chemin autant qu'un autre : %+v", rec.evs)
+		t.Fatalf("an absorbed trap proves the path as much as any other: %+v", rec.evs)
 	}
 	if rec.evs[0].Detail == "" {
-		t.Error("un Detail vide se lirait comme un champ perdu en route")
+		t.Error("an empty Detail would read as a field lost on the way")
 	}
 }
 
-// TestOnTrapNeProuveRienDepuisUneSourceNonAutorisee : la preuve ne doit pas pouvoir
-// be FABRIQUEE. Un trap v2c est de l'UDP non authentifie : si un tiers sur le
-// chemin pouvait faire dire au controleur « le chemin retour de sw1 est established »,
-// l'evenement ne prouverait plus rien du tout.
-func TestOnTrapNeProuveRienDepuisUneSourceNonAutorisee(t *testing.T) {
+// TestOnTrapProvesNothingFromAnUnauthorisedSource: the proof must not be
+// FORGEABLE. A v2c trap is unauthenticated UDP: if a third party on the path
+// could make the controller say "sw1's return path is established", the event
+// would prove nothing at all any more.
+func TestOnTrapProvesNothingFromAnUnauthorisedSource(t *testing.T) {
 	type cas struct {
-		nom, ip, community string
+		name, ip, community string
 	}
 	var cases = []cas{
-		{nom: "source inconnue", ip: "192.168.1.1", community: "lecture"},
-		{nom: "community inattendue", ip: "10.0.0.5", community: "public"},
-		{nom: "community absente (trap v3)", ip: "10.0.0.5", community: ""},
-		{nom: "source illisible", ip: "", community: "lecture"},
+		{name: "unknown source", ip: "192.168.1.1", community: "readonly"},
+		{name: "unexpected community", ip: "10.0.0.5", community: "public"},
+		{name: "community absent (v3 trap)", ip: "10.0.0.5", community: ""},
+		{name: "unreadable source", ip: "", community: "readonly"},
 	}
 	var k cas
 	for _, k = range cases {
-		t.Run(k.nom, func(t *testing.T) {
-			var c, rec = nouveauCollecteur(t)
-			c.onTrap(paquetTrap(oidLinkDown, k.community), sourceUDP(k.ip), viseeLocale)
+		t.Run(k.name, func(t *testing.T) {
+			var c, rec = freshCollector(t)
+			c.onTrap(trapPacket(oidLinkDown, k.community), sourceUDP(k.ip), localTarget)
 			if len(rec.evs) != 0 {
-				t.Fatalf("aucun evenement expected, obtenu %+v", rec.evs)
+				t.Fatalf("no event expected, got %+v", rec.evs)
 			}
-			// Et la preuve reste disponible : un trap rejete ne doit pas non plus
-			// CONSOMMER le droit de prouver plus tard, sinon un usurpateur suffirait a
-			// rendre the device muet pour toujours.
+			// And the proof stays available: a rejected trap must not CONSUME the right to
+			// prove later either, otherwise a spoofer would be enough to silence the device
+			// forever.
 			if !c.trapGate.firstSeen("sw1") {
-				t.Error("un trap rejete ne doit pas consommer la preuve de sw1")
+				t.Error("a rejected trap must not consume sw1's proof")
 			}
 		})
 	}
 }
 
-func TestOnTrapReprouveApresUnRetraitDeSurveillance(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
+func TestOnTrapReprovesAfterARemovalFromMonitoring(t *testing.T) {
+	var c, rec = freshCollector(t)
 	var watch = []tunnel.SNMPWatch{
-		{DeviceID: "sw1", IP: "10.0.0.5", Community: "lecture", StateIntervalS: 30},
+		{DeviceID: "sw1", IP: "10.0.0.5", Community: "readonly", StateIntervalS: 30},
 	}
 
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 {
-		t.Fatalf("preuve initiale attendue, obtenu %+v", rec.evs)
+		t.Fatalf("initial proof expected, got %+v", rec.evs)
 	}
 
-	// Retire de la surveillance : purge silencieuse, comme pour les etats de port.
+	// Removed from monitoring: silent purge, as for port states.
 	rec.evs = nil
 	c.SetWatches(nil)
 	if len(rec.evs) != 0 {
-		t.Fatalf("un retrait de surveillance n'emet rien : %+v", rec.evs)
+		t.Fatalf("a removal from monitoring emits nothing: %+v", rec.evs)
 	}
 
-	// Reintegrated : le pare-feu, la route ou l'ACL a pu changer entre-temps, donc la
-	// preuve d'hier n'engage plus rien — elle est refaite, UNE fois.
+	// Reinstated: the firewall, the route or the ACL may have changed in the
+	// meantime, so yesterday's proof commits to nothing — it is redone, ONCE.
 	c.SetWatches(watch)
-	defer desamorce(c)
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	defer defuse(c)
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), localTarget)
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 || rec.evs[0].Type != tunnel.EventTrapSeen {
-		t.Fatalf("une seule preuve after reintegration, obtenu %+v", rec.evs)
+		t.Fatalf("a single proof after reinstatement, got %+v", rec.evs)
 	}
 }
 
-// TestOnTrapNeDivulguePasLaCommunaute : la community est un secret d'operation.
-// L'evenement part au controleur, y est stocke, puis affiche — le verify sur la
-// forme SERIALISEE rather que champ par champ garde le test vrai le jour where
-// tunnel.Event gagne un champ.
-func TestOnTrapNeDivulguePasLaCommunaute(t *testing.T) {
-	const communaute = "s3cr3t-de-labo"
-	var c = NewSNMPCollector("http://exemple.invalid", "px1", "s3cr3t")
-	var rec = &collecte{}
+// TestOnTrapDoesNotDiscloseTheCommunity: the community is an operating secret. The
+// event goes to the controller, is stored there, then displayed — checking the
+// SERIALISED form rather than field by field keeps the test true the day
+// tunnel.Event gains a field.
+func TestOnTrapDoesNotDiscloseTheCommunity(t *testing.T) {
+	const community = "s3cr3t-de-labo"
+	var c = NewSNMPCollector("http://example.invalid", "px1", "s3cr3t")
+	var rec = &eventRecorder{}
 	c.SetEmitter(rec.note)
 	c.SetWatches([]tunnel.SNMPWatch{
-		{DeviceID: "sw1", IP: "10.0.0.5", Community: communaute, StateIntervalS: 30},
+		{DeviceID: "sw1", IP: "10.0.0.5", Community: community, StateIntervalS: 30},
 	})
-	defer desamorce(c)
+	defer defuse(c)
 
-	c.onTrap(paquetTrap(oidLinkUp, communaute), sourceUDP("10.0.0.5"), viseeLocale)
+	c.onTrap(trapPacket(oidLinkUp, community), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 {
-		t.Fatalf("un evenement de preuve expected, obtenu %+v", rec.evs)
+		t.Fatalf("a proof event expected, got %+v", rec.evs)
 	}
-	var brut, err = json.Marshal(rec.evs[0])
+	var rawJSON, err = json.Marshal(rec.evs[0])
 	if err != nil {
-		t.Fatalf("serialisation de l'evenement : %v", err)
+		t.Fatalf("serialising the event: %v", err)
 	}
-	if strings.Contains(string(brut), communaute) {
-		t.Errorf("la community n'a rien a faire dans un evenement : %s", brut)
+	if strings.Contains(string(rawJSON), community) {
+		t.Errorf("the community has no business in an event: %s", rawJSON)
 	}
 }
 
-// --- Attribution de la preuve : l'adresse VISEE par le datagramme ---
+// --- Proof attribution: the address TARGETED by the datagram ---
 
-// TestOnTrapPorteLAdresseVisee : la preuve doit dire A QUELLE ADRESSE le trap est
-// arrive, sans quoi elle ne prouve pas ce que le controleur lui fait dire.
+// TestOnTrapCarriesTheTargetedAddress: the proof must say AT WHICH ADDRESS the trap
+// arrived, otherwise it does not prove what the controller makes it say.
 //
-// Le filtre du proxy n'examine que l'IP SOURCE et la community ; sa socket ecoute
-// l'adresse joker et accepte tout ce qui atteint 162/udp. Un device qui emettrait
-// vers un autre collecteur de la same machine fabriquerait donc une « preuve » de
-// l'adresse que meshcraft vient to write, sans le moindre rapport. Seule l'adresse
-// locale visee referme cet ecart, et elle ne peut venir que d'ici : le controleur, lui,
-// ne voit pas les datagrams.
-func TestOnTrapPorteLAdresseVisee(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
-	defer desamorce(c)
+// The proxy's filter only examines the SOURCE IP and the community; its socket
+// listens on the wildcard address and accepts everything reaching 162/udp. A
+// device emitting towards another collector on the same machine would therefore
+// fabricate a "proof" of the address meshcraft just wrote, entirely unrelated.
+// Only the targeted local address closes that gap, and it can only come from
+// here: the controller does not see the datagrams.
+func TestOnTrapCarriesTheTargetedAddress(t *testing.T) {
+	var c, rec = freshCollector(t)
+	defer defuse(c)
 
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), viseeLocale)
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), localTarget)
 	if len(rec.evs) != 1 {
-		t.Fatalf("un evenement de preuve expected, obtenu %+v", rec.evs)
+		t.Fatalf("a proof event expected, got %+v", rec.evs)
 	}
 	if rec.evs[0].DestAddr != "10.42.0.67" {
-		t.Errorf("la preuve doit porter l'adresse visee, obtenu %q", rec.evs[0].DestAddr)
+		t.Errorf("the proof must carry the targeted address, got %q", rec.evs[0].DestAddr)
 	}
 }
 
-// TestOnTrapNInventePasLAdresseVisee : quand le noyau n'a pas dit la destination, le
-// champ reste VIDE.
+// TestOnTrapDoesNotInventTheTargetedAddress: when the kernel did not give the
+// destination, the field stays EMPTY.
 //
-// Le repli tentant serait d'y mettre l'adresse par laquelle le proxy joint
-// the device — celle qu'il a rendue a `AskSourceAddr`, donc celle que le controleur
-// a written. Ce serait rendre la verification tautologique : elle confirmerait toujours,
-// puisqu'elle comparerait la pretention a elle-same. Un « je ne sais pas » doit
-// traverser le tunnel tel quel, et c'est le controleur qui decide de ce qu'une preuve
-// non attribuee vaut.
-func TestOnTrapNInventePasLAdresseVisee(t *testing.T) {
-	var c, rec = nouveauCollecteur(t)
-	defer desamorce(c)
+// The tempting fallback would be to put there the address through which the
+// proxy reaches the device — the one it returned to `AskSourceAddr`, hence the
+// one the controller wrote. That would make the check tautological: it would
+// always confirm, since it would compare the claim with itself. An "I don't
+// know" must cross the tunnel as is, and it is the controller that decides what
+// an unattributed proof is worth.
+func TestOnTrapDoesNotInventTheTargetedAddress(t *testing.T) {
+	var c, rec = freshCollector(t)
+	defer defuse(c)
 
-	c.onTrap(paquetTrap(oidLinkDown, "lecture"), sourceUDP("10.0.0.5"), netip.Addr{})
+	c.onTrap(trapPacket(oidLinkDown, "readonly"), sourceUDP("10.0.0.5"), netip.Addr{})
 	if len(rec.evs) != 1 {
-		t.Fatalf("un evenement de preuve expected, obtenu %+v", rec.evs)
+		t.Fatalf("a proof event expected, got %+v", rec.evs)
 	}
 	if rec.evs[0].DestAddr != "" {
-		t.Errorf("une destination inconnue ne s'invente pas, obtenu %q",
+		t.Errorf("an unknown destination is not invented, got %q",
 			rec.evs[0].DestAddr)
 	}
 }
 
-// TestTrapDstAddrNormalise : ce que le noyau rend n'est pas comparable tel quel.
-func TestTrapDstAddrNormalise(t *testing.T) {
-	// Socket double pile : le noyau rend la destination d'un datagramme IPv4 sous
-	// forme mappee. Comparer « ::ffff:10.42.0.67 » a l'inventaire du controleur, qui
-	// written « 10.42.0.67 », ferait echouer l'attribution selon l'humeur de la pile de
-	// l'hote — la same precaution que classifyTrap.
+// TestTrapDstAddrNormalises: what the kernel returns is not comparable as is.
+func TestTrapDstAddrNormalises(t *testing.T) {
+	// Dual-stack socket: the kernel returns an IPv4 datagram's destination in mapped
+	// form. Comparing "::ffff:10.42.0.67" with the controller's inventory, which
+	// writes "10.42.0.67", would make attribution fail depending on the mood of the
+	// host's stack — the same precaution as classifyTrap.
 	var got = trapDstAddr(net.ParseIP("::ffff:10.42.0.67"))
 	if got.String() != "10.42.0.67" {
-		t.Errorf("adresse mappee non demappee : %q", got.String())
+		t.Errorf("mapped address not unmapped: %q", got.String())
 	}
-	// Rien a dire, et il faut que ca se DISE : une adresse absente ou joker n'est pas
-	// une adresse fausse, c'est une absence de response. Le controleur en tire une
-	// preuve non attribuee, pas un refus.
+	// Nothing to say, and that must BE SAID: an absent or wildcard address is not a
+	// wrong address, it is an absence of answer. The controller derives an
+	// unattributed proof from it, not a refusal.
 	if trapDstAddr(nil).IsValid() {
-		t.Error("une destination absente doit be invalide")
+		t.Error("an absent destination must be invalid")
 	}
 	if trapDstAddr(net.ParseIP("0.0.0.0")).IsValid() {
-		t.Error("l'adresse joker ne designe rien et ne doit pas be rendue")
+		t.Error("the wildcard address designates nothing and must not be returned")
 	}
 	if trapDstAddr(net.ParseIP("::")).IsValid() {
-		t.Error("l'adresse joker v6 ne designe rien et ne doit pas be rendue")
+		t.Error("the v6 wildcard address designates nothing and must not be returned")
 	}
 }
 
-// collecteSure : le same enregistreur, mais verrouille.
+// safeEventRecorder: the same recorder, but locked.
 //
-// Necessaire pour le test de bout en bout et pour lui seul : l'evenement y arrive sur
-// la goroutine de lecture de la socket, alors que tous les autres tests appellent
-// `onTrap` eux-memes. Un `collecte` nu y serait une course de data (et `-race` le
-// dirait).
-type collecteSure struct {
+// Needed for the end-to-end test and for it alone: the event arrives there on
+// the socket's read goroutine, whereas all the other tests call `onTrap`
+// themselves. A bare `eventRecorder` would be a data race there (and `-race` would
+// say so).
+type safeEventRecorder struct {
 	mu  sync.Mutex
 	evs []tunnel.Event
 }
 
-func (r *collecteSure) note(ev tunnel.Event) {
+func (r *safeEventRecorder) note(ev tunnel.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evs = append(r.evs, ev)
 }
 
-// attendre rend le premier evenement collecte, ou renonce. Un trap est de l'UDP en
-// boucle locale : s'il n'est pas arrive en une seconde, il n'arrivera pas.
-func (r *collecteSure) attendre(t *testing.T) tunnel.Event {
+// awaitEvent returns the first collected event, or gives up. A trap is UDP over
+// loopback: if it has not arrived within a second, it will not.
+func (r *safeEventRecorder) awaitEvent(t *testing.T) tunnel.Event {
 	t.Helper()
 	var fin = time.Now().Add(time.Second)
 	for time.Now().Before(fin) {
@@ -741,126 +741,125 @@ func (r *collecteSure) attendre(t *testing.T) tunnel.Event {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("aucun evenement de preuve recu par la socket de traps")
+	t.Fatal("no proof event received by the trap socket")
 	return tunnel.Event{}
 }
 
-// TestSocketDeTrapsLitLAdresseVisee : le test de BOUT EN BOUT du collecteur, et le
-// seul qui verifies ce que le noyau veut bien dire.
+// TestTrapSocketReadsTheTargetedAddress: the collector's END-TO-END test, and the
+// only one that checks what the kernel is willing to say.
 //
-// Il envoie un vrai trap v2c sur une vraie socket et attend la preuve a l'autre bout.
-// C'est ce qui rend la decision de ce lot defendable : la lecture de l'adresse de
-// destination (PKTINFO) n'est pas de la logique qu'on peut simuler — ou le noyau la
-// donne, ou il ne la donne pas. S'il ne la donnait pas, le canal continuerait de
-// fonctionner mais toutes les preuves seraient non attribuees, et il faut le SAVOIR
-// ici rather que de le decouvrir sur le parc d'un client.
+// It sends a real v2c trap on a real socket and waits for the proof at the
+// other end. That is what makes this batch's decision defensible: reading the
+// destination address (PKTINFO) is not logic that can be simulated — either the
+// kernel gives it, or it does not. If it did not, the channel would keep working
+// but every proof would be unattributed, and that must be KNOWN here rather
+// than discovered on a customer's fleet.
 //
-// Il verifies du same coup que remplacer `gosnmp.TrapListener` par notre socket n'a
-// rien casse du decoding : le paquet est fabrique et envoye par gosnmp, et c'est
-// `gosnmp.UnmarshalTrap` — exporte, donc conserve — qui le relit.
-func TestSocketDeTrapsLitLAdresseVisee(t *testing.T) {
-	var c = NewSNMPCollector("http://exemple.invalid", "px1", "s3cr3t")
-	var rec = &collecteSure{}
+// It checks at the same time that replacing `gosnmp.TrapListener` with our
+// socket broke nothing in decoding: the packet is built and sent by gosnmp, and
+// it is `gosnmp.UnmarshalTrap` — exported, hence kept — that reads it back.
+func TestTrapSocketReadsTheTargetedAddress(t *testing.T) {
+	var c = NewSNMPCollector("http://example.invalid", "px1", "s3cr3t")
+	var rec = &safeEventRecorder{}
 	c.SetEmitter(rec.note)
-	// La boucle locale comme device surveille : c'est la seule adresse dont un test
-	// puisse be a la fois la source et la destination.
+	// Loopback as the watched device: it is the only address a test can be both
+	// the source and the destination of.
 	c.SetWatches([]tunnel.SNMPWatch{
-		{DeviceID: "sw1", IP: "127.0.0.1", Community: "lecture", StateIntervalS: 30},
+		{DeviceID: "sw1", IP: "127.0.0.1", Community: "readonly", StateIntervalS: 30},
 	})
-	defer desamorce(c)
+	defer defuse(c)
 
-	// Port 0 : le noyau en choisit un libre. Demander 162 exigerait un privilege que
-	// n'a aucun conteneur de test, et le port n'apprend rien ici.
+	// Port 0: the kernel picks a free one. Asking for 162 would require a privilege
+	// no test container has, and the port teaches nothing here.
 	var rx, err = startTrapReceiver(0, c.onTrap)
 	if err != nil {
-		t.Fatalf("socket de traps non liee : %v", err)
+		t.Fatalf("trap socket not bound: %v", err)
 	}
 	defer rx.stop()
 	if !rx.dstKnown() {
-		t.Fatal("ce noyau ne rend pas l'adresse de destination des datagrams : " +
-			"toute preuve du chemin retour serait non attribuee")
+		t.Fatal("this kernel does not return the datagrams' destination address: " +
+			"every return-path proof would be unattributed")
 	}
 
 	var g = &gosnmp.GoSNMP{
 		Target: "127.0.0.1", Port: uint16(rx.bound), Transport: "udp", //nolint:gosec
-		Community: "lecture", Version: gosnmp.Version2c,
+		Community: "readonly", Version: gosnmp.Version2c,
 		Timeout: time.Second, Retries: 0,
 	}
 	if err = g.Connect(); err != nil {
-		t.Fatalf("connexion de l'emetteur de trap : %v", err)
+		t.Fatalf("trap sender connection: %v", err)
 	}
 	defer g.Conn.Close() //nolint:errcheck
 	if _, err = g.SendTrap(gosnmp.SnmpTrap{Variables: []gosnmp.SnmpPDU{
 		{Name: oidSnmpTrapOID, Type: gosnmp.ObjectIdentifier, Value: oidLinkDown},
 	}}); err != nil {
-		t.Fatalf("envoi du trap : %v", err)
+		t.Fatalf("sending the trap: %v", err)
 	}
 
-	var ev = rec.attendre(t)
+	var ev = rec.awaitEvent(t)
 	if ev.Type != tunnel.EventTrapSeen || ev.DeviceID != "sw1" {
-		t.Fatalf("preuve du chemin retour attendue, obtenu %+v", ev)
+		t.Fatalf("return-path proof expected, got %+v", ev)
 	}
 	if ev.DestAddr != "127.0.0.1" {
-		t.Errorf("le trap a been adresse a 127.0.0.1, la preuve dit %q", ev.DestAddr)
+		t.Errorf("the trap was sent to 127.0.0.1, the proof says %q", ev.DestAddr)
 	}
 	if ev.Detail != "linkDown" {
-		t.Errorf("le trap doit be decode jusqu'a son OID, Detail %q", ev.Detail)
+		t.Errorf("the trap must be decoded down to its OID, Detail %q", ev.Detail)
 	}
 }
 
-// TestArretDeSocketNEstPasUnIncident : fermer la socket fait echouer la lecture en
-// cours, et cette erreur-there ne doit pas se declare « morte ».
+// TestSocketShutdownIsNotAnIncident: closing the socket makes the pending read
+// fail, and that error must not declare itself "dead".
 //
-// C'est la contrepartie du garde-fou anti-mort-silencieuse : une lecture qui rend la
-// main sur une erreur inattendue marque la socket, et reconcileTraps en relie une
-// neuve. Confondre l'arret DEMANDE avec un incident ferait donc relier une socket
-// juste after chaque extinction volontaire — i.e. a chaque fois que le
-// controleur retire l'ecoute des traps de la configuration de surveillance.
-func TestArretDeSocketNEstPasUnIncident(t *testing.T) {
+// It is the counterpart of the anti-silent-death guard: a read that returns on
+// an unexpected error marks the socket, and reconcileTraps binds a fresh one.
+// Mistaking the REQUESTED shutdown for an incident would therefore rebind a
+// socket right after every voluntary shutdown — i.e. every time the controller
+// removes trap listening from the monitoring configuration.
+func TestSocketShutdownIsNotAnIncident(t *testing.T) {
 	var rx, err = startTrapReceiver(0, func(*gosnmp.SnmpPacket, *net.UDPAddr, netip.Addr) {})
 	if err != nil {
-		t.Fatalf("socket de traps non liee : %v", err)
+		t.Fatalf("trap socket not bound: %v", err)
 	}
 	rx.stop()
-	// La boucle sort de sa lecture bloquante a la fermeture ; quelques millisecondes
-	// suffisent, et une attente franche vaut mieux qu'un test qui depend de
-	// l'ordonnanceur.
+	// The loop leaves its blocking read on close; a few milliseconds are enough,
+	// and a plain wait beats a test that depends on the scheduler.
 	time.Sleep(50 * time.Millisecond)
 	if rx.dead.Load() {
-		t.Error("un arret requested ne doit pas se lire comme une lecture morte")
+		t.Error("a requested shutdown must not read as a dead read")
 	}
 }
 
 func TestTrapSeenDetail(t *testing.T) {
 	if trapSeenDetail(oidLinkUp, "linkUp") != "linkUp" {
-		t.Error("le label reconnu passe devant l'OID")
+		t.Error("the recognised label goes before the OID")
 	}
-	// Trap constructeur : pas de nom, mais l'OID situe la gamme — « il emet, mais
-	// pas de linkUp/linkDown » ne se rule pas comme un silence complet.
+	// Vendor trap: no name, but the OID locates the product line — "it emits, but
+	// no linkUp/linkDown" is not fixed like a complete silence.
 	var got = trapSeenDetail("1.3.6.1.4.1.11.2.14.11.5.1.7.1.29.1", "")
 	if got != "oid=1.3.6.1.4.1.11.2.14.11.5.1.7.1.29.1" {
-		t.Errorf("OID brut expected, obtenu %q", got)
+		t.Errorf("raw OID expected, got %q", got)
 	}
-	// Trap v1 : aucun snmpTrapOID.0 a citer, et le Detail ne doit pas be vide
-	// pour autant.
+	// v1 trap: no snmpTrapOID.0 to quote, and the Detail must not be empty for all
+	// that.
 	if trapSeenDetail("", "") == "" {
-		t.Error("un Detail vide se lirait comme un champ perdu en route")
+		t.Error("an empty Detail would read as a field lost on the way")
 	}
 }
 
 func TestOperStatusLabel(t *testing.T) {
-	// « up » est reserve a 1, et a lui seul : c'est la decision qui gouverne tout
-	// le reste du fichier.
+	// "up" is reserved for 1, and for it alone: that is the decision governing the
+	// rest of the file.
 	var status int
 	for status = 2; status <= 7; status++ {
 		if portUp(status) {
-			t.Errorf("ifOperStatus=%d ne doit pas compter comme up", status)
+			t.Errorf("ifOperStatus=%d must not count as up", status)
 		}
 	}
 	if !portUp(ifOperUp) {
-		t.Error("ifOperStatus=1 doit compter comme up")
+		t.Error("ifOperStatus=1 must count as up")
 	}
-	if operStatusLabel(7) != "lowerLayerDown" || operStatusLabel(42) != "inconnu" {
-		t.Errorf("labels inattendus : %q / %q", operStatusLabel(7), operStatusLabel(42))
+	if operStatusLabel(7) != "lowerLayerDown" || operStatusLabel(42) != "unknown" {
+		t.Errorf("unexpected labels: %q / %q", operStatusLabel(7), operStatusLabel(42))
 	}
 }

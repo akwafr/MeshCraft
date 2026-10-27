@@ -19,7 +19,7 @@ import (
 )
 
 // Find a device that changed address
-// (cf. docs/01-Architecture/Management addressing section 5 and internal/relocate).
+// (cf. docs/en/01-Architecture/Management addressing.md section 5 and internal/relocate).
 //
 // Two parallel paths: scanning the target subnet, and the address the operator
 // enters if they already know it. The first to identify the correct SERIAL

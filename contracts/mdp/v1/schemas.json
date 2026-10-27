@@ -1,0 +1,2116 @@
+{
+  "$comment": "GENERATED from meshcraft/wire/mdpv1 by tools/mdpschema — do not edit; the Go types are the source of truth.",
+  "components": {
+    "schemas": {
+      "Account": {
+        "properties": {
+          "Authority": {
+            "type": "integer"
+          },
+          "Name": {
+            "type": "string"
+          },
+          "Privilege": {
+            "type": "integer"
+          },
+          "Role": {
+            "type": "string"
+          },
+          "Source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Authority",
+          "Name",
+          "Privilege",
+          "Role",
+          "Source"
+        ],
+        "type": "object"
+      },
+      "AccountRequest": {
+        "properties": {
+          "secret": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "type": "object"
+      },
+      "AdminAccount": {
+        "properties": {
+          "alphanumeric_only": {
+            "type": "boolean"
+          },
+          "custom": {
+            "type": "boolean"
+          },
+          "fixed_name": {
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "password_max": {
+            "type": "integer"
+          },
+          "password_min": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "custom"
+        ],
+        "type": "object"
+      },
+      "ApplyResult": {
+        "properties": {
+          "backup": {
+            "type": "string"
+          },
+          "not_applied": {
+            "items": {
+              "$ref": "#/components/schemas/NotApplied"
+            },
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports_written": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "vlans_created": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ports_written",
+          "vlans_created"
+        ],
+        "type": "object"
+      },
+      "Candidate": {
+        "properties": {
+          "Secret": {
+            "type": "string"
+          },
+          "Username": {
+            "type": "string"
+          },
+          "Why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Secret",
+          "Username",
+          "Why"
+        ],
+        "type": "object"
+      },
+      "Capabilities": {
+        "properties": {
+          "admin": {
+            "$ref": "#/components/schemas/AdminAccount"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object"
+          },
+          "max_aces": {
+            "type": "integer"
+          },
+          "max_acls": {
+            "type": "integer"
+          },
+          "max_lags": {
+            "type": "integer"
+          },
+          "max_sessions": {
+            "type": "integer"
+          },
+          "max_static_routes": {
+            "type": "integer"
+          },
+          "max_vlans": {
+            "type": "integer"
+          },
+          "mgmt": {
+            "$ref": "#/components/schemas/MgmtCapabilities"
+          },
+          "monitoring": {
+            "$ref": "#/components/schemas/MonitoringCapabilities"
+          },
+          "mst_instances": {
+            "type": "integer"
+          },
+          "ports_per_lag": {
+            "type": "integer"
+          },
+          "snmp_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "snmpv3_auth": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "snmpv3_priv": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "stp_modes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "vlan_range": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "admin",
+          "commit",
+          "features",
+          "max_aces",
+          "max_acls",
+          "max_lags",
+          "max_sessions",
+          "max_static_routes",
+          "max_vlans",
+          "mgmt",
+          "monitoring",
+          "mst_instances",
+          "ports_per_lag",
+          "snmp_versions",
+          "stp_modes",
+          "vlan_range"
+        ],
+        "type": "object"
+      },
+      "ConnectorSupport": {
+        "properties": {
+          "gestures": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "identify": {
+            "properties": {
+              "needs_credentials": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "needs_credentials"
+            ],
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gestures",
+          "identify",
+          "name"
+        ],
+        "type": "object"
+      },
+      "DHCPSnoopPlan": {
+        "properties": {
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/DHCPSnoopPortIntent"
+            },
+            "type": "array"
+          },
+          "vlans": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "DHCPSnoopPortIntent": {
+        "properties": {
+          "port": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "port",
+          "trusted"
+        ],
+        "type": "object"
+      },
+      "DHCPSnoopPortState": {
+        "properties": {
+          "port": {
+            "type": "string"
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "port",
+          "trusted"
+        ],
+        "type": "object"
+      },
+      "DHCPSnoopState": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/DHCPSnoopPortState"
+            },
+            "type": "array"
+          },
+          "vlans": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "ErrorBody": {
+        "properties": {
+          "because": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "gesture": {
+            "type": "string"
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "Evidence": {
+        "properties": {
+          "HTTPBody": {
+            "type": "string"
+          },
+          "HTTPServer": {
+            "type": "string"
+          },
+          "HTTPTitle": {
+            "type": "string"
+          },
+          "OpenPorts": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "SSHBanner": {
+            "type": "string"
+          },
+          "ShellOut": {
+            "type": "string"
+          },
+          "SysDescr": {
+            "type": "string"
+          },
+          "SysObjectID": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "HTTPBody",
+          "HTTPServer",
+          "HTTPTitle",
+          "OpenPorts",
+          "SSHBanner",
+          "ShellOut",
+          "SysDescr",
+          "SysObjectID"
+        ],
+        "type": "object"
+      },
+      "FDBEntryObservation": {
+        "properties": {
+          "LocalPort": {
+            "type": "string"
+          },
+          "MAC": {
+            "type": "string"
+          },
+          "VLAN": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "LocalPort",
+          "MAC",
+          "VLAN"
+        ],
+        "type": "object"
+      },
+      "FDBObservation": {
+        "properties": {
+          "Entries": {
+            "items": {
+              "$ref": "#/components/schemas/FDBEntryObservation"
+            },
+            "type": "array"
+          },
+          "Notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "Entries",
+          "Notes"
+        ],
+        "type": "object"
+      },
+      "FingerprintRequest": {
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/Evidence"
+          }
+        },
+        "required": [
+          "connector",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "FingerprintResponse": {
+        "properties": {
+          "score": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "score"
+        ],
+        "type": "object"
+      },
+      "HostnameRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "Identity": {
+        "properties": {
+          "boot_firmware": {
+            "type": "string"
+          },
+          "build": {
+            "type": "string"
+          },
+          "copper_ports": {
+            "type": "integer"
+          },
+          "family": {
+            "type": "string"
+          },
+          "firmware": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "mac": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "model_code": {
+            "type": "string"
+          },
+          "poe": {
+            "type": "boolean"
+          },
+          "port_groups": {
+            "items": {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "serial": {
+            "type": "string"
+          },
+          "sfp_plus": {
+            "type": "boolean"
+          },
+          "sfp_ports": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "type": "object"
+      },
+      "Info": {
+        "properties": {
+          "doc": {
+            "type": "string"
+          },
+          "family": {
+            "type": "string"
+          },
+          "identify_needs_credentials": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "transport": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "vendor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "family",
+          "name",
+          "transport",
+          "vendor"
+        ],
+        "type": "object"
+      },
+      "LAGState": {
+        "properties": {
+          "fallback": {
+            "type": "integer"
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "raw": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "vlan": {
+            "$ref": "#/components/schemas/PortState"
+          }
+        },
+        "required": [
+          "members",
+          "mode",
+          "name",
+          "vlan"
+        ],
+        "type": "object"
+      },
+      "LAGsRequest": {
+        "properties": {
+          "desired": {
+            "items": {
+              "$ref": "#/components/schemas/LAGState"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "desired"
+        ],
+        "type": "object"
+      },
+      "LLDPNeighborObservation": {
+        "properties": {
+          "ChassisID": {
+            "type": "string"
+          },
+          "LocalPort": {
+            "type": "string"
+          },
+          "PortDesc": {
+            "type": "string"
+          },
+          "PortID": {
+            "type": "string"
+          },
+          "SysDesc": {
+            "type": "string"
+          },
+          "SysName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ChassisID",
+          "LocalPort",
+          "PortDesc",
+          "PortID",
+          "SysDesc",
+          "SysName"
+        ],
+        "type": "object"
+      },
+      "LLDPObservation": {
+        "properties": {
+          "Enabled": {
+            "type": "boolean"
+          },
+          "Neighbors": {
+            "items": {
+              "$ref": "#/components/schemas/LLDPNeighborObservation"
+            },
+            "type": "array"
+          },
+          "Notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "Enabled",
+          "Neighbors",
+          "Notes"
+        ],
+        "type": "object"
+      },
+      "MSTRegion": {
+        "properties": {
+          "instance_vlans": {
+            "additionalProperties": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "MetricUnavailable": {
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "observed"
+        ],
+        "type": "object"
+      },
+      "MgmtAddrIntent": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "dns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "gateway": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "MgmtAddrResult": {
+        "properties": {
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "observed": {
+            "$ref": "#/components/schemas/MgmtAddrState"
+          }
+        },
+        "type": "object"
+      },
+      "MgmtAddrState": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "dns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "gateway": {
+            "type": "string"
+          },
+          "interface": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MgmtAddressedResponse": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
+      "MgmtCapabilities": {
+        "properties": {
+          "apply_same_vlan": {
+            "type": "boolean"
+          },
+          "dhcp": {
+            "type": "boolean"
+          },
+          "dhcp_fallback": {
+            "type": "string"
+          },
+          "dns": {
+            "type": "boolean"
+          },
+          "gateway": {
+            "type": "boolean"
+          },
+          "ip_arp": {
+            "type": "boolean"
+          },
+          "jump_vlan": {
+            "type": "boolean"
+          },
+          "migrate_vlan": {
+            "type": "boolean"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "out_of_band": {
+            "type": "boolean"
+          },
+          "routed": {
+            "type": "boolean"
+          },
+          "static": {
+            "type": "boolean"
+          },
+          "tagged_ok": {
+            "type": "boolean"
+          },
+          "vlan_ids": {
+            "type": "string"
+          },
+          "vlan_range": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "apply_same_vlan",
+          "dhcp",
+          "dns",
+          "gateway",
+          "ip_arp",
+          "jump_vlan",
+          "migrate_vlan",
+          "out_of_band",
+          "routed",
+          "static",
+          "tagged_ok",
+          "vlan_ids",
+          "vlan_range"
+        ],
+        "type": "object"
+      },
+      "MgmtJumpRequest": {
+        "properties": {
+          "vlan_id": {
+            "type": "integer"
+          },
+          "want": {
+            "$ref": "#/components/schemas/MgmtAddrIntent"
+          }
+        },
+        "required": [
+          "vlan_id",
+          "want"
+        ],
+        "type": "object"
+      },
+      "MgmtJumpResponse": {
+        "properties": {
+          "backup": {
+            "format": "byte",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "MgmtVLANRequest": {
+        "properties": {
+          "vlan_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vlan_id"
+        ],
+        "type": "object"
+      },
+      "MonitorChannel": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "min_interval": {
+            "description": "nanoseconds (Go time.Duration)",
+            "type": "integer"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "metrics",
+          "min_interval"
+        ],
+        "type": "object"
+      },
+      "MonitoringCapabilities": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/MonitorChannel"
+            },
+            "type": "array"
+          },
+          "fdb_per_vlan": {
+            "type": "boolean"
+          },
+          "streaming": {
+            "type": "boolean"
+          },
+          "syslog": {
+            "type": "boolean"
+          },
+          "traps": {
+            "type": "boolean"
+          },
+          "unavailable": {
+            "items": {
+              "$ref": "#/components/schemas/MetricUnavailable"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "channels",
+          "streaming",
+          "syslog",
+          "traps"
+        ],
+        "type": "object"
+      },
+      "NotApplied": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
+        ],
+        "type": "object"
+      },
+      "OnboardResult": {
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "type": "array"
+          },
+          "was": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changed",
+          "identity",
+          "stage",
+          "was"
+        ],
+        "type": "object"
+      },
+      "OpticsPortState": {
+        "properties": {
+          "bias_current_ma": {
+            "type": "number"
+          },
+          "ddm": {
+            "type": "boolean"
+          },
+          "part_number": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          },
+          "rx_power_dbm": {
+            "type": "number"
+          },
+          "serial": {
+            "type": "string"
+          },
+          "temperature_c": {
+            "type": "number"
+          },
+          "tx_power_dbm": {
+            "type": "number"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "voltage_v": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ddm",
+          "port"
+        ],
+        "type": "object"
+      },
+      "OpticsState": {
+        "properties": {
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/OpticsPortState"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "PoEPlan": {
+        "properties": {
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/PoEPortIntent"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "PoEPortIntent": {
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "type": "object"
+      },
+      "PoEPortState": {
+        "properties": {
+          "capable": {
+            "type": "boolean"
+          },
+          "class": {
+            "type": "string"
+          },
+          "current_ma": {
+            "type": "number"
+          },
+          "delivering": {
+            "type": "boolean"
+          },
+          "detection": {
+            "type": "string"
+          },
+          "negotiated_class": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          },
+          "power_w": {
+            "type": "number"
+          },
+          "role": {
+            "type": "string"
+          },
+          "temperature_c": {
+            "type": "number"
+          },
+          "voltage_v": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "capable",
+          "delivering",
+          "port"
+        ],
+        "type": "object"
+      },
+      "PoEState": {
+        "properties": {
+          "budget_w": {
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/PoEPortState"
+            },
+            "type": "array"
+          },
+          "used_w": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "PortAdminIntent": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "port"
+        ],
+        "type": "object"
+      },
+      "PortAdminPlan": {
+        "properties": {
+          "force": {
+            "type": "boolean"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/PortAdminIntent"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "PortCyclePlan": {
+        "properties": {
+          "off_for": {
+            "description": "nanoseconds (Go time.Duration)",
+            "type": "integer"
+          },
+          "ports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "PortNameRequest": {
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "device_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector",
+          "device_name"
+        ],
+        "type": "object"
+      },
+      "PortNameResponse": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "ok"
+        ],
+        "type": "object"
+      },
+      "PortPlan": {
+        "properties": {
+          "Desired": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PortState"
+            },
+            "type": "object"
+          },
+          "Force": {
+            "type": "boolean"
+          },
+          "MgmtVLAN": {
+            "type": "integer"
+          },
+          "SiteVLANs": {
+            "items": {
+              "$ref": "#/components/schemas/VLAN"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "Desired",
+          "Force",
+          "MgmtVLAN",
+          "SiteVLANs"
+        ],
+        "type": "object"
+      },
+      "PortState": {
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "pvid": {
+            "type": "integer"
+          },
+          "tagged": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "tagged_at_least": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "ProtocolInfo": {
+        "properties": {
+          "driver": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "version"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "driver",
+          "protocol"
+        ],
+        "type": "object"
+      },
+      "RawReadRequest": {
+        "properties": {
+          "unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit"
+        ],
+        "type": "object"
+      },
+      "RawReadResponse": {
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ReadPart": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          },
+          "result": {}
+        },
+        "type": "object"
+      },
+      "ReadRequest": {
+        "properties": {
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "parts"
+        ],
+        "type": "object"
+      },
+      "ReadResponse": {
+        "properties": {
+          "parts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReadPart"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "parts"
+        ],
+        "type": "object"
+      },
+      "ResetProcedure": {
+        "properties": {
+          "after_reset": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "erases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "hardware": {
+            "type": "string"
+          },
+          "pitfalls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "software": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "SNMPIdentity": {
+        "properties": {
+          "AuthAlg": {
+            "type": "string"
+          },
+          "AuthSecret": {
+            "type": "string"
+          },
+          "Community": {
+            "type": "string"
+          },
+          "Group": {
+            "type": "string"
+          },
+          "PrivAlg": {
+            "type": "string"
+          },
+          "PrivSecret": {
+            "type": "string"
+          },
+          "Sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "User": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "AuthAlg",
+          "AuthSecret",
+          "Community",
+          "Group",
+          "PrivAlg",
+          "PrivSecret",
+          "Sources",
+          "User"
+        ],
+        "type": "object"
+      },
+      "SNMPResult": {
+        "properties": {
+          "community_set": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "group_created": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "user_set": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "community_set",
+          "enabled",
+          "group_created",
+          "user_set"
+        ],
+        "type": "object"
+      },
+      "SOCKSAccess": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "password",
+          "username"
+        ],
+        "type": "object"
+      },
+      "SessionRequest": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "type": "array"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "lease_seconds": {
+            "type": "integer"
+          },
+          "socks": {
+            "$ref": "#/components/schemas/SOCKSAccess"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetSpec"
+          }
+        },
+        "required": [
+          "candidates",
+          "connector",
+          "lease_seconds",
+          "socks",
+          "target"
+        ],
+        "type": "object"
+      },
+      "SessionResponse": {
+        "properties": {
+          "accepted": {
+            "$ref": "#/components/schemas/Candidate"
+          },
+          "account": {
+            "type": "string"
+          },
+          "lease_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "account",
+          "lease_expires_at",
+          "session_id"
+        ],
+        "type": "object"
+      },
+      "SessionlessRequest": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            },
+            "type": "array"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "socks": {
+            "$ref": "#/components/schemas/SOCKSAccess"
+          },
+          "target": {
+            "$ref": "#/components/schemas/TargetSpec"
+          }
+        },
+        "required": [
+          "connector",
+          "socks",
+          "target"
+        ],
+        "type": "object"
+      },
+      "SetSecretRequest": {
+        "properties": {
+          "new_secret": {
+            "type": "string"
+          },
+          "old_secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_secret",
+          "old_secret"
+        ],
+        "type": "object"
+      },
+      "SpanningTreePlan": {
+        "properties": {
+          "bpdu_filter_ports": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "bridge_priority": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/SpanningTreePortIntent"
+            },
+            "type": "array"
+          },
+          "region": {
+            "$ref": "#/components/schemas/MSTRegion"
+          },
+          "root_instances": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "super_root": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "SpanningTreePort": {
+        "properties": {
+          "bpdu_guard": {
+            "type": "boolean"
+          },
+          "edge": {
+            "type": "boolean"
+          },
+          "edge_mode": {
+            "type": "string"
+          },
+          "path_cost": {
+            "type": "integer"
+          },
+          "port": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "root_path_cost": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "type": "object"
+      },
+      "SpanningTreePortIntent": {
+        "properties": {
+          "bpdu_guard": {
+            "type": "boolean"
+          },
+          "edge": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "path_cost": {
+            "type": "integer"
+          },
+          "port": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "type": "object"
+      },
+      "SpanningTreeState": {
+        "properties": {
+          "bridge_id": {
+            "type": "string"
+          },
+          "bridge_priority": {
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "is_root": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/SpanningTreePort"
+            },
+            "type": "array"
+          },
+          "region": {
+            "$ref": "#/components/schemas/MSTRegion"
+          },
+          "root_bridge_id": {
+            "type": "string"
+          },
+          "root_path_cost": {
+            "type": "integer"
+          },
+          "root_priority": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "is_root"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "properties": {
+          "lags": {
+            "items": {
+              "$ref": "#/components/schemas/LAGState"
+            },
+            "type": "array"
+          },
+          "links": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "mgmt_vlan": {
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PortState"
+            },
+            "type": "object"
+          },
+          "vlans": {
+            "items": {
+              "$ref": "#/components/schemas/VLAN"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mgmt_vlan",
+          "ports",
+          "vlans"
+        ],
+        "type": "object"
+      },
+      "StaticOwnerProbeRequest": {
+        "properties": {
+          "addr": {
+            "type": "string"
+          },
+          "mask": {
+            "type": "string"
+          },
+          "vlan_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "addr",
+          "mask",
+          "vlan_id"
+        ],
+        "type": "object"
+      },
+      "StaticOwnerProbeResponse": {
+        "properties": {
+          "owner": {
+            "type": "integer"
+          },
+          "raw": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner"
+        ],
+        "type": "object"
+      },
+      "Step": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "what": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "what"
+        ],
+        "type": "object"
+      },
+      "StormControlCaps": {
+        "properties": {
+          "classes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "shared_rate": {
+            "type": "boolean"
+          },
+          "units": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "why": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "shared_rate"
+        ],
+        "type": "object"
+      },
+      "StormControlPlan": {
+        "properties": {
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/StormControlPortIntent"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "StormControlPortIntent": {
+        "properties": {
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/StormLimit"
+            },
+            "type": "array"
+          },
+          "port": {
+            "type": "string"
+          },
+          "speed_mbps": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "type": "object"
+      },
+      "StormControlPortState": {
+        "properties": {
+          "foreign": {
+            "items": {
+              "$ref": "#/components/schemas/StormForeignLimit"
+            },
+            "type": "array"
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/StormLimit"
+            },
+            "type": "array"
+          },
+          "port": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "port"
+        ],
+        "type": "object"
+      },
+      "StormControlState": {
+        "properties": {
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/StormControlPortState"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "StormForeignLimit": {
+        "properties": {
+          "because": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string"
+          },
+          "spelling": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "because",
+          "spelling"
+        ],
+        "type": "object"
+      },
+      "StormLimit": {
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "rate": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "class",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "SupportsResponse": {
+        "properties": {
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorSupport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "connectors"
+        ],
+        "type": "object"
+      },
+      "TargetSpec": {
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "port_prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "type": "object"
+      },
+      "TrapDestination": {
+        "properties": {
+          "Address": {
+            "type": "string"
+          },
+          "Community": {
+            "type": "string"
+          },
+          "Port": {
+            "type": "integer"
+          },
+          "User": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Address",
+          "Community",
+          "Port",
+          "User"
+        ],
+        "type": "object"
+      },
+      "TrapResult": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "known": {
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "replaced": {
+            "type": "boolean"
+          },
+          "set": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "known",
+          "port",
+          "replaced",
+          "set",
+          "version"
+        ],
+        "type": "object"
+      },
+      "VLAN": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "WebUIResponse": {
+        "properties": {
+          "auth": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "auth",
+          "base"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}

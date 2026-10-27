@@ -15,19 +15,58 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"meshcraft/internal/driver"
-	"meshcraft/internal/driver/instanton"
-	// Connectors also register themselves with the driver registry through
-	// their init: discovery is the point in the program that consults all of
-	// them, so this is where they come on stage.
-	"meshcraft/internal/driver/cisco/ios"
-	"meshcraft/internal/driver/fs/s3900"
-	_ "meshcraft/internal/driver/hpe/procurve" // registers "hpe-procurve" via init()
-	"meshcraft/internal/driver/mikrotik/routeros"
-	"meshcraft/internal/driver/mikrotik/swos"
+	// ALL BLANK since the contract hardening pass: the connectors register
+	// themselves with the driver registry through their init, and discovery is
+	// the point in the program that consults all of them, so this is where
+	// they come on stage. Nothing here calls a vendor package by name any
+	// more — enrichment goes through [driver.Identifier], the same door an
+	// out-of-process driver will use.
+	_ "meshcraft/internal/driver/arista/eos"
+	_ "meshcraft/internal/driver/cisco/ios"
+	_ "meshcraft/internal/driver/fs/s3400"
+	_ "meshcraft/internal/driver/fs/s3900"
+	_ "meshcraft/internal/driver/hpe/procurve"
+	_ "meshcraft/internal/driver/instanton"
+	_ "meshcraft/internal/driver/mikrotik/routeros"
+	_ "meshcraft/internal/driver/mikrotik/swos"
+	_ "meshcraft/internal/driver/ubiquiti/edgeswitch"
 )
 
 // Ports probed: the ones that distinguish a manageable network device.
-var ProbePorts = []int{22, 23, 80, 443, 8080, 8443}
+//
+// # 6030 IS NOT AN ADMINISTRATION PORT, and that is why it is worth probing
+//
+// Every other port here is a way IN — a shell, a web interface — and discovery
+// uses them to decide how to reach a device. 6030 is a way for the device to
+// talk to US: it is where EOS serves gNMI, and nothing in this prober will ever
+// authenticate against it.
+//
+// It earns its place for a different reason. A device answering on 6030 is a
+// device that can be carried by STREAMING TELEMETRY, and that is a fact worth
+// knowing at adoption rather than discovering later as an empty graph. The Arista
+// connector declares gNMI channels for every metric it serves
+// (internal/driver/arista/eos/eos.go), so the controller will subscribe to a
+// device it adopts as an Arista whether or not that port is open — and if the
+// `management api gnmi` block was never written, the subscription fails for ever
+// with nothing on screen to explain it. The open port is the cheapest possible
+// evidence that the block IS in place.
+//
+// The cost is one TCP connect per address, in parallel with the six others (cf.
+// scanPorts), so a sweep is not measurably slower.
+//
+// It is deliberately NOT used as a fingerprint signal. gNMI is served by several
+// vendors, and treating an open 6030 as "this is an Arista" would be exactly the
+// kind of guess [Prober.Fingerprint] refuses everywhere else — a wrong connector
+// is worse than none, because writes follow it.
+var ProbePorts = []int{22, 23, 80, 443, 8080, 8443, GNMIPort}
+
+// GNMIPort is the port EOS serves gNMI on out of the box.
+//
+// Duplicated from internal/gnmipoll.DefaultPort and the connector's own constant
+// rather than imported, for the reason that constant already gives: this is a
+// WIRE default, not a platform capability, and discovery must not grow a
+// dependency on a collector package to scan a port.
+const GNMIPort = 6030
 
 const (
 	dialTimeout  = 900 * time.Millisecond
@@ -128,8 +167,8 @@ type Result struct {
 // Dialer opens the probe's TCP connections. This is the tunnel's ingress
 // point: `net.Dialer` for the "Local" proxy (the instance itself), the
 // tunnel hub for a remote proxy. The probe itself doesn't know which one it
-// is using — that's the "single code path" rule (docs/01-Architecture/Vue
-// d'ensemble).
+// is using — that's the "single code path" rule (docs/en/01-Architecture/
+// Overview.md).
 type Dialer interface {
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 }
@@ -484,7 +523,7 @@ func sshClientConfig(c Credential) *ssh.ClientConfig {
 // maxAuthFailures bounds the attempts per host: beyond that, we stop even if
 // there are still credentials left to test. AAA policies lock accounts after
 // a few failures — discovering a switch must not block the network team's
-// access (see docs/01-Architecture/Discovery, safeguards).
+// access (see docs/en/01-Architecture/Discovery.md, safeguards).
 const maxAuthFailures = 2
 
 // trySSH tries the credentials in the order received and, on the first one
@@ -685,7 +724,7 @@ func extractConfig(out string) string {
 // and only opens a session after a POST of a form whose URL, fields, and
 // cookie-handling method must be known. None of that can be guessed from a
 // generic probe: it's platform knowledge, hence a connector's job (see
-// docs/01-Architecture/Connecteurs). This is exactly the reason the third
+// docs/en/01-Architecture/Connectors.md). This is exactly the reason the third
 // outcome below exists — without it, this limitation would read like a
 // refused password.
 const (
@@ -1053,43 +1092,43 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 // worked, and replaying others would only fill up the device's
 // authentication log and eat into the account-lockout protection the probe
 // just applied.
-func (p *Prober) enrich(ctx context.Context, res *Result, cred Credential, haveCred bool) {
-	switch res.Driver {
-	case "aruba-instant-on-1930":
-		p.enrichInstantOn(ctx, res)
-	case "mikrotik-swos":
-		p.enrichSwOS(ctx, res, cred)
-	case "mikrotik-routeros":
-		p.enrichRouterOS(ctx, res, cred, haveCred)
-	case "fs-s3900":
-		p.enrichS3900(ctx, res, cred, haveCred)
-	case "cisco-ios":
-		p.enrichCiscoIOS(ctx, res, cred, haveCred)
-	}
-}
-
-// enrichCiscoIOS: model, serial and above all the FACEPLATE, read by the SSH
-// connector with the one credential that already opened the door.
+// THROUGH THE REGISTRY since the contract hardening pass: this function used
+// to dispatch on the driver name and call each vendor package directly
+// (eos.Inspect, swos.Inspect, …), which welded discovery to the drivers this
+// binary compiles in. [driver.Identifier.Identify] is the contract form of the
+// same read, and the connectors already carry every behaviour the vendor
+// branches encoded:
 //
-// The faceplate matters more on this vendor than on any other in the fleet.
-// The 2960-X range alone ships 24- and 48-port variants, PoE and non-PoE, with
-// four 1G cages OR two 10G cages — and only the part-number suffix tells them
-// apart. Without this read, a Catalyst adopted by push would carry no drawable
-// port, LLDP resolution would discard every neighbour, and the SNMP poller's
-// MaxIfIndex bound would stay at zero. That exact sequence is what an S3900
-// went through the day before its connector shipped.
-func (p *Prober) enrichCiscoIOS(ctx context.Context, res *Result, cred Credential, haveCred bool) {
-	if !haveCred {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" Serial and faceplate not read: the CLI sits behind SSH authentication and no credential opened it.")
+//   - each gates on credentials with ITS OWN message ("the CLI sits behind SSH
+//     authentication", "RouterOS REST responds 401 on all its resources") —
+//     returned as the error, so the note keeps its vendor flavour without this
+//     file knowing any vendor;
+//   - each returns the PARTIAL identity it could establish TOGETHER WITH the
+//     reason it stopped. That is the SwOS rule ("this is a CSS326-24G-2S+
+//     whose password we don't have" beats "failure"), generalized: fields are
+//     copied BEFORE the error test, for every platform.
+func (p *Prober) enrich(ctx context.Context, res *Result, cred Credential, haveCred bool) {
+	var drv, known = driver.Get(res.Driver)
+	if !known {
 		return
 	}
-	var id, err = ios.Inspect(ctx, res.IP, p.Dialer, cred.Username, cred.Secret)
-	if err != nil {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" Deep identification failed: " + firstLine(err.Error()))
+	var ident, canIdentify = drv.(driver.Identifier)
+	if !canIdentify {
 		return
 	}
+	var cands []driver.Candidate
+	if haveCred {
+		cands = []driver.Candidate{{Username: cred.Username, Secret: cred.Secret,
+			Why: "the credential the probe already proved on this device"}}
+	}
+	// No pre-gate on Info().IdentifyNeedsCredentials here, on purpose: a
+	// connector that needs credentials and got none answers IMMEDIATELY, with
+	// no packet sent, and its message is better than one this file could
+	// write. The declaration exists for callers that pay per call — a sweep
+	// fanning out to driver containers — not for this in-process path.
+	var id, err = ident.Identify(ctx,
+		driver.Target{Host: res.IP, Dialer: p.Dialer}, cands)
+
 	if id.Model != "" {
 		res.Model = id.Model
 	}
@@ -1099,175 +1138,83 @@ func (p *Prober) enrichCiscoIOS(ctx context.Context, res *Result, cred Credentia
 	if id.MAC != "" {
 		res.MAC = id.MAC
 	}
+	if res.Hostname == "" && id.Hostname != "" {
+		res.Hostname = id.Hostname
+	}
 	if len(id.PortGroups) > 0 {
 		res.PortGroups = id.PortGroups
 	}
-	if res.Confidence < ConfDeviceSelfReport {
+	// A device that named itself outranks an HTTP title — but only if it DID
+	// name itself: an empty identity must not raise confidence.
+	if (id.Model != "" || id.Serial != "") && res.Confidence < ConfDeviceSelfReport {
 		res.Confidence = ConfDeviceSelfReport
 		res.Evidence = "identification by the device (" + id.Source + ")"
 	}
 	if id.Firmware != "" {
-		res.Notes = strings.TrimSpace(res.Notes + " Cisco IOS " + id.Firmware + ".")
-	}
-}
-
-// enrichS3900 : série, firmware et FAÇADE lus par le connecteur SSH, avec le
-// seul identifiant qui a déjà ouvert la porte. Sans façade, un S3900 adopté en
-// mode « push » n'aurait aucun port dessinable, la résolution LLDP jetterait
-// chaque voisin et la borne MaxIfIndex du polling SNMP resterait à zéro.
-func (p *Prober) enrichS3900(ctx context.Context, res *Result, cred Credential, haveCred bool) {
-	if !haveCred {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" Serie et facade non lues : le CLI est derriere l'authentification SSH et aucun identifiant n'a ouvert.")
-		return
-	}
-	var id, err = s3900.Inspect(ctx, res.IP, p.Dialer, cred.Username, cred.Secret)
-	if err != nil {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" Identification approfondie impossible : " + firstLine(err.Error()))
-		return
-	}
-	if id.Serial != "" {
-		res.Serial = id.Serial
-	}
-	if len(id.PortGroups) > 0 {
-		res.PortGroups = id.PortGroups
-	}
-	if res.Confidence < ConfDeviceSelfReport {
-		res.Confidence = ConfDeviceSelfReport
-		res.Evidence = "identification par the device (" + id.Source + ")"
-	}
-	if id.Firmware != "" {
-		res.Notes = strings.TrimSpace(res.Notes + " FSOS OpCode " + id.Firmware + ".")
-	}
-}
-
-// enrichSwOS : le model EXACT sans le moindre identifiant.
-//
-// C'est la particularite de cette plateforme, et elle vaut d'be exploitee : le
-// realm de son challenge Digest porte la reference du produit
-// (`realm="CSS326-24G-2S+"`), servi avec le 401 lui-same. L'enrichissement a donc
-// un sens same sur un device dont personne ne connait le mot de passe — ce qui
-// est exactement la situation d'un balayage de discovery.
-//
-// Identity PARTIELLE est retenue AVANT le test d'erreur, et l'ordre n'est pas
-// negociable : Inspect rend ce qu'il a pu establish en same temps que la raison de
-// son arret, et « c'est un CSS326-24G-2S+ dont on n'a pas le mot de passe » est un
-// result utile there where « failure » n'en est pas un.
-func (p *Prober) enrichSwOS(ctx context.Context, res *Result, cred Credential) {
-	var id, err = swos.Inspect(ctx, res.IP, cred.Username, cred.Secret, p.Dialer)
-	if id.Model != "" {
-		res.Model = id.Model
-		res.PortGroups = id.PortGroups()
-		if res.Confidence < ConfDeviceSelfReport {
-			res.Confidence = ConfDeviceSelfReport
-			res.Evidence = "identification par the device (" + id.Source + ")"
+		var note = " " + firmwareNoteLabel(res.Driver) + " " + id.Firmware
+		if id.BootFirmware != "" {
+			// Two versions, and confusing them once made a device look four
+			// major versions behind: the system is one number, the boot
+			// loader another.
+			note += " (boot " + id.BootFirmware + ")"
 		}
-	}
-	if id.Serial != "" {
-		res.Serial = id.Serial
-	}
-	if id.MAC != "" {
-		res.MAC = id.MAC
-	}
-	if res.Hostname == "" && id.Hostname != "" {
-		res.Hostname = id.Hostname
-	}
-	if id.Firmware != "" {
-		res.Notes = strings.TrimSpace(res.Notes + " SwOS " + id.Firmware)
-	}
-	if err != nil {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" identification partielle : " + firstLine(err.Error()))
-	}
-}
-
-// enrichRouterOS : ici, rien sans identifiant.
-//
-// L'API REST repond 401 sur toutes ses ressources, y compris celle qui porte le
-// model. C'est la difference de nature avec les deux autres gammes, et elle se
-// dit rather qu'elle ne se contourne : sans identifiant qui ait fonctionne, la
-// discovery en reste au titre de la page web — ce qui suffit a ranger
-// the device dans le bon connecteur, mais pas a nommer son model.
-//
-// Le message est written pour l'exploitant qui regarde la file des decouvertes et se
-// demande pourquoi cette ligne est moins renseignee que les autres.
-func (p *Prober) enrichRouterOS(ctx context.Context, res *Result, cred Credential, haveCred bool) {
-	if !haveCred {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" Modele et serial number non lus : l'API REST de RouterOS les reserve " +
-			"a une session authentifiee, et aucun identifiant n'a ouvert cet device.")
-		return
-	}
-	var id, err = routeros.Inspect(ctx, res.IP, p.Dialer, cred.Username, cred.Secret)
-	if err != nil {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" identification approfondie impossible : " + firstLine(err.Error()))
-		return
-	}
-	if id.Model != "" {
-		res.Model = id.Model
-	}
-	if id.Serial != "" {
-		res.Serial = id.Serial
-	}
-	if id.MAC != "" {
-		res.MAC = id.MAC
-	}
-	if res.Hostname == "" && id.Hostname != "" {
-		res.Hostname = id.Hostname
-	}
-	res.PortGroups = id.PortGroups()
-	if res.Confidence < ConfDeviceSelfReport {
-		res.Confidence = ConfDeviceSelfReport
-		res.Evidence = "identification par the device (" + id.Source + ")"
-	}
-	// Deux versions, et les confondre ferait croire a un device quatre
-	// versions majeures en retard : RouterOS est le SYSTEME, RouterBOOT le
-	// chargeur boot.
-	if id.Firmware != "" {
-		var note = " RouterOS " + id.Firmware
-		if id.RouterBoot != "" {
-			note += " (RouterBOOT " + id.RouterBoot + ")"
+		if id.Build != "" {
+			note += " (build " + id.Build + ")"
 		}
-		res.Notes = strings.TrimSpace(res.Notes + note)
+		res.Notes = strings.TrimSpace(res.Notes + note + ".")
+	}
+	if err != nil {
+		res.Notes = strings.TrimSpace(res.Notes +
+			" Deep identification incomplete: " + firstLine(err.Error()))
+	}
+	if res.Driver == "arista-eos" && err == nil {
+		p.noteEOSTelemetry(res)
 	}
 }
 
-func (p *Prober) enrichInstantOn(ctx context.Context, res *Result) {
-	var id, err = instanton.Inspect(ctx, res.IP, p.Dialer)
-	if err != nil {
-		res.Notes = strings.TrimSpace(res.Notes +
-			" identification approfondie impossible : " + firstLine(err.Error()))
+// firmwareNoteLabel names the SYSTEM in the discovery note ("Arista EOS 4.28"
+// reads; "firmware 4.28" on a range whose OS has a name does not). DISPLAY
+// ONLY, keyed by registry name so it holds for drivers this binary does not
+// compile in — an unlisted driver reads as plain "firmware", which is always
+// true.
+var firmwareNoteLabels = map[string]string{
+	"arista-eos":        "Arista EOS",
+	"cisco-ios":         "Cisco IOS",
+	"fs-s3400":          "version",
+	"fs-s3900":          "FSOS OpCode",
+	"mikrotik-swos":     "SwOS",
+	"mikrotik-routeros": "RouterOS",
+}
+
+func firmwareNoteLabel(driverName string) string {
+	var label, ok = firmwareNoteLabels[driverName]
+	if !ok {
+		return "firmware"
+	}
+	return label
+}
+
+// noteEOSTelemetry — THE TELEMETRY PORT, said out loud at adoption.
+//
+// This platform is carried entirely by streaming telemetry — its connector
+// declares gNMI channels for interface state, counters, LLDP and health, and
+// no SNMP channel at all — so the controller will subscribe to it the moment
+// it is adopted. If `management api gnmi` was never written, that subscription
+// fails on every retry and the device's graphs stay empty with nothing on any
+// screen to say why.
+//
+// The note is written in BOTH directions, and the negative one is the useful
+// half: "no telemetry until this block is written" at adoption is a five
+// minute fix, whereas the same fact discovered a week later looks like a
+// broken collector.
+func (p *Prober) noteEOSTelemetry(res *Result) {
+	if hasPort(res.OpenPorts, GNMIPort) {
+		res.Notes = strings.TrimSpace(res.Notes + " gNMI is listening on " +
+			itoa(GNMIPort) + ": this device can be carried by streaming telemetry.")
 		return
 	}
-	if id.Model != "" {
-		res.Model = id.Model
-	}
-	if id.Serial != "" {
-		res.Serial = id.Serial
-	}
-	if id.MAC != "" {
-		res.MAC = id.MAC
-	}
-	if res.Hostname == "" && id.Hostname != "" {
-		res.Hostname = id.Hostname
-	}
-	// `PortGroups` est un CHAMP ici, et une METHOD sur les deux connecteurs
-	// MikroTik. Ce n'est pas une incoherence a reparer : identity de cette gamme
-	// est now celle du contrat partage (`driver.Identity`), where la front panel est
-	// une data, tandis que les deux autres gardent un type identity plus riche
-	// que le contrat — et Go interdit d'attacher une method au type d'un autre
-	// paquet. Aligner les trois voudrait donc dire appauvrir deux connecteurs.
-	res.PortGroups = id.PortGroups
-	// Une identification par le constructeur lui-same vaut mieux qu'un titre
-	// HTML : la confiance monte en consequence.
-	if res.Confidence < ConfDeviceSelfReport {
-		res.Confidence = ConfDeviceSelfReport
-		res.Evidence = "identification par the device (" + id.Source + ")"
-	}
-	if id.Firmware != "" {
-		res.Notes = strings.TrimSpace(res.Notes + " firmware " + id.Firmware +
-			" (build " + id.Build + ")")
-	}
+	res.Notes = strings.TrimSpace(res.Notes + " gNMI is NOT listening on " +
+		itoa(GNMIPort) + ": this platform is collected by streaming telemetry and " +
+		"nothing else, so it will produce no metrics until \"management api gnmi\" " +
+		"is configured on it.")
 }

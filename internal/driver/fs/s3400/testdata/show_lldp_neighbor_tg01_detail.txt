@@ -1,0 +1,5 @@
+show lldp neighbor interface TGigaEthernet0/1 detail
+show lldp neighbor interface TGigaEthernet0/1 detail
+                                              ^
+Too many parameters
+Switch#

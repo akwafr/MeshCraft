@@ -3,7 +3,7 @@
  * Callers push inbound text via append(); scripts await expect() / send().
  *
  * expectAny picks the RIGHTMOST match among patterns in the post-mark slice:
- * a stale « Password: » earlier must not win over a later « Username: », or the
+ * a stale "Password:" earlier must not win over a later "Username:", or the
  * script types the password into the username field.
  */
 
@@ -59,7 +59,7 @@ export function rightmostMatch(
 
 /**
  * Wrap a session so every ACTION (send/sendRaw/expect/sleep) first waits on
- * `gate`. Used by « pause provisioning »: the script freezes before its next
+ * `gate`. Used by "pause provisioning": the script freezes before its next
  * step while the operator drives the console by hand through the inner
  * session. Reads (capture, marks) pass through untouched.
  *
@@ -127,9 +127,44 @@ export function createSerialSession(opts: SerialSessionOpts): SerialSession {
   };
 
   return {
+    /**
+     * Append inbound text, keeping the capture bounded.
+     *
+     * # THE MARK MOVES WITH THE BUFFER, and forgetting that cost a provisioning run
+     *
+     * `markAt` is an INDEX INTO `capture`. Once the rolling buffer saturates,
+     * every append drops characters off the FRONT, so every index into it shifts
+     * left by exactly that many characters. The old code only reset the mark when
+     * `markAt > capture.length` — a condition that can never be true once the
+     * buffer is pinned at `maxCapture`, because the mark is always set to a length
+     * that was itself ≤ maxCapture.
+     *
+     * So past 200 000 characters the mark stayed pinned at the end of the buffer
+     * while the content slid out from under it: `getSinceMark()` returned an empty
+     * string for ever, and every `expect` / `expectAny` after that point saw
+     * nothing and timed out — on a console that was answering perfectly.
+     *
+     * OBSERVED 2026-08-06 on the Arista lab switch, at "write memory": the whole
+     * management push had been accepted command by command, then the save sat out
+     * its full timeout and the run died with the configuration in the RUNNING
+     * config only. Nothing was wrong with the device, the command, or the line
+     * terminator — the operator typed the same `write memory` by hand immediately
+     * afterwards and it worked.
+     *
+     * It surfaced on Arista first because that console is by far the most verbose
+     * in the fleet — a full Linux boot, plus a ZTP retry line every thirty seconds
+     * — but the defect is in the SHARED session and every platform was exposed to
+     * it on a long enough run.
+     */
     append(text: string) {
-      capture = (capture + text).slice(-maxCapture);
-      if (markAt > capture.length) markAt = 0;
+      var combined = capture + text;
+      var dropped = combined.length - maxCapture;
+      if (dropped > 0) {
+        capture = combined.slice(dropped);
+        markAt = markAt > dropped ? markAt - dropped : 0;
+      } else {
+        capture = combined;
+      }
       opts.onCapture?.(capture);
       notify();
     },

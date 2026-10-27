@@ -1,22 +1,22 @@
--- Étiquettes d'équipement, et portée des identifiants par étiquette.
--- Voir docs/01-Architecture/Étiquettes et portée des identifiants.
+-- Device tags, and credential scope by tag.
+-- See docs/en/01-Architecture/Tags and credential scope.md.
 --
--- Le groupe (devices.group_id) ne suffit pas : il est UNIQUE par équipement, et
--- il porte déjà le profil de configuration. Or les raisons de donner un mot de
--- passe particulier ne s'excluent pas — une gamme qui plafonne les mots de passe
--- à 16 caractères, un lieu confié à un prestataire, une plage d'adresses isolée.
--- Un équipement peut relever des trois à la fois.
+-- The group (devices.group_id) is not enough: it is UNIQUE per device, and it
+-- already carries the configuration profile. Yet the reasons for giving a
+-- particular password do not exclude one another — a product line that caps
+-- passwords at 16 characters, a location entrusted to a contractor, an isolated
+-- address range. A device may fall under all three at once.
 
--- Étiquettes posées sur un équipement.
+-- Tags set on a device.
 create table if not exists device_tags (
     device_id  uuid not null references devices(id) on delete cascade,
     tag        text not null,
-    -- source : « manual », ou « rule:<uuid> » quand une règle l'a posée.
+    -- source: "manual", or "rule:<uuid>" when a rule set it.
     --
-    -- Rejouer les règles doit pouvoir RETIRER ce qu'une règle avait posé et qui
-    -- ne s'applique plus, sans jamais toucher à ce qu'un humain a décidé. Sans
-    -- cette colonne, la seule réévaluation sûre serait de ne rien retirer, et le
-    -- parc accumulerait des étiquettes périmées que personne n'oserait nettoyer.
+    -- Replaying the rules must be able to REMOVE what a rule had set and no longer
+    -- applies, without ever touching what a human decided. Without this column,
+    -- the only safe re-evaluation would be to remove nothing, and the fleet would
+    -- accumulate stale tags nobody would dare clean up.
     source     text not null default 'manual',
     created_at timestamptz not null default now(),
     primary key (device_id, tag)
@@ -24,20 +24,20 @@ create table if not exists device_tags (
 
 create index if not exists device_tags_tag_idx on device_tags (tag);
 
--- Règles d'étiquetage automatique, par site.
+-- Automatic tagging rules, per site.
 create table if not exists tag_rules (
     id         uuid primary key default gen_random_uuid(),
     site_id    uuid not null references sites(id) on delete cascade,
     tag        text not null,
-    -- priority départage deux identifiants d'étiquette qui viseraient le même
-    -- équipement : la plus haute gagne.
+    -- priority breaks the tie between two tag credentials that would target the
+    -- same device: the highest wins.
     priority   int not null default 0,
     enabled    boolean not null default true,
-    -- match : critères combinés en ET. Clés reconnues — vendor, model, location
-    -- (sous-chaîne insensible à la casse) et ip_prefix (CIDR).
+    -- match: criteria combined with AND. Recognised keys — vendor, model, location
+    -- (case-insensitive substring) and ip_prefix (CIDR).
     --
-    -- Une règle SANS critère ne s'applique à rien. Le contraire ferait d'une
-    -- ligne à moitié saisie une règle qui prend tout le parc.
+    -- A rule WITHOUT criteria applies to nothing. The opposite would turn a
+    -- half-typed line into a rule that takes the whole fleet.
     match      jsonb not null default '{}'::jsonb,
     note       text not null default '',
     created_at timestamptz not null default now(),
@@ -47,12 +47,12 @@ create table if not exists tag_rules (
 
 create index if not exists tag_rules_site_idx on tag_rules (site_id);
 
--- Un identifiant peut viser une ÉTIQUETTE au lieu d'un groupe.
+-- A credential may target a TAG instead of a group.
 --
--- Vide = l'identifiant ne vise pas d'étiquette (défaut du site, ou identifiant
--- de groupe). La contrainte d'unicité historique portait sur
--- (site_id, group_name, kind) : elle est élargie à l'étiquette, sinon un site ne
--- pourrait pas avoir deux identifiants d'étiquette distincts.
+-- Empty = the credential targets no tag (site default, or group credential).
+-- The historical uniqueness constraint was on (site_id, group_name, kind): it is
+-- widened to the tag, otherwise a site could not have two distinct tag
+-- credentials.
 alter table site_credentials
   add column if not exists tag text not null default '';
 

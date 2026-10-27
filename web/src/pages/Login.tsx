@@ -1,9 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth";
-import { ErrorMsg } from "../components";
+import { ActionButton, ErrorMsg, Field } from "../components";
 import LanguageSelector from "../i18n/LanguageSelector";
+import LoginBackdrop from "../LoginBackdrop";
 import Logo from "../Logo";
+import { Form } from "../ui/Form";
 
 export default function Login() {
   const { t } = useTranslation();
@@ -13,8 +15,7 @@ export default function Login() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -28,42 +29,43 @@ export default function Login() {
 
   return (
     <div className="login-wrap">
-      <form className="card login-card" onSubmit={submit}>
+      <LoginBackdrop />
+      <Form className="card login-card" onSubmit={submit} busy={busy}>
         {/* On the login screen, the name stays written next to the brand:
             this is the first contact, ambiguity is not desirable here. */}
         <div className="login-brand">
           <Logo size={40} />
           <h1>
-            mesh<span style={{ color: "var(--accent)" }}>craft</span>
+            mesh<span className="login-brand-accent">craft</span>
           </h1>
         </div>
-        <label>
-          <span className="lbl">{t("login.email")}</span>
+        <Field label={t("login.email")}>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
             autoFocus
             required
           />
-        </label>
-        <label>
-          <span className="lbl">{t("login.password")}</span>
+        </Field>
+        <Field label={t("login.password")}>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
             required
           />
-        </label>
+        </Field>
         <ErrorMsg error={error} />
-        <button type="submit" disabled={busy} style={{ width: "100%" }}>
+        <ActionButton kind="connect" type="submit" className="login-submit" disabled={busy}>
           {busy ? t("login.connecting") : t("login.submit")}
-        </button>
+        </ActionButton>
         <div className="login-lang">
           <LanguageSelector />
         </div>
-      </form>
+      </Form>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"meshcraft/internal/driver"
@@ -516,32 +517,82 @@ func (a *Admin) writeSection(ctx context.Context, section, action, inner, done s
 	return nil
 }
 
-// reUserName rereads the accounts that the device declares. Targeted extraction
-// is enough: the response mixes XML and fragments depending on the sections.
-var reUserName = regexp.MustCompile(`(?is)<AdminUserEntry>.*?<userName>(.*?)</userName>`)
+// reEntrySplit cuts the section into one chunk per account. Splitting rather
+// than matching a whole `<AdminUserEntry>…</AdminUserEntry>` block is
+// deliberate: this range answers with a mix of XML and fragments depending on
+// the sections asked for, and a parser that required the CLOSING tag would
+// return an empty list on a response that names accounts perfectly well — which
+// [Admin.EnsureAccount] would then read as "nothing exists yet" and try to
+// `add` an account that is already there.
+var reEntrySplit = regexp.MustCompile(`(?i)<AdminUserEntry>`)
 
-// Accounts lists the administration accounts present on the device.
+// reUserName and reAccessLevel read the two fields of one such chunk. The level
+// is in the SAME section as the name — the very field [adminUserEntry] writes —
+// so carrying it costs nothing beyond this second FindStringSubmatch.
+var (
+	reUserName    = regexp.MustCompile(`(?is)<userName>(.*?)</userName>`)
+	reAccessLevel = regexp.MustCompile(`(?is)<accessLevel>(.*?)</accessLevel>`)
+)
+
+// Accounts lists the administration accounts present on the device, with the
+// access level each one carries.
 //
 // This is a READ, and it is what makes account operations safe: knowing
 // what already exists before writing avoids adding an account that is
 // already there (which the device would refuse) and mistakenly believing
 // an account was deleted when it was not.
-func (a *Admin) Accounts(ctx context.Context) ([]string, error) {
+//
+// THE LEVEL COMES FREE, and this connector used to throw it away: the section
+// this GET already returns carries `<accessLevel>` beside every `<userName>`
+// (15 is read/write on this range — cf. [accessLevelRW], observed as
+// `<level>15</level>` on the administration session itself). One HTTP request,
+// same as before.
+//
+// An entry whose `<accessLevel>` is absent or unreadable comes back
+// [driver.PrivilegeUnknown]: this firmware has been seen answering with
+// fragments, and "the section did not carry the field" must not be reported
+// as level 0.
+func (a *Admin) Accounts(ctx context.Context) ([]driver.Account, error) {
 	var url = a.wcdURL() + "?{" + sectionAdminUsers + "}"
 	var resp, err = a.web.Get(ctx, url)
 	if err != nil {
 		a.step(false, "reading admin accounts", err.Error())
 		return nil, err
 	}
-	var out = []string{}
-	var m []string
-	for _, m = range reUserName.FindAllStringSubmatch(resp.Body, -1) {
-		out = append(out, strings.TrimSpace(m[1]))
+	var out = []driver.Account{}
+	var chunks = reEntrySplit.Split(resp.Body, -1)
+	var i int
+	// The first chunk is whatever came BEFORE the first entry: never an account.
+	for i = 1; i < len(chunks); i++ {
+		var name = reUserName.FindStringSubmatch(chunks[i])
+		if name == nil {
+			continue
+		}
+		out = append(out, driver.AccountAtLevel(strings.TrimSpace(name[1]),
+			parseAccessLevel(chunks[i]), sectionAdminUsers))
+	}
+	var told = make([]string, 0, len(out))
+	for i = range out {
+		told = append(told, out[i].Describe())
 	}
 	a.step(true, "admin accounts read",
 		fmt.Sprintf("HTTP %d — %d account(s): %s", resp.Status, len(out),
-			strings.Join(out, ", ")))
+			strings.Join(told, ", ")))
 	return out, nil
+}
+
+// parseAccessLevel reads `<accessLevel>` out of one entry chunk, and answers
+// [driver.PrivilegeUnknown] when the field is missing or not a number.
+func parseAccessLevel(chunk string) int {
+	var m = reAccessLevel.FindStringSubmatch(chunk)
+	if m == nil {
+		return driver.PrivilegeUnknown
+	}
+	var n, err = strconv.Atoi(strings.TrimSpace(m[1]))
+	if err != nil {
+		return driver.PrivilegeUnknown
+	}
+	return n
 }
 
 // EnsureAccount ensures that an account named `user` exists and has `secret`.
@@ -551,17 +602,13 @@ func (a *Admin) Accounts(ctx context.Context) ([]string, error) {
 // choose. This is also what makes the operation replayable — a write
 // interrupted and then resumed does not run into a half-created account.
 func (a *Admin) EnsureAccount(ctx context.Context, user, secret string) error {
-	var names, err = a.Accounts(ctx)
+	var present, err = a.Accounts(ctx)
 	if err != nil {
 		return err
 	}
 	var action = "add"
-	var n string
-	for _, n = range names {
-		if strings.EqualFold(n, user) {
-			action = "set"
-			break
-		}
+	if driver.HasAccount(present, user) {
+		action = "set"
 	}
 	var what = fmt.Sprintf("account %q created on device", user)
 	if action == "set" {
@@ -578,16 +625,107 @@ func (a *Admin) EnsureAccount(ctx context.Context, user, secret string) error {
 // factory-reset button, meaning a site visit. The caller MUST have proven
 // — by opening a real session, not by reading a return code — that
 // another account works before calling this.
+//
+// # THREE refusals, and the last two arrived on 2026-08-12
+//
+// Until then this method carried the CURRENT-SESSION refusal and nothing else,
+// on the range where a lockout is least repairable in the whole tree. Worse, the
+// gap was invisible: TODO.md listed `admin.go:605` among the connectors holding
+// a last-account guard, and that line is the [Admin.Accounts] call inside
+// [Admin.EnsureAccount] choosing `add` from `set`. The guard below is the one
+// `ubiquiti/edgeswitch` landed the same day (`accounts.go`, `deleteAccountFrom`),
+// ported — and it has to be at least as strict here, because that range at least
+// keeps a front-panel reset that a technician reaches over Ethernet afterwards;
+// this one answers on HTTPS only.
+//
+// THE PREDICATE IS "WHAT WOULD REMAIN", not "how many are there":
+// [driver.AccountsExcept] filters out the account about to go and the deletion
+// is refused when nothing survives it. That is `len(have) <= 1` made exact, and
+// it also lets through the delete of a name the device does not enumerate,
+// which removes nothing.
+//
+// # WHAT DIFFERS ON THIS PLATFORM: an empty read is NOT an empty device
+//
+// On the EdgeSwitch the account list comes from a CLI, and a read that fails
+// fails loudly — `readAccountsFrom` returns an error only when both of its
+// commands died, so "no accounts" and "could not read" are distinguishable
+// facts. HERE THEY ARE NOT, and that is the one thing this port could not copy:
+// [Admin.Accounts] is a `wcd` GET whose body is scanned for `<AdminUserEntry>`,
+// [driver.WebSession.Get] does not treat a non-200 as an error, and this
+// firmware answers a section it does not recognise with HTTP 200 and
+// `statusCode = -1` (the `UpdatePassword` finding, see [SetPassword]) — an
+// answer that parses to ZERO accounts and NO error. A bounced-to-login-page
+// response does the same. So `len(have) == 0` had to become a refusal in its own
+// right, and it is a sound one for a reason peculiar to a session-based read:
+// THIS SESSION IS OPEN. The device therefore holds at least the account it was
+// opened under, so a section naming none did not answer with the account list.
+// An empty list here is an unreadable one.
+//
+// The same asymmetry covers a TRUNCATED answer, which this firmware also
+// produces (it mixes XML with fragments — see [reEntrySplit]): a short list can
+// only make the survivor count too LOW, so the guard errs into refusing a
+// deletion that was fine. That is the direction a guard is allowed to be wrong
+// in.
+//
+// # Why a failed read REFUSES, where eos and ios proceed
+//
+// `arista/eos` and `cisco/ios` run their guard as `rerr == nil && len(have) <= 1`
+// and both justify failing open in one word: the console still works. There is no
+// console on a 1930 — no SSH, no Telnet, no serial port — so that justification
+// does not transfer. A deletion refused leaves a stale account, which is an open
+// door but a visible and reversible one; a deletion allowed on a read nobody could
+// make costs a site visit and the device's configuration with it.
+//
+// # WHAT THIS GUARD DOES NOT PROMISE, and the wording matters more than the code
+//
+// It does NOT promise a way back in. It counts accounts the DEVICE enumerates in
+// `AdminUserSetting`; it cannot know which of their secrets meshcraft holds,
+// which have ever been authenticated, or which is a factory password — a 1930 out
+// of the box carries `admin` with no password at all, and this connector would
+// count it as a survivor. So the honest guarantee is one sentence: THE DEVICE
+// WILL STILL HAVE AN ACCOUNT. "A credential remains that works" is a question
+// about the vault, which no connector can see, and it must not be implied here by
+// a predicate that cannot check it — a guard that suggests a safety property it
+// does not have is the one an operator stops thinking behind. The refusals and
+// the success line both say so on purpose.
+//
+// COST: one GET on an already-open session, the same read [Admin.EnsureAccount]
+// already pays for. This range grants five sessions and no new one is opened.
 func (a *Admin) DeleteAccount(ctx context.Context, user string) error {
 	if strings.EqualFold(user, a.User) {
 		// Deleting yourself would leave the current session without an owner,
 		// and equipment without guarantee that another account will respond.
+		// FREE: nothing is sent, not even the read below.
 		return fmt.Errorf("refusing to delete %q: it is the current session account", user)
+	}
+	var have, err = a.Accounts(ctx)
+	if err != nil {
+		return fmt.Errorf("refusing to delete %q on %s: the administration accounts could "+
+			"not be read, so nothing here can tell whether it is the last one — and this "+
+			"range has no SSH, no Telnet and no serial port, so a switch left without an "+
+			"account is recovered with the factory-reset button on site, at the cost of "+
+			"its configuration: %w", user, a.host, err)
+	}
+	if len(have) == 0 {
+		return fmt.Errorf("refusing to delete %q on %s: \"%s\" named no account at all, "+
+			"and this session is OPEN — the device holds at least the account it was "+
+			"opened under, so this read did not answer with the account list. An empty "+
+			"list here is an unreadable one, not an empty device, and this range has no "+
+			"console to repair a lockout from", user, a.host, sectionAdminUsers)
+	}
+	var remaining = driver.AccountsExcept(have, user)
+	if len(remaining) == 0 {
+		return fmt.Errorf("refusing to delete %q on %s: \"%s\" enumerates it as the only "+
+			"administration account, and this range has no SSH, no Telnet and no serial "+
+			"port — a switch with no account is recovered with the factory-reset button "+
+			"on site, at the cost of its configuration", user, a.host, sectionAdminUsers)
 	}
 	return a.writeSection(ctx, sectionAdminUsers, "delete",
 		"<AdminUserList><AdminUserEntry><userName>"+xmlEscape(user)+
 			"</userName></AdminUserEntry></AdminUserList>",
-		fmt.Sprintf("account %q removed from device", user))
+		fmt.Sprintf("account %q removed from device — %d account(s) remain, which is NOT a "+
+			"promise that anyone holds a secret that opens one: this counts what the device "+
+			"enumerates, not what the vault can prove", user, len(remaining)))
 }
 
 // SaveConfig copies the CURRENT configuration into the STARTUP

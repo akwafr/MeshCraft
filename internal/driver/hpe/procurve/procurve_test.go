@@ -150,10 +150,25 @@ func TestSetSecretRefusesAnEmptySecret(t *testing.T) {
 	}
 }
 
-func TestDriverDeclaresNoExtras(t *testing.T) {
+// WritesExtra is a PROMISE that an apply carries that configuration. "stp" is
+// kept in step with ApplySpanningTree existing and "port_admin" with
+// ApplyPortAdmin (declared 2026-08-06, on a DEDUCED "enable" verb — contract.go
+// says on what terms); everything else must stay undeclared until something
+// writes it, because a name here that resolves to nothing reports a configuration
+// as applied that never arrived.
+func TestDriverDeclaresOnlyTheExtrasItWrites(t *testing.T) {
 	var d = &Driver{}
+	if !d.WritesExtra("stp") {
+		t.Error("ApplySpanningTree exists and \"stp\" is not declared: the UI would " +
+			"never offer the gesture this connector implements")
+	}
+	if !d.WritesExtra("port_admin") {
+		t.Error("ApplyPortAdmin exists and the gesture was asked for fleet-wide: " +
+			"api/portadmin_apply.go gates on this name and would refuse it")
+	}
 	var name string
-	for _, name = range []string{"stp", "poe", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "dhcp_snooping", "port_security", "lldp",
+		"port_power_cycle"} {
 		if d.WritesExtra(name) {
 			t.Errorf("declares %q writable, and nothing writes it", name)
 		}

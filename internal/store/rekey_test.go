@@ -42,28 +42,39 @@ import (
 // would destroy it, and authentication would stop working.
 //
 // This test freezes the exact list, both ways.
-func TestInventaireDesColonnesScellees(t *testing.T) {
-	var attendu = []string{
+func TestSealedColumnsInventory(t *testing.T) {
+	var want = []string{
 		"site_credentials.secret_enc",
 		"site_credentials.secret2_enc",
 		"credential_generations.secret_enc",
 		"credential_generations.secret2_enc",
 		"known_credentials.secret_enc",
+		// Added with migration 0046: the API token of a foreign controller a
+		// site is backed by (ADR-0015). It is a per-SITE secret, so it belongs
+		// in the vault and therefore in this inventory — a sealed column
+		// missing here is a secret destroyed at the next key rotation.
+		"site_extensions.token_enc",
+		// Added with migration 0048: the Telegram bot token, or the whole Slack
+		// webhook URL, of a notification channel (ADR-0024). Same reasoning as
+		// 0046 — a per-channel secret an operator edits on screen belongs in the
+		// vault — and the same trap: absent from this inventory, the token is
+		// destroyed at the next key rotation without a word.
+		"notify_channels.token_enc",
 	}
 	var got []string
 	var c SealedColumn
 	for _, c = range SealedColumns() {
 		got = append(got, c.Table+"."+c.Column)
 	}
-	if strings.Join(got, ",") != strings.Join(attendu, ",") {
-		t.Fatalf("inventory changed.\nexpected: %v\ngot:      %v", attendu, got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("inventory changed.\nexpected: %v\ngot:      %v", want, got)
 	}
 
 	// bytea columns that are NOT ciphertext must never enter here.
-	var interdit = []string{"token_hash", "secret_hash", "value", "fingerprint",
+	var forbidden = []string{"token_hash", "secret_hash", "value", "fingerprint",
 		"pw_hash", "migrate_token"}
 	var col string
-	for _, col = range interdit {
+	for _, col = range forbidden {
 		for _, c = range SealedColumns() {
 			if c.Column == col {
 				t.Fatalf("%s.%s is a fingerprint or key, not a sealed secret: re-encrypting "+
@@ -76,19 +87,19 @@ func TestInventaireDesColonnesScellees(t *testing.T) {
 // Locks are always taken in the same order, otherwise two concurrent operations deadlock — and
 // a deadlock on this operation leaves the operator facing a hung process, unsure whether to
 // kill it.
-func TestOrdreDeVerrouillageStable(t *testing.T) {
+func TestStableLockOrder(t *testing.T) {
 	var a = strings.Join(sealedTables(), ",")
 	var b = strings.Join(sealedTables(), ",")
 	if a != b {
 		t.Fatal("lock order is not deterministic")
 	}
-	if a != "credential_generations,known_credentials,site_credentials" {
+	if a != "credential_generations,known_credentials,notify_channels,site_credentials,site_extensions" {
 		t.Fatalf("unexpected order: %s", a)
 	}
 	// Each table once: locking the same twice is not a SQL error, but would signal a duplicated
 	// inventory entry.
-	if len(sealedTables()) != 3 {
-		t.Fatalf("%d tables, expected 3", len(sealedTables()))
+	if len(sealedTables()) != 5 {
+		t.Fatalf("%d tables, expected 5", len(sealedTables()))
 	}
 }
 
@@ -252,18 +263,18 @@ func seedVault(t *testing.T, st *Store, ctx context.Context, key []byte) *vault 
 	return v
 }
 
-// assertOuvertureAvec re-reads the ENTIRE vault and verifies each value opens with `key` and
-// yields expected plaintext. `interdite` must open nothing.
-func assertOuvertureAvec(t *testing.T, st *Store, ctx context.Context, v *vault,
-	key, interdite []byte) {
+// assertOpensWith re-reads the ENTIRE vault and verifies each value opens with `key` and
+// yields expected plaintext. `forbiddenKey` must open nothing.
+func assertOpensWith(t *testing.T, st *Store, ctx context.Context, v *vault,
+	key, forbiddenKey []byte) {
 	t.Helper()
 	var box, err = secretbox.New(key, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var boxInterdite *secretbox.Service
-	if interdite != nil {
-		if boxInterdite, err = secretbox.New(interdite, false); err != nil {
+	var forbiddenBox *secretbox.Service
+	if forbiddenKey != nil {
+		if forbiddenBox, err = secretbox.New(forbiddenKey, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -297,8 +308,8 @@ func assertOuvertureAvec(t *testing.T, st *Store, ctx context.Context, v *vault,
 				rows.Close()
 				t.Fatalf("%s id=%s: plaintext %q, expected %q", name, id, got, want)
 			}
-			if boxInterdite != nil {
-				if _, err = boxInterdite.Open(enc); err == nil {
+			if forbiddenBox != nil {
+				if _, err = forbiddenBox.Open(enc); err == nil {
 					rows.Close()
 					t.Fatalf("%s id=%s: still opens with key that should no longer work — "+
 						"re-encryption did not happen", name, id)
@@ -308,23 +319,23 @@ func assertOuvertureAvec(t *testing.T, st *Store, ctx context.Context, v *vault,
 		}
 		rows.Close()
 	}
-	var attendu int
+	var want int
 	var m map[string]string
 	for _, m = range v.plaintexts {
-		attendu += len(m)
+		want += len(m)
 	}
-	if n != attendu {
-		t.Fatalf("%d value(s) re-read, %d expected", n, attendu)
+	if n != want {
+		t.Fatalf("%d value(s) re-read, %d expected", n, want)
 	}
 }
 
 // Nominal path: after re-encryption, everything reads with the NEW key and nothing with the
 // old; counts match; fingerprint is the new key's; old key gone from database.
-func TestRekeyCheminNominal(t *testing.T) {
+func TestRekeyNominalPath(t *testing.T) {
 	var st, ctx = testStore(t)
-	var ancienne, _ = secretbox.NewRandomKey()
-	var nouvelle, _ = secretbox.NewRandomKey()
-	var v = seedVault(t, st, ctx, ancienne)
+	var oldKey, _ = secretbox.NewRandomKey()
+	var newKey, _ = secretbox.NewRandomKey()
+	var v = seedVault(t, st, ctx, oldKey)
 
 	// Inventory BEFORE, the one the operator compares to the report.
 	var before, err = st.CountSealed(ctx)
@@ -333,7 +344,7 @@ func TestRekeyCheminNominal(t *testing.T) {
 	}
 
 	var report RekeyReport
-	report, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{
+	report, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{
 		LockTimeout: 10 * time.Second,
 	})
 	if err != nil {
@@ -342,7 +353,7 @@ func TestRekeyCheminNominal(t *testing.T) {
 
 	// Exact counts, column by column: 2 credentials -> 2 secret_enc, 1 secret2_enc; 3
 	// generations -> 3 secret_enc, 1 secret2_enc; 2 standard credentials.
-	var attendu = map[string]int{
+	var want = map[string]int{
 		"site_credentials.secret_enc":        2,
 		"site_credentials.secret2_enc":       1,
 		"credential_generations.secret_enc":  3,
@@ -352,11 +363,11 @@ func TestRekeyCheminNominal(t *testing.T) {
 	var c RekeyCount
 	for _, c = range report.Columns {
 		var name = c.Table + "." + c.Column
-		if c.Rows != attendu[name] {
-			t.Errorf("%s: %d row(s), %d expected", name, c.Rows, attendu[name])
+		if c.Rows != want[name] {
+			t.Errorf("%s: %d row(s), %d expected", name, c.Rows, want[name])
 		}
-		if c.Resealed != attendu[name] {
-			t.Errorf("%s: %d re-sealed, %d expected", name, c.Resealed, attendu[name])
+		if c.Resealed != want[name] {
+			t.Errorf("%s: %d re-sealed, %d expected", name, c.Resealed, want[name])
 		}
 		if c.Already != 0 {
 			t.Errorf("%s: %d unexpected already-up-to-date", name, c.Already)
@@ -388,7 +399,7 @@ func TestRekeyCheminNominal(t *testing.T) {
 	}
 
 	// Vault: readable with new, not at all with old.
-	assertOuvertureAvec(t, st, ctx, v, nouvelle, ancienne)
+	assertOpensWith(t, st, ctx, v, newKey, oldKey)
 
 	// Old key no longer in database — a key no longer needed is just a leak waiting.
 	var _, keyErr = st.InstanceSecretValue(ctx, CredentialsKeyName)
@@ -400,7 +411,7 @@ func TestRekeyCheminNominal(t *testing.T) {
 	if fp, err = st.CredentialsKeyFingerprint(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !secretbox.SameFingerprint(fp, secretbox.Fingerprint(nouvelle)) {
+	if !secretbox.SameFingerprint(fp, secretbox.Fingerprint(newKey)) {
 		t.Error("stored fingerprint is not the new key's")
 	}
 }
@@ -411,14 +422,14 @@ func TestRekeyCheminNominal(t *testing.T) {
 //
 // Cut deliberately after the third write — mid-operation, rows written behind and intact rows
 // ahead — and verify the database did NOT move one byte.
-func TestRekeyEstAtomique(t *testing.T) {
+func TestRekeyIsAtomic(t *testing.T) {
 	var st, ctx = testStore(t)
-	var ancienne, _ = secretbox.NewRandomKey()
-	var nouvelle, _ = secretbox.NewRandomKey()
-	var v = seedVault(t, st, ctx, ancienne)
+	var oldKey, _ = secretbox.NewRandomKey()
+	var newKey, _ = secretbox.NewRandomKey()
+	var v = seedVault(t, st, ctx, oldKey)
 
 	var boom = errors.New("simulated cut mid-operation")
-	var _, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{
+	var _, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{
 		LockTimeout: 10 * time.Second,
 		AfterRow: func(n int) error {
 			if n == 3 {
@@ -433,7 +444,7 @@ func TestRekeyEstAtomique(t *testing.T) {
 
 	// Everything must still open with the OLD key, nothing with the new: database exactly as
 	// before, fully functional, operation can be retried.
-	assertOuvertureAvec(t, st, ctx, v, ancienne, nouvelle)
+	assertOpensWith(t, st, ctx, v, oldKey, newKey)
 
 	// Side effects must be rolled back too: fingerprint written without secrets would refuse
 	// startup on a healthy database.
@@ -448,31 +459,31 @@ func TestRekeyEstAtomique(t *testing.T) {
 	if key, err = st.InstanceSecretValue(ctx, CredentialsKeyName); err != nil {
 		t.Fatalf("old key was deleted despite rollback: %v", err)
 	}
-	if string(key) != string(ancienne) {
+	if string(key) != string(oldKey) {
 		t.Error("database key changed despite rollback")
 	}
 }
 
 // Replaying on an ALREADY rotated database must be harmless. That allows relaunching calmly
 // when unsure whether the first attempt succeeded — common after a terminal disconnect.
-func TestRekeyEstIdempotent(t *testing.T) {
+func TestRekeyIsIdempotent(t *testing.T) {
 	var st, ctx = testStore(t)
-	var ancienne, _ = secretbox.NewRandomKey()
-	var nouvelle, _ = secretbox.NewRandomKey()
-	var v = seedVault(t, st, ctx, ancienne)
+	var oldKey, _ = secretbox.NewRandomKey()
+	var newKey, _ = secretbox.NewRandomKey()
+	var v = seedVault(t, st, ctx, oldKey)
 
-	var _, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{})
+	var _, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{})
 	if err != nil {
 		t.Fatalf("first pass: %v", err)
 	}
 	// Key gone from database; put the SAME old one back to replay exactly the call, as if the
 	// operator reran the command.
-	if err = st.PutInstanceSecret(ctx, CredentialsKeyName, ancienne); err != nil {
+	if err = st.PutInstanceSecret(ctx, CredentialsKeyName, oldKey); err != nil {
 		t.Fatal(err)
 	}
 
 	var report RekeyReport
-	report, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{})
+	report, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{})
 	if err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -490,39 +501,39 @@ func TestRekeyEstIdempotent(t *testing.T) {
 		t.Errorf("incomplete verification: %d/%d", report.Verified, rows)
 	}
 	// Vault intact.
-	assertOuvertureAvec(t, st, ctx, v, nouvelle, ancienne)
+	assertOpensWith(t, st, ctx, v, newKey, oldKey)
 }
 
 // A value unreadable with BOTH keys must abort the entire operation. Skipping it would be the
 // worst choice: rotation would sign permanent loss of what we failed to read, since the old
 // key disappears.
-func TestRekeyRefuseUneValeurIllisible(t *testing.T) {
+func TestRekeyRefusesAnUnreadableValue(t *testing.T) {
 	var st, ctx = testStore(t)
-	var ancienne, _ = secretbox.NewRandomKey()
-	var nouvelle, _ = secretbox.NewRandomKey()
-	var v = seedVault(t, st, ctx, ancienne)
+	var oldKey, _ = secretbox.NewRandomKey()
+	var newKey, _ = secretbox.NewRandomKey()
+	var v = seedVault(t, st, ctx, oldKey)
 
 	// Value sealed by a THIRD key, neither opens.
-	var perdue, _ = secretbox.NewRandomKey()
-	var box, _ = secretbox.New(perdue, false)
+	var lost, _ = secretbox.NewRandomKey()
+	var box, _ = secretbox.New(lost, false)
 	var enc, _ = box.Seal("secret from elsewhere")
-	var orphelin string
+	var orphan string
 	var err = st.pool.QueryRow(ctx,
 		`insert into known_credentials (name, kind, username, secret_enc)
 		 values ('From elsewhere', 'ssh', 'admin', $1) returning id::text`,
-		enc).Scan(&orphelin)
+		enc).Scan(&orphan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Global verification must ignore this row: readable by neither key, that is its point.
-	v.ignore("known_credentials.secret_enc", orphelin)
+	v.ignore("known_credentials.secret_enc", orphan)
 
-	_, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{})
+	_, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{})
 	if !errors.Is(err, ErrUndecryptable) {
 		t.Fatalf("expected ErrUndecryptable, got: %v", err)
 	}
 	// Nothing moved: rest of vault still opens with old key.
-	assertOuvertureAvec(t, st, ctx, v, ancienne, nil)
+	assertOpensWith(t, st, ctx, v, oldKey, nil)
 	var fp []byte
 	if fp, err = st.CredentialsKeyFingerprint(ctx); err != nil {
 		t.Fatal(err)
@@ -534,15 +545,15 @@ func TestRekeyRefuseUneValeurIllisible(t *testing.T) {
 
 // Empty vault (new instance) re-encrypts without error and does nothing: operation must be a
 // non-event, not a special case that crashes.
-func TestRekeySurCoffreVide(t *testing.T) {
+func TestRekeyOnEmptyVault(t *testing.T) {
 	var st, ctx = testStore(t)
-	var ancienne, _ = secretbox.NewRandomKey()
-	var nouvelle, _ = secretbox.NewRandomKey()
-	var seedErr = st.PutInstanceSecret(ctx, CredentialsKeyName, ancienne)
+	var oldKey, _ = secretbox.NewRandomKey()
+	var newKey, _ = secretbox.NewRandomKey()
+	var seedErr = st.PutInstanceSecret(ctx, CredentialsKeyName, oldKey)
 	if seedErr != nil {
 		t.Fatal(seedErr)
 	}
-	var report, err = st.RekeyCredentials(ctx, ancienne, nouvelle, RekeyOptions{})
+	var report, err = st.RekeyCredentials(ctx, oldKey, newKey, RekeyOptions{})
 	if err != nil {
 		t.Fatalf("re-encryption of empty vault: %v", err)
 	}
@@ -557,14 +568,14 @@ func TestRekeySurCoffreVide(t *testing.T) {
 	if fp, err = st.CredentialsKeyFingerprint(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !secretbox.SameFingerprint(fp, secretbox.Fingerprint(nouvelle)) {
+	if !secretbox.SameFingerprint(fp, secretbox.Fingerprint(newKey)) {
 		t.Error("fingerprint not stored on empty vault")
 	}
 }
 
 // Fingerprint: one row, no matter what. Two rows would mean two contradictory truths about
 // what sealed the database — and the guard would read one at random.
-func TestEmpreinteResteUnique(t *testing.T) {
+func TestFingerprintStaysUnique(t *testing.T) {
 	var st, ctx = testStore(t)
 	var a, _ = secretbox.NewRandomKey()
 	var b, _ = secretbox.NewRandomKey()
@@ -594,7 +605,7 @@ func TestEmpreinteResteUnique(t *testing.T) {
 
 // Missing fingerprint is not an error: state of every pre-migration-0024 instance, and
 // treating it as error would refuse to start the entire installed fleet.
-func TestEmpreinteAbsenteNEstPasUneErreur(t *testing.T) {
+func TestMissingFingerprintIsNotAnError(t *testing.T) {
 	var st, ctx = testStore(t)
 	var fp, err = st.CredentialsKeyFingerprint(ctx)
 	if err != nil {

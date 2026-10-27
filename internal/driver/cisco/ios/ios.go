@@ -3,14 +3,29 @@
 //
 // # The status of what is written here, said before anything else
 //
-// Every CLI form below is DOCUMENTED, not captured. That is the difference
-// with the FS S3900 connector next door, whose every string was typed on lab
-// hardware and whose comments say so line by line. IOS is a far more stable and
-// far better documented CLI than FSOS — which is why this connector exists at
-// all before a capture — but "well known" is not "observed", and the project
-// rule does not bend for a popular vendor: what has not been seen is announced
-// as such, in the transcript, at every login (cf. [Client.postLogin]), and in
-// [Driver.ResetProcedure] via `Confirmed: false`.
+// This header opened with "Every CLI form below is DOCUMENTED, not captured"
+// from the day the connector was written until 2026-08-08, by which point the
+// lab 2960-X (CiscoLabFirst1) had disproved it several times over. It is now
+// SPLIT, because a blanket claim in either direction is the wrong shape:
+//
+//   - EXERCISED THROUGH THIS CONNECTOR, on that hardware: management addressing
+//     (2026-08-03), the system name (2026-08-05, a converging rename),
+//     [Client.ApplyTrapReceiver] and [Client.ApplyStormControl] (each apply →
+//     idempotent re-apply → revert, proven by re-read — live_trap_test.go and
+//     live_stormcontrol_test.go), plus the spanning-tree read (2026-08-02) and
+//     the DHCP-snooping read off AND on (2026-08-08, both in testdata/);
+//   - STILL DOCUMENTED ONLY: the port VLAN write path — "switchport mode
+//     access / trunk", the allowed-VLAN forms and the encapsulation fallback —
+//     and "shutdown" on a physical port. These are the forms whose refusals
+//     name [DocumentedRelease] and ask for a survey.
+//
+// The rule that produced the original sentence has not changed and is why the
+// split is worth maintaining: IOS is a far more stable and far better
+// documented CLI than FSOS — which is why this connector existed at all before
+// a capture — but "well known" is not "observed". What has not been seen is
+// announced as such, in the transcript, at every login (cf.
+// [Client.postLogin]), and in [Driver.ResetProcedure] via `Confirmed: false`
+// (that one is still accurate: no factory reset has been performed here).
 //
 // The practical consequence is in apply.go: forms that differ across the
 // Catalyst family are run as ORDERED candidates rather than assumed. The one
@@ -41,6 +56,7 @@
 package ios
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -64,6 +80,9 @@ func (d *Driver) Info() driver.Info {
 		Vendor:    "Cisco",
 		Family:    "Catalyst 2960 / 2960-X / 2960-XR (IOS 12.2–15.2)",
 		Transport: []string{"ssh", "serial", "telnet"},
+		// The CLI sits behind SSH authentication: nothing is identifiable
+		// without a credential.
+		IdentifyNeedsCredentials: true,
 		Doc: "Catalyst 2960-X Series Switch Command Reference, IOS 15.2(7)E " +
 			"(https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst2960x/software/15-2_7_e/command_reference.html)",
 	}
@@ -105,11 +124,21 @@ func monitoring() driver.MonitoringCapabilities {
 				Metrics:     []string{"lldp"},
 				MinInterval: 30 * time.Second,
 				Note: "standard LLDP-MIB (1.0.8802). IOS ships with LLDP OFF and speaks " +
-					"only CDP, so this branch is empty until « lldp run » is configured " +
+					"only CDP, so this branch is empty until \"lldp run\" is configured " +
 					"globally — which provisioning NOW writes (cf. MgmtPushCmds). A switch " +
 					"adopted before that change, or configured by hand, still needs the " +
 					"command: the LLDP screen reports not_served rather than a fault, and " +
 					"the device is invisible to every neighbour in the fleet until it is set",
+			},
+			{
+				Kind:        "snmp",
+				Metrics:     []string{"fdb"},
+				MinInterval: 30 * time.Second,
+				Note: "MEASURED (walks 2026-08-13 on the C2960X): dot1qTpFdbPort is EMPTY " +
+					"and the flat dot1dTpFdbPort serves only the default VLAN's instance " +
+					"(6 rows, all VLAN 1). IOS reads its table per VLAN through community " +
+					"indexing (\"community@N\"), VLANs enumerated from vtpVlanState (9 rows " +
+					"here, of which 1002-1005 are FDDI/TR defaults) — hence FDBPerVLAN below.",
 			},
 			{
 				Kind:        "snmp",
@@ -120,28 +149,49 @@ func monitoring() driver.MonitoringCapabilities {
 					"CISCO-MEMORY-POOL-MIB (enterprise 9), which the poller does not query — " +
 					"cf. the Unavailable declarations below",
 			},
-		},
-		// « snmp-server host » exists on IOS and is not written by this connector:
-		// declaring traps would open 162/udp on the proxy for a destination nobody
-		// posed.
-		Traps:  false,
-		Syslog: false,
-		// What this platform does not deliver TO THIS PRODUCT, with the reason.
-		// Said out loud so the screen answers "why is there no CPU curve?" instead
-		// of leaving an operator waiting for a release.
-		//
-		// Note the wording: these absences are NOT observed on hardware (no walk
-		// has been run on a 2960X here), they follow from what the POLLER asks
-		// for. Observed stays false — an assumed absence must remain revisable.
-		Unavailable: []driver.MetricUnavailable{
 			{
-				Metric:   "optical_power",
-				Observed: false,
-				Source: "the poller's optical OIDs are MikroTik-proprietary (mtxrOptical, " +
-					"1.3.6.1.4.1.14988.1.1.19). IOS exposes transceiver diagnostics under " +
-					"CISCO-ENTITY-SENSOR-MIB on models whose SFPs support DOM — never queried here",
+				Kind:    "snmp",
+				Metrics: []string{"optical_power"},
+				// A minute: a fibre's level moves on the minute scale, and the walk
+				// is six branches joined per cage rather than one column.
+				MinInterval: time.Minute,
+				Note: "CISCO-ENTITY-SENSOR-MIB (enterprise 9.9.91), JOINED to ENTITY-MIB to " +
+					"learn which port each sensor describes. CAPTURED 2026-08-12 on a " +
+					"WS-C2960X-24TD-L: entSensorType 14 is dBm, and entPhysicalName names both " +
+					"the direction (\"Te1/0/2 Transmit Power Sensor\") and — through " +
+					"entPhysicalContainedIn — the port (\"TenGigabitEthernet1/0/2\", an " +
+					"SFP-10GBase-LR). TX -3.9 dBm and RX -2.7 dBm read back on that cage, with " +
+					"module temperature, supply voltage and laser bias on the same join. The " +
+					"STANDARD ENTITY-SENSOR-MIB (1.3.6.1.2.1.99) answers NOTHING on this " +
+					"platform, which is why the enterprise tree is the one walked",
 			},
 		},
+		// "snmp-server host" IS written by this connector (trap.go,
+		// [Client.ApplyTrapReceiver]): declaring it here is what makes the proxy
+		// open 162/udp for this platform (watchConfigFor) — the two halves of the
+		// same capability, per the [driver.TrapPusher] contract.
+		Traps:  true,
+		Syslog: false,
+		// The community@vlan regime the fdb channel's note establishes: the
+		// controller copies this onto the watch, the proxy executes (PollFDB).
+		FDBPerVLAN: true,
+		// NOTHING IS DECLARED UNAVAILABLE ON THIS PLATFORM ANY MORE, and the
+		// emptiness is the record of a walk rather than an oversight.
+		//
+		// The list held one entry — `optical_power` — whose reason was that the
+		// poller's optical OIDs are MikroTik-proprietary and that IOS carries DOM
+		// "under CISCO-ENTITY-SENSOR-MIB on models whose SFPs support DOM, never
+		// queried here". On 2026-08-12 that tree WAS queried, on a live
+		// WS-C2960X-24TD-L, and it answers: the channel above quotes the capture.
+		// The entry went with it, because an Unavailable that has stopped being
+		// true is worse than none — a screen repeats it to an operator as the
+		// reason a curve is missing, and they wait for a release that already
+		// shipped.
+		//
+		// The old preamble also said no walk had ever been run on a 2960X here.
+		// Several have now (health scales 2026-08-02, DOM 2026-08-12), so an
+		// absence added below from now on should say which walk found it.
+		Unavailable: nil,
 	}
 }
 
@@ -170,8 +220,27 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 		// A 2960-X carries 255 active VLANs (LAN Base), not 4094 — the ID range
 		// and the SIMULTANEOUS count are two different limits, and it is the
 		// second one a write hits.
-		MaxVlans:     255,
-		Features:     map[string]bool{"ssh": true, "telnet": true, "serial": true},
+		MaxVlans: 255,
+		Features: map[string]bool{"ssh": true, "telnet": true, "serial": true,
+			// LACP: read AND written live on the lab C2960X (2026-08-13) —
+			// Po5 built with "channel-group 5 mode active", read back in
+			// "show etherchannel summary", torn down clean.
+			"LACP": true,
+			// MSTRegion: this connector emits the whole triplet —
+			// "spanning-tree mst configuration" then name / revision /
+			// "instance N vlan …" — and emits it FIRST in the block, because a
+			// mode written without its region puts the switch in a region of one
+			// (stp.go's header argues it at length).
+			//
+			// NOT FeatSTPSuperRoot, which this connector still refuses: the two
+			// keys exist precisely so that "writes a region" and "expresses Super
+			// Root" can disagree on the same platform, and here they do. Declaring
+			// the region was an omission ADR-0023 closes, not a new promise — the
+			// code has emitted it since the file was written.
+			driver.FeatMSTRegion: true},
+		// 2960-X EtherChannel bounds (LAN Base): 24 groups of 8.
+		MaxLAGs:      24,
+		PortsPerLAG:  8,
 		STPModes:     []string{"stp", "rstp", "mstp"},
 		SNMPVersions: []string{"v1", "v2c"},
 		// vty 0 15 = sixteen lines; the console is one more. Kept at 5 for the
@@ -188,21 +257,30 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			DHCP:      true,
 			Gateway:   true,
 			DNS:       true,
-			// A 2960-X is L2: it has no routing table, only « ip default-gateway ».
+			// A 2960-X is L2: it has no routing table, only "ip default-gateway".
 			// Off-subnet outbound therefore works, through that gateway alone.
 			Routed:    true,
 			IPARP:     true,
 			OutOfBand: true, // RJ45 console, 9600 8N1
-			// ApplySameVLAN stays FALSE: the write forms are documented, none has
-			// been run on hardware from this connector. It flips the day a
-			// same-VLAN re-addressing is observed to work end to end — not before,
-			// because this is the capability that decides whether a screen offers
-			// a button that can make a device mute.
-			ApplySameVLAN: false,
+			// ApplySameVLAN: EXERCISED ON HARDWARE 2026-08-03, on the lab
+			// WS-C2960X at 192.0.2.2. driver.MgmtAddrWriter re-applied the
+			// address the switch already carried (192.0.2.2/16 on vlan99, with
+			// its gateway) through the real command path — interface selection
+			// from the read, CIDR converted to the dotted mask IOS wants,
+			// "no shutdown", "ip default-gateway", then a re-read that came
+			// back identical on a session that survived.
+			//
+			// What that proves and what it does not: the FORMS are accepted and
+			// the block applies cleanly. A re-address to a DIFFERENT subnet was
+			// deliberately not run — the session travels on the address being
+			// moved — so the honest statement is that this connector can apply
+			// addressing, and that the caller must verify through the new
+			// address (which ApplyMgmtAddressing says in its own notes).
+			ApplySameVLAN: true,
 			Notes: []string{
-				"« ip address A.B.C.D M.M.M.M » (dotted mask) — IOS does not accept the " +
+				"\"ip address A.B.C.D M.M.M.M\" (dotted mask) — IOS does not accept the " +
 					"CIDR form the FS connector uses",
-				"an SVI created by « interface vlan N » comes up SHUTDOWN: « no shutdown » " +
+				"an SVI created by \"interface vlan N\" comes up SHUTDOWN: \"no shutdown\" " +
 					"is required, and the VLAN must exist in the VLAN database first",
 				"changing the address of the SVI the session came in through cuts the " +
 					"session: verify afterward through the NEW address",
@@ -212,9 +290,14 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 			Custom: true,
 			Notes: []string{
 				"username U privilege 15 secret 0 SECRET",
-				"enable secret 0 SECRET",
-				"SSH needs « ip domain-name » + « crypto key generate rsa » before " +
-					"« transport input ssh » is of any use",
+				"NO ENABLE PASSWORD is set, by fleet rule, and \"no enable secret\" / " +
+					"\"no enable password\" are written to remove one a device already " +
+					"carried. On THIS platform that makes \"privilege 15\" above " +
+					"load-bearing: IOS refuses \"enable\" from a vty when no enable " +
+					"password exists (\"% No password set\"), so an account without it " +
+					"cannot reach \"#\" over the network — only from the console",
+				"SSH needs \"ip domain-name\" + \"crypto key generate rsa\" before " +
+					"\"transport input ssh\" is of any use",
 			},
 		},
 	}
@@ -223,43 +306,45 @@ func (d *Driver) Capabilities(model string) driver.Capabilities {
 func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 	return driver.ResetProcedure{
 		Software: "enable; write erase → [confirm]; delete flash:vlan.dat → [confirm] ×2; " +
-			"reload → answer « no » to « Save? », then [confirm]",
-		Hardware: "Power off. Hold MODE and power on; release when the SYST LED blinks " +
-			"amber then turns green (10–15 s) → « switch: » prompt. " +
+			"reload → answer \"no\" to \"Save?\", then [confirm]",
+		Hardware: "ASSISTED by the serial wizard (Add → serial → hardware reset): it " +
+			"watches the console, tells you when to power-cycle holding MODE and when " +
+			"to release, then wipes and provisions by itself. By hand: power off, hold " +
+			"MODE and power on, release at the \"switch:\" prompt, then " +
 			"flash_init ; del flash:config.text ; del flash:vlan.dat ; boot",
 		Erases: []string{
 			"startup configuration (nvram)",
-			"VLAN database — ONLY if flash:vlan.dat is deleted explicitly: « write erase » leaves it",
+			"VLAN database — ONLY if flash:vlan.dat is deleted explicitly: \"write erase\" leaves it",
 		},
 		AfterReset: []string{
 			"9600 8N1 console (NOT 115200 — that is the FS default)",
-			"« Would you like to enter the initial configuration dialog? [yes/no]: » → answer no",
-			"« Press RETURN to get started! » → Switch> , « enable » gives # with NO password",
+			"\"Would you like to enter the initial configuration dialog? [yes/no]:\" → answer no",
+			"\"Press RETURN to get started!\" → Switch> , \"enable\" gives # with NO password",
 			"push management via MgmtPushCmds / soft-reset",
 		},
 		Pitfalls: []string{
-			"« reload » asks « System configuration has been modified. Save? [yes/no]: » — " +
+			"\"reload\" asks \"System configuration has been modified. Save? [yes/no]:\" — " +
 				"answering yes RE-SAVES the configuration that was just erased. Answer no",
-			"« write erase » does NOT remove the VLAN database: delete flash:vlan.dat too, " +
+			"\"write erase\" does NOT remove the VLAN database: delete flash:vlan.dat too, " +
 				"or VLANs survive the reset",
 			"the setup dialog after reboot swallows every command typed at it and answers " +
-				"« % Please answer 'yes' or 'no'. » — it must be declined before anything else",
-			"« crypto key generate rsa » fails with « % Please define a domain-name first » " +
-				"until « ip domain-name » is set; it then takes tens of seconds on a 2960-X",
-			"« switchport mode trunk » is refused on 3560/3750 until « switchport trunk " +
-				"encapsulation dot1q » is set; a 2960/2960-X refuses that same encapsulation " +
+				"\"% Please answer 'yes' or 'no'.\" — it must be declined before anything else",
+			"\"crypto key generate rsa\" fails with \"% Please define a domain-name first\" " +
+				"until \"ip domain-name\" is set; it then takes tens of seconds on a 2960-X",
+			"\"switchport mode trunk\" is refused on 3560/3750 until \"switchport trunk " +
+				"encapsulation dot1q\" is set; a 2960/2960-X refuses that same encapsulation " +
 				"line — the connector tries both forms in order rather than assuming one",
-			"a non-k9 image has no « crypto » command at all: SSH is then impossible and " +
+			"a non-k9 image has no \"crypto\" command at all: SSH is then impossible and " +
 				"the device stays serial/telnet only",
 			"the uplink must carry the management VLAN (switchport trunk allowed vlan add N) " +
 				"or the probe that follows the push cannot reach the new address",
 			"THIRD-PARTY SFP: IOS refuses any optic it does not read as Cisco-coded, shuts " +
 				"the port (err-disabled, reason gbic-invalid) and logs " +
-				"« %PHY-4-UNSUPPORTED_TRANSCEIVER ». The cage then reads exactly like an " +
+				"\"%PHY-4-UNSUPPORTED_TRANSCEIVER\". The cage then reads exactly like an " +
 				"EMPTY one, so the uplink looks absent while the fibre is plugged in — this " +
 				"is the most common way a provisioning run dies looking like a cabling " +
-				"fault. Provisioning applies « service unsupported-transceiver » + « no " +
-				"errdisable detect cause gbic-invalid » and bounces the affected ports; a " +
+				"fault. Provisioning applies \"service unsupported-transceiver\" + \"no " +
+				"errdisable detect cause gbic-invalid\" and bounces the affected ports; a " +
 				"factory reset removes both, which is why they are re-applied every run",
 		},
 		// NOTHING here has been run on a 2960-X by this connector. The gestures are
@@ -273,6 +358,30 @@ func (d *Driver) ResetProcedure(model string) driver.ResetProcedure {
 
 // --- CLI builders (the serial soft-reset and the SSH connector share these) ---
 
+// MgmtPushCmds HAS NO GO CALLER, AND THAT IS THE CONVENTION RATHER THAN A HOLE.
+//
+// Not one of the six MgmtPushCmds in this tree has one — cisco/ios,
+// ubiquiti/edgeswitch, fs/s3400, fs/s3900 and arista/eos are all reached only
+// from their own tests. The argument is written out once, at
+// arista/eos/eos.go's equivalent: the block exists to GIVE a switch a management
+// address, so a switch that has one is already provisioned and a switch that has
+// not cannot be reached over SSH — and a switch still in ZTP has every write
+// refused by requireWritableDialect anyway. There is no device state in which an
+// SSH caller can both reach the switch and needs this.
+//
+// The builder is the written SPECIFICATION of a gesture that runs in the
+// BROWSER, over Web Serial: web/src/pages/add/ciscoIosSoftReset.ts. That script
+// is the path that reaches hardware, and internal/discovery/reset.go points an
+// operator at this function by name as the reference for what it must send.
+//
+// SO THE UNFILLED FIELDS BELOW ARE A SPECIFICATION, NOT DEAD WIRING.
+// DomainName in particular: the runnable path resolves the domain from the
+// site's own field (site.local_domain → resolveDomainName), and falls back to
+// [DefaultDomainName] only when a site declares none. Before 2026-08-09 the
+// script passed nothing at all, so that fallback was not a fallback — it was the
+// only domain this product had ever written, on every console-provisioned
+// Catalyst. Do not "fix" the absence of a Go caller here by adding one.
+
 // MgmtOpts is what soft-reset / onboarding needs on the wire.
 type MgmtOpts struct {
 	VlanID    int
@@ -280,16 +389,24 @@ type MgmtOpts struct {
 	IP        string
 	PrefixLen int // e.g. 16 for /16 — converted to the dotted mask IOS wants
 	Gateway   string
-	// DomainName is required BEFORE « crypto key generate rsa »; defaults to
+	// DomainName is required BEFORE "crypto key generate rsa"; defaults to
 	// [DefaultDomainName] rather than being skipped, because skipping it makes
 	// SSH silently impossible.
 	DomainName string
 	Username   string
 	Password   string
-	// EnablePassword defaults to Password: meshcraft stores one secret per
-	// account, and « enable » is the only door from user EXEC to privileged mode.
-	EnablePassword string
-	Hostname       string
+	// NOTE: there is deliberately NO EnablePassword field any more. The fleet
+	// rule is that no switch carries an enable password (cf. NoEnableCmds), and
+	// the field existed only to be defaulted to Password and written — removing
+	// it is what makes the rule impossible to bypass by filling in a struct.
+	//
+	// Hostname is the device's MESHCRAFT NAME, not an already-normalized system
+	// name: MgmtPushCmds runs it through [driver.HostnameFromDeviceName] — the
+	// same function api.hostnameheal uses — so a switch provisioned from a
+	// console and the same switch reconciled half an hour later cannot end up
+	// carrying two different names. A name that cannot be normalized is REFUSED,
+	// never mangled: MgmtPushCmds returns the reason and omits the line.
+	Hostname string
 	// TrunkPorts are FULL IOS interface names ("GigabitEthernet1/0/25"), the
 	// ones discovered to have a link. Empty skips trunk membership.
 	TrunkPorts []string
@@ -298,8 +415,8 @@ type MgmtOpts struct {
 	RSAModulus int
 }
 
-// DefaultDomainName is used when the caller supplies none: « crypto key generate
-// rsa » refuses to run without a domain name, and a switch left without SSH
+// DefaultDomainName is used when the caller supplies none: "crypto key generate
+// rsa" refuses to run without a domain name, and a switch left without SSH
 // after a provisioning run is a switch nobody can adopt.
 const DefaultDomainName = "meshcraft.local"
 
@@ -314,7 +431,7 @@ const DefaultDomainName = "meshcraft.local"
 //	reload                → "Save? [yes/no]:"               → no   ← NOT Enter
 //	                      → "Proceed with reload? [confirm]" → Enter
 //
-// The « no » is the one that matters: the default on that prompt saves the
+// The "no" is the one that matters: the default on that prompt saves the
 // running configuration back over the nvram that was just erased.
 func FactoryResetCmds() []string {
 	return []string{
@@ -335,7 +452,33 @@ func FactoryResetCmds() []string {
 //  4. CREDENTIALS LAST — same reason as the FS connector: the console session
 //     can drop right at the password change of the account currently logged in,
 //     and everything else is then already in place.
-func MgmtPushCmds(opts MgmtOpts) []string {
+//
+// # THE ERROR IS THE SYSTEM NAME'S REFUSAL, AND NOTHING ELSE (2026-08-09)
+//
+// This returned a bare []string until the four `sanitizeHostname` spellings were
+// collapsed into [driver.HostnameFromDeviceName]. That function REFUSES a name it
+// cannot normalize instead of mangling it, and a builder with no error channel
+// has exactly two ways to honour a refusal: drop the line, or say so. Dropping it
+// silently is the mangle-doctrine in another costume — the operator asked for a
+// name, the switch keeps `Switch`, and nothing anywhere says why. So the
+// signature carries the reason out.
+//
+// THE REST OF THE PUSH IS STILL RETURNED ALONGSIDE THE ERROR, deliberately, and
+// it is the same convention `adminFor` and the identity readers already follow in
+// this tree: return what you COULD build next to the reason the rest failed. A
+// switch left factory-reset and unreachable because its meshcraft name carries an
+// accent is a far worse answer than a switch that is reachable, adopted and
+// merely still called `Switch` — with the reason on the operator's screen. The
+// caller sends the commands AND reports the error; it does not choose one.
+//
+// The mirror of this contract is web/src/pages/add/ciscoIosSoftReset.ts, which
+// logs the refusal into the run log and pushes everything else. The builder is
+// the written specification of that script (see the note above), so the shape of
+// the refusal is part of what is being specified.
+//
+// ubiquiti/edgeswitch's MgmtPushCmds keeps the bare []string: that CLI has no
+// `hostname` command at all, so its MgmtOpts carries no name that could refuse.
+func MgmtPushCmds(opts MgmtOpts) ([]string, error) {
 	var vlanID = opts.VlanID
 	if vlanID < 1 {
 		vlanID = 1
@@ -360,8 +503,19 @@ func MgmtPushCmds(opts MgmtOpts) []string {
 	// precedes this push is precisely what removed them.
 	out = append(out, UnsupportedTransceiverCmds()...)
 
-	if opts.Hostname != "" {
-		out = append(out, "hostname "+sanitizeHostname(opts.Hostname))
+	// The system name, through the ONE normalizer. No local sanitizer any more:
+	// the one that stood here dropped every character it did not recognise, kept
+	// the `_` driver.ValidHostname forbids, never trimmed, and fell back to the
+	// literal `switch` — four disagreements with the reconciled path, on a name
+	// that ends up on the console banner and in the LLDP system-name TLV.
+	var hostErr error
+	if strings.TrimSpace(opts.Hostname) != "" {
+		var host, refusal = driver.HostnameFromDeviceName(opts.Hostname)
+		if refusal != "" {
+			hostErr = errors.New(refusal)
+		} else {
+			out = append(out, "hostname "+host)
+		}
 	}
 
 	// 1. VLAN before SVI. VLAN 1 always exists and must not be re-declared.
@@ -383,8 +537,8 @@ func MgmtPushCmds(opts MgmtOpts) []string {
 
 	var gw = strings.TrimSpace(opts.Gateway)
 	if gw != "" {
-		// A 2960-X has no routing table: « ip route » would be refused, and
-		// « ip default-gateway » is the only form that works on an L2 switch.
+		// A 2960-X has no routing table: "ip route" would be refused, and
+		// "ip default-gateway" is the only form that works on an L2 switch.
 		out = append(out, "ip default-gateway "+gw)
 	}
 
@@ -444,23 +598,83 @@ func MgmtPushCmds(opts MgmtOpts) []string {
 	var user = strings.TrimSpace(opts.Username)
 	var pass = opts.Password
 	if user != "" && pass != "" {
-		// « secret » and not « password »: the second stores the value in clear
+		// "secret" and not "password": the second stores the value in clear
 		// (or reversibly encoded as type 7) in the configuration.
 		out = append(out, fmt.Sprintf("username %s privilege 15 secret 0 %s", user, pass))
 	}
-	var en = opts.EnablePassword
-	if en == "" {
-		en = pass
-	}
-	if en != "" {
-		out = append(out, fmt.Sprintf("enable secret 0 %s", en))
-	}
+	// NO ENABLE PASSWORD — the fleet rule (cf. NoEnableCmds), applied AFTER the
+	// privilege-15 account exists so the device is never left without a way in.
+	out = append(out, NoEnableCmds()...)
 
-	return out
+	// PERSIST. Last, unconditionally, and it used to be absent entirely.
+	//
+	// The same defect the Arista builder carried: this produced a complete,
+	// correct provisioning run — domain, RSA key, SSH, VLANs, SVI, address,
+	// gateway, trunks, account — that lived ENTIRELY in the running
+	// configuration and was gone at the next reload. Nothing reported it. Every
+	// command was accepted, the switch was reachable, and it stayed that way
+	// until somebody power-cycled it. Of the connectors that build a push, only
+	// EdgeSwitch and the two FS ranges were saving; this one and EOS were not.
+	//
+	// # Why `write memory` and not the fallback
+	//
+	// [SaveCmdFallback] (`copy running-config startup-config`) ALWAYS asks
+	// "Destination filename [startup-config]?", and a blind command list cannot
+	// answer a prompt — the next line of the list would be typed in as the
+	// answer. That is not hypothetical: it is the exact failure that cost the FS
+	// connector a deployment, recorded in admin.go's header, where a `show run`
+	// became a startup file name.
+	//
+	// `write memory` normally answers without asking anything. It is deprecated
+	// on some IOS-XE builds, where it returns "% Invalid input" — one refused
+	// line at the very end of a console transcript, visible, and leaving the
+	// operator exactly where they were before this change. The interactive path
+	// ([Client.save]) is what tries both and reads the answers; a command list
+	// gets the form that does not prompt.
+	//
+	// `end` first: `write memory` is an EXEC command and is refused in
+	// configuration mode.
+	out = append(out, "end", SaveCmd)
+
+	return out, hostErr
+}
+
+// NoEnableCmds enforces the fleet's universal rule: NO ENABLE PASSWORD.
+//
+// # Applied, not merely omitted
+//
+// Not writing one would leave the rule true on a factory Catalyst and false on
+// every switch that already carried one — which is exactly the fleet where it
+// matters. Both forms are removed because IOS has two and a device can carry
+// either: `enable secret` (hashed) and the older `enable password` (type 7,
+// trivially reversible). Removing only the first would leave the second in force
+// and the rule quietly false.
+//
+// # THE IOS-SPECIFIC HAZARD, which the Arista connector does not have
+//
+// This is where the two platforms genuinely differ, and it is worth stating
+// before anyone copies this across another range. On IOS, `enable` from a VTY
+// (SSH / telnet) session with NO enable password configured is REFUSED:
+//
+//	% No password set
+//
+// From the CONSOLE the same command succeeds. So on a Catalyst, removing the
+// enable secret makes `privilege 15` on the account not a convenience but the
+// ONLY path to a privileged SSH session — an account that lands on ">" can
+// never leave it over the network, and the recovery is the console port.
+//
+// That is survivable here, and only because of the ORDER: this connector always
+// writes `username U privilege 15 secret 0 S` first, in the same block, and
+// [Client.EnsureAccount] does the same. The account that remains is privileged at
+// login and never traverses an enable prompt. [cliConn.enable] recognises the
+// refusal by name so the failure, if it ever happens, says what it is instead of
+// timing out.
+func NoEnableCmds() []string {
+	return []string{"no enable secret", "no enable password"}
 }
 
 // SaveCmd is the save this connector emits first; [SaveCmdFallback] is the one
-// tried if IOS refuses it. « write memory » prompts for nothing, which is why
+// tried if IOS refuses it. "write memory" prompts for nothing, which is why
 // it comes first.
 const (
 	SaveCmd         = "write memory"
@@ -514,7 +728,7 @@ func PrefixFromMask(mask string) int {
 }
 
 // ParseUpPorts extracts the FULL interface names of the ports whose link is up,
-// from « show interfaces status » output. This is what the soft-reset uses to
+// from "show interfaces status" output. This is what the soft-reset uses to
 // decide which uplink must carry the management VLAN.
 func ParseUpPorts(status string) []string {
 	var rows = parseInterfacesStatus(status)
@@ -552,19 +766,13 @@ func sanitizeVlanName(s string) string {
 	return out
 }
 
-func sanitizeHostname(s string) string {
-	var b strings.Builder
-	var r rune
-	for _, r = range s {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			b.WriteRune(r)
-		} else if r == ' ' {
-			b.WriteByte('-')
-		}
-	}
-	var out = b.String()
-	if out == "" {
-		return "switch"
-	}
-	return out
-}
+// There is no sanitizeHostname here any more, and its removal is not tidying.
+// It kept the `_` [driver.ValidHostname] forbids, dropped silently every other
+// character it did not recognise, never trimmed the hyphens RFC 1123 rejects at
+// the ends, and fell back to the literal `switch` on an empty result — four ways
+// of disagreeing with the name the reconciliation loop would push to the same
+// device an hour later. [MgmtPushCmds] now calls
+// [driver.HostnameFromDeviceName], which is that loop's own normalizer, and
+// refuses rather than mangling. Do not re-introduce a local one: the drift this
+// ended started as exactly one such function, per connector, each reasonable on
+// its own.

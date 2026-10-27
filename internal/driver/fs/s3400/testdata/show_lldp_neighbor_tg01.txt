@@ -1,0 +1,19 @@
+show lldp neighbor interface TGigaEthernet0/1
+
+chassis id: c950.6d5f.1f73
+port id: 0/18
+port description: -- not advertised
+system name: -- not advertised
+system description: -- not advertised
+
+Time remaining: 93
+system capabilities: -- not advertised
+enabled capabilities: -- not advertised
+Managment Address: -- not advertised
+
+Port VLAN ID: 1
+------------------------------------------
+
+
+Total entries displayed: 1
+Switch#

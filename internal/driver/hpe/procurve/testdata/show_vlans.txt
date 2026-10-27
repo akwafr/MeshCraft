@@ -1,0 +1,20 @@
+ Status and Counters - VLAN Information
+
+  Maximum VLANs to support : 30                   
+  Primary VLAN : Default       
+  Management VLAN :               
+
+  VLAN ID Name                             | Status     Voice Jumbo
+  ------- -------------------------------- + ---------- ----- -----
+  1       Default                          | Port-based No    No   
+  3       staff                            | Port-based No    No   
+  9       wifi-guest                       | Port-based No    No   
+  10      streaming                        | Port-based No    No   
+  99      LAN_Management                   | Port-based No    No   
+  101     ZONE1                            | Port-based No    No   
+  102     ZONE2                            | Port-based No    No   
+  103     ZONE3                            | Port-based No    No   
+  104     ZONE4                            | Port-based No    No   
+  200     joueurs                          | Port-based No    No   
+ 
+

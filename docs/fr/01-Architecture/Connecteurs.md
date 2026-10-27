@@ -482,7 +482,7 @@ lui-même. Le groupe doit porter un `notifyView`, ce que `groupEntry()` fait dé
 
 > [!warning] Un Inform v3 n'est pas un Trap v3
 > Un **Trap** v3 s'authentifie contre le moteur SNMP local, dont l'identifiant est
-> relevé (`localEngineID = 8000000b038825101761a7`, `localEngineIDType = 2`,
+> relevé (`localEngineID = 8000000b0302005e1061a7`, `localEngineIDType = 2`,
 > `localEngineIdState = 1`) : l'utilisateur posé en `engineIDType 1` suffit. Un
 > **Inform** v3, lui, est acquitté par le récepteur et se dérive contre le moteur
 > **du récepteur** — il réclame une entrée `SNMPRemoteEngineIDList{Entry{IPAddress,
@@ -494,7 +494,7 @@ lui-même. Le groupe doit porter un `notifyView`, ce que `groupEntry()` fait dé
 des bundles ne porte de réglage de type `source-interface` pour SNMP (les seuls
 `sourceInterface` du code concernent RMON et le port-mirroring). Et l'équipement
 n'a qu'**une** interface IP exploitable : `IPv4InterfaceList` rend `VLAN99` =
-`10.99.200.101/16` (`owner = 2`, statique), la seule autre entrée étant
+`198.51.100.101/24` (`owner = 2`, statique), la seule autre entrée étant
 `User Defined Port 1` = `169.254.0.1/24` en `owner = 3`, que l'interface elle-même
 exclut de ses listes. Les traps partiront donc de l'adresse de management
 ([[Adressage de management]]) — ce qui est exactement ce dont le [[Proxy]] a besoin
@@ -579,7 +579,7 @@ départ est celle qu'un exploitant pose devant quatre liens fibre — « quel es
 optique ? » — et la réponse est qu'il n'y en aura pas sur cette gamme.
 
 Relevé sur `sw-labo-1930` (JL685A, firmware `InstantOn_1930_3.4.0.0`,
-`sysObjectID = 1.3.6.1.4.1.11.2.3.7.11.199`, série `CN2AKPH86J`), interrogé en **SNMP
+`sysObjectID = 1.3.6.1.4.1.11.2.3.7.11.199`, série `CN0EXAMPL1`), interrogé en **SNMP
 v2c à travers le proxy** :
 
 | Ce qui a été interrogé | Résultat | Ce qu'il faut en conclure |
@@ -832,15 +832,67 @@ déclaré par l'équipement.
 | Filtrage d'entrée strict | `strict` non écrit (jette des trames à l'entrée) | **écrit** (`ingress-filtering`), sous garde-fou |
 | Ajouter un port au bridge | sans objet — tous les ports sont dans la table | **non fait** : un port hors bridge est signalé, pas ajouté |
 | Agrégation (LACP / bonding) | `/lacp.b` lu pour les capabilities, **jamais écrit** | `/interface/bonding` relevé vide, **jamais écrit** |
-| STP / RSTP | `/rstp.b` lu **et écrit** (`ena`, `fc`, `cost`, `edge`) via `ApplySpanningTree` ; mode site via préférence `stp_mode_preference` (MSTP/RSTP-PVST/STP/none) | `edge`, `path-cost`, `bpdu-guard` relevés, **jamais écrits** |
+| STP / RSTP | `/rstp.b` lu **et écrit** (`ena`, `fc`, `cost`, `edge`) via `ApplySpanningTree` ; mode site via préférence `stp_mode_preference` (MSTP/RSTP-PVST/STP/none, ou **vide** : voir ci-dessous) | `edge`, `path-cost`, `bpdu-guard` relevés, **jamais écrits** |
 | Vitesse, duplex, auto-négociation, MTU, contrôle de flux | `/link.b` porte `an`, `dpxc`, `fctc`, `fctr` — **jamais écrits**, et aucune intention du modèle standard ne les demande | `/interface/ethernet` porte `advertise`, `l2mtu` (plafond `max-l2mtu: 10218` relevé) — **jamais écrits** |
 | Isolation de ports | `/fwd.b` `fp1…fp26`, matrice complète, **jamais écrite** | `horizon` par port, **jamais écrit** |
-| Activation / désactivation d'un port | `/link.b` `en` — **jamais écrit** | `disabled` — **jamais écrit** |
+| Activation / désactivation d'un port | `/link.b` `en` — **écrit** (`ApplyPortAdmin`, page entière) | `disabled` sur `/interface` — **écrit** (`ApplyPortAdmin`, `type: ether` uniquement) |
 
-Cette dernière ligne mérite d'être lue deux fois : **aucun des deux connecteurs ne
-sait éteindre un port**. C'est une des demandes les plus banales d'un exploitant, et
-elle n'a pas d'intention dans le [[Modèle de données standard]] — le manque est donc
-en amont des connecteurs, pas en eux.
+Cette dernière ligne a longtemps dit « jamais écrit » des deux côtés, et le manque
+était en amont : le [[Modèle de données standard]] n'avait pas d'intention pour
+éteindre un port. Elle en a une depuis le 2026-08-05, et **les deux connecteurs
+l'écrivent**, chacun prouvé sur le matériel du labo le 2026-08-10 (SwOS `Port2`,
+RouterOS `ether2`, via `POST /api/devices/{id}/ports/admin` puis re-lecture, second
+apply à vide, et retour arrière confirmé).
+
+Les deux gestes ne se ressemblent pas, et c'est le SwOS qu'il faut lire deux fois :
+
+- **RouterOS** écrit UN champ (`disabled`) sur UN enregistrement, dont l'`.id` est
+  relu juste avant l'écriture — ces numéros ne survivent pas à un redémarrage, et un
+  identifiant périmé n'échoue pas, il désactive *une autre interface*. Seul
+  `type: ether` est accepté : `bridge`, `lo` et `vlan99` acceptent parfaitement
+  `disabled: true` et coupent respectivement toute la commutation, la boucle locale
+  et l'adresse d'administration ;
+- **SwOS** n'a pas d'écriture par port. L'état administratif est un BIT dans un
+  MASQUE (`en`) d'une page que l'équipement rend et attend en ENTIER : écrire un port
+  veut dire reposter `nm` (les vingt-six noms de ports), `an`, `dpxc`, `fctc`,
+  `fctr`, `spdc` avec lui. D'où le refus plutôt que la troncature quand un champ
+  manque — poster sans `nm` renommerait vingt-six ports en rien. Et la persistance
+  est immédiate : ni `running`/`startup`, ni redémarrage qui défasse le geste. La
+  seule marche arrière est le `GET /backup.swb` pris juste avant l'écriture, ou le
+  bouton de reset en façade, sur site.
+
+#### `stp_mode_preference` vide : l'interrupteur d'arrêt par site
+
+La liste des modes préférés d'un site a **trois** états, pas deux, et le troisième
+est le seul qui ne se lise pas sur l'écran :
+
+- **absente** — le site n'a jamais ouvert l'écran STP : `driver.DefaultSTPPreference`
+  s'applique, l'apply pousse un mode ;
+- **remplie** — le premier mode que la plateforme annonce est poussé ;
+- **explicitement vide** — l'exploitant l'a vidée : `applyDeviceSTP` sort
+  immédiatement et **n'envoie rien**. C'est le cas prévu pour un Catalyst laissé
+  volontairement en (rapid-)PVST+ pendant une migration, sur un connecteur qui n'a
+  pas de chemin « lu, identique, rien à faire » : avant cet interrupteur, n'importe
+  quel changement de port renvoyait le mode et reconvergeait l'arbre.
+
+> [!warning] L'interrupteur est plus large que son nom
+> Il ne suspend pas seulement le mode. `SpanningTreePlan` transporte le mode, la
+> région MST **et** les intentions par port — portfast/edge, BPDU guard, coût de
+> chemin — et tout passe par le même `pushDeviceSTP`. Vider la liste pour protéger
+> le mode global d'un seul équipement arrête donc aussi l'application du BPDU guard
+> sur tous les ports d'accès du site.
+>
+> Et un site qui utilise MST cesse d'être **ré-homogénéisé** : le condensé de région
+> couvre toute la liste de VLAN du site (`siteMSTRegion`), donc quand cette liste
+> bouge, les équipements portant déjà une région meshcraft gardent l'ANCIENNE. En
+> 802.1s, une région qui ne correspond pas est traitée comme un voisin RSTP
+> ordinaire : l'éviction est **silencieuse**, les ports commutent toujours,
+> l'équipement reste vert. C'est exactement la panne 802.1s invisible que la
+> comparaison de région existe pour attraper.
+>
+> L'exploitant n'est pas désarmé pour autant : `handleApplyDeviceSTP` prend un mode
+> explicite et ne consulte jamais la préférence, donc un push par équipement depuis
+> le panneau STP fonctionne toujours. Ce qui s'arrête, c'est la RIDE automatique.
 
 ### Le troisième transport de RouterOS : l'API binaire
 

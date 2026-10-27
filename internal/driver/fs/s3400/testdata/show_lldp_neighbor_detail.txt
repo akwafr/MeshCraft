@@ -1,0 +1,50 @@
+show lldp neighbor detail
+
+chassis id: c950.6d5f.1f73
+port id: 0/18
+port description: -- not advertised
+system name: -- not advertised
+system description: -- not advertised
+
+Time remaining: 93
+system capabilities: -- not advertised
+enabled capabilities: -- not advertised
+Managment Address: -- not advertised
+
+Port VLAN ID: 1
+------------------------------------------
+
+
+chassis id: 46d9.9961.4301
+port id: Eth 1/25
+port description: Ethernet Port on unit 1, port 25
+system name: 
+
+system description: S3900-24T4S
+
+Time remaining: 102
+system capabilities: R B 
+enabled capabilities: R B 
+Management Address: 
+   IP: 192.0.2.71
+
+Port VLAN ID: 1
+VLAN 100 name: LAN100_User1
+VLAN 99 name: LAN99_Management
+VLAN 98 name: LAN98_ServicesInternes
+VLAN 42 name: LAN42_ServicesPublics
+VLAN 1 name: DefaultVlan
+Protocol identity  : CFM Unknown Unknown LACP RSTP/MSTP Unknown STP 
+Auto Negotiation: supported,enabled
+Physical media capabilities: 
+Operational MAU type: W PCS/PMA, unknown PMD(37)
+
+Link Aggregation: 
+	Aggregation capability: capable of being aggregated
+	Aggregation status: not currently in aggregation
+Maximum frame size: 1522
+------------------------------------------
+
+
+Total entries displayed: 2
+Switch#

@@ -1,0 +1,21 @@
+show poe port all
+
+          OP               HP      HP      Detect  Disconnect Class
+Intf      Mode             Enable  Mode    Enable  Enable     Enable
+--------- ---------------- ------- ------- ------- ---------- -------
+0/1       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/2       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/3       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/4       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/5       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/6       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/7       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/8       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/9       Shutdown         Enable  802.3at Enable  Enable     Enable
+0/10      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/11      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/12      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/13      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/14      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/15      Shutdown         Enable  802.3at Enable  Enable     Enable
+0/16      Shutdown         Enable  802.3at Enable  Enable     Enable

@@ -21,7 +21,7 @@ Les §1 à §10 sont la **conception**, écrite avant de construire, et elle vau
 | Rotation **automatique** (périodique) | **décidé, non construit** — la rotation est exclusivement manuelle et exige un secret fourni |
 | **Déploiement** d'une génération sur le parc (pousser, vérifier, retirer, en masse) | **décidé, non construit** — créer une génération ne la pousse pas |
 | Compte **CLI** de service (SSH), clé publique ed25519 | **décidé, non construit** — la seule pose passe par l'interface web de l'équipement |
-| **Streaming telemetry** gNMI, certificats, échéances (§8) | **décidé, non construit** — aucun certificat, aucune capability renseignée |
+| **Streaming telemetry** gNMI, certificats, échéances (§8) | **construit, sans autorité** — l'abonnement existe et s'authentifie par un identifiant de site de genre `gnmi` (un compte d'équipement, pas une communauté). Le transport sait faire TLS (`transport_tls` : `verify` / `skip-verify` / `plaintext`, migration 0039), mais RIEN n'émet encore de certificat : un site sans autorité tombe sur `skip-verify`, et `plaintext` reste possible et explicite |
 | `external_aaa` | **décidé, non construit** |
 | **Purge** avec délai de grâce, états `retired` / `compromised` | **décidé, non construit** — voir le callout du §13.2 |
 | Vue de parc « répartition des générations », ce qui bloque une purge (§10) | **partiel** — le décompte par génération existe, le reste non |
@@ -45,7 +45,7 @@ La troisième est d'une autre nature : meshcraft en est le **propriétaire**. Pe
 | SNMP | user v3 authPriv si la plateforme sait, sinon communauté v2c en **lecture seule** | résolu par capability, voir §2.1 | `SNMPVersions`, `SNMPv3{auth[], priv[]}` | **livré** ([[Identité SNMP]]) |
 | Cibles de télémétrie | destination de traps **dérivée** du collecteur déclaré ([[Monitoring]]) | une cible | `Monitoring.Traps` | **livré pour les traps v2c** ; syslog non livré ; **deux** cibles non livrées |
 | Compte CLI de service | utilisateur, clé publique ed25519, mot de passe de repli, niveau de privilège | clé publique | `LocalUsers`, `SSHPubkeyAuth` | **décidé, non construit** |
-| Streaming telemetry | abonnement gNMI/gRPC : certificat client + CA, ou compte gRPC ; dial-out | dial-out | `GNMI` | **décidé, non construit** |
+| Streaming telemetry | abonnement gNMI/gRPC : compte d'équipement passé en métadonnées gRPC ; dial-**in** (le proxy compose vers 6030) | dial-in | `GNMI` | **construit** — identifiant de genre `gnmi`, `internal/gnmipoll`, `cmd/proxy/gnmi.go`. Le certificat client reste à faire |
 | Compte HTTP/API | compte local, uniquement pour les plateformes web-only ([[Accès web pass-through]]) | — | `HTTPLocalUsers` | **sans objet** — sur la gamme livrée, le compte d'administration *est* le compte web |
 
 Ce que la plateforme ne sait pas faire n'est pas contourné : le plan porte la mention *non applicable* avec la raison, visible dans l'aperçu. Un réglage silencieusement ignoré serait pire qu'un réglage refusé. **Livré** au sens où chaque refus de pose (pas de collecteur déclaré, pas de plan v2c, pas de capability) porte son motif et son geste de réparation ([[Monitoring]], `trapdest`).

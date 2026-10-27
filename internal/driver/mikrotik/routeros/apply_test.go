@@ -332,7 +332,7 @@ func TestWritableExtrasSTP(t *testing.T) {
 		t.Fatal("WritesExtra(stp) must be true once ApplySpanningTree exists")
 	}
 	var name string
-	for _, name = range []string{"poe", "dhcp_snooping", "port_security"} {
+	for _, name = range []string{"poe", "port_security"} {
 		if WritesExtra(name) {
 			t.Errorf("WritesExtra(%q) = true without apply code", name)
 		}

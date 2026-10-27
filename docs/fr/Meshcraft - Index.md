@@ -65,3 +65,4 @@ tags: [moc, meshcraft]
 ## Livraison
 
 - [[Roadmap]] — phases MVP → v1 → v2
+- [[Notes de version]] — ce que chaque version apporte, et ce qu'elle laisse ouvert

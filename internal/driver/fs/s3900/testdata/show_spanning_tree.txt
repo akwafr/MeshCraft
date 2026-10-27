@@ -1,0 +1,82 @@
+show spanning-tree
+Spanning tree brief for instance 0
+Spanning Tree Mode             : MSTP
+Spanning Tree Status           : Enabled
+ Root ID     Priority    0
+             Address    D4:01:C3:AB:32:F4
+             Hello Time  2 sec  Max Age 20 sec  Forward Delay 15 sec
+ Bridge ID   Priority    32768
+             Address    64:9D:99:16:34:10
+             Hello Time  2 sec  Max Age 20 sec  Forward Delay 15 sec
+Interface Role Sts   Bridge ID                    Port ID    Prio  Cost     STP
+--------- ---- ----- ---------------------------- ---------- ----- -------- ----
+Eth 1/ 1  DISB BLK   32768.0.64:9D:99:16:34:10    128.1        128    20000 EN 
+Eth 1/ 2  ALTN BLK   32768.0.02:00:5e:10:61:A7    128.1        128    20000 EN 
+Eth 1/ 3  DISB BLK   32768.0.64:9D:99:16:34:10    128.3        128    20000 EN 
+Eth 1/ 4  DISB BLK   32768.0.64:9D:99:16:34:10    128.4        128    20000 EN 
+Eth 1/ 5  DISB BLK   32768.0.64:9D:99:16:34:10    128.5        128    20000 EN 
+Eth 1/ 6  DISB BLK   32768.0.64:9D:99:16:34:10    128.6        128    20000 EN 
+Eth 1/ 7  DISB BLK   32768.0.64:9D:99:16:34:10    128.7        128    20000 EN 
+Eth 1/ 8  DISB BLK   32768.0.64:9D:99:16:34:10    128.8        128    20000 EN 
+Eth 1/ 9  DISB BLK   32768.0.64:9D:99:16:34:10    128.9        128    20000 EN 
+Eth 1/10  DISB BLK   32768.0.64:9D:99:16:34:10    128.10       128    20000 EN 
+Eth 1/11  DISB BLK   32768.0.64:9D:99:16:34:10    128.11       128    20000 EN 
+Eth 1/12  DISB BLK   32768.0.64:9D:99:16:34:10    128.12       128    20000 EN 
+Eth 1/13  DISB BLK   32768.0.64:9D:99:16:34:10    128.13       128    20000 EN 
+Eth 1/14  DISB BLK   32768.0.64:9D:99:16:34:10    128.14       128    20000 EN 
+Eth 1/15  DISB BLK   32768.0.64:9D:99:16:34:10    128.15       128    20000 EN 
+Eth 1/16  DISB BLK   32768.0.64:9D:99:16:34:10    128.16       128    20000 EN 
+Eth 1/17  DISB BLK   32768.0.64:9D:99:16:34:10    128.17       128    20000 EN 
+Eth 1/18  DISB BLK   32768.0.64:9D:99:16:34:10    128.18       128    20000 EN 
+Eth 1/19  DISB BLK   32768.0.64:9D:99:16:34:10    128.19       128    20000 EN 
+Eth 1/20  DISB BLK   32768.0.64:9D:99:16:34:10    128.20       128    20000 EN 
+Eth 1/21  DISB BLK   32768.0.64:9D:99:16:34:10    128.21       128    20000 EN 
+Eth 1/22  DISB BLK   32768.0.64:9D:99:16:34:10    128.22       128    20000 EN 
+Eth 1/23  DISB BLK   32768.0.64:9D:99:16:34:10    128.23       128    20000 EN 
+Eth 1/24  DISB BLK   32768.0.64:9D:99:16:34:10    128.24       128    20000 EN 
+Eth 1/25  DESG FWD   32768.0.64:9D:99:16:34:10    128.25       128     2000 EN 
+Eth 1/26  DISB BLK   32768.0.64:9D:99:16:34:10    128.26       128     2000 EN 
+Eth 1/27  DESG FWD   32768.0.64:9D:99:16:34:10    128.27       128     2000 EN 
+Eth 1/28  ROOT FWD   32768.0.02:00:5e:10:61:A7    128.51       128     2000 EN 
+
+Spanning tree brief for instance 1
+Spanning Tree Mode             : MSTP
+Spanning Tree Status           : Enabled
+ Root ID     Priority    32768
+             Address    64:9D:99:16:34:10
+             Hello Time  2 sec  Max Age 20 sec  Forward Delay 15 sec
+ Bridge ID   Priority    32768
+             Address    64:9D:99:16:34:10
+             Hello Time  2 sec  Max Age 20 sec  Forward Delay 15 sec
+Interface Role Sts   Bridge ID                    Port ID    Prio  Cost     STP
+--------- ---- ----- ---------------------------- ---------- ----- -------- ----
+Eth 1/ 1  DISB BLK   32768.1.64:9D:99:16:34:10    128.1        128    20000 EN 
+Eth 1/ 2  ALTN BLK   32768.1.64:9D:99:16:34:10    128.2        128    20000 EN 
+Eth 1/ 3  DISB BLK   32768.1.64:9D:99:16:34:10    128.3        128    20000 EN 
+Eth 1/ 4  DISB BLK   32768.1.64:9D:99:16:34:10    128.4        128    20000 EN 
+Eth 1/ 5  DISB BLK   32768.1.64:9D:99:16:34:10    128.5        128    20000 EN 
+Eth 1/ 6  DISB BLK   32768.1.64:9D:99:16:34:10    128.6        128    20000 EN 
+Eth 1/ 7  DISB BLK   32768.1.64:9D:99:16:34:10    128.7        128    20000 EN 
+Eth 1/ 8  DISB BLK   32768.1.64:9D:99:16:34:10    128.8        128    20000 EN 
+Eth 1/ 9  DISB BLK   32768.1.64:9D:99:16:34:10    128.9        128    20000 EN 
+Eth 1/10  DISB BLK   32768.1.64:9D:99:16:34:10    128.10       128    20000 EN 
+Eth 1/11  DISB BLK   32768.1.64:9D:99:16:34:10    128.11       128    20000 EN 
+Eth 1/12  DISB BLK   32768.1.64:9D:99:16:34:10    128.12       128    20000 EN 
+Eth 1/13  DISB BLK   32768.1.64:9D:99:16:34:10    128.13       128    20000 EN 
+Eth 1/14  DISB BLK   32768.1.64:9D:99:16:34:10    128.14       128    20000 EN 
+Eth 1/15  DISB BLK   32768.1.64:9D:99:16:34:10    128.15       128    20000 EN 
+Eth 1/16  DISB BLK   32768.1.64:9D:99:16:34:10    128.16       128    20000 EN 
+Eth 1/17  DISB BLK   32768.1.64:9D:99:16:34:10    128.17       128    20000 EN 
+Eth 1/18  DISB BLK   32768.1.64:9D:99:16:34:10    128.18       128    20000 EN 
+Eth 1/19  DISB BLK   32768.1.64:9D:99:16:34:10    128.19       128    20000 EN 
+Eth 1/20  DISB BLK   32768.1.64:9D:99:16:34:10    128.20       128    20000 EN 
+Eth 1/21  DISB BLK   32768.1.64:9D:99:16:34:10    128.21       128    20000 EN 
+Eth 1/22  DISB BLK   32768.1.64:9D:99:16:34:10    128.22       128    20000 EN 
+Eth 1/23  DISB BLK   32768.1.64:9D:99:16:34:10    128.23       128    20000 EN 
+Eth 1/24  DISB BLK   32768.1.64:9D:99:16:34:10    128.24       128    20000 EN 
+Eth 1/25  DESG FWD   32768.1.64:9D:99:16:34:10    128.25       128     2000 EN 
+Eth 1/26  DISB BLK   32768.1.64:9D:99:16:34:10    128.26       128     2000 EN 
+Eth 1/27  DESG FWD   32768.1.64:9D:99:16:34:10    128.27       128     2000 EN 
+Eth 1/28  MAST FWD   32768.1.64:9D:99:16:34:10    128.28       128     2000 EN 
+
+Switch-1#

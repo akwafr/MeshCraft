@@ -25,6 +25,17 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 		return out, nil
 	}
 
+	// SuperRoot is not carried here. The wcd framework does expose a bridge
+	// priority, but it has no "root super" equivalent and no MST instance the
+	// flag could target, and writing 0 from a checkbox meant for another platform
+	// would move the root of whatever tree this switch is in. Said rather than
+	// dropped, per driver.SpanningTreePlan.SuperRoot.
+	if plan.SuperRoot {
+		out.Skipped = append(out.Skipped,
+			"SUPER ROOT not applied: this connector does not implement it. Set the bridge "+
+				"priority explicitly (STP GlobalSetting) if this switch must be root")
+	}
+
 	var mode = driver.NormalizeSTPMode(plan.Mode)
 	if plan.Enabled && mode != "stp" && mode != "rstp" && mode != "mstp" {
 		out.Skipped = append(out.Skipped, "unsupported STP mode "+plan.Mode)
@@ -40,22 +51,30 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 
 	var paramInner = "<enabled>" + enabled + "</enabled>" +
 		"<STPOperationMode>" + opMode + "</STPOperationMode>"
-	if err := a.writeSection(ctx, sectionSTPGlobalParam, "set", paramInner,
-		"spanning-tree admin/mode via "+sectionSTPGlobalParam); err != nil {
-		return out, err
+	var paramErr = a.writeSection(ctx, sectionSTPGlobalParam, "set", paramInner,
+		"spanning-tree admin/mode via "+sectionSTPGlobalParam)
+	if paramErr != nil {
+		return out, paramErr
 	}
-	out.Notes = append(out.Notes,
-		fmt.Sprintf("SpanningTreeGlobalParam enabled=%s STPOperationMode=%s", enabled, opMode))
+	// NO NOTE HERE, deliberately. `ApplyResult.Notes` is reread OBSERVATION — what
+	// the connector learned about the device that the standard model cannot say,
+	// chiefly "this configuration is in place and inert". The screen that renders it
+	// (ConnectorNotesBanner) promises exactly that.
+	//
+	// `enabled` and `opMode` are the two locals written on the line above: a note
+	// built from them observes nothing, it quotes the request back. And it is not
+	// even the only copy — [Admin.writeSection] already records every accepted write
+	// as a step, so the echo competed with the transcript for the one surface where
+	// a real remark has to stand out. Cf. the file-level rule in stp_mst.go.
 
 	// THE REGION, and only in MSTP mode. Writing a region name on a device running
 	// RSTP configures a field nothing reads, and would show as "applied" on a
 	// screen where nothing changed.
 	//
-	// Name and revision are written; the VLAN-to-instance map is NOT, and the
-	// result says so rather than staying quiet (cf. parseIonRegion for why the
-	// entry shape is not guessed). That is an honest partial: two devices sharing
-	// a name and revision but differing on the digest are still in DIFFERENT
-	// regions, so the caller must not read this as "region homogenised".
+	// Name and revision go through the MSTP section; the VLAN-to-instance map
+	// goes through the MSTPLogicalInstanceList / MSTPInstanceList / MSTPVLANList
+	// triple the product UI itself uses (cf. stp_mst.go — the shape was read
+	// from the served JavaScript, then proven on hardware, never guessed).
 	if mode == "mstp" && plan.Region.Configured() {
 		var region = "<regionName>" + xmlEscape(plan.Region.Name) + "</regionName>" +
 			"<revisionNo>" + fmt.Sprintf("%d", plan.Region.Revision) + "</revisionNo>"
@@ -64,16 +83,18 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 		if regErr != nil {
 			return out, regErr
 		}
-		out.Notes = append(out.Notes, fmt.Sprintf(
-			"MSTP region name=%q revision=%d", plan.Region.Name, plan.Region.Revision))
+		// Same rule as above: `plan.Region.Name` and `.Revision` are the request, not
+		// a reading. The region a site applies is answerable without this echo, from
+		// `GET /api/sites/{siteID}/stp-mst-region` (cf. ADR-0021), which is also the
+		// only place that can state the three values TOGETHER as the identity they
+		// are — a note naming two of the three invited reading the name alone as the
+		// region, which is the misconception that splits a fabric.
 		if len(plan.Region.InstanceVLANs) > 0 {
-			out.Skipped = append(out.Skipped,
-				"MST instance-to-VLAN mapping NOT written: the InstanceEntry field "+
-					"shape has never been observed on this range (every unit surveyed "+
-					"serves an empty element), and guessing it produces this platform's "+
-					"silent failure — statusCode 0, no change, no message. Name and "+
-					"revision are set; devices still differ on the VLAN digest and are "+
-					"therefore NOT yet in one region.")
+			var mstErr = a.applyMSTInstanceVLANs(ctx, plan.Region.InstanceVLANs,
+				plan.BridgePriority, &out)
+			if mstErr != nil {
+				return out, mstErr
+			}
 		}
 	}
 
@@ -87,11 +108,12 @@ func (a *Admin) ApplySpanningTree(ctx context.Context, plan driver.SpanningTreeP
 		}
 		var bridgeInner = "<GlobalSetting><BridgeSetting><bridgePriority>" +
 			fmt.Sprintf("%d", p) + "</bridgePriority></BridgeSetting></GlobalSetting>"
-		if err := a.writeSection(ctx, sectionSTP, "set", bridgeInner,
-			"bridge priority via "+sectionSTP); err != nil {
-			return out, err
+		var prioErr = a.writeSection(ctx, sectionSTP, "set", bridgeInner,
+			"bridge priority via "+sectionSTP)
+		if prioErr != nil {
+			return out, prioErr
 		}
-		out.Notes = append(out.Notes, fmt.Sprintf("STP bridgePriority=%d", p))
+		// `p` is the clamped request, echoed. The transcript carries the write.
 	}
 
 	var p driver.SpanningTreePortIntent

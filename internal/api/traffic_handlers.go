@@ -58,12 +58,12 @@ func portRates(d model.Device) (rx, tx float64) {
 		// LINK IS ENOUGH; intent is not required. It used to be required, and that was
 		// the same defect as port tiles: an ACTIVE port meshcraft does not configure still
 		// carries traffic, and excluding it zeroed the fallback curve for every freshly
-		// adopted device — whose ports have no intent yet. « Active » is observation,
-		// « managed » is intent.
+		// adopted device — whose ports have no intent yet. "Active" is observation,
+		// "managed" is intent.
 		if e.Link == "" {
 			continue
 		}
-		// An « all VLANs » trunk is an aggregation link: its traffic is already counted on
+		// An "all VLANs" trunk is an aggregation link: its traffic is already counted on
 		// access ports that feed it. Counting it twice would double the site curve.
 		if e.Mode == "trunk" && string(e.Tagged) == `"all"` {
 			continue
@@ -166,7 +166,8 @@ func (s *Server) measuredTraffic(ctx context.Context, devices []model.Device,
 
 // nearestSample finds a store sample within ±halfSec of the chart slot.
 func nearestSample(m map[int64]float64, want, halfSec int64) (float64, bool) {
-	if v, ok := m[want]; ok {
+	var v, ok = m[want]
+	if ok {
 		return v, true
 	}
 	var bestTs int64

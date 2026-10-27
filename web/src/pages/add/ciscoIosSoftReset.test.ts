@@ -12,9 +12,11 @@ import { createSerialSession, type SerialSession } from "./serialExpect.ts";
 import {
   acceptThirdPartyOptics,
   collectShow,
+  DEFAULT_DOMAIN,
   fullIfName,
   parseErrDisabled,
   parseUpPorts,
+  resolveDomainName,
   runConfigCmds,
   saveConfig,
   toDottedMask,
@@ -56,7 +58,7 @@ function upPorts() {
   var status =
     "Port      Name               Status       Vlan       Duplex  Speed Type\r\n" +
     "Gi1/0/1                      notconnect   1            auto   auto 10/100/1000BaseTX\r\n" +
-    "Gi1/0/2   salle de reunion   connected    10           a-full a-1000 10/100/1000BaseTX\r\n" +
+    "Gi1/0/2   meeting room       connected    10           a-full a-1000 10/100/1000BaseTX\r\n" +
     "Gi1/0/3                      disabled     1            auto   auto 10/100/1000BaseTX\r\n" +
     "Gi1/0/28  uplink core        connected    trunk        full   1000 1000BaseSX SFP\r\n" +
     "Te1/0/1                      notconnect   1            full    10G unknown\r\n";
@@ -67,7 +69,7 @@ function upPorts() {
 }
 
 async function saveAnswersTheOverwritePrompt() {
-  // After an IOS upgrade, « write memory » asks before overwriting NVRAM that
+  // After an IOS upgrade, "write memory" asks before overwriting NVRAM that
   // an older image wrote. Waiting that prompt out leaves the CLI sitting at the
   // question, and the NEXT command is typed in as its answer.
   var logs: string[] = [];
@@ -277,9 +279,29 @@ async function opticsStepIsQuietWhenNothingIsShut() {
   );
 }
 
+// THE SITE'S DOMAIN MUST REACH THE KEY CEREMONY (2026-08-09).
+//
+// `Serial.tsx` passes `site.local_domain` and nothing else does; before that it
+// passed nothing, so the fallback was not a fallback — it was the only value
+// this script had ever sent, and every console-provisioned Catalyst was named
+// into a domain no site declared. The three cases below are exactly the three
+// the caller can produce: a site with a domain, a site without one (the field
+// is optional and the API omits it), and a site whose field holds whitespace,
+// which `Sites.tsx` trims on write but which an older row may still carry.
+function domainNameResolution() {
+  assert.equal(resolveDomainName("lab.example"), "lab.example");
+  assert.equal(resolveDomainName(undefined), DEFAULT_DOMAIN);
+  assert.equal(resolveDomainName(""), DEFAULT_DOMAIN);
+  assert.equal(resolveDomainName("   "), DEFAULT_DOMAIN);
+  // Surrounding space is trimmed rather than sent: "ip domain-name  lab.example"
+  // is not the same command, and the space would travel into the key subject.
+  assert.equal(resolveDomainName("  lab.example  "), "lab.example");
+}
+
 async function main() {
   maskConversions();
   interfaceNames();
+  domainNameResolution();
   upPorts();
   errDisabledParsing();
   await opticsAreAcceptedAndOnlyGbicPortsBounced();

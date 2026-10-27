@@ -26,7 +26,7 @@ import (
 // API layer was written against the Instant On connector's types and
 // called `instanton.OpenAdmin` directly. Adopting two MikroTik switches on
 // a site therefore sent an SNMP push IN INSTANT ON PROTOCOL toward one of
-// them \u2014 `https://10.99.0.54/`, connection refused since that device
+// them \u2014 `https://192.0.2.54/`, connection refused since that device
 // doesn't listen on 443, `snmp.apply_failed` at severity 3. Nothing was
 // written because TCP failed. The gesture itself had indeed gone out, and
 // that's what must be made impossible.
@@ -102,14 +102,14 @@ func TestCapabilityRefusalEmitsNoByte(t *testing.T) {
 			// Everything is implemented: this is the range that was used
 			// to design the contract.
 			connector: "aruba-instant-on-1930",
-			adm:       instanton.OpenAdmin("10.99.0.54", d),
+			adm:       instanton.OpenAdmin("192.0.2.54", d),
 			accounts:  true, persist: true, snmp: true, traps: true, mgmt: true, raw: true,
 		},
 		{
 			// No Persister (`immediate`: nothing to save). MgmtMover is
 			// implemented (dual-path; OutOfBand recovers on this platform).
 			connector: "mikrotik-routeros",
-			adm:       routeros.Open("10.99.0.54", d, "mcadmin", "secret"),
+			adm:       routeros.Open("192.0.2.54", d, "mcadmin", "secret"),
 			accounts:  true, persist: false, snmp: true, traps: true, mgmt: true, raw: true,
 		},
 		{
@@ -117,7 +117,7 @@ func TestCapabilityRefusalEmitsNoByte(t *testing.T) {
 			// notion of an account, no trap-destination field, nothing to
 			// persist, only one management address at a time.
 			connector: "mikrotik-swos",
-			adm:       swos.OpenAdmin("10.99.0.36", "admin", "", d),
+			adm:       swos.OpenAdmin("192.0.2.36", "admin", "", d),
 			accounts:  false, persist: false, snmp: true, traps: false, mgmt: false, raw: true,
 		},
 	}
@@ -173,7 +173,7 @@ func TestMgmtMoveRefusalNamesThePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the SwOS connector must be in this binary: %v", err)
 	}
-	var adm = swos.OpenAdmin("10.99.0.36", "admin", "", d)
+	var adm = swos.OpenAdmin("192.0.2.36", "admin", "", d)
 
 	var _, canMove = mgmtMoverOf(conn, adm)
 	if canMove {
@@ -202,7 +202,7 @@ func TestMgmtMoveRefusalNamesThePlatform(t *testing.T) {
 	if ioErr != nil {
 		t.Fatalf("the Instant On connector must be in this binary: %v", ioErr)
 	}
-	var _, ioCanMove = mgmtMoverOf(io, instanton.OpenAdmin("10.99.200.101", d))
+	var _, ioCanMove = mgmtMoverOf(io, instanton.OpenAdmin("198.51.100.101", d))
 	if !ioCanMove {
 		t.Error("the Instant On range can move its management addressing: " +
 			"it's the one that was used to write this contract")
@@ -211,7 +211,7 @@ func TestMgmtMoveRefusalNamesThePlatform(t *testing.T) {
 	if rosErr != nil {
 		t.Fatalf("the RouterOS connector must be in this binary: %v", rosErr)
 	}
-	var _, rosCanMove = mgmtMoverOf(ros, routeros.Open("10.99.0.54", d, "mcadmin", "secret"))
+	var _, rosCanMove = mgmtMoverOf(ros, routeros.Open("192.0.2.54", d, "mcadmin", "secret"))
 	if !rosCanMove {
 		t.Error("RouterOS implements dual-path MgmtMover (OutOfBand recovers)")
 	}
@@ -247,8 +247,8 @@ func TestTrapRefusalBeforeAnyContact(t *testing.T) {
 	// \u2014 everything is gathered, and it's the only push capability
 	// missing.
 	var in = trapDestInputs{
-		deviceName: "sw-css-1", mgmtIP: "10.99.0.36",
-		collector: "agence-a", collectorName: "Branch A",
+		deviceName: "sw-css-1", mgmtIP: "192.0.2.36",
+		collector: "branch-a", collectorName: "Branch A",
 		plan:         snmpprov.Plan{Version: "v2c", Kind: snmpprov.KindV2c},
 		credentialID: "cred-1",
 		trapsPush:    caps.Monitoring.Traps,

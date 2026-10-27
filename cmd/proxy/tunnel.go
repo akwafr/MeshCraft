@@ -16,15 +16,16 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Le tunnel : une connexion WebSocket SORTANTE vers le controleur, maintenue en
-// permanence, dans laquelle le controleur ouvre des connexions TCP vers les
-// devices que ce proxy sait joindre.
+// The tunnel: an OUTBOUND WebSocket connection to the controller, kept up
+// permanently, inside which the controller opens TCP connections to the
+// devices this proxy can reach.
 //
-// Rien d'entrant chez le client : c'est le principe n° 4 du projet. Le heartbeat
-// HTTP reste en place a cote — il porte les ordres de migration et survit same
-// si le tunnel ne s'establishes pas (mauvais reverse-proxy, WebSocket bloque).
+// Nothing inbound at the customer's: that is the project's principle no. 4. The
+// HTTP heartbeat stays in place alongside — it carries migration orders and
+// survives even if the tunnel cannot be established (bad reverse proxy,
+// WebSocket blocked).
 
-// tunnelURL convertit l'URL du controleur en URL WebSocket du tunnel.
+// tunnelURL converts the controller URL into the tunnel's WebSocket URL.
 func tunnelURL(controller string) string {
 	var u = strings.TrimSuffix(controller, "/")
 	if strings.HasPrefix(u, "https://") {
@@ -35,26 +36,26 @@ func tunnelURL(controller string) string {
 	return u + tunnel.Path
 }
 
-// runTunnel maintient le lien, avec backoff exponentiel et jitter. La fonction
-// ne rend jamais la main : elle vit aussi longtemps que le proxy.
-// monitor est partage entre les sessions : la configuration de surveillance
-// survit a une reconnexion, et le ping ne stops pas parce que le WAN a
-// hoquete. Seule la remontee d'evenements attend le retour du tunnel.
+// runTunnel keeps the link up, with exponential backoff and jitter. The
+// function never returns: it lives as long as the proxy.
+// monitor is shared between sessions: the monitoring configuration survives a
+// reconnection, and pinging does not stop because the WAN hiccupped. Only the
+// upstream of events waits for the tunnel to come back.
 var monitor = NewMonitor()
 
 func runTunnel(st State, version string) {
 	var allow, err = tunnel.ParseAllowlist(os.Getenv("MESHCRAFT_DIAL_ALLOW"))
 	if err != nil {
-		// Une allowlist illisible ne doit pas se transformer en « tout ouvert » :
-		// on prefers refuser tout dial et le dire fort.
-		slog.Error("MESHCRAFT_DIAL_ALLOW invalide : aucun dial ne sera accepted", "err", err)
+		// An unreadable allowlist must not turn into "everything open": we prefer to
+		// refuse every dial and say so loudly.
+		slog.Error("MESHCRAFT_DIAL_ALLOW invalid: no dial will be accepted", "err", err)
 		allow, _ = tunnel.ParseAllowlist("127.0.0.255/32")
 	}
-	slog.Info("tunnel : destinations autorisees", "allowlist", allow.String())
+	slog.Info("tunnel: allowed destinations", "allowlist", allow.String())
 
-	// La surveillance tourne independamment du tunnel : un proxy coupe du
-	// controleur continue de savoir qui est en ligne, et remontera les
-	// transitions a la reconnexion.
+	// Monitoring runs independently of the tunnel: a proxy cut off from the
+	// controller keeps knowing who is online, and will report the transitions on
+	// reconnection.
 	go monitor.Run(context.Background())
 
 	var url = tunnelURL(st.Controller)
@@ -63,14 +64,14 @@ func runTunnel(st State, version string) {
 		var started = time.Now()
 		err = tunnelOnce(url, st, version, allow)
 		var lived = time.Since(started)
-		// Une session qui a tenu se reinitialise le backoff : une coupure after
-		// deux heures n'est pas le symptome d'un controleur en panne.
+		// A session that held resets the backoff: an outage after two hours is not
+		// the symptom of a failed controller.
 		if lived > 2*time.Minute {
 			attempt = 0
 		}
 		if err != nil {
-			slog.Warn("tunnel interrompu", "err", err,
-				"duree", lived.Round(time.Second).String(), "attempt", attempt+1)
+			slog.Warn("tunnel interrupted", "err", err,
+				"duration", lived.Round(time.Second).String(), "attempt", attempt+1)
 		}
 		time.Sleep(tunnelBackoff(attempt))
 		attempt++
@@ -85,6 +86,11 @@ func tunnelOnce(url string, st State, version string, allow *tunnel.Allowlist) e
 	header.Set(tunnel.HeaderProxyID, st.ProxyID)
 	header.Set(tunnel.HeaderSecret, st.Secret)
 	header.Set(tunnel.HeaderVersion, version)
+	// What this binary can do, declared by the code that does it — and not
+	// deduced from `version`, which is only a text stamped at build time. An older
+	// controller ignores this header, a recent one uses it to know whether it can
+	// wait for the end of the resynchronisation burst (see tunnel.HeaderFeatures).
+	header.Set(tunnel.HeaderFeatures, tunnel.FeatureResyncDone)
 
 	var ws, resp, err = websocket.Dial(ctx, url, &websocket.DialOptions{
 		HTTPHeader:      header,
@@ -98,8 +104,8 @@ func tunnelOnce(url string, st State, version string, allow *tunnel.Allowlist) e
 	}
 	defer ws.CloseNow() //nolint:errcheck
 
-	// Pas de limite de taille : c'est yamux qui decoupe, et un stream peut
-	// transporter un transfert de configuration entier.
+	// No size limit: yamux does the chunking, and a stream may carry an entire
+	// configuration transfer.
 	ws.SetReadLimit(-1)
 	var nc = websocket.NetConn(ctx, ws, websocket.MessageBinary)
 
@@ -108,7 +114,7 @@ func tunnelOnce(url string, st State, version string, allow *tunnel.Allowlist) e
 	cfg.ConnectionWriteTimeout = tunnel.WriteTimeout
 	cfg.LogOutput = io.Discard
 
-	// Le PROXY est le serveur yamux : il accepte les streams, il n'en ouvre pas.
+	// The PROXY is the yamux server: it accepts streams, it does not open them.
 	var session *yamux.Session
 	session, err = yamux.Server(nc, cfg)
 	if err != nil {
@@ -118,39 +124,47 @@ func tunnelOnce(url string, st State, version string, allow *tunnel.Allowlist) e
 
 	slog.Info("tunnel established", "controller", st.Controller)
 
-	// Remontee des evenements sur un stream ouvert PAR le proxy.
+	// Events go upstream on a stream opened BY the proxy.
 	//
-	// `monitor.Snapshot` est passe pour que la reconnexion REANNONCE state courant
-	// after avoir vide le reliquat de la file : le moniteur est un singleton de
-	// processus qui survit a la coupure, donc il sait ce qu'il croit de chaque cible,
-	// et le controleur peut l'avoir manque. Sans ce cliche, une transition perdue
-	// pendant une coupure ne se rejouait jamais (cf. tunnel.Event.Resync).
+	// `monitor.Snapshot` is passed so that the reconnection RE-ANNOUNCES the current
+	// state after draining what is left in the queue: the monitor is a process
+	// singleton that survives the outage, so it knows what it believes about each
+	// target, and the controller may have missed it. Without this snapshot, a
+	// transition lost during an outage was never replayed (see tunnel.Event.Resync).
 	// Reconnect re-announces BOTH ICMP and SNMP reachability. Two snapshots,
 	// one stream: a lost SNMP transition is the same class of hole as a lost
-	// ping transition (cf. tunnel.Event.Resync).
+	// ping transition (see tunnel.Event.Resync).
 	go func() {
 		var snap = func() []tunnel.Event {
 			var out = monitor.Snapshot()
 			if snmpCollector != nil {
 				out = append(out, snmpCollector.Snapshot()...)
 			}
+			// And the streaming half. A device carried on gNMI is absent from
+			// the SNMP collector entirely — the two lists are exclusive — so
+			// without this its collection state would never be re-announced, and
+			// a transition lost during a tunnel outage would stay lost. That is
+			// the same hole Resync exists to close, arriving through the door
+			// this lot opened.
+			if gnmiCollector != nil {
+				out = append(out, gnmiCollector.Snapshot()...)
+			}
 			return out
 		}
 		var sendErr = tunnel.SendEvents(session, monitor.Events(), snap)
 		if sendErr != nil {
-			slog.Warn("remontee d'evenements interrompue", "err", sendErr)
+			slog.Warn("event upstream interrupted", "err", sendErr)
 		}
 	}()
-	// handleAsk repond aux questions ponctuelles (cf. rpc.go). Aucun etat a
-	// initialiser et rien a stop : une question, une response, le stream se
-	// ferme — donc rien qui doive survivre a une reconnexion, contrairement a
-	// `monitor`.
+	// handleAsk answers one-off questions (see rpc.go). No state to initialise
+	// and nothing to stop: one question, one answer, the stream closes — so
+	// nothing that must survive a reconnection, unlike `monitor`.
 	return tunnel.ServeStreams(session, allow, monitor.SetConfig, handleAsk)
 }
 
-// tunnelError distingue un refus du controleur (401 : proxy revoque, secret
-// stale) d'une panne de transport — le premier ne se resout pas en reessayant
-// plus vite.
+// tunnelError tells a refusal from the controller (401: proxy revoked, stale
+// secret) from a transport failure — the former is not solved by retrying
+// faster.
 type tunnelError struct {
 	status int
 	err    error
@@ -158,7 +172,7 @@ type tunnelError struct {
 
 func (e *tunnelError) Error() string {
 	if e.status == http.StatusUnauthorized {
-		return "refused par le controleur (proxy revoque ou secret invalide)"
+		return "refused by the controller (proxy revoked or invalid secret)"
 	}
 	return "HTTP " + itoa(e.status) + ": " + e.err.Error()
 }
@@ -175,8 +189,8 @@ func itoa(n int) string {
 	return string(digits)
 }
 
-// tunnelBackoff : 1 s → 60 s, avec jitter. Sans jitter, tous les proxys d'un
-// parc reviennent frapper a la same seconde after une coupure du controleur.
+// tunnelBackoff: 1 s → 60 s, with jitter. Without jitter, every proxy of a fleet
+// comes back knocking in the same second after a controller outage.
 func tunnelBackoff(attempt int) time.Duration {
 	var base = time.Duration(1<<min(attempt, 6)) * time.Second
 	if base > 60*time.Second {

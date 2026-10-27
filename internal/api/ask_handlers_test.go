@@ -161,27 +161,27 @@ func TestImplausibleOIDRejected(t *testing.T) {
 
 var askCouvrantsSiteA = []model.Proxy{
 	{ID: "local", Name: "Local", Global: true},
-	{ID: "agence-a", Name: "Agence A"},
+	{ID: "branch-a", Name: "Branch A"},
 }
 
 func TestAttachedProxyChoiceIsItsCollector(t *testing.T) {
 	var connected = func(id string) bool { return id == "local" }
-	var verdict, p = chooseAskProxy(askCouvrantsSiteA, "agence-a", connected)
+	var verdict, p = chooseAskProxy(askCouvrantsSiteA, "branch-a", connected)
 	if verdict != askProxyAttached {
 		t.Fatalf("an attached device is queried through its collector, verdict %v", verdict)
 	}
-	if p.ID != "agence-a" {
+	if p.ID != "branch-a" {
 		t.Errorf("proxy chosen %q, expected declared collector", p.ID)
 	}
 }
 
 func TestUnattachedProxyChoiceIsCovering(t *testing.T) {
 	var verdict, p = chooseAskProxy(askCouvrantsSiteA, "",
-		func(id string) bool { return id == "agence-a" })
+		func(id string) bool { return id == "branch-a" })
 	if verdict != askProxyCovering {
 		t.Fatalf("an unattached device is queried through a covering proxy, verdict %v", verdict)
 	}
-	if p.ID != "agence-a" {
+	if p.ID != "branch-a" {
 		t.Errorf("the CONNECTED proxy must be preferred, got %q", p.ID)
 	}
 	verdict, p = chooseAskProxy(askCouvrantsSiteA, "", func(string) bool { return false })
@@ -215,7 +215,7 @@ func TestNoCoveringProxyRefused(t *testing.T) {
 
 func TestNonCoveringAttachmentRefused(t *testing.T) {
 	var couvrantsSiteB = []model.Proxy{{ID: "local", Name: "Local", Global: true}}
-	var verdict, p = chooseAskProxy(couvrantsSiteB, "agence-a",
+	var verdict, p = chooseAskProxy(couvrantsSiteB, "branch-a",
 		func(string) bool { return true })
 	if verdict != askProxyNotCovering {
 		t.Fatalf("a non-covering collector must be refused, verdict %v", verdict)
@@ -223,14 +223,14 @@ func TestNonCoveringAttachmentRefused(t *testing.T) {
 	if p.ID != "" {
 		t.Errorf("no substitution must occur, got %q", p.ID)
 	}
-	var msg = noAskProxyMessage(askProxyNotCovering, "sw-a1", "Agence A")
+	var msg = noAskProxyMessage(askProxyNotCovering, "sw-a1", "Branch A")
 	var word string
-	for _, word = range []string{"Agence A", "sw-a1", "nobody", "coverage", "detach"} {
+	for _, word = range []string{"Branch A", "sw-a1", "nobody", "coverage", "detach"} {
 		if !strings.Contains(msg, word) {
 			t.Errorf("the refusal must mention %q: %s", word, msg)
 		}
 	}
-	if strings.Contains(noAskProxyMessage(askProxyNotCovering, "sw-a1", ""), "«  »") {
+	if strings.Contains(noAskProxyMessage(askProxyNotCovering, "sw-a1", ""), "\"\"") {
 		t.Error("a collector without a name must not leave empty quotes")
 	}
 }
@@ -245,20 +245,39 @@ func planV3() snmpprov.Plan {
 		Tag: "snmpv3:sha256-aes128", Auth: "sha256", Priv: "aes128", Conform: true}
 }
 
-func TestWalkRejectsV3WithReason(t *testing.T) {
+// THE V3 VERDICT SPLIT ON 2026-08-13, when the collector learned authNoPriv:
+// a v3 plan WITH privacy is still refused (nothing speaks priv yet, and
+// half-speaking it reads as a mute device), while an authNoPriv plan — the
+// S3400 family, the reason the capability exists — walks like any v2c device.
+func TestWalkRejectsV3PrivButAcceptsAuthNoPriv(t *testing.T) {
 	var verdict, msg = judgeAskSNMP("sw-a1", planV3(), "cred-v3")
 	if verdict != askSNMPv3Only {
-		t.Fatalf("a v3 device is not queryable through this path, verdict %v", verdict)
+		t.Fatalf("a v3-with-privacy device is not queryable, verdict %v", verdict)
 	}
 	var word string
-	for _, word = range []string{"sw-a1", "SNMPv3", "v2c", "community"} {
+	for _, word = range []string{"sw-a1", "SNMPv3", "privacy", "authNoPriv"} {
 		if !strings.Contains(msg, word) {
-			t.Errorf("the v3 refusal must mention %q: %s", word, msg)
+			t.Errorf("the priv refusal must mention %q: %s", word, msg)
 		}
 	}
 	verdict, _ = judgeAskSNMP("sw-a1", planV3(), "")
 	if verdict != askSNMPv3Only {
-		t.Errorf("v3 is refused for the protocol, not for the vault, verdict %v", verdict)
+		t.Errorf("v3-priv is refused for the protocol, not for the vault, verdict %v", verdict)
+	}
+
+	// authNoPriv — Priv empty is the S3400's measured plan shape.
+	var nopriv = snmpprov.Plan{Version: "v3", Kind: snmpprov.KindV3,
+		Tag: "snmpv3-sha-nopriv", Auth: "sha", Conform: false,
+		Reason: "platform without a privacy user form"}
+	verdict, msg = judgeAskSNMP("sw-a1", nopriv, "cred-v3")
+	if verdict != askSNMPReady {
+		t.Fatalf("an authNoPriv device must be walkable since the collector "+
+			"speaks it, verdict %v: %s", verdict, msg)
+	}
+	verdict, _ = judgeAskSNMP("sw-a1", nopriv, "")
+	if verdict != askSNMPNoCredential {
+		t.Errorf("authNoPriv without a vault secret is a CREDENTIAL refusal "+
+			"(fixable by snmp-apply), not a protocol one, verdict %v", verdict)
 	}
 }
 
@@ -286,8 +305,8 @@ func TestWalkRefusesMissingVaultCommunity(t *testing.T) {
 }
 
 func TestWalkRefusesDeviceWithoutSNMPPlan(t *testing.T) {
-	var sansPlan = snmpprov.Plan{Reason: "No connector recognizes this device."}
-	var verdict, msg = judgeAskSNMP("unknown-box", sansPlan, "")
+	var withoutPlan = snmpprov.Plan{Reason: "No connector recognizes this device."}
+	var verdict, msg = judgeAskSNMP("unknown-box", withoutPlan, "")
 	if verdict != askSNMPUnsupervised {
 		t.Fatalf("without an SNMP plan, the walk is impossible, verdict %v", verdict)
 	}

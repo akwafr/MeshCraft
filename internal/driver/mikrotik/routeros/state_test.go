@@ -139,7 +139,7 @@ func TestCPUMemberOfMgmtVLANButNotAPort(t *testing.T) {
 
 // TestMgmtVLANDerivedFromAddress locks the derivation chain ALL apply safeguards depend on.
 //
-// The chain, entirely observed: `/ip/address` gives `10.99.0.54/24` on `vlan99`;
+// The chain, entirely observed: `/ip/address` gives `192.0.2.54/24` on `vlan99`;
 // `/interface/vlan` gives `vlan99` with identifier 99 on `bridge`; therefore management
 // VLAN is 99.
 //
@@ -154,14 +154,14 @@ func TestMgmtVLANDerivedFromAddress(t *testing.T) {
 	if st.MgmtVLAN != 99 {
 		t.Errorf("management VLAN = %d, expected 99. The capture carries two "+
 			"addresses: 192.168.88.1/24 on the bridge (defconf, unused) and "+
-			"10.99.0.54/24 on vlan99 (the real one). Keeping the first would protect the "+
+			"192.0.2.54/24 on vlan99 (the real one). Keeping the first would protect the "+
 			"wrong VLAN", st.MgmtVLAN)
 	}
 	if st.MgmtInterface != "vlan99" {
 		t.Errorf("management interface = %q, expected 'vlan99'", st.MgmtInterface)
 	}
-	if st.MgmtAddress != "10.99.0.54/24" {
-		t.Errorf("management address = %q, expected '10.99.0.54/24'",
+	if st.MgmtAddress != "192.0.2.54/24" {
+		t.Errorf("management address = %q, expected '192.0.2.54/24'",
 			st.MgmtAddress)
 	}
 }

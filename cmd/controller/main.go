@@ -31,7 +31,7 @@ import (
 //	version = product version (VERSION file, e.g. 0.1.0);
 //	build   = UTC build timestamp YYYYMMDD.HHMMSS, which actually
 //	          identifies the deployed image
-//	          (see docs/01-Architecture/Versionnage et mise a jour du proxy).
+//	          (see docs/en/01-Architecture/Proxy versioning and updates.md).
 var (
 	version = "dev"
 	build   = "dev"
@@ -53,7 +53,7 @@ func main() {
 
 	// The log goes to standard output AS BEFORE, plus into an in-memory ring
 	// buffer that administration can consult live
-	// (see docs/01-Architecture/Monitoring unifie et pipelines §6). "Plus",
+	// (see docs/en/01-Architecture/Unified monitoring and pipelines.md §6). "Plus",
 	// never "instead of": diverting the stream would lose the container's
 	// logs at the moment they are needed most.
 	var debugRing = debuglog.NewRing(3000)
@@ -184,6 +184,67 @@ func main() {
 	// nobody knows they need to make (see internal/api/snmpheal.go).
 	go srv.RunSNMPHeal(context.Background())
 
+	// Periodic PoE draw sampling: the CLI-read wattage that no SNMP OID
+	// serves, refreshed on a schedule instead of only on the read-state
+	// click — per-port `poe_w` in inventory, a fresh `poe_observed`, and a
+	// wattage series when a store exists (see internal/api/poesample.go).
+	// Cadence: MESHCRAFT_POE_SAMPLE_EVERY (default 5m, "off" disables).
+	go srv.RunPoESampler(context.Background())
+
+	// Periodic transceiver-DDM sampling: the CLI leg of optical level history,
+	// for platforms whose only vantage point on their cages is a show command
+	// (driver.OpticsReader — the FS S3400 case). Refreshes `optics_observed`
+	// and feeds the sfp dBm series; exits when no series store is configured
+	// (see internal/api/opticssample.go).
+	// Cadence: MESHCRAFT_OPTICS_SAMPLE_EVERY (default 5m, "off" disables).
+	go srv.RunOpticsSampler(context.Background())
+
+	// Client bandwidth buckets: attributes each port's octet increase to the
+	// MACs located there, once a minute. Exits when no series store is
+	// configured (see internal/api/clientbuckets.go).
+	go srv.RunClientBuckets(context.Background())
+
+	// Forwarding-table sampler: periodic CLI reads for the platforms neither
+	// collector serves (EOS — its gNMI doors were probed closed on 4.28).
+	// Cadence: MESHCRAFT_FDB_SAMPLE_EVERY (default 2m, "off" disables).
+	go srv.RunFDBSampler(context.Background())
+
+	// System-name reconciliation: meshcraft owns the device's own hostname, so a
+	// device renamed at its console — or one that never received the name it was
+	// given in the inventory — is repaired on a cadence, and the repair is visible
+	// in the device's history (see internal/api/hostnameheal.go). The comparison
+	// itself opens NO device session: the name the device announces already arrives
+	// on every SNMP poll cycle as its LLDP system name.
+	go srv.RunHostnameHeal(context.Background())
+
+	// Site-extension import, every 30 s, measured from the END of the previous
+	// pass so a slow controller cannot stack up overlapping passes (ADR-0029
+	// §11). ONE goroutine for the whole instance, walking every paired
+	// extension sequentially — the cost to bound is the remote controller's,
+	// not ours. It is deliberately quiet: only transitions reach the journal,
+	// because a line every 30 s would drown the page humans read
+	// (see internal/api/extsync.go).
+	go srv.RunExtSync(context.Background())
+
+	// Periodic CONFIG read-back — the hole the three loops above do not fill.
+	// Everything that polls continuously today polls TELEMETRY: the proxy's SNMP
+	// poller, RunPortRates, the PoE sampler, ping watch. Configuration — a port
+	// shut at the console, VLAN membership changed by hand, drift — lives behind
+	// an administration session, and until this loop the only thing that ever
+	// opened one on a schedule was an operator clicking "read state". Between
+	// two clicks the screens showed meshcraft's own intentions and an observation
+	// of unknown age (see internal/api/configpoll.go). It runs the SAME gesture
+	// the button runs, one device at a time, stalest first, never beside an
+	// apply. Cadence: MESHCRAFT_CONFIG_POLL_EVERY (default 30m, "off" disables).
+	go srv.RunConfigPoll(context.Background())
+	// The alerting queue drains the delivery slips filing wrote (ADR-0024).
+	// It is the SENDING half only: classification and filing happen on the
+	// journal write path, so not starting this loop leaves detection and the
+	// journal exactly as they were and simply delivers nothing — a degradation
+	// the screen shows as a growing pending count, rather than a channel that
+	// reads as healthy while silent.
+	go srv.RunNotifyQueue(context.Background())
+
 	slog.Info("meshcraft controller started", "listen", cfg.Listen,
 		"version", version, "build", build)
 	// The SOCKS route to device web interfaces (cf. internal/socks). Started
@@ -192,6 +253,12 @@ func main() {
 	// is a door into customer management networks and it does not open by
 	// accident.
 	srv.StartSocks(context.Background(), cfg.SocksListen)
+	// The drivers' OWN SOCKS listener + the external driver endpoints (cf.
+	// internal/api/driversocks.go). Off unless configured, same rule as above.
+	srv.StartDriverSocks(context.Background())
+	// The agent-image build pipeline (git→OCI-layout→registry). Needs only the
+	// Docker socket, not the driver SOCKS listener, so it is started on its own.
+	srv.StartAgentHost(context.Background())
 
 	var httpSrv = &http.Server{
 		Addr:              cfg.Listen,

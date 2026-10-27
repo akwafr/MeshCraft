@@ -31,7 +31,7 @@ import (
 // No request is emitted, which is the meaning of `nil` here: if this code touched the
 // network, it would panic here.
 func TestNoCredentialToTryIsAnExplicitRefusal(t *testing.T) {
-	var admin, err = (&Driver{}).Authenticate(nil, driver.Target{Host: "10.99.0.54"}, nil)
+	var admin, err = (&Driver{}).Authenticate(nil, driver.Target{Host: "192.0.2.54"}, nil)
 	if err == nil {
 		t.Fatal("authenticating without any candidate must be refused: RouterOS REST " +
 			"serves nothing without credentials, there is nothing to try")
@@ -71,7 +71,7 @@ func TestNoCredentialToTryIsAnExplicitRefusal(t *testing.T) {
 // credentials — it would then return empty without error, and discovery would rank a
 // device without model believing it had been read.
 func TestIdentifyRequiresCandidates(t *testing.T) {
-	var id, err = (&Driver{}).Identify(nil, driver.Target{Host: "10.99.0.54"}, nil)
+	var id, err = (&Driver{}).Identify(nil, driver.Target{Host: "192.0.2.54"}, nil)
 	if err == nil {
 		t.Fatal("identifying a RouterOS without credentials must be refused: the REST API " +
 			"answers 401 on all its resources, including the one that carries the model")
@@ -104,7 +104,7 @@ func TestV3IsRefusedNotApproximated(t *testing.T) {
 	var c = &Client{}
 	var _, err = c.ApplySNMP(nil, SNMPIdentity{
 		User: "mcmon", AuthAlg: "SHA-256", PrivAlg: "AES-128",
-		AuthSecret: "one", PrivSecret: "two", Sources: []string{"10.99.0.0/24"},
+		AuthSecret: "one", PrivSecret: "two", Sources: []string{"192.0.2.0/24"},
 	})
 	if err == nil {
 		t.Fatal("an SNMPv3 identity must be REFUSED: this connector declares only " +
@@ -180,7 +180,7 @@ func TestCommunityWithoutSourceBoundIsRefused(t *testing.T) {
 // the proxy.
 func TestTrapPortOtherThan162IsRefused(t *testing.T) {
 	var c = &Client{}
-	var want = TrapDestination{Address: "10.99.0.2", Community: "mc-ro", Port: 1162}
+	var want = TrapDestination{Address: "192.0.2.2", Community: "mc-ro", Port: 1162}
 	var out, err = c.ApplyTrapReceiver(nil, want)
 	if err == nil {
 		t.Fatal("a trap port other than 0 or 162 must be REFUSED, never ignored: " +
@@ -227,7 +227,7 @@ func TestTrapPortOtherThan162IsRefused(t *testing.T) {
 // not match against any community list entry, so NOTHING would signal the error.
 func TestReceiverWithoutCommunityIsRefused(t *testing.T) {
 	var c = &Client{}
-	var _, err = c.ApplyTrapReceiver(nil, TrapDestination{Address: "10.99.0.2"})
+	var _, err = c.ApplyTrapReceiver(nil, TrapDestination{Address: "192.0.2.2"})
 	if err == nil {
 		t.Fatal("declaring a trap receiver without community must be refused: " +
 			"the collector would reject all traps, and the device would say nothing")
@@ -245,7 +245,7 @@ func TestReceiverWithoutCommunityIsRefused(t *testing.T) {
 	// A v3 receiver is an absent CAPABILITY, not a missing parameter: distinguishing them
 	// is what lets the screen not offer a button that leads nowhere.
 	_, err = c.ApplyTrapReceiver(nil, TrapDestination{
-		Address: "10.99.0.2", User: "mcmon"})
+		Address: "192.0.2.2", User: "mcmon"})
 	if !errors.Is(err, driver.ErrNotImplemented) {
 		t.Errorf("a v3 receiver must be a CAPABILITY refusal, recognizable by "+
 			"errors.Is(err, driver.ErrNotImplemented): %v", err)
@@ -410,7 +410,7 @@ func TestUnresolvedAllRemovesNothing(t *testing.T) {
 
 // TestConnectorReachableThroughContract — the fault all this closes.
 //
-// Adopting the CRS326 sent an Instant On SNMP placement protocol at it: `https://10.99.0.54/`,
+// Adopting the CRS326 sent an Instant On SNMP placement protocol at it: `https://192.0.2.54/`,
 // connection refused since that device does not listen on 443. The cause was that no path
 // led from the API layer to this connector — it called `instanton.OpenAdmin` hard-coded.
 //

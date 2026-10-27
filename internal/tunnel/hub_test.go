@@ -49,10 +49,10 @@ func pairYamux(t *testing.T) *yamux.Session {
 // holds it. While it stayed open, revocation only applied to the next authentication,
 // yet the existing session was enough to reach devices and receive SNMP communities
 // from the fleet.
-func TestCloseSessionCoupeEtOublieLaSession(t *testing.T) {
+func TestCloseSessionCutsAndForgetsTheSession(t *testing.T) {
 	var h = NewHub()
 	var ymux = pairYamux(t)
-	var release = h.Register("p1", "v1", ymux)
+	var release = h.Register("p1", "v1", "", ymux)
 	defer release()
 
 	if !h.Connected("p1") {
@@ -81,12 +81,12 @@ func TestCloseSessionCoupeEtOublieLaSession(t *testing.T) {
 
 // The mirror risk, and the worst one: an overly broad cut would disconnect the whole
 // fleet. A proxy that is not targeted must feel nothing.
-func TestCloseSessionLaisseLesAutresProxysTranquilles(t *testing.T) {
+func TestCloseSessionLeavesOtherProxiesAlone(t *testing.T) {
 	var h = NewHub()
 	var revoked = pairYamux(t)
 	var valid = pairYamux(t)
-	defer h.Register("revoked", "v1", revoked)()
-	defer h.Register("valid", "v1", valid)()
+	defer h.Register("revoked", "v1", "", revoked)()
+	defer h.Register("valid", "v1", "", valid)()
 
 	h.CloseSession("revoked", "proxy revoked")
 
@@ -102,7 +102,7 @@ func TestCloseSessionLaisseLesAutresProxysTranquilles(t *testing.T) {
 
 // A proxy with no tunnel: nothing to cut, and the caller must be able to say so --
 // that is what lets it avoid announcing a cut that did not happen.
-func TestCloseSessionSansTunnel(t *testing.T) {
+func TestCloseSessionWithoutTunnel(t *testing.T) {
 	var h = NewHub()
 	if h.CloseSession("never-seen", "proxy revoked") {
 		t.Error("CloseSession announces a cut when no tunnel existed")
@@ -112,10 +112,10 @@ func TestCloseSessionSansTunnel(t *testing.T) {
 // A session already dead but not yet reaped (tunnel handler has not returned) does
 // not count as a cut: otherwise periodic revalidation would write a log line on every
 // pass for a tunnel nobody cut.
-func TestCloseSessionNAnnonceRienSurUneSessionDejaMorte(t *testing.T) {
+func TestCloseSessionAnnouncesNothingOnADeadSession(t *testing.T) {
 	var h = NewHub()
 	var ymux = pairYamux(t)
-	defer h.Register("p1", "v1", ymux)()
+	defer h.Register("p1", "v1", "", ymux)()
 	_ = ymux.Close()
 
 	if h.CloseSession("p1", "proxy revoked") {
@@ -129,14 +129,14 @@ func TestCloseSessionNAnnonceRienSurUneSessionDejaMorte(t *testing.T) {
 // Register invariant that makes early removal safe: release from a cut session must
 // not evict a reconnection that arrived since. A revoked proxy reconnects in a loop --
 // authentication will refuse it -- but a reactivated proxy comes back for good.
-func TestCloseSessionPuisReconnexionImmediate(t *testing.T) {
+func TestCloseSessionThenImmediateReconnect(t *testing.T) {
 	var h = NewHub()
 	var old = pairYamux(t)
-	var releaseOld = h.Register("p1", "v1", old)
+	var releaseOld = h.Register("p1", "v1", "", old)
 	h.CloseSession("p1", "proxy revoked")
 
 	var fresh = pairYamux(t)
-	defer h.Register("p1", "v2", fresh)()
+	defer h.Register("p1", "v2", "", fresh)()
 
 	// Old session release arrives AFTER reconnection: real order when a proxy returns
 	// faster than the handler it left.
@@ -153,10 +153,10 @@ func TestCloseSessionPuisReconnexionImmediate(t *testing.T) {
 // ProxyIDs is what periodic revalidation walks: it must return established tunnels
 // without PINGing them, unlike List(). Content is verified here; absence of ping is
 // visible in code (no round trip possible on a session whose other end does not read).
-func TestProxyIDsRendLesTunnelsEtablis(t *testing.T) {
+func TestProxyIDsReturnsEstablishedTunnels(t *testing.T) {
 	var h = NewHub()
-	defer h.Register("p1", "v1", pairYamux(t))()
-	defer h.Register("p2", "v1", pairYamux(t))()
+	defer h.Register("p1", "v1", "", pairYamux(t))()
+	defer h.Register("p2", "v1", "", pairYamux(t))()
 
 	var ids = h.ProxyIDs()
 	if len(ids) != 2 {
@@ -174,12 +174,12 @@ func TestProxyIDsRendLesTunnelsEtablis(t *testing.T) {
 
 // Register closes a same-proxy previous session -- behavior already in place and never
 // tested, on which cut relies: same gesture (close a yamux) and same table.
-func TestRegisterFermeLaSessionPrecedente(t *testing.T) {
+func TestRegisterClosesThePreviousSession(t *testing.T) {
 	var h = NewHub()
 	var first = pairYamux(t)
-	h.Register("p1", "v1", first)
+	h.Register("p1", "v1", "", first)
 	var second = pairYamux(t)
-	defer h.Register("p1", "v2", second)()
+	defer h.Register("p1", "v2", "", second)()
 
 	// Close happens outside Register lock: allow a moment.
 	var deadline = time.Now().Add(2 * time.Second)
@@ -191,5 +191,107 @@ func TestRegisterFermeLaSessionPrecedente(t *testing.T) {
 	}
 	if second.IsClosed() {
 		t.Error("new session was closed")
+	}
+}
+
+// --- Resync tracking, and the compatibility contract it carries ---
+
+// THE OLD PROXY, which is the property that must never break. A session that did not
+// announce FeatureResyncDone will never send an end-of-burst marker, and the Hub says
+// so with a state of its own instead of leaving it pending forever: a controller that
+// waited on it would freeze a fleet that was working yesterday, and the fleet is not
+// upgraded atomically.
+func TestResyncUnsupportedForAProxyThatAnnouncesNothing(t *testing.T) {
+	var h = NewHub()
+	defer h.Register("p1", "v1", "", pairYamux(t))()
+
+	if h.Resync("p1") != ResyncUnsupported {
+		t.Fatalf("Resync = %v, want unsupported: this proxy announced no capability",
+			h.Resync("p1"))
+	}
+	// And an unrelated capability list is not a claim to this one.
+	defer h.Register("p2", "v1", "traps,lldp-push", pairYamux(t))()
+	if h.Resync("p2") != ResyncUnsupported {
+		t.Errorf("Resync = %v, want unsupported: another feature is not this one",
+			h.Resync("p2"))
+	}
+}
+
+// A proxy nobody holds a session for has said nothing at all -- distinct from "cannot
+// say". The two are separated because only one of them is worth waiting for.
+func TestResyncAbsentWithoutASession(t *testing.T) {
+	var h = NewHub()
+	if h.Resync("never-seen") != ResyncAbsent {
+		t.Errorf("Resync = %v, want absent", h.Resync("never-seen"))
+	}
+}
+
+// THE FULL PATH, on a real yamux pair and through the real event reader: a proxy that
+// announces the capability starts pending, and the marker it writes at the end of its
+// burst is what moves it to done. The Hub records this ITSELF -- the handler is only
+// told -- so no controller wiring can lose it.
+func TestResyncPendingUntilTheProxyClosesItsBurst(t *testing.T) {
+	var h = NewHub()
+	var proxy, controller = pairYamuxBoth(t)
+	defer h.Register("p1", "v1", FeatureResyncDone, controller)()
+
+	if h.Resync("p1") != ResyncPending {
+		t.Fatalf("Resync = %v, want pending: the burst has not been closed",
+			h.Resync("p1"))
+	}
+
+	var seen = make(chan Event, 8)
+	go h.AcceptEvents("p1", func(_ string, ev Event) { seen <- ev })
+
+	var events = make(chan Event, 4)
+	go func() { _ = SendEvents(proxy, events, nil) }()
+
+	var deadline = time.Now().Add(2 * time.Second)
+	for h.Resync("p1") != ResyncDone && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if h.Resync("p1") != ResyncDone {
+		t.Fatalf("Resync = %v, want done: the proxy closed its burst", h.Resync("p1"))
+	}
+	// Forwarded as well as recorded: that journal line is the only trace an operator
+	// has of a proxy declaring itself caught up.
+	var ev Event
+	select {
+	case ev = <-seen:
+		if ev.Type != EventResyncDone {
+			t.Errorf("handler saw %q, want %q", ev.Type, EventResyncDone)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the marker was recorded but never handed to the handler")
+	}
+
+	// A RECONNECTION IS A NEW BURST. The state lives on the session, so the proxy is
+	// pending again without anyone having to remember to reset it -- which is exactly
+	// what a controller restart looks like from here.
+	defer h.Register("p1", "v1", FeatureResyncDone, pairYamux(t))()
+	if h.Resync("p1") != ResyncPending {
+		t.Errorf("Resync = %v after reconnection, want pending", h.Resync("p1"))
+	}
+}
+
+// The capability list crosses an HTTP header written by a binary we do not control, so
+// its parsing is tolerant on form and strict on content: a near-miss token is not the
+// capability, and claiming it by accident would make the controller wait for a marker
+// that is never coming.
+func TestHasFeatureIsTolerantOnFormAndStrictOnContent(t *testing.T) {
+	if !HasFeature("resync-done", FeatureResyncDone) {
+		t.Error("the plain token was not recognized")
+	}
+	if !HasFeature("traps, resync-done , lldp", FeatureResyncDone) {
+		t.Error("spacing in the list defeated the match")
+	}
+	if !HasFeature("Resync-Done", FeatureResyncDone) {
+		t.Error("case in the list defeated the match")
+	}
+	if HasFeature("", FeatureResyncDone) {
+		t.Error("an empty list announced a capability")
+	}
+	if HasFeature("resync-done-maybe", FeatureResyncDone) {
+		t.Error("a longer token was accepted as this one")
 	}
 }

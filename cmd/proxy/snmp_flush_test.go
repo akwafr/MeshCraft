@@ -15,87 +15,87 @@ import (
 	"meshcraft/internal/metricbuf"
 )
 
-// Ce que ces tests protegent : que le tampon AVANCE.
+// What these tests protect: that the buffer MOVES ON.
 //
-// Le tampon existe pour qu'une coupure de tunnel ne perde pas les minutes qu'elle
-// dure, et pour ca `flush` rend au tampon tout lot qui n'est pas parti. Mais
-// `metricbuf.Take` rend TOUJOURS le same lot reserve : rendre un lot que le
-// controleur refusera encore, c'est le rejouer a l'identique pour toujours. Le
-// tampon ne se vide plus, il deborde par le haut, et ce sont les points les plus
-// RECENTS que la collecte perd — l'arret complet de la remontee pour ce proxy, et
-// non une perte partielle.
+// The buffer exists so a tunnel outage does not lose the minutes it lasts, and
+// for that `flush` returns to the buffer any batch that did not go out. But
+// `metricbuf.Take` ALWAYS returns the same reserved batch: returning a batch the
+// controller will refuse again means replaying it identically forever. The
+// buffer no longer drains, it overflows from the top, and the collection loses
+// its MOST RECENT points — the complete stop of upstream for this proxy, not a
+// partial loss.
 //
-// Hence trois properties, et la first est celle qui donne son sens aux autres :
+// Hence three properties, and the first is the one that gives the others meaning:
 //
-//  1. sur un refus DEFINITIF, le lot est abandonne et le lot suivant est DIFFERENT ;
-//  2. sur un failure PASSAGER, le lot suivant est le SAME — c'est la raison d'be du
-//     tampon, et la corriger ne doit pas l'emporter ;
-//  3. un abandon dit combien de points il sacrifie. Un abandon silencieux serait
-//     pire que la boucle qu'il remplace : la boucle, elle, finit par se voir.
+//  1. on a PERMANENT refusal, the batch is dropped and the next batch is DIFFERENT;
+//  2. on a TRANSIENT failure, the next batch is the SAME — that is the buffer's
+//     reason to exist, and fixing the former must not take it away;
+//  3. a drop says how many points it sacrifices. A silent drop would be worse
+//     than the loop it replaces: the loop, at least, ends up being seen.
 //
-// Sans network reel : `flush` prend son client HTTP dans le collecteur, un serveur de
-// test suffit donc a jouer le controleur — y compris pour ses responses les plus
-// difficiles a obtenir en vrai, qui sont justement celles qui bloquaient.
+// No real network: `flush` takes its HTTP client from the collector, so a test
+// server is enough to play the controller — including for its responses that
+// are hardest to get for real, which are precisely the ones that used to stall.
 
-// lotRecu : ce qui identifie un lot vu du controleur.
+// receivedBatch: what identifies a batch as seen by the controller.
 //
-// Ses BORNES, pas ses samples. Toute la question applied a ces tests est « le lot
-// suivant est-il le same que le previous ? », et deux valeurs y repondent — a
-// condition que les samples soient numerotes, ce dont echantillonsNumerotes se
-// charge.
-type lotRecu struct {
-	n       int
-	premier float64
-	dernier float64
+// Its BOUNDS, not its samples. The whole question these tests ask is "is the
+// next batch the same as the previous one?", and two values answer it —
+// provided the samples are numbered, which numberedSamples takes care of.
+type receivedBatch struct {
+	n     int
+	first float64
+	last  float64
 }
 
-// receveur enregistre les lots que le faux controleur receives.
+// batchRecorder records the batches the fake controller receives.
 //
-// Le verrou n'est pas decoratif : le gestionnaire HTTP tourne dans la goroutine du
-// serveur de test, la lecture dans celle du test. L'aller-retour par la connexion
-// suffirait probablement a ordonner les deux, mais « probablement » n'est pas ce
-// qu'on demande a un test lance avec -race.
-type receveur struct {
-	mu   sync.Mutex
-	lots []lotRecu
+// The lock is not decorative: the HTTP handler runs in the test server's
+// goroutine, the reading in the test's. The round trip over the connection
+// would probably be enough to order the two, but "probably" is not what we ask
+// of a test run with -race.
+type batchRecorder struct {
+	mu      sync.Mutex
+	batches []receivedBatch
 }
 
-func (rc *receveur) ajoute(t *testing.T, r *http.Request) {
+func (rc *batchRecorder) record(t *testing.T, r *http.Request) {
 	var in struct {
 		ProxyID string             `json:"proxy_id"`
 		Samples []metricbuf.Sample `json:"samples"`
 	}
-	// t.Errorf et non t.Fatalf : on est dans la goroutine du serveur, where stop le
-	// test n'est pas permis.
+	// t.Errorf and not t.Fatalf: we are in the server's goroutine, where stopping
+	// the test is not allowed.
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
-		t.Errorf("corps illisible cote controleur")
+		t.Errorf("unreadable body on the controller side")
 		return
 	}
 	if in.ProxyID != tProxyID {
-		t.Errorf("proxy_id expected %q, recu %q", tProxyID, in.ProxyID)
+		t.Errorf("proxy_id expected %q, received %q", tProxyID, in.ProxyID)
 	}
 	if len(in.Samples) == 0 {
-		t.Errorf("lot vide recu : flush ne doit pas envoyer de request pour rien")
+		t.Errorf("empty batch received: flush must not send a request for nothing")
 		return
 	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	rc.lots = append(rc.lots, lotRecu{
-		n: len(in.Samples), premier: in.Samples[0].Value,
-		dernier: in.Samples[len(in.Samples)-1].Value,
+	rc.batches = append(rc.batches, receivedBatch{
+		n: len(in.Samples), first: in.Samples[0].Value,
+		last: in.Samples[len(in.Samples)-1].Value,
 	})
 }
 
-func (rc *receveur) vus() []lotRecu {
+func (rc *batchRecorder) received() []receivedBatch {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	return append([]lotRecu{}, rc.lots...)
+	return append([]receivedBatch{}, rc.batches...)
 }
 
-// echantillonsNumerotes rend `n` samples dont la VALEUR est le rang. C'est ce
-// number qui rend « le same lot » et « le lot suivant » distinguables ; sans lui, un
-// rejeu et un avancement produisent deux corps identiques et le test ne prouve rien.
-func echantillonsNumerotes(n int) []metricbuf.Sample {
+// numberedSamples returns `n` samples whose VALUE is their rank. That
+// number is what makes "the same batch" and "the next batch" distinguishable;
+// without it, a replay and a move-on produce two identical bodies and the test
+// proves nothing.
+func numberedSamples(n int) []metricbuf.Sample {
 	var out = make([]metricbuf.Sample, 0, n)
 	var i int
 	for i = 0; i < n; i++ {
@@ -108,28 +108,29 @@ func echantillonsNumerotes(n int) []metricbuf.Sample {
 	return out
 }
 
-// controleurQuiRepond monte un faux controleur qui enregistre puis repond `status`
-// avec `corps`, et le collecteur qui lui parle.
+// fakeController sets up a fake controller that records then answers
+// `status` with `respBody`, and the collector that talks to it.
 //
-// Le tampon est dimensionne EXACTEMENT a ce qu'on y met : ainsi tout `Dropped` non
-// nul dans un de ces tests est un vrai symptome, jamais un effet du montage.
-func controleurQuiRepond(t *testing.T, status int, corps string,
-	enTetes map[string]string, n int) (*SNMPCollector, *receveur) {
+// The buffer is sized EXACTLY to what is put in it: that way any non-zero
+// `Dropped` in one of these tests is a real symptom, never a side effect of the
+// setup.
+func fakeController(t *testing.T, status int, respBody string,
+	headers map[string]string, n int) (*SNMPCollector, *batchRecorder) {
 	t.Helper()
-	var rc = &receveur{}
+	var rc = &batchRecorder{}
 	var srv = httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/proxy/metrics" {
-				t.Errorf("chemin inattendu : %s", r.URL.Path)
+				t.Errorf("unexpected path: %s", r.URL.Path)
 			}
-			rc.ajoute(t, r)
+			rc.record(t, r)
 			var k, v string
-			for k, v = range enTetes {
+			for k, v = range headers {
 				w.Header().Set(k, v)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
-			var _, err = w.Write([]byte(corps))
+			var _, err = w.Write([]byte(respBody))
 			if err != nil {
 				t.Errorf("write de la response : %v", err)
 			}
@@ -142,257 +143,259 @@ func controleurQuiRepond(t *testing.T, status int, corps string,
 		secret:        tSecret,
 		client:        srv.Client(),
 	}
-	c.buf.AddAll(echantillonsNumerotes(n))
+	c.buf.AddAll(numberedSamples(n))
 	return c, rc
 }
 
-// refus413 : le corps que le controleur renvoie vraiment sur un lot trop volumineux
-// (cf. failJSON et batchGeste, internal/api). Recopie parce que c'est le motif que
-// l'exploitant lira dans le journal du proxy : si sa forme change, c'est le message
-// d'abandon qui perd son interet.
-const refus413 = `{"error":"corps de request trop grand : plafond de 8388608 ` +
-	`octets ; le lot du proxy est trop volumineux, reduisez maxPerFlush ` +
-	`(ce n'est pas un probleme de contenu)"}`
+// refusal413: the body the controller really sends back on an oversized batch
+// (see failJSON and batchRecovery, internal/api). Copied because it is the reason
+// the operator will read in the proxy's log: if its shape changes, the drop
+// message loses its value.
+const refusal413 = `{"error":"request body too large: cap of 8388608 ` +
+	`bytes; proxy batch too large, reduce maxPerFlush ` +
+	`(this is not a content problem)"}`
 
-// TestRefusDefinitifAbandonneEtLeTamponAvance est LE test du lot.
+// TestPermanentRefusalDropsAndTheBufferMovesOn is THE test of this batch.
 //
-// Il tests la seule property qui distingue la reparation du default : after un
-// refus definitif, le lot SUIVANT n'est pas le previous. Tout le reste — le
-// journal, la frontiere, les chiffres — n'a d'interet que si celle-ci tient.
-func TestRefusDefinitifAbandonneEtLeTamponAvance(t *testing.T) {
-	// Plus d'un lot dans le tampon, sinon « le lot suivant est different » ne veut
-	// rien dire : c'est exactement la property qu'on mesure.
+// It tests the only property that tells the fix from the defect: after a
+// permanent refusal, the NEXT batch is not the previous one. Everything else —
+// the log, the boundary, the figures — only matters if this one holds.
+func TestPermanentRefusalDropsAndTheBufferMovesOn(t *testing.T) {
+	// More than one batch in the buffer, otherwise "the next batch is different"
+	// means nothing: that is exactly the property being measured.
 	var enTampon = maxPerFlush + 500
-	var c, rc = controleurQuiRepond(t, http.StatusRequestEntityTooLarge, refus413,
+	var c, rc = fakeController(t, http.StatusRequestEntityTooLarge, refusal413,
 		nil, enTampon)
 	var ctx = context.Background()
 
-	// Faux same sur un abandon, alors que le tampon a pourtant avance : un refus
-	// systematique sacrifierait quatre lots par wake au lieu d'un si la rafale
-	// continuait.
+	// False even on a drop, although the buffer did move on: a systematic refusal
+	// would sacrifice four batches per wake-up instead of one if the burst went on.
 	if c.flush(ctx) {
-		t.Errorf("flush doit rendre faux sur un refus : la rafale stops there")
+		t.Errorf("flush must return false on a refusal: the burst stops there")
 	}
 	if c.flush(ctx) {
-		t.Errorf("flush doit rendre faux sur un refus : la rafale stops there")
+		t.Errorf("flush must return false on a refusal: the burst stops there")
 	}
 
-	var lots = rc.vus()
-	if len(lots) != 2 {
-		t.Fatalf("2 lots attendus au controleur, recu %d", len(lots))
+	var batches = rc.received()
+	if len(batches) != 2 {
+		t.Fatalf("2 batches expected at the controller, received %d", len(batches))
 	}
-	if lots[0].premier == lots[1].premier {
-		t.Fatalf("le tampon N'A PAS AVANCE : les deux lots commencent au point %.0f "+
-			"— c'est la boucle infinie que ce lot repare", lots[0].premier)
+	if batches[0].first == batches[1].first {
+		t.Fatalf("the buffer DID NOT MOVE ON: both batches start at point %.0f "+
+			"— that is the infinite loop this batch fixes", batches[0].first)
 	}
-	if lots[0].n != maxPerFlush || lots[0].premier != 0 {
-		t.Errorf("premier lot : %d samples a partir de %.0f, expected %d a partir "+
-			"de 0", lots[0].n, lots[0].premier, maxPerFlush)
+	if batches[0].n != maxPerFlush || batches[0].first != 0 {
+		t.Errorf("first batch: %d samples from %.0f, expected %d from "+
+			"de 0", batches[0].n, batches[0].first, maxPerFlush)
 	}
-	if lots[1].premier != float64(maxPerFlush) || lots[1].n != 500 {
-		t.Errorf("second lot : %d samples a partir de %.0f, expected 500 a partir "+
-			"de %d", lots[1].n, lots[1].premier, maxPerFlush)
+	if batches[1].first != float64(maxPerFlush) || batches[1].n != 500 {
+		t.Errorf("second batch: %d samples from %.0f, expected 500 from "+
+			"de %d", batches[1].n, batches[1].first, maxPerFlush)
 	}
 
-	// Le tampon est vide, et surtout : il n'a plus rien de RESERVE. Un `Pending`
-	// residuel serait le same blocage sous un autre nom, puisque `Take` le rendrait
-	// encore.
+	// The buffer is empty, and above all: it has nothing RESERVED left. A residual
+	// `Pending` would be the same stall under another name, since `Take` would
+	// return it again.
 	var st = c.buf.Stats()
 	if st.Queued != 0 || st.Pending != 0 {
-		t.Errorf("tampon expected vide, obtenu %d en attente et %d reserves",
+		t.Errorf("buffer expected empty, got %d queued and %d reserved",
 			st.Queued, st.Pending)
 	}
-	// `Dropped` compte les pertes par SATURATION, pas les abandons : un lot abandonne
-	// ne laisse aucune trace dans les statistiques du tampon. C'est precisely
-	// pourquoi l'abandon doit se journaliser lui-same (voir le test suivant).
+	// `Dropped` counts SATURATION losses, not drops: a dropped batch leaves no
+	// trace in the buffer statistics. That is precisely why the drop must log
+	// itself (see the next test).
 	if st.Dropped != 0 {
-		t.Errorf("aucune perte par saturation attendue, obtenu %d", st.Dropped)
+		t.Errorf("no saturation loss expected, got %d", st.Dropped)
 	}
 }
 
-// TestEchecPassagerRejoueLeMemeLot est la non-regression du tampon, et elle compte
-// autant que le test previous : distinguer le refus definitif ne doit pas
-// transformer une panne de controleur en perte de mesures. C'est ce que le tampon
-// existe pour empecher.
-func TestEchecPassagerRejoueLeMemeLot(t *testing.T) {
-	// 503 : la response d'un controleur sans stockage de metriques configure. Il la
-	// choisit EXPRESSEMENT pour que le proxy garde son lot (cf. handleProxyMetrics).
-	var c, rc = controleurQuiRepond(t, http.StatusServiceUnavailable,
-		`{"error":"stockage de metriques non configure sur ce controleur"}`,
+// TestTransientFailureReplaysTheSameBatch is the buffer's non-regression, and it
+// matters as much as the previous test: recognising the permanent refusal must
+// not turn a controller outage into a loss of measurements. That is what the
+// buffer exists to prevent.
+func TestTransientFailureReplaysTheSameBatch(t *testing.T) {
+	// 503: the response of a controller with no metrics storage configured. It
+	// chooses it EXPRESSLY so the proxy keeps its batch (see handleProxyMetrics).
+	var c, rc = fakeController(t, http.StatusServiceUnavailable,
+		`{"error":"metrics storage not configured on this controller"}`,
 		nil, maxPerFlush+500)
 	var ctx = context.Background()
 	var i int
 	for i = 0; i < 3; i++ {
 		if c.flush(ctx) {
-			t.Errorf("flush doit rendre faux sur un refus (tentative %d)", i+1)
+			t.Errorf("flush must return false on a refusal (attempt %d)", i+1)
 		}
 	}
-	var lots = rc.vus()
-	if len(lots) != 3 {
-		t.Fatalf("3 tentatives attendues, recu %d", len(lots))
+	var batches = rc.received()
+	if len(batches) != 3 {
+		t.Fatalf("3 attempts expected, received %d", len(batches))
 	}
-	for i = 1; i < len(lots); i++ {
-		if lots[i] != lots[0] {
-			t.Fatalf("le lot %d differe du premier (%+v vs %+v) : un failure passager "+
-				"doit rejouer le SAME lot, sans quoi une panne de controleur devient "+
-				"une perte de mesures", i+1, lots[i], lots[0])
+	for i = 1; i < len(batches); i++ {
+		if batches[i] != batches[0] {
+			t.Fatalf("batch %d differs from the first (%+v vs %+v): a transient failure "+
+				"must replay the SAME batch, otherwise a controller outage becomes "+
+				"a loss of measurements", i+1, batches[i], batches[0])
 		}
 	}
-	// Rien n'est perdu, et rien ne reste RESERVE : `Nack` remet le lot dans la file, EN
-	// TETE, et libere la reservation. C'est ce qui explique le rejeu a l'identique
-	// mieux que « Take rend le lot reserve » — le lot suivant est le same parce qu'il
-	// est repris au same endroit de la file, pas parce qu'une reservation survit.
+	// Nothing is lost, and nothing stays RESERVED: `Nack` puts the batch back in the
+	// queue, at the HEAD, and releases the reservation. That explains the
+	// identical replay better than "Take returns the reserved batch" — the next
+	// batch is the same because it is picked up from the same place in the queue,
+	// not because a reservation survives.
 	var st = c.buf.Stats()
 	if st.Queued != maxPerFlush+500 || st.Pending != 0 || st.Dropped != 0 {
-		t.Errorf("expected %d en attente / 0 reserve / 0 perdu, obtenu %d / %d / %d",
+		t.Errorf("expected %d queued / 0 reserved / 0 lost, got %d / %d / %d",
 			maxPerFlush+500, st.Queued, st.Pending, st.Dropped)
 	}
 }
 
-// TestUnAbandonDitCombienDePointsIlSacrifie : le nombre de points sacrifies n'a pas
-// d'autre endroit where se dire.
+// TestADropSaysHowManyPointsItSacrifices: the number of points sacrificed has
+// no other place to be said.
 //
-// `metricbuf` ne le compte pas — un abandon n'est pas une saturation — donc si cette
-// ligne ne le porte pas, la mesure disparait sans laisser de trace, et un abandon
-// silencieux est pire que la boucle qu'il remplace. Le motif du controleur y figure
-// aussi : c'est lui qui dit lequel des reglages du proxy est en cause.
-func TestUnAbandonDitCombienDePointsIlSacrifie(t *testing.T) {
+// `metricbuf` does not count it — a drop is not a saturation — so if this line
+// does not carry it, the measurement disappears without a trace, and a silent
+// drop is worse than the loop it replaces. The controller's reason is in it
+// too: it is what says which of the proxy's settings is at fault.
+func TestADropSaysHowManyPointsItSacrifices(t *testing.T) {
 	var journal bytes.Buffer
 	var precedent = slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&journal,
 		&slog.HandlerOptions{Level: slog.LevelWarn})))
 	defer slog.SetDefault(precedent)
 
-	// Sept points : un compte qu'on reconnait a l'œil dans la ligne, et un lot
-	// INCOMPLET — l'abandon ne depend pas de la taille du lot.
-	var c, _ = controleurQuiRepond(t, http.StatusRequestEntityTooLarge, refus413,
+	// Seven points: a count recognisable at a glance in the line, and an
+	// INCOMPLETE batch — the drop does not depend on the batch size.
+	var c, _ = fakeController(t, http.StatusRequestEntityTooLarge, refusal413,
 		nil, 7)
 	c.flush(context.Background())
 
-	var ligne = journal.String()
-	t.Logf("journal : %s", strings.TrimSpace(ligne))
-	if !strings.Contains(ligne, "abandonnes=7") {
-		t.Errorf("le nombre de points sacrifies doit figurer au journal (abandonnes=7), "+
-			"obtenu : %s", ligne)
+	var line = journal.String()
+	t.Logf("log: %s", strings.TrimSpace(line))
+	if !strings.Contains(line, "dropped=7") {
+		t.Errorf("the number of points sacrificed must appear in the log (dropped=7), "+
+			"got: %s", line)
 	}
-	if !strings.Contains(ligne, "status=413") {
-		t.Errorf("le code de refus doit figurer au journal, obtenu : %s", ligne)
+	if !strings.Contains(line, "status=413") {
+		t.Errorf("the refusal code must appear in the log, got: %s", line)
 	}
-	if !strings.Contains(ligne, "reduisez maxPerFlush") {
-		t.Errorf("le motif du controleur doit figurer au journal, obtenu : %s", ligne)
+	if !strings.Contains(line, "reduce maxPerFlush") {
+		t.Errorf("the controller's reason must appear in the log, got: %s", line)
 	}
-	if !strings.Contains(ligne, "level=WARN") {
-		t.Errorf("un abandon de mesures est un WARN, obtenu : %s", ligne)
+	if !strings.Contains(line, "level=WARN") {
+		t.Errorf("dropping measurements is a WARN, got: %s", line)
 	}
 
-	// Et un failure PASSAGER ne doit pas se dire « abandonnees » : c'est la same ligne a
-	// un mot pres, et ce mot est toute la difference pour celui qui la lit.
+	// And a TRANSIENT failure must not call itself "dropped": it is the same line
+	// give or take one word, and that word is the whole difference for whoever
+	// reads it.
 	journal.Reset()
-	var passager, _ = controleurQuiRepond(t, http.StatusBadGateway,
-		`{"error":"victoriametrics: connexion refused"}`, nil, 7)
-	passager.flush(context.Background())
-	ligne = journal.String()
-	if strings.Contains(ligne, "abandonn") {
-		t.Errorf("un 502 conserve le lot : la ligne ne doit pas parler d'abandon, "+
-			"obtenu : %s", ligne)
+	var transient, _ = fakeController(t, http.StatusBadGateway,
+		`{"error":"victoriametrics: connection refused"}`, nil, 7)
+	transient.flush(context.Background())
+	line = journal.String()
+	if strings.Contains(line, "dropped") {
+		t.Errorf("a 502 keeps the batch: the line must not talk about dropping, "+
+			"got: %s", line)
 	}
-	if !strings.Contains(ligne, "conservees en tampon") {
-		t.Errorf("un 502 doit dire que le lot est conserve, obtenu : %s", ligne)
+	if !strings.Contains(line, "kept in buffer") {
+		t.Errorf("a 502 must say the batch is kept, got: %s", line)
 	}
 }
 
-// TestUnRetryAfterEmpecheLAbandon : le cas qu'un `>= 400` un peu large rangerait du
-// mauvais cote. Eprouve de bout en bout et pas seulement sur refusDefinitif, parce
-// que ce qui compte est que `flush` LISE cet en-tete.
-func TestUnRetryAfterEmpecheLAbandon(t *testing.T) {
-	// Un 413 accompagne d'un « reviens dans 10 s » ne vient pas du garde-fou de lot :
-	// il vient d'un intermediaire qui se protege, et il demande explicitement un
-	// rejeu.
-	var c, rc = controleurQuiRepond(t, http.StatusRequestEntityTooLarge,
-		`{"error":"reviens plus tard"}`, map[string]string{"Retry-After": "10"}, 7)
+// TestARetryAfterPreventsTheDrop: the case a slightly broad `>= 400` would
+// file on the wrong side. Exercised end to end and not only on isPermanentRefusal,
+// because what matters is that `flush` READS that header.
+func TestARetryAfterPreventsTheDrop(t *testing.T) {
+	// A 413 accompanied by a "come back in 10 s" does not come from the batch
+	// guard: it comes from an intermediary protecting itself, and it explicitly
+	// asks for a replay.
+	var c, rc = fakeController(t, http.StatusRequestEntityTooLarge,
+		`{"error":"come back later"}`, map[string]string{"Retry-After": "10"}, 7)
 	var ctx = context.Background()
 	c.flush(ctx)
 	c.flush(ctx)
-	var lots = rc.vus()
-	if len(lots) != 2 {
-		t.Fatalf("2 tentatives attendues, recu %d", len(lots))
+	var batches = rc.received()
+	if len(batches) != 2 {
+		t.Fatalf("2 attempts expected, received %d", len(batches))
 	}
-	if lots[0] != lots[1] {
-		t.Errorf("un refus qui dit quand revenir doit be rejoue tel quel : %+v puis %+v",
-			lots[0], lots[1])
+	if batches[0] != batches[1] {
+		t.Errorf("a refusal that says when to come back must be replayed as is: %+v then %+v",
+			batches[0], batches[1])
 	}
-	// Rendus a la file, pas abandonnes : les sept points sont toujours there.
+	// Returned to the queue, not dropped: the seven points are still there.
 	var st = c.buf.Stats()
 	if st.Queued != 7 || st.Pending != 0 {
-		t.Errorf("les 7 points doivent revenir dans la file, obtenu %d en attente et "+
+		t.Errorf("the 7 points must come back into the queue, got %d queued and "+
 			"%d reserves", st.Queued, st.Pending)
 	}
 }
 
-// TestFrontiereDuRefusDefinitif written la frontiere cas par cas, avec le POURQUOI de
-// chaque cote.
+// TestPermanentRefusalBoundary writes the boundary down case by case, with the
+// WHY of each side.
 //
-// C'est la table qui vaudra, dans six mois, mieux qu'une relecture du `switch` : elle
-// dit ce qu'on a decide, et pour quelle raison. Les deux cas a defendre sont 401/403
-// — passagers, un secret se rotationne et une revocation s'annule, alors
-// qu'abandonner ne remonterait pas un point de plus — et 429 avec ou sans
-// `Retry-After`, qui est une demande de patience et pas un desaccord sur le lot.
-func TestFrontiereDuRefusDefinitif(t *testing.T) {
+// In six months this table will be worth more than re-reading the `switch`: it
+// says what was decided, and for what reason. The two cases to defend are
+// 401/403 — transient, a secret gets rotated and a revocation gets undone,
+// whereas dropping would not ship one more point — and 429 with or without
+// `Retry-After`, which asks for patience and is not a disagreement about the
+// batch.
+func TestPermanentRefusalBoundary(t *testing.T) {
 	var cas = []struct {
 		status     int
 		retryAfter string
-		definitif  bool
-		pourquoi   string
+		permanent  bool
+		why        string
 	}{
 		{http.StatusBadRequest, "", true,
-			"400 : le corps a been lu et refused, les memes octets rendront le same verdict"},
+			"400: the body was read and refused, the same bytes will get the same verdict"},
 		{http.StatusRequestEntityTooLarge, "", true,
-			"413 : le contenu est bon, c'est le volume qui ne passe pas — et Take ne " +
-				"sait pas rendre un lot plus petit"},
+			"413: the content is fine, it is the volume that does not fit — and Take " +
+				"cannot return a smaller batch"},
 		{http.StatusUnsupportedMediaType, "", true,
-			"415 : flush envoie toujours le same Content-Type"},
+			"415: flush always sends the same Content-Type"},
 		{http.StatusUnprocessableEntity, "", true,
-			"422 : le controleur a compris la request et refuse le fond"},
+			"422: the controller understood the request and rejects its substance"},
 		{http.StatusUnauthorized, "", false,
-			"401 : le lot n'est same pas en cause, l'authentification passe after la " +
-				"lecture du corps ; un secret se rotationne"},
+			"401: the batch is not even in question, authentication happens after the " +
+				"body is read; a secret gets rotated"},
 		{http.StatusForbidden, "", false,
-			"403 : une revocation s'annule, et abandonner ne remonterait pas un point " +
-				"de plus — ca n'en effacerait que la trace"},
+			"403: a revocation gets undone, and dropping would not ship one more point " +
+				"— it would only erase the trace"},
 		{http.StatusNotFound, "", false,
-			"404 : route absente, controleur d'une version anterieure ou URL mal reglee"},
-		{http.StatusMethodNotAllowed, "", false, "405 : idem 404, cote method"},
-		{http.StatusRequestTimeout, "", false, "408 : un delai d'attente est a refaire"},
+			"404: route missing, controller of an earlier version or misconfigured URL"},
+		{http.StatusMethodNotAllowed, "", false, "405: same as 404, on the method side"},
+		{http.StatusRequestTimeout, "", false, "408: a timeout is to be retried"},
 		{http.StatusConflict, "", false,
-			"409 : cette route n'en produit pas — on ne classe pas definitif ce qu'on " +
-				"ne connait pas"},
+			"409: this route does not produce it — what is unknown is not classified " +
+				"as permanent"},
 		{http.StatusTooManyRequests, "", false,
-			"429 : une demande de patience, pas un desaccord sur le lot"},
-		{http.StatusTooManyRequests, "5", false, "429 avec le delai annonce"},
-		{http.StatusInternalServerError, "", false, "500 : le controleur est en difficulte"},
+			"429: a request for patience, not a disagreement about the batch"},
+		{http.StatusTooManyRequests, "5", false, "429 with the announced delay"},
+		{http.StatusInternalServerError, "", false, "500: the controller is in trouble"},
 		{http.StatusBadGateway, "", false,
-			"502 : write VictoriaMetrics en failure, response choisie POUR que le " +
-				"proxy garde son lot"},
+			"502: failed VictoriaMetrics write, a response chosen SO THAT the " +
+				"proxy keeps its batch"},
 		{http.StatusServiceUnavailable, "", false,
-			"503 : stockage non configure, same intention"},
-		{http.StatusServiceUnavailable, "30", false, "503 de maintenance annoncee"},
-		{http.StatusGatewayTimeout, "", false, "504 : le controleur n'a pas repondu a temps"},
+			"503: storage not configured, same intent"},
+		{http.StatusServiceUnavailable, "30", false, "503 for an announced maintenance"},
+		{http.StatusGatewayTimeout, "", false, "504: the controller did not answer in time"},
 		{http.StatusNotImplemented, "", false,
-			"501 : un controleur anterieur, qu'un deploiement repare — aucun 5xx n'est " +
-				"definitif"},
+			"501: an earlier controller, which a deployment fixes — no 5xx is " +
+				"permanent"},
 		{http.StatusRequestEntityTooLarge, "10", false,
-			"413 + Retry-After : l'en-tete est prioritaire, c'est lui qui empeche un " +
-				">= 400 trop large de confondre patience et refus"},
+			"413 + Retry-After: the header takes priority, it is what stops a too broad " +
+				">= 400 from confusing patience with refusal"},
 		{http.StatusBadRequest, "1", false,
-			"400 + Retry-After : same rule, et elle ne souffre pas d'exception — un " +
-				"refus qui dit quand revenir attend qu'on revienne"},
+			"400 + Retry-After: same rule, and it allows no exception — a refusal that " +
+				"says when to come back is waiting for you to come back"},
 	}
 	var i int
 	for i = range cas {
-		var got = refusDefinitif(cas[i].status, cas[i].retryAfter)
-		if got != cas[i].definitif {
-			t.Errorf("status %d (Retry-After %q) : definitif=%v expected %v — %s",
-				cas[i].status, cas[i].retryAfter, got, cas[i].definitif, cas[i].pourquoi)
+		var got = isPermanentRefusal(cas[i].status, cas[i].retryAfter)
+		if got != cas[i].permanent {
+			t.Errorf("status %d (Retry-After %q): permanent=%v expected %v — %s",
+				cas[i].status, cas[i].retryAfter, got, cas[i].permanent, cas[i].why)
 		}
 	}
 }

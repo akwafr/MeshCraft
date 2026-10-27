@@ -6,7 +6,7 @@ import (
 )
 
 func TestParsePortRange(t *testing.T) {
-	var cas = []struct {
+	var cases = []struct {
 		name     string
 		spec     string
 		expected []string
@@ -23,8 +23,8 @@ func TestParsePortRange(t *testing.T) {
 		{"reversed range", "9-2", nil},
 		{"unreadable token", "abc,1", []string{"GE1"}},
 	}
-	var c = cas[0]
-	for _, c = range cas {
+	var c = cases[0]
+	for _, c = range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got = ParsePortRange(c.spec, "GE")
 			if !reflect.DeepEqual(got, c.expected) {

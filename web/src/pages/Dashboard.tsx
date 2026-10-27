@@ -1,297 +1,565 @@
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+/**
+ * Dashboards: the site's arrangements of tiles, and the screen that edits them.
+ *
+ * This page replaces two fixed ones — the old Dashboard and the old Monitoring,
+ * which said nearly the same thing in a different order and could not be
+ * changed by the person looking at them. Both survive as the two dashboards
+ * every site is seeded with, and both are ordinary data from the first second:
+ * renamable, rearrangeable, deletable.
+ *
+ * # Three responsibilities, and only three
+ *
+ * Choosing which dashboard is shown, editing the arrangement, and managing the
+ * public link. Everything else lives elsewhere on purpose: the tiles are in
+ * dashboardTiles.tsx, the grid and its gestures in dashboardGrid.tsx, the
+ * arithmetic in dashboardLayout.ts (where a test can reach it), and the fetching
+ * in dashboardData.ts.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { viewerDate } from "../ui/clock";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
-import { sitePath } from "../paths";
+
+import { ActionButton } from "../ActionButton";
+import { useSiteRole } from "../auth";
+import { ErrorMsg, Field, Modal } from "../components";
+import {
+  createDashboard,
+  deleteDashboard,
+  listDashboards,
+  moveDashboard,
+  publicDashboardPath,
+  renameDashboard,
+  saveDashboardTiles,
+  shareDashboard,
+  unshareDashboard,
+  type Dashboard as DashboardRec,
+} from "../dashboardApi";
+import { useDashboardData } from "../dashboardData";
+import DashboardGrid from "../dashboardGrid";
+import { addTile, sameLayout, type Tile } from "../dashboardLayout";
+import { TILES, TILE_TYPES } from "../dashboardTiles";
+import { useBreakpoint } from "../ui/breakpoint";
 import { useSite, useSiteId } from "../useSite";
-import {
-  useSiteLive,
-  get,
-  type Device,
-  type DeviceLink,
-  type Event,
-  type ProxyInfo,
-  type TrafficSeries,
-  type Vlan,
-} from "../api";
-import {
-  expandPorts,
-  fmtMbps,
-  serves,
-  siteRates,
-  statusColor,
-} from "../network";
-import { BarList, LineChart, SERIES, StatTile } from "../viz";
+
+/** Which dashboard was last open, per site. A tab bar that always reopened on
+ *  the first one would make the second dashboard cost a click, forever. */
+const LAST_DASHBOARD_KEY = "meshcraft.lastDashboard";
+
+function rememberDashboard(siteId: string, id: string) {
+  try {
+    localStorage.setItem(LAST_DASHBOARD_KEY + "." + siteId, id);
+  } catch {
+    /* private mode, quota — losing a preference is not worth an error */
+  }
+}
+
+function recallDashboard(siteId: string): string {
+  try {
+    return localStorage.getItem(LAST_DASHBOARD_KEY + "." + siteId) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export default function Dashboard() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { site } = useSite();
   const siteId = useSiteId();
   const siteSlug = site?.slug ?? "";
-  const navigate = useNavigate();
-  // Real-time: the dashboard is a home screen kept open.
-  const refetchInterval = useSiteLive(siteId);
+  const role = useSiteRole(siteId);
+  const canWrite = role === "ing" || role === "tech";
+  // Publishing a site's state without a login is not the same decision as
+  // moving a tile: the share panel is site_admin only, and the server checks it
+  // again (handleShareDashboard).
+  const canShare = role === "ing";
+  const qc = useQueryClient();
 
-  const { data: devices } = useQuery({
-    queryKey: ["devices", siteId],
-    queryFn: () => get<Device[]>(`/api/sites/${siteId}/devices`),
-    enabled: !!siteId,
-    refetchInterval,
-  });
-  const { data: vlans } = useQuery({
-    queryKey: ["vlans", siteId],
-    queryFn: () => get<Vlan[]>(`/api/sites/${siteId}/vlans`),
+  const { data: dashboards, error } = useQuery({
+    queryKey: ["dashboards", siteId],
+    queryFn: () => listDashboards(siteId),
     enabled: !!siteId,
   });
-  const { data: links } = useQuery({
-    queryKey: ["links", siteId],
-    queryFn: () => get<DeviceLink[]>(`/api/sites/${siteId}/links`),
-    enabled: !!siteId,
-    refetchInterval,
-  });
-  const { data: events } = useQuery({
-    queryKey: ["events", siteId, "recent"],
-    queryFn: () => get<Event[]>(`/api/sites/${siteId}/events?limit=6`),
-    enabled: !!siteId,
-    refetchInterval,
-  });
-  // Proxies are an instance resource: no filtering by site.
-  const { data: proxies } = useQuery({
-    queryKey: ["proxies"],
-    queryFn: () => get<ProxyInfo[]>("/api/proxies"),
+
+  const [selectedId, setSelectedId] = useState("");
+  const selected = useMemo<DashboardRec | undefined>(() => {
+    if (!dashboards || dashboards.length === 0) return undefined;
+    return (
+      dashboards.find((d) => d.id === selectedId) ??
+      dashboards.find((d) => d.id === recallDashboard(siteId)) ??
+      dashboards[0]
+    );
+  }, [dashboards, selectedId, siteId]);
+
+  useEffect(() => {
+    if (selected && selected.id !== selectedId) setSelectedId(selected.id);
+    if (selected && siteId) rememberDashboard(siteId, selected.id);
+  }, [selected, selectedId, siteId]);
+
+  // --- Local arrangement ---
+  //
+  // `local` is what the screen shows while it differs from the server. It is
+  // NOT only an edit-mode thing: picking a traffic window or a log severity is
+  // a tile option, so it changes the layout even outside edit mode. Whether
+  // that change is ever written is a separate question — see the save button,
+  // which appears only when the caller may write.
+  const [local, setLocal] = useState<Tile[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  // Under bp:narrow the grid is a stack and half of what the hint describes —
+  // dragging, the resize corner, the arrows — does not exist. See the header
+  // of dashboardGrid.tsx for why the spatial gestures are withdrawn there
+  // rather than approximated.
+  const narrow = useBreakpoint() === "narrow";
+  const serverTiles = useMemo<Tile[]>(() => selected?.tiles ?? [], [selected]);
+  const tiles = local ?? serverTiles;
+  const dirty = !sameLayout(tiles, serverTiles);
+
+  // Switching dashboards drops the local arrangement: carrying it across would
+  // apply one dashboard's edits to another's tiles.
+  useEffect(() => {
+    setLocal(null);
+    setEditing(false);
+  }, [selected?.id]);
+
+  const saveLayout = useMutation({
+    mutationFn: (next: Tile[]) => saveDashboardTiles(selected?.id ?? "", next),
+    onSuccess: () => {
+      setLocal(null);
+      qc.invalidateQueries({ queryKey: ["dashboards", siteId] });
+    },
   });
 
-  // Site aggregates.
-  let online = 0,
-    ports = 0,
-    portsUp = 0,
-    rx = 0,
-    tx = 0,
-    poe = 0,
-    poeBudget = 0;
-  {
-    // Site totals go through siteRates rather than a sum of deviceRates: at
-    // the SITE level, inter-switch links must be excluded from the sum,
-    // otherwise a frame crossing two devices is counted twice. On a device
-    // SHEET, on the contrary, they count (see the comments of both functions).
-    const rates = siteRates(devices);
-    ports = rates.ports;
-    portsUp = rates.up;
-    rx = rates.rx;
-    tx = rates.tx;
-    poe = rates.poe;
-    poeBudget = rates.poeBudget;
-    online = rates.online;
-  }
-
-  // Sliding traffic window — default 24 h. Point density is chosen server-side
-  // from the window (1 min / 5 min / 10 min / 15 min) so every chip stays dense.
-  const [trafficHours, setTrafficHours] = useState(24);
-  const { data: traffic } = useQuery({
-    queryKey: ["traffic", siteId, trafficHours],
-    queryFn: () =>
-      get<TrafficSeries>(
-        `/api/sites/${siteId}/traffic?hours=${trafficHours}`,
-      ),
-    enabled: !!siteId,
-    refetchInterval: 60000,
-  });
-  const tp = traffic?.points ?? [];
-  const hasSamples = tp.some((p) => p.rx_mbps != null || p.tx_mbps != null);
-  // Keep the full time grid even when values are null — empty stretches stay empty
-  // instead of compressing later samples across the whole width.
-  const rxHist: (number | null)[] = tp.map((p) => p.rx_mbps);
-  const txHist: (number | null)[] = tp.map((p) => p.tx_mbps);
-  const hourLabel = (i: number) => {
-    const p = tp[i];
-    if (!p) return "";
-    const d = new Date(p.ts);
-    if (trafficHours <= 24) {
-      return d.toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit" });
-    }
-    return d.toLocaleDateString(i18n.language, { month: "short", day: "numeric" });
-  };
-
-  // Alerts: degraded devices + faulty links + offline proxies.
-  const byId = new Map((devices ?? []).map((d) => [d.id, d]));
-  const alerts: { color: string; text: string; onOpen?: () => void }[] = [];
-  (devices ?? []).forEach((d) => {
-    if (d.status === "off" || d.status === "warn")
-      alerts.push({
-        color: statusColor(d.status),
-        text:
-          d.name +
-          (d.status === "off" ? ` ${t("dashboard.unreachableSuffix")}` : ` ${t("dashboard.alertSuffix")}`) +
-          (d.status_note ? " — " + d.status_note : ""),
-        onOpen: () => navigate(sitePath(siteSlug, "equipment", d.name)),
-      });
-  });
-  (links ?? []).forEach((l) => {
-    if (l.status !== "up" || l.note) {
-      const a = byId.get(l.a_device)?.name ?? "?";
-      const b = byId.get(l.b_device)?.name ?? "?";
-      alerts.push({
-        color: l.status === "down" ? "var(--danger)" : "var(--warn)",
-        text: t("dashboard.linkAlert", { a, b, cut: l.status === "down" ? t("dashboard.cutSuffix") : "", note: l.note ? " — " + l.note : "" }),
-        onOpen: () => navigate(sitePath(siteSlug, "topology")),
-      });
-    }
-  });
-  (proxies ?? []).forEach((p) => {
-    if (p.internal) return;
-    const stale = !p.last_seen || Date.now() - new Date(p.last_seen).getTime() > 120000;
-    if (!p.migrated_at && !p.revoked && stale)
-      alerts.push({
-        color: "var(--warn)",
-        text: t("dashboard.proxyNoHeartbeat", { name: p.name }),
-        onOpen: () => navigate("/config/proxy"),
-      });
+  const create = useMutation({
+    mutationFn: (name: string) => createDashboard(siteId, name, []),
+    onSuccess: (d) => {
+      setSelectedId(d.id);
+      qc.invalidateQueries({ queryKey: ["dashboards", siteId] });
+    },
   });
 
-  // Configured ports per VLAN (top 8).
-  const vlanRows = (vlans ?? [])
-    .map((v) => {
-      let n = 0;
-      (devices ?? []).forEach((d) =>
-        expandPorts(d).forEach((pr) => {
-          if (pr.p.mode && pr.p.mode !== "libre" && serves(pr.p, v.vlan_id)) n++;
-        }),
-      );
-      return { key: v.id, label: v.name, sub: String(v.vlan_id), value: n, color: v.color };
-    })
-    .filter((r) => r.value > 0)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 8);
+  const rename = useMutation({
+    mutationFn: (v: { id: string; name: string }) => renameDashboard(v.id, v.name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dashboards", siteId] }),
+  });
 
-  const total = (devices ?? []).length;
-  const poePct = poeBudget ? Math.round((poe / poeBudget) * 100) : 0;
+  const reorder = useMutation({
+    mutationFn: (v: { id: string; position: number }) => moveDashboard(v.id, v.position),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dashboards", siteId] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteDashboard(id),
+    onSuccess: () => {
+      setSelectedId("");
+      qc.invalidateQueries({ queryKey: ["dashboards", siteId] });
+    },
+  });
+
+  const data = useDashboardData(siteId, tiles);
+
+  const [renaming, setRenaming] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [sharing, setSharing] = useState(false);
+
+  if (!siteId) return <div className="empty">{t("common.loading")}</div>;
 
   return (
     <>
-      <div className="toolbar">
-        <h1>
-          {t("nav.dashboard")}
-          <span className="sub">{t("dashboard.subtitle")}</span>
-        </h1>
+      {/* No page heading. The tab bar already says "Dashboard", and the
+          dashboard bar below already highlights WHICH dashboard is open — the
+          title was the third place saying it. */}
+      <div className="toolbar toolbar--actions-end">
+        <div className="row" style={{ gap: 8, flex: "none" }}>
+          {canWrite && !editing && (
+            <ActionButton kind="edit" className="secondary" onClick={() => setEditing(true)}>
+              {t("dashboards.arrange")}
+            </ActionButton>
+          )}
+          {canWrite && editing && (
+            <ActionButton kind="finish" onClick={() => setEditing(false)}>
+              {t("dashboards.doneArranging")}
+            </ActionButton>
+          )}
+          {canWrite && dirty && (
+            <>
+              <ActionButton
+                kind="save"
+                disabled={saveLayout.isPending}
+                onClick={() => saveLayout.mutate(tiles)}
+              >
+                {saveLayout.isPending ? t("dashboards.saving") : t("dashboards.saveLayout")}
+              </ActionButton>
+              <ActionButton kind="cancel" className="secondary" onClick={() => setLocal(null)}>
+                {t("common.cancel")}
+              </ActionButton>
+            </>
+          )}
+          {canShare && selected && (
+            <ActionButton kind="link" className="secondary" onClick={() => setSharing(true)}>
+              {selected.shared ? t("dashboards.shareOn") : t("dashboards.share")}
+            </ActionButton>
+          )}
+        </div>
       </div>
 
-      <div className="tile-row">
-        <StatTile
-          label={t("dashboard.devicesOnline") as string}
-          value={`${online} / ${total}`}
-          dotColor={online === total ? "var(--ok)" : online === 0 ? "var(--danger)" : "var(--warn)"}
-          sub={total ? t("dashboard.offlineCount", { count: total - online }) as string : t("dashboard.noDevice") as string}
-        />
-        <StatTile label={t("dashboard.activePorts") as string} value={String(portsUp)} sub={t("dashboard.outOfPorts", { count: ports }) as string} />
-        <StatTile label={t("dashboard.rxRate") as string} value={fmtMbps(rx)} sub={t("dashboard.siteCumulative") as string} />
-        <StatTile label={t("dashboard.txRate") as string} value={fmtMbps(tx)} sub={t("dashboard.siteCumulative") as string} />
-        <StatTile
-          label={t("dashboard.poeDistributed") as string}
-          value={Math.round(poe) + " W"}
-          sub={poeBudget ? (t("dashboard.poePercentOf", { pct: poePct, budget: poeBudget }) as string) : (t("dashboard.noBudgetDeclared") as string)}
-          accent={poePct >= 85 ? "var(--warn)" : undefined}
-        />
-        <StatTile
-          label={t("dashboard.activeAlerts") as string}
-          value={String(alerts.length)}
-          accent={alerts.length ? "var(--danger)" : "var(--ok)"}
-          sub={alerts.length ? (t("dashboard.toHandle") as string) : (t("dashboard.allNominal") as string)}
-        />
-      </div>
+      <ErrorMsg error={error} />
+      <ErrorMsg error={saveLayout.error} />
+      <ErrorMsg error={create.error} />
+      <ErrorMsg error={rename.error} />
+      <ErrorMsg error={remove.error} />
 
-      <div className="dash-grid">
-        <div className="card">
-          <div className="card-head">
-            <div className="kicker">{t("dashboard.siteTraffic")}</div>
-            <div className="row" style={{ gap: 4, flex: "none" }}>
-              {(
-                [
-                  { h: 24, label: "24 h" },
-                  { h: 72, label: "3 d" },
-                  { h: 168, label: "7 d" },
-                  { h: 720, label: "30 d" },
-                ] as const
-              ).map((o) => (
-                <button
-                  key={o.h}
-                  className={"chip" + (o.h === trafficHours ? " on" : "")}
-                  onClick={() => setTrafficHours(o.h)}
+      {/* The dashboard bar. Tabs, because a select would hide from a new user
+          that there is more than one — and the whole point of this feature is
+          that there can be several. */}
+      <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {(dashboards ?? []).map((d, i) => (
+          <span key={d.id} className="row" style={{ gap: 2, flex: "none" }}>
+            <button
+              className={"pill" + (d.id === selected?.id ? " on" : "")}
+              onClick={() => setSelectedId(d.id)}
+            >
+              {d.name}
+              {d.shared && (
+                <span
+                  className="note"
+                  title={t("dashboards.publicBadgeTip") as string}
+                  style={{ marginLeft: 6 }}
                 >
-                  {o.label}
+                  ●
+                </span>
+              )}
+            </button>
+            {editing && canWrite && (
+              <>
+                <button
+                  className="pill pill--icon"
+                  disabled={i === 0}
+                  title={t("dashboards.moveEarlier") as string}
+                  onClick={() => reorder.mutate({ id: d.id, position: Math.max(0, i - 1) })}
+                >
+                  ◀
                 </button>
-              ))}
-            </div>
-          </div>
-          <div className="note" style={{ marginBottom: 8 }}>
-            {hasSamples ? t("dashboard.measured") : t("dashboard.noHistoryInWindow")}
-          </div>
-          <LineChart
-            series={[
-              { name: t("dashboard.incoming"), color: SERIES.in, points: rxHist },
-              { name: t("dashboard.outgoing"), color: SERIES.out, points: txHist },
-            ]}
-            format={fmtMbps}
-            xLabel={(i, n) => (i === n - 1 ? t("dashboard.now") : hourLabel(i))}
-          />        </div>
-        <div className="card">
-          <div className="card-head">
-            <div className="kicker">{t("dashboard.configuredPortsByVlan")}</div>
-            <span className="note">{t("dashboard.topEight")}</span>
-          </div>
-          <BarList rows={vlanRows} format={(v) => t("dashboard.portsCount", { count: v }) as string} />
-        </div>
+                <button
+                  className="pill pill--icon"
+                  disabled={i === (dashboards?.length ?? 1) - 1}
+                  title={t("dashboards.moveLater") as string}
+                  onClick={() => reorder.mutate({ id: d.id, position: i + 1 })}
+                >
+                  ▶
+                </button>
+              </>
+            )}
+          </span>
+        ))}
+        {canWrite && (
+          <ActionButton
+            kind="add"
+            className="pill pill--add"
+            onClick={() => {
+              setNewName("");
+              setCreating(true);
+            }}
+          >
+            {t("dashboards.newDashboard")}
+          </ActionButton>
+        )}
+        {canWrite && selected && editing && (
+          <>
+            <ActionButton
+              kind="rename"
+              className="secondary"
+              onClick={() => {
+                setNameDraft(selected.name);
+                setRenaming(true);
+              }}
+            >
+              {t("dashboards.rename")}
+            </ActionButton>
+            <ActionButton
+              kind="delete"
+              className="secondary"
+              onClick={() => setConfirmDelete(true)}
+            >
+              {t("dashboards.deleteDashboard")}
+            </ActionButton>
+          </>
+        )}
       </div>
 
-      <div className="dash-grid">
-        <div className="card">
-          <div className="card-head">
-            <div className="kicker">{t("dashboard.activeAlerts")}</div>
-            <Link className="note" to={sitePath(siteSlug, "monitoring")}>
-              {t("nav.monitoring")} →
-            </Link>
-          </div>
-          {alerts.length === 0 ? (
-            <div className="empty">{t("dashboard.noAlerts")}</div>
-          ) : (
-            <div className="alert-list" style={{ margin: 0 }}>
-              {alerts.map((al, i) => (
-                <button key={i} className="alert-row" onClick={al.onOpen}>
-                  <span className="dot" style={{ background: al.color }} />
-                  <span>{al.text}</span>
-                  <span className="note" style={{ marginLeft: "auto", letterSpacing: ".06em" }}>
-                    {t("dashboard.viewArrow")}
-                  </span>
-                </button>
+      {editing && canWrite && (
+        <div className="card" style={{ padding: 12 }}>
+          <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+            {/* `1 1 220px`, not `1`: with a zero basis the hint never asks for
+                room, so the row never wrapped and at 393px the sentence was
+                set one word per line beside a 260px select. The basis is the
+                width below which the two stop sharing a line. */}
+            <span className="note" style={{ flex: "1 1 220px" }}>
+              {t(narrow ? "dashboards.editHintNarrow" : "dashboards.editHint")}
+            </span>
+            <select
+              value=""
+              style={{ width: 260 }}
+              onChange={(e) => {
+                const type = e.target.value;
+                const def = TILES[type];
+                if (!def) return;
+                setLocal(addTile(tiles, type, def.w, def.h));
+              }}
+            >
+              <option value="">{t("dashboards.addTile")}</option>
+              {TILE_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {t(TILES[type].labelKey)}
+                </option>
               ))}
-            </div>
-          )}
-        </div>
-        <div className="card">
-          <div className="card-head">
-            <div className="kicker">{t("dashboard.recentEvents")}</div>
-            <Link className="note" to={sitePath(siteSlug, "monitoring")}>
-              {t("dashboard.fullLog")} →
-            </Link>
+            </select>
           </div>
-          {(events ?? []).length === 0 ? (
-            <div className="empty">{t("dashboard.emptyLog")}</div>
-          ) : (
-            <div className="ev-compact">
-              {(events ?? []).map((ev) => (
-                <div key={ev.id} className="ev-compact-row">
-                  <span className="note ev-time">
-                    {new Date(ev.ts).toLocaleTimeString(i18n.language, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                  <span>{ev.message}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-      </div>
+      )}
+
+      {!dashboards ? (
+        <div className="empty">{t("common.loading")}</div>
+      ) : dashboards.length === 0 ? (
+        <div className="empty">{t("dashboards.noDashboards")}</div>
+      ) : (
+        <DashboardGrid
+          tiles={tiles}
+          data={data}
+          siteSlug={siteSlug}
+          publicView={false}
+          editing={editing && canWrite}
+          onChange={setLocal}
+        />
+      )}
+
+      {creating && (
+        <Modal title={t("dashboards.newDashboard")} onClose={() => setCreating(false)}>
+          <Field label={t("dashboards.name")}>
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newName.trim()) {
+                  create.mutate(newName.trim());
+                  setCreating(false);
+                }
+              }}
+            />
+          </Field>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton kind="cancel" className="secondary" onClick={() => setCreating(false)}>
+              {t("common.cancel")}
+            </ActionButton>
+            <ActionButton
+              kind="create"
+              disabled={!newName.trim()}
+              onClick={() => {
+                create.mutate(newName.trim());
+                setCreating(false);
+              }}
+            >
+              {t("dashboards.create")}
+            </ActionButton>
+          </div>
+        </Modal>
+      )}
+
+      {renaming && selected && (
+        <Modal title={t("dashboards.rename")} onClose={() => setRenaming(false)}>
+          <Field label={t("dashboards.name")}>
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+            />
+          </Field>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton kind="cancel" className="secondary" onClick={() => setRenaming(false)}>
+              {t("common.cancel")}
+            </ActionButton>
+            <ActionButton
+              kind="save"
+              disabled={!nameDraft.trim()}
+              onClick={() => {
+                rename.mutate({ id: selected.id, name: nameDraft.trim() });
+                setRenaming(false);
+              }}
+            >
+              {t("common.save")}
+            </ActionButton>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDelete && selected && (
+        <Modal title={t("dashboards.deleteDashboard")} onClose={() => setConfirmDelete(false)}>
+          <p>{t("dashboards.confirmDelete", { name: selected.name })}</p>
+          {selected.shared && <p className="error">{t("dashboards.deleteSharedWarning")}</p>}
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton
+              kind="cancel"
+              className="secondary"
+              onClick={() => setConfirmDelete(false)}
+            >
+              {t("common.cancel")}
+            </ActionButton>
+            <ActionButton
+              kind="delete"
+              onClick={() => {
+                remove.mutate(selected.id);
+                setConfirmDelete(false);
+              }}
+            >
+              {t("common.delete")}
+            </ActionButton>
+          </div>
+        </Modal>
+      )}
+
+      {sharing && selected && (
+        <SharePanel
+          dashboard={selected}
+          onClose={() => setSharing(false)}
+          onChanged={() => qc.invalidateQueries({ queryKey: ["dashboards", siteId] })}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * The share panel.
+ *
+ * Everything about this dialog is shaped by one fact: the token is shown ONCE.
+ * The server keeps a sha256 of it (migration 0041), so there is nothing to
+ * re-display later — the panel therefore says so before minting, shows the URL
+ * in full afterwards, and offers rotation rather than recovery.
+ */
+function SharePanel({
+  dashboard,
+  onClose,
+  onChanged,
+}: {
+  dashboard: DashboardRec;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const [token, setToken] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const mint = useMutation({
+    mutationFn: () => shareDashboard(dashboard.id),
+    onSuccess: (r) => {
+      setToken(r.token);
+      setCopied(false);
+      onChanged();
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: () => unshareDashboard(dashboard.id),
+    onSuccess: () => {
+      setToken("");
+      onChanged();
+    },
+  });
+
+  // The ORIGIN comes from the browser, never from the server: the controller is
+  // reached through whatever hostname this operator's browser used, and a
+  // server-side guess at its own public URL is wrong exactly when it matters
+  // (reverse proxy, split DNS).
+  const url = token ? window.location.origin + publicDashboardPath(token) : "";
+
+  const when = (iso?: string) =>
+    iso ? (viewerDate(iso) ?? new Date(iso)).toLocaleString(i18n.language) : t("dashboards.shareNever");
+
+  return (
+    <Modal
+      title={t("dashboards.shareTitle", { name: dashboard.name })}
+      onClose={onClose}
+      help={
+        <>
+          <p>{t("dashboards.shareHelp1")}</p>
+          <p>{t("dashboards.shareHelp2")}</p>
+        </>
+      }
+    >
+      <ErrorMsg error={mint.error} />
+      <ErrorMsg error={revoke.error} />
+
+      {!dashboard.shared && !token && (
+        <>
+          <p className="note">{t("dashboards.shareOffExplain")}</p>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton kind="cancel" className="secondary" onClick={onClose}>
+              {t("common.cancel")}
+            </ActionButton>
+            <ActionButton kind="link" disabled={mint.isPending} onClick={() => mint.mutate()}>
+              {t("dashboards.shareCreate")}
+            </ActionButton>
+          </div>
+        </>
+      )}
+
+      {token && (
+        <>
+          <p className="note">{t("dashboards.shareOnceWarning")}</p>
+          <Field label={t("dashboards.shareUrl")}>
+            <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+          </Field>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton
+              kind="copy"
+              className="secondary"
+              onClick={() => {
+                navigator.clipboard?.writeText(url).then(
+                  () => setCopied(true),
+                  // Clipboard access can be refused (insecure origin, policy).
+                  // The field above is selectable, so the fallback is "copy it
+                  // by hand" and not an error nobody can act on.
+                  () => setCopied(false),
+                );
+              }}
+            >
+              {copied ? t("dashboards.shareCopied") : t("dashboards.shareCopy")}
+            </ActionButton>
+            <ActionButton kind="close" onClick={onClose}>
+              {t("common.closeAction")}
+            </ActionButton>
+          </div>
+        </>
+      )}
+
+      {dashboard.shared && !token && (
+        <>
+          <p className="note">
+            {t("dashboards.shareCreatedAt", { when: when(dashboard.share_created_at) })}
+            {" · "}
+            {t("dashboards.shareLastUsed", { when: when(dashboard.share_last_used_at) })}
+          </p>
+          <p className="note">{t("dashboards.shareLostExplain")}</p>
+          <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+            <ActionButton kind="cancel" className="secondary" onClick={onClose}>
+              {t("common.closeAction")}
+            </ActionButton>
+            <ActionButton
+              kind="ban"
+              className="secondary"
+              disabled={revoke.isPending}
+              onClick={() => revoke.mutate()}
+            >
+              {t("dashboards.shareRevoke")}
+            </ActionButton>
+            <ActionButton kind="migrate" disabled={mint.isPending} onClick={() => mint.mutate()}>
+              {t("dashboards.shareRotate")}
+            </ActionButton>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

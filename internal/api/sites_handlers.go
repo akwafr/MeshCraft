@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -35,7 +36,7 @@ func (s *Server) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.emitSite(r, site.ID, "site.created", model.SevNotice,
-		"Site « "+site.Name+" » created", nil)
+		"Site \""+site.Name+"\" created", nil)
 	// A site is born with its admin credential. Without it, every adopted device
 	// would stay on its factory password — often none — until someone remembers
 	// to create one.
@@ -63,15 +64,28 @@ func (s *Server) handleRenameSite(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`
+		// LocalDomain: the DNS domain this site's equipment belongs to.
+		//
+		// A POINTER, and that is what lets the field carry three states where a
+		// string carries two: absent (leave it alone), a value (set it), and ""
+		// (this site has no domain). Without the pointer, every rename that did
+		// not resend the domain would clear it — and clearing it silently changes
+		// the FQDN of every switch the site provisions afterwards.
+		LocalDomain *string `json:"local_domain"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.Name == "" && in.Slug == "" {
-		respondErr(w, http.StatusBadRequest, "name or slug required")
+	if in.Name == "" && in.Slug == "" && in.LocalDomain == nil {
+		respondErr(w, http.StatusBadRequest, "name, slug or local_domain required")
 		return
 	}
-	var site, err = s.Store.RenameSite(r.Context(), siteID, in.Name, in.Slug)
+	var domain *string
+	if in.LocalDomain != nil {
+		var trimmed = strings.TrimSpace(*in.LocalDomain)
+		domain = &trimmed
+	}
+	var site, err = s.Store.RenameSite(r.Context(), siteID, in.Name, in.Slug, domain)
 	if err != nil {
 		fail(w, err)
 		return

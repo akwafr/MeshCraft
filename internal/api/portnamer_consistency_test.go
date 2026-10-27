@@ -9,21 +9,28 @@ package api
 // When they disagree the failure is SILENT and total, and it has happened: an
 // FS S3900 whose faceplate said "GE11" while its namer still answered
 // "ethernet 1/11" read every port as down and dropped every LLDP neighbour on
-// a switch that was perfectly healthy. facadeNamingStale is the runtime
-// detector for it (recon_handlers.go); this test is the build-time one, so a
-// connector cannot ship with the two halves out of step.
+// a switch that was perfectly healthy. At runtime, the read-state facade
+// catch-up re-reads the faceplate from the device itself and persists it when
+// it differs (cf. fillFaceplate in recon_handlers.go); this test is the
+// build-time detector, so a connector cannot ship with the two halves out of
+// step in the first place.
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"meshcraft/internal/driver"
 
-	_ "meshcraft/internal/driver/cisco/ios" // registers "cisco-ios" via init()
-	_ "meshcraft/internal/driver/fs/s3900"  // registers "fs-s3900" via init()
-	_ "meshcraft/internal/driver/instanton" // registers "aruba-instant-on-1930"
+	_ "meshcraft/internal/driver/arista/eos"   // registers "arista-eos" via init()
+	_ "meshcraft/internal/driver/cisco/ios"    // registers "cisco-ios" via init()
+	_ "meshcraft/internal/driver/fs/s3400"     // registers "fs-s3400" via init()
+	_ "meshcraft/internal/driver/fs/s3900"     // registers "fs-s3900" via init()
+	_ "meshcraft/internal/driver/hpe/procurve" // registers "hpe-procurve"
+	_ "meshcraft/internal/driver/instanton"    // registers "aruba-instant-on-1930"
 	_ "meshcraft/internal/driver/mikrotik/routeros"
 	_ "meshcraft/internal/driver/mikrotik/swos"
+	_ "meshcraft/internal/driver/ubiquiti/edgeswitch" // registers "ubiquiti-edgeswitch"
 )
 
 // faceplates: the port groups each numbering connector actually emits, as its
@@ -37,6 +44,64 @@ var faceplates = map[string]string{
 	// number on two different sockets.
 	"cisco-ios": `[{"prefix":"GE","from":1,"count":48,"silk":"Gi1/0/"},
 	               {"prefix":"XG","from":1,"count":2,"silk":"Te1/0/"}]`,
+	// Same two-prefix shape and for the same reason: a 48T4SP carries g0/1
+	// AND tg0/1 — the same number on two different sockets.
+	"fs-s3400": `[{"prefix":"GE","from":1,"count":48,"silk":"g0/"},
+	              {"prefix":"XG","from":1,"count":4,"silk":"tg0/"}]`,
+	// ONE prefix, TWO groups: an EdgePoint S16 numbers its 16 RJ45 and 2 SFP+
+	// cages continuously in slot 0 (0/1..0/18) — same prefix throughout, same
+	// naming scheme as HPE ProCurve below, split by group rather than prefix
+	// because this platform gives every socket the same "GE" name. The LAG
+	// rows "show port all" also prints live in slot 3 and are not faceplate
+	// ports at all.
+	"ubiquiti-edgeswitch": `[{"prefix":"GE","from":1,"count":16,"silk":"0/"},
+	                         {"prefix":"GE","from":17,"count":2,"silk":"0/","label":"SFP+","speed":"10G"}]`,
+	// ONE prefix and ONE silk for the whole faceplate, because the platform has
+	// one: EOS calls every socket EthernetN whatever it is — a 1G copper jack, a
+	// 25G SFP28 cage and a 100G QSFP28 cage differ only by what the Type column
+	// reports. The MEDIUM therefore reaches portrules.mediaOf through the group
+	// LABEL and nowhere else, which is why the optical groups carry one and the
+	// copper group must not.
+	"arista-eos": `[{"prefix":"ET","from":1,"count":48,"silk":"Et","label":"SFP28","speed":"25G"},
+	                {"prefix":"ET","from":49,"count":8,"silk":"Et","label":"QSFP28","speed":"100G"}]`,
+	// THREE groups and an EMPTY silk: this CLI names a port with a bare number
+	// and nothing else, so there is no second numbering space to distinguish —
+	// the groups split on the socket type a 2610-48 actually carries (48 fast
+	// ethernet, 2 dual-personality gigabit, 2 mini-GBIC cages).
+	"hpe-procurve": `[{"prefix":"GE","from":1,"count":48,"silk":""},
+	                  {"prefix":"GE","from":49,"count":2,"silk":""},
+	                  {"prefix":"GE","from":51,"count":2,"silk":""}]`,
+}
+
+// facadeNamingStale reports whether at least one faceplate group carries a
+// prefix the connector's PortNamer would translate to something ELSE — the
+// two halves of the translation disagreeing. Same probe shape as
+// remapPortNamesIfStale, applied to port groups: test each group's FIRST port
+// (prefix + from) — on every numbering connector shipped today the mapping is
+// affine, so one sample proves the whole group. Formerly the runtime staleness
+// gate in recon_handlers.go; the runtime catch-up now asks the device itself,
+// and this pure check remains as the build-time consistency probe.
+func facadeNamingStale(namer driver.PortNamer, portGroups json.RawMessage) bool {
+	type groupProbe struct {
+		Prefix string `json:"prefix"`
+		From   int    `json:"from"`
+	}
+	var groups []groupProbe
+	if json.Unmarshal(portGroups, &groups) != nil {
+		return false
+	}
+	var g groupProbe
+	for _, g = range groups {
+		if g.From <= 0 || g.Prefix == "" {
+			continue
+		}
+		var sample = g.Prefix + strconv.Itoa(g.From)
+		var std, ok = namer.StandardPortName(sample)
+		if ok && std != sample {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConnectorFaceplatesAgreeWithTheirOwnPortNamer(t *testing.T) {
@@ -65,18 +130,19 @@ func TestConnectorFaceplatesAgreeWithTheirOwnPortNamer(t *testing.T) {
 //
 // Refusing is the expected answer and not a gap: StandardPortName translates a
 // name observed ON THE PLATFORM, and "GE11" is not one — no Catalyst and no
-// S3900 ever utters it. Both callers are written for that: facadeNamingStale
-// treats ok=false as "nothing to be stale against", and remapPortNamesIfStale
-// leaves the key alone.
+// S3900 ever utters it. Its caller is written for that: remapPortNamesIfStale
+// leaves a key alone on ok=false.
 //
 // What would be a genuine defect is the third case: a namer that ACCEPTS
-// "GE11" and answers something else. facadeNamingStale would then declare the
-// faceplate stale on every single read, and the catch-up would rewrite it for
-// ever — while remapPortNamesIfStale re-keyed every port intent behind it.
+// "GE11" and answers something else — remapPortNamesIfStale would re-key
+// every port intent behind it on every read.
 func TestPortNamerNeverRenamesAStandardName(t *testing.T) {
 	var cases = map[string][]string{
-		"fs-s3900":  {"GE1", "GE24", "GE28"},
-		"cisco-ios": {"GE1", "GE48", "XG1", "XG2"},
+		"fs-s3900":            {"GE1", "GE24", "GE28"},
+		"cisco-ios":           {"GE1", "GE48", "XG1", "XG2"},
+		"fs-s3400":            {"GE1", "GE48", "XG1", "XG4"},
+		"ubiquiti-edgeswitch": {"GE1", "GE18"},
+		"arista-eos":          {"ET1", "ET48", "ET56"},
 	}
 	var name string
 	var names []string

@@ -28,6 +28,31 @@ func stpPreferenceOf(plan json.RawMessage) []string {
 	return driver.SanitizeSTPPreference(*parsed.Pref)
 }
 
+// stpPreferenceWantsMST reports whether this site's preference list contains
+// "mstp" at all — i.e. whether an MST region is an INTENTION of the site or a
+// value that would be written nowhere and read by nothing.
+//
+// It gates the region conformity verdict (ADR-0023) for the same reason
+// SpanningTreeConfig only renders the region block under this condition: a site
+// that prefers RSTP has a computable region — [Server.mstRegionOfSite] derives
+// one from any VLAN list — and showing a device "out of" it would be the purest
+// form of the non-event noise this product keeps removing from its banners.
+//
+// Position in the list is NOT consulted, deliberately. A site that lists mstp
+// second still means it for every platform whose caps exclude the first choice,
+// and a gate that reasoned about ORDER would have to re-run
+// [driver.ResolveSTPMode] per device against connector capabilities — which is
+// the apply path's job, not a display gate's.
+func stpPreferenceWantsMST(plan json.RawMessage) bool {
+	var m string
+	for _, m = range stpPreferenceOf(plan) {
+		if m == driver.STPPrefMSTP {
+			return true
+		}
+	}
+	return false
+}
+
 // mergeSTPPreference writes preference into the site plan JSON without dropping
 // other keys (zones, device positions, …). An empty list is stored as-is so the
 // operator can clear Preferred and rebuild it (including re-adding STP).

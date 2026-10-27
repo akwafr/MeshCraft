@@ -157,7 +157,7 @@ func TestSNMPChannelSaysNoOIDWasRead(t *testing.T) {
 		//
 		// 'measured' is the third receivable admission, and it arrived AFTER the other
 		// two. The `lldp` channel was walked OID by OID on the reference device
-		// (observed 2026-07-29, cf. docs/fr/01-Architecture/Voisinage LLDP.md): forcing
+		// (observed 2026-07-29, cf. docs/en/01-Architecture/LLDP neighbours.md): forcing
 		// it to say 'no OID was read' would have been demanding a LIE to satisfy a
 		// test. What this test protects is not the formula, it is that a note say
 		// EXPLICITLY where its floor comes from — measurement, observed configuration,

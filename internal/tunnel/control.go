@@ -8,7 +8,7 @@ import "time"
 //	controller -> proxy : {"op":"watch"}   then WatchConfig
 //	proxy -> controller : {"op":"events"}  then Event
 //
-// Role split follows docs/01-Architecture/Proxy: the proxy is the local executor.
+// Role split follows docs/en/01-Architecture/Proxy.md: the proxy is the local executor.
 // It pings its own devices and sweeps its prefixes; the WAN carries only CHANGES.
 // Having the controller ping through the tunnel would cost one round trip per second
 // per device for the same information.
@@ -66,9 +66,17 @@ type AskRequest struct {
 	// fleet view it does not need.
 	IP string `json:"ip"`
 	// Community / Port: for AskSNMPWalk. Secret is passed PER OPERATION, never the
-	// vault -- same rule as connectors (docs/01-Architecture/Connecteurs, contract shape).
+	// vault -- same rule as connectors (docs/en/01-Architecture/Connectors.md, contract shape).
 	Community string `json:"community,omitempty"`
-	Port      int    `json:"port,omitempty"`
+	// V3User / V3AuthAlg / V3AuthSecret: the USM identity when the device's plan
+	// is v3 authNoPriv — same shape as SNMPWatch's, same per-operation rule as
+	// Community. Without this the diagnostic walk cannot reach exactly the
+	// devices whose MIBs most need surveying (the S3400 was unprobeable for as
+	// long as this path spoke only v2c).
+	V3User       string `json:"v3_user,omitempty"`
+	V3AuthAlg    string `json:"v3_auth_alg,omitempty"`
+	V3AuthSecret string `json:"v3_auth_secret,omitempty"`
+	Port         int    `json:"port,omitempty"`
 	// OID: root to walk.
 	OID string `json:"oid,omitempty"`
 	// MaxRows bounds the response. A walk under `1.3.6.1` on a switch yields tens of
@@ -130,6 +138,22 @@ type WatchConfig struct {
 	// the PROXY executes. A walk crossing the WAN in UDP would cost one round trip per
 	// OID and fail on the first link incident.
 	SNMP []SNMPWatch `json:"snmp,omitempty"`
+	// GNMI: devices to SUBSCRIBE to, and at what sampling cadence.
+	//
+	// EXCLUSIVE WITH [WatchConfig.SNMP] PER DEVICE, and that is a controller
+	// invariant this struct cannot enforce — so it is stated here, where whoever
+	// builds a WatchConfig will read it. A device appearing in both arrays gets
+	// its interface counters produced twice, by two collectors, with two
+	// different label sets: the SNMP path carries `ifindex` and `iftype`, the
+	// gNMI path deliberately carries neither (cf. internal/metricbuf/names.go).
+	// VictoriaMetrics then stores two adjacent half-populated series under one
+	// name, which is precisely the failure that file's labelling rule exists to
+	// prevent — and it is invisible, because both series look plausible.
+	//
+	// The controller resolves the choice once per device, from the connector's
+	// declared channels (`BestOfKind`), and zeroes the other side. See
+	// internal/api/watch_handlers.go.
+	GNMI []GNMIWatch `json:"gnmi,omitempty"`
 	// TrapListen: should this proxy listen for SNMP traps?
 	//
 	// Decided by the controller like the rest of watch: one source of truth, and a
@@ -150,9 +174,21 @@ type WatchConfig struct {
 type SNMPWatch struct {
 	DeviceID string `json:"device_id"`
 	IP       string `json:"ip"`
-	// Community: read-only v2c. v3 will come with service identity.
+	// Community: read-only v2c — empty on a v3 watch.
 	Community string `json:"community,omitempty"`
-	Port      int    `json:"port,omitempty"`
+	// V3User / V3AuthAlg / V3AuthSecret: the USM read identity (authNoPriv),
+	// set INSTEAD of Community on platforms whose plan is v3 — the FS S3400
+	// is the first. The note here used to read "v3 will come with service
+	// identity"; this IS that identity: the read-only `mcmonitor` account the
+	// controller already provisions on the device at adoption
+	// (internal/api/snmpidentity.go). Shipping its passphrase to the proxy is
+	// the same trust move as GNMIWatch's device login below, with a better
+	// wire story than the community it replaces: USM authenticates with an
+	// HMAC, the passphrase never transits.
+	V3User       string `json:"v3_user,omitempty"`
+	V3AuthAlg    string `json:"v3_auth_alg,omitempty"`
+	V3AuthSecret string `json:"v3_auth_secret,omitempty"`
+	Port         int    `json:"port,omitempty"`
 	// StateIntervalS: `if_state` cadence, what must stay fresh.
 	StateIntervalS int `json:"state_interval_s,omitempty"`
 	// CountersIntervalS: `if_counters` cadence, bulky and slow.
@@ -184,6 +220,17 @@ type SNMPWatch struct {
 	// Neighbor data goes its own path (`POST /api/proxy/lldp`), because a table
 	// snapshot does not fit a labeled float buffer -- cf. header of internal/snmppoll/lldp.go.
 	LLDPIntervalS int `json:"lldp_interval_s,omitempty"`
+	// FDBIntervalS: forwarding-table (learned MAC) cadence. Same rule: 0 = do
+	// not collect, decided by the CONTROLLER from connector declarations. Like
+	// LLDP it pushes no samples — the snapshot travels by `POST /api/proxy/fdb`
+	// (cf. internal/snmppoll/fdb.go for why a table of MACs cannot be a series).
+	FDBIntervalS int `json:"fdb_interval_s,omitempty"`
+	// FDBPerVLAN: read the forwarding table per VLAN with community indexing
+	// ("community@N") — the Cisco IOS regime, where dot1q is empty and dot1d
+	// serves only the default VLAN's instance (measured on the C2960X,
+	// 2026-08-13). A platform decision, so the controller sets it from the
+	// connector and the proxy executes.
+	FDBPerVLAN bool `json:"fdb_per_vlan,omitempty"`
 	// MaxIfIndex bounds retained interfaces to REAL front-panel ports.
 	//
 	// `ifTable` is not only physical ports: a switch exposes aggregates, stack port,
@@ -192,6 +239,73 @@ type SNMPWatch struct {
 	// controller knows the facade (port_groups), the proxy does not: it bounds. 0 = no
 	// bound, take all.
 	MaxIfIndex int `json:"max_ifindex,omitempty"`
+}
+
+// GNMIWatch: one device to SUBSCRIBE to over gNMI.
+//
+// # Why this is not SNMPWatch with a port changed
+//
+// The credential. [SNMPWatch.Community] is a read-only v2c community: leaked, it
+// reads a MIB. This struct carries a DEVICE LOGIN, because EOS authenticates a
+// gNMI subscriber against its ordinary AAA stack — leaked, it configures the
+// switch. That difference is why telemetry has its own `gnmi` site-credential
+// kind rather than riding the fleet admin account: a proxy compromise should cost
+// a subscriber, not a configurer.
+//
+// The second difference is that a subscription has no poll loop. The interval
+// here is what the DEVICE is asked to sample at, sent once at subscribe time;
+// the proxy cannot "poll faster", it can only re-subscribe. So a cadence that is
+// wrong stays wrong until the controller pushes a new watch.
+type GNMIWatch struct {
+	DeviceID string `json:"device_id"`
+	IP       string `json:"ip"`
+	// Port: 0 means 6030, the port EOS serves gNMI on out of the box.
+	Port int `json:"port,omitempty"`
+	// Username / Password: a DEVICE LOGIN. See the type comment.
+	//
+	// A watch arriving without them is NOT subscribed to. Subscribing anyway
+	// would produce an authentication failure per retry, for ever, against the
+	// switch's AAA — which on a box carrying a lockout policy is how meshcraft
+	// locks out its own service account.
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	// Plaintext: subscribe over UNENCRYPTED gRPC.
+	//
+	// OPT-IN, false by default, and the default is the whole point: over
+	// plaintext the password above travels in clear in gRPC metadata on the
+	// management network. `transport grpc default` with no ssl profile — what the
+	// EOS connector writes when no profile is asked for — is exactly that case.
+	// The controller sets this only when a site has explicitly accepted it.
+	Plaintext bool `json:"plaintext,omitempty"`
+	// SkipVerify / CAPEM: TLS trust. Meaningful only when Plaintext is false.
+	//
+	// SkipVerify exists because these switches ship self-signed certificates and
+	// a site with no CA yet would otherwise be pushed to Plaintext — which is
+	// strictly worse, since an unverified TLS session still defeats a passive
+	// listener and plaintext defeats nothing.
+	SkipVerify bool   `json:"skip_verify,omitempty"`
+	CAPEM      string `json:"ca_pem,omitempty"`
+	// StateIntervalS / CountersIntervalS / HealthIntervalS / LLDPIntervalS: the
+	// cadences, in seconds, already bounded by the connector's declared floor.
+	//
+	// ZERO MEANS DO NOT SUBSCRIBE, exactly as in [SNMPWatch] — same rule, so that
+	// a reader who knows one knows the other.
+	//
+	// Two of these are NOT sampling intervals and it matters: `if_state` and
+	// `lldp` are subscribed ON CHANGE, which has no cadence at all. Their value
+	// here is read as a boolean — collect or not — and the number is ignored on
+	// the wire. It is still carried as a number so the controller resolves all
+	// four the same way and so the field can become a heartbeat interval later
+	// without a protocol change.
+	StateIntervalS    int `json:"state_interval_s,omitempty"`
+	CountersIntervalS int `json:"counters_interval_s,omitempty"`
+	HealthIntervalS   int `json:"health_interval_s,omitempty"`
+	LLDPIntervalS     int `json:"lldp_interval_s,omitempty"`
+	// OpticalIntervalS: `optical_power` cadence — the transceiver DDM
+	// subscription (receive/transmit power, laser bias). Same rule as its SNMP
+	// twin on [SNMPWatch]: zero means do not subscribe, and only a connector that
+	// DECLARES the gNMI channel gets a nonzero value here.
+	OpticalIntervalS int `json:"optical_interval_s,omitempty"`
 }
 
 // WatchTarget: one device to watch.
@@ -216,6 +330,40 @@ const (
 	EventHostSeen = "host.seen"
 	// EventSweepDone: end of a sweep, with coverage.
 	EventSweepDone = "sweep.done"
+	// EventResyncDone: end of the RESYNC BURST that follows a tunnel (re)connection —
+	// backlog delivered, snapshot delivered, nothing left to restate. Modelled on
+	// EventSweepDone, which marks the end of a different burst, deliberately: one
+	// vocabulary for "that stream of catching-up events is over".
+	//
+	// # What it is for, and it is not cosmetic
+	//
+	// Event.Resync marks each event of the burst and says nothing about the LAST one.
+	// The controller therefore could not tell "this proxy is still restating what it
+	// knows" from "this proxy has nothing to say", and had to judge a device's
+	// reachability against a witness set that was still assembling. At controller
+	// startup that produced a measured ~9 second window in which one proxy's confirmed
+	// "down" was written while the proxy that actually reaches the device had not yet
+	// finished — or not yet begun — restating its own view (cf. internal/api,
+	// judgeReach and holdReach).
+	//
+	// # Its contract, exactly
+	//
+	// It says: everything I was going to restate about the targets I hold, I have
+	// restated. It does NOT say the proxy has finished PROBING them — a target it has
+	// never concluded on is still nil after this event, and that case belongs to
+	// judgeReach, not here. It carries no DeviceID: it speaks about the proxy itself,
+	// like sweep.done, so it needs no device scope check.
+	//
+	// # Old proxies
+	//
+	// A proxy that predates this event never sends it, and nothing in the controller
+	// may wait for it: the capability is announced at the handshake
+	// (HeaderFeatures / FeatureResyncDone) and a session that did not announce it is
+	// treated as having no resync phase at all. See Hub.Resync for the three states
+	// that follow from this, and note that the reverse direction is free — a proxy
+	// that sends this event to an older controller hits a switch with no case for it
+	// and is ignored, which is the pre-existing behaviour for every unknown type.
+	EventResyncDone = "resync.done"
 	// EventPortUp / EventPortDown: front-panel port TRANSITIONS from SNMP-polled
 	// `ifOperStatus`.
 	//
@@ -260,6 +408,62 @@ const (
 	// log with information that no longer changes once acquired. It re-arms when the
 	// device leaves then re-enters the watch list -- i.e. when something may have changed.
 	EventTrapSeen = "trap.seen"
+	// EventGNMIFailing / EventGNMIRecovered: a gNMI SUBSCRIPTION has been failing long
+	// enough to be a state rather than a blip, and then that it stopped failing.
+	//
+	// # Why a device that streams nothing needed its own event
+	//
+	// core01.lab, 2026-08-10. Its `gnmi` credential went stale the moment the site
+	// admin credential was rotated -- the two are separate `site_credentials` rows, each
+	// with its own copy of the password -- and the proxy resubscribed with the refused
+	// login for over an hour. Every operator-visible surface said healthy: the controller
+	// logged `gnmi_targets:1, gnmi_skipped_no_credential:0`, which is TRUE and useless
+	// (it says a credential RESOLVED, not that it WORKS), and `events` held nothing.
+	//
+	// EventSNMPUp/Down could not carry it. Those mean "collection is up / down for this
+	// device", they are the right vocabulary for a collector that has gone quiet, and the
+	// gNMI collector already emits them (cf. GNMICollector.noteReach) -- but they say
+	// only that samples stopped. They cannot say WHY, and here the why is the entire
+	// operational content: a refused login is repaired in meshcraft, in seconds, by
+	// someone who knows which credential to look at. Rounded to "collection down" it
+	// reads as a network fault and sends that person to the switch.
+	//
+	// # What they carry that the pair above does not
+	//
+	// [Event.Metric] -- WHICH subscription, since a device holds up to four and they fail
+	// independently -- and [Event.Cause], the CLASS of failure. Never a value: see
+	// [Event.Cause], and cmd/proxy/gnmi.go for why a gNMI password is the one field on
+	// this fleet that must not reach a journal even truncated.
+	//
+	// TRANSITIONS, like every other pair here. The proxy holds the threshold and reports
+	// once when it is crossed; it does not restate the condition on reconnect, because
+	// unlike a device status there is no column to deduplicate a restatement against, and
+	// an event re-inserted at every tunnel blip is how a fleet log becomes unreadable.
+	EventGNMIFailing   = "device.gnmi_failing"
+	EventGNMIRecovered = "device.gnmi_recovered"
+)
+
+// Cause values for [EventGNMIFailing]: WHY a subscription will not stay up.
+//
+// A closed vocabulary rather than free text, because the controller BRANCHES on it --
+// it picks the sentence that tells an operator which gesture repairs the fault -- and
+// text arriving from a proxy is not something to branch on.
+//
+// The three are exhaustive by construction: the proxy maps every classification onto
+// one of them and defaults to [CauseUnknown], so a class added on the collector side
+// arrives as "I could not tell" on a controller that predates it, never as silence.
+const (
+	// CauseAuth: the device REFUSED THE LOGIN. It never recovers on its own -- no
+	// amount of backoff fixes a wrong password -- and the repair is on the controller.
+	CauseAuth = "auth"
+	// CauseUnreachable: the device did not answer on its gNMI port.
+	CauseUnreachable = "unreachable"
+	// CauseUnknown: it failed, and the transport did not say in a form the proxy can
+	// read. HONEST, and the value that must exist: without it every unclassifiable
+	// failure would be filed as one of the two above and the class would stop meaning
+	// anything. Cf. internal/gnmipoll.ClassifyEnd, which documents exactly which paths
+	// lose the distinction and why they are not guessed at.
+	CauseUnknown = "unknown"
 )
 
 // Event is what the proxy pushes to the controller.
@@ -321,6 +525,24 @@ type Event struct {
 	// The proxy must NOT fill it with the address it thinks it uses to reach the device,
 	// which would make verification tautological -- precisely the hypothesis to test.
 	DestAddr string `json:"dest_addr,omitempty"`
+	// Metric: which COLLECTION SET a fact concerns -- "if_state", "if_counters",
+	// "health", "lldp" (cf. internal/gnmipoll and internal/snmppoll, which share the
+	// vocabulary deliberately).
+	//
+	// For [EventGNMIFailing] / [EventGNMIRecovered], where it is not decoration: a device
+	// holds one subscription per set and they fail independently. A counters
+	// subscription that dies while `if_state` keeps running means the graphs are empty
+	// and port transitions still work, which is a different morning from the reverse.
+	Metric string `json:"metric,omitempty"`
+	// Cause: WHY, as one of the Cause* constants -- a CLASS, never a value.
+	//
+	// The restriction is the point. A gNMI login on this fleet CONFIGURES the switch
+	// rather than merely reading it (cf. GNMIWatch), so the password must not travel in
+	// an event any more than it may appear in a log -- and "the first characters" or "the
+	// length" are not exceptions, since events are read on screen, exported, and kept.
+	// A closed vocabulary makes that property structural rather than a rule someone has
+	// to remember: there is no field here that CAN carry a secret.
+	Cause string `json:"cause,omitempty"`
 	// Detail carries failure text or precision.
 	Detail string `json:"detail,omitempty"`
 }

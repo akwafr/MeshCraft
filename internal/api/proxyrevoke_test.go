@@ -51,7 +51,7 @@ func hubWith(t *testing.T, proxyIDs ...string) (*tunnel.Hub, map[string]*yamux.S
 			_ = client.Close()
 			_ = server.Close()
 		})
-		h.Register(id, "v1", client)
+		h.Register(id, "v1", "", client)
 		sessions[id] = client
 	}
 	return h, sessions
@@ -62,7 +62,7 @@ func TestRevalidationCutsRevokedProxyInDB(t *testing.T) {
 	var cuts []string
 	var n = cutDisownedTunnels(h, func(proxyID string) (tunnelCheck, error) {
 		if proxyID == "revoked" {
-			return tunnelCheck{verdict: tunnelRevoked, name: "proxy-akwalan"}, nil
+			return tunnelCheck{verdict: tunnelRevoked, name: "proxy-lab"}, nil
 		}
 		return tunnelCheck{verdict: tunnelKeep, name: "proxy-local"}, nil
 	}, func(proxyID string, c tunnelCheck) {
@@ -81,7 +81,7 @@ func TestRevalidationCutsRevokedProxyInDB(t *testing.T) {
 			"the whole fleet")
 	}
 	// Name read from DB goes to site log: a UUID is not human-readable.
-	if len(cuts) != 1 || cuts[0] != "revoked/proxy-akwalan/"+revokedTunnelReason {
+	if len(cuts) != 1 || cuts[0] != "revoked/proxy-lab/"+revokedTunnelReason {
 		t.Errorf("announced cuts = %v", cuts)
 	}
 }
@@ -158,7 +158,7 @@ func TestTunnelCheckForOnlyCutsOnCertainty(t *testing.T) {
 			if (err != nil) != c.raises {
 				t.Errorf("returned error = %v, expected raise = %v", err, c.raises)
 			}
-			// NULL verdict is « keep »: that protects the fleet from a read error treated
+			// NULL verdict is "keep": that protects the fleet from a read error treated
 			// as refusal.
 			if err != nil && got.verdict != tunnelKeep {
 				t.Errorf("error yields cut verdict (%d)", got.verdict)
@@ -168,12 +168,12 @@ func TestTunnelCheckForOnlyCutsOnCertainty(t *testing.T) {
 }
 
 // tunnelKeep must be the ZERO value of tunnelVerdict: the verdict returned on failed
-// read, forgotten struct, unset field. If it meant « cut », any hole in the code would
+// read, forgotten struct, unset field. If it meant "cut", any hole in the code would
 // disconnect the fleet.
 func TestNullVerdictDoesNotCut(t *testing.T) {
 	var zero tunnelCheck
 	if zero.verdict != tunnelKeep {
-		t.Fatal("zero value of tunnelVerdict is not « keep tunnel »")
+		t.Fatal("zero value of tunnelVerdict is not \"keep tunnel\"")
 	}
 	if tunnelKeep.reason() != "" {
 		t.Error("tunnelKeep carries a cut reason")
@@ -245,10 +245,10 @@ func TestRevocationWritesDBBeforeCutting(t *testing.T) {
 			}
 		}
 	}
-	var nom string
-	for nom = range expected {
-		if !seen[nom] {
-			t.Errorf("%s not found in package: this lock proves nothing", nom)
+	var name string
+	for name = range expected {
+		if !seen[name] {
+			t.Errorf("%s not found in package: this lock proves nothing", name)
 		}
 	}
 }

@@ -1,0 +1,272 @@
+show running-config
+Building configuration...
+
+
+Current configuration:
+!
+!version 2.0.2J build 95262
+service timestamps log date
+service timestamps debug date
+!
+!
+hostname poefs3400lab
+!
+!
+lldp run
+!
+!
+!
+!
+!
+spanning-tree mode rstp
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+aaa authentication login default local
+aaa authentication enable default none
+aaa authorization exec default local
+!
+username mcadmin password 0 ExamplePass12345
+!
+enable password 0 ExamplePass12345 level 15
+!
+!
+!
+interface Null0
+!
+interface GigaEthernet0/1
+ switchport pvid 100
+!
+interface GigaEthernet0/2
+ switchport pvid 100
+!
+interface GigaEthernet0/3
+ switchport pvid 100
+!
+interface GigaEthernet0/4
+ switchport pvid 100
+!
+interface GigaEthernet0/5
+ switchport pvid 100
+!
+interface GigaEthernet0/6
+ switchport pvid 100
+!
+interface GigaEthernet0/7
+ switchport pvid 100
+!
+interface GigaEthernet0/8
+ switchport pvid 100
+!
+interface GigaEthernet0/9
+ switchport pvid 100
+!
+interface GigaEthernet0/10
+ switchport pvid 100
+!
+interface GigaEthernet0/11
+ switchport pvid 100
+!
+interface GigaEthernet0/12
+ switchport pvid 100
+!
+interface GigaEthernet0/13
+ switchport pvid 100
+!
+interface GigaEthernet0/14
+ switchport pvid 100
+!
+interface GigaEthernet0/15
+ switchport pvid 100
+!
+interface GigaEthernet0/16
+ switchport pvid 100
+!
+interface GigaEthernet0/17
+ switchport pvid 100
+!
+interface GigaEthernet0/18
+ switchport pvid 100
+!
+interface GigaEthernet0/19
+ switchport pvid 100
+!
+interface GigaEthernet0/20
+ switchport pvid 100
+!
+interface GigaEthernet0/21
+ switchport pvid 100
+!
+interface GigaEthernet0/22
+ switchport pvid 100
+!
+interface GigaEthernet0/23
+ switchport pvid 100
+!
+interface GigaEthernet0/24
+ switchport pvid 100
+!
+interface GigaEthernet0/25
+ switchport pvid 100
+!
+interface GigaEthernet0/26
+ switchport pvid 100
+!
+interface GigaEthernet0/27
+ switchport pvid 100
+!
+interface GigaEthernet0/28
+ switchport pvid 100
+!
+interface GigaEthernet0/29
+ switchport pvid 100
+!
+interface GigaEthernet0/30
+ switchport pvid 100
+!
+interface GigaEthernet0/31
+ switchport pvid 100
+!
+interface GigaEthernet0/32
+ switchport pvid 100
+!
+interface GigaEthernet0/33
+ switchport pvid 100
+!
+interface GigaEthernet0/34
+ switchport pvid 100
+!
+interface GigaEthernet0/35
+ switchport pvid 100
+!
+interface GigaEthernet0/36
+ switchport pvid 100
+!
+interface GigaEthernet0/37
+ switchport pvid 100
+!
+interface GigaEthernet0/38
+ switchport pvid 100
+!
+interface GigaEthernet0/39
+ switchport pvid 100
+!
+interface GigaEthernet0/40
+ switchport pvid 100
+!
+interface GigaEthernet0/41
+ switchport pvid 100
+!
+interface GigaEthernet0/42
+ switchport pvid 100
+!
+interface GigaEthernet0/43
+ switchport pvid 100
+!
+interface GigaEthernet0/44
+ switchport pvid 100
+!
+interface GigaEthernet0/45
+ switchport trunk vlan-allowed 42,98-100
+ switchport mode trunk
+ switchport pvid 100
+!
+interface GigaEthernet0/46
+ switchport trunk vlan-allowed 42,98-100
+ switchport mode trunk
+ switchport pvid 100
+!
+interface GigaEthernet0/47
+ switchport trunk vlan-allowed 42,98-100
+ switchport mode trunk
+ switchport pvid 100
+!
+interface GigaEthernet0/48
+ switchport trunk vlan-allowed 42,98-100
+ switchport mode trunk
+ switchport pvid 100
+!
+interface TGigaEthernet0/1
+ switchport trunk vlan-allowed 1,42,98-100
+ switchport mode trunk
+!
+interface TGigaEthernet0/2
+ switchport trunk vlan-allowed 1,42,98-100
+ switchport mode trunk
+!
+interface TGigaEthernet0/3
+ switchport trunk vlan-allowed 1,42,98-100
+ switchport mode trunk
+!
+interface TGigaEthernet0/4
+ switchport trunk vlan-allowed 1,42,98-100
+ switchport mode trunk
+!
+interface VLAN99
+ ip address 192.0.2.3 255.255.0.0
+ no ip directed-broadcast
+!
+!
+!
+vlan 42
+ name LAN42_ServicesPublics
+!
+vlan 98
+ name LAN98_ServicesInternes
+!
+vlan 99
+ name LAN99_Management
+!
+vlan 100
+ name LAN100_User1
+!
+vlan 1,42,98-100
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+!
+ip route default 192.0.2.1 
+ip exf
+!
+ipv6 exf
+!
+ip telnet attack-defense
+!
+ip http server
+!
+!
+snmp-server group mcagA v3 auth 
+snmp-server group mcagN v3 noauth 
+snmp-server user mcau1 mcagA v3 auth sha 0 REDACTED-PASSPHRASE 
+snmp-server user mcau2 mcagA v3 auth md5 0 REDACTED-PASSPHRASE 
+snmp-server user mcau3 mcagA v3 encrypted auth sha 0 REDACTED-PASSPHRASE 
+snmp-server user mcorph mcnogroup v3 auth sha 0 REDACTED-PASSPHRASE 
+snmp-server community 0 REDACTED-COMMUNITY RO 
+!
+!
+ip sshd enable
+!
+!
+!
+!
+poefs3400lab#

@@ -1,0 +1,41 @@
+show interface tg0/2
+TGigaEthernet0/2 is up, line protocol is up
+  protocolstatus upTimes 1, downTimes 0, last transition 2000-1-1 0:0:41
+  Ifindex is 178, unique port number is 50
+  Hardware is 10Giga-FX-SFP, address is 649d.9922.7bc7 (bia 649d.9922.7bc7)
+  MTU 1500 bytes, BW 10000000 kbit, DLY 10 usec
+  Encapsulation ARPA
+  Full-duplex,  10000Mb/s,  Flow-Control Off
+Transceiver Info:
+    SFP,LC,1330nm,10000BASE-FX-LR,LOS:no
+    SM 20KM
+    DDM:YES,Vend:Pureoptics,PN:SFP-10G-LR-BXD
+    SerialNum:KAFDH587,Date:2018-07-26
+DDM info:
+    TX power:-1.52 dBm, RX power:-1.55 dBm
+    SFP temperature:54.00 C,supply voltage :3.29V,Bias Current.:46.07mA
+
+  DDM Thresholds:        Low-Alarm    Low-Warning   High-Warning  High-Alarm
+  TX power(dBm):            -9.17        -8.20         0.50         1.29
+  RX power(dBm):           -18.01       -15.00         0.00         3.01
+  SFP temperature(C):         -45          -40           85           90
+  Supply voltage(v):         2.97         3.13         3.46         3.63
+  Bias Current(mA):          2.00         4.00        80.00       100.00
+  5 minutes input rate 94387 bits/sec, 180 packets/sec
+  5 minutes output rate 22277 bits/sec, 5 packets/sec
+  Real time input rate 0%, 8783 bits/sec, 12 packets/sec
+  Real time output rate 0%, 28253 bits/sec, 13 packets/sec
+     Received 16182328 packets, 1065048002 bytes
+     15828549 broadcasts, 46509 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 CRC, 0 undersize, 0 oversize
+     0 fragment, 0 jabber
+     15939273 Pkts64, 176947 Pkts65, 49409 Pkts128
+     3934 Pkts256, 682 Pkts512, 12050 Pkts1024
+     Transmitted 318622 packets, 158109118 bytes
+     973 broadcasts, 1852 multicasts
+     0 discard, 0 PAUSE, 0 error
+     0 collision
+     0 Pkts64, 183084 Pkts65, 10023 Pkts128
+     8414 Pkts256, 25612 Pkts512, 78300 Pkts1024
+Switch#

@@ -12,7 +12,7 @@ import (
 )
 
 // emit logs an event. A write error never fails the business action: the log is an
-// observer, not has lock.
+// observer, not a lock.
 func (s *Server) emit(r *http.Request, ev model.Event) {
 	if ev.Severity == 0 {
 		ev.Severity = model.SevInfo
@@ -20,9 +20,21 @@ func (s *Server) emit(r *http.Request, ev model.Event) {
 	if ev.Actor == "" {
 		ev.Actor = auth.UserFrom(r.Context()).Email
 	}
-	var err = s.Store.InsertEvent(r.Context(), ev)
+	var id, err = s.Store.InsertEventID(r.Context(), ev)
 	if err != nil {
 		slog.Error("event log: insert failed", "err", err, "type", ev.Type)
+	}
+	// Alerting hangs off the journal, not beside it (ADR-0024 rule 1). Hooked
+	// HERE rather than on the site bus because the bus carries no payload —
+	// only "something of kind `event` changed on site X" — so a notifier
+	// listening to it would know an alert happened and not what it was.
+	//
+	// This covers the ~143 emit* call sites. The six alertable types come from
+	// three DIRECT InsertEvent callers in watch_handlers.go, hooked there for
+	// the same reason; a future alertable type added through emit works with no
+	// further wiring.
+	if err == nil {
+		s.fileAlerts(r.Context(), id, ev)
 	}
 	// The site event log is a screen like any other: a row that appears
 	// must appear for everyone. Redundant with notifyOnWrite for API actions —
@@ -33,7 +45,7 @@ func (s *Server) emit(r *http.Request, ev model.Event) {
 	}
 }
 
-// emitSite is the shortcut for has site-scoped event.
+// emitSite is the shortcut for a site-scoped event.
 func (s *Server) emitSite(r *http.Request, siteID, evType string, sev int, msg string, payload any) {
 	var raw []byte
 	if payload != nil {
@@ -45,14 +57,14 @@ func (s *Server) emitSite(r *http.Request, siteID, evType string, sev int, msg s
 }
 
 // emitInstance is the shortcut for an instance event, without site: proxy lifecycle,
-// for example, belongs to no site (cf. docs/01-Architecture/Proxy).
+// for example, belongs to no site (cf. docs/en/01-Architecture/Proxy.md).
 func (s *Server) emitInstance(r *http.Request, evType string, sev int, msg string) {
 	s.emit(r, model.Event{Type: evType, Severity: sev, Message: msg})
 }
 
 // handleListInstanceEvents: event log WITHOUT site — proxies, discovery, audit.
 // Reserved for global-admin: user logins and instance credentials appear here,
-// and must not be readable by has mere site viewer ([[RBAC]]).
+// and must not be readable by a mere site viewer ([[RBAC]]).
 func (s *Server) handleListInstanceEvents(w http.ResponseWriter, r *http.Request) {
 	var q = r.URL.Query()
 	var limit, _ = strconv.Atoi(q.Get("limit"))

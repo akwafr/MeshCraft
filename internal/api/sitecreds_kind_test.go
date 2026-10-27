@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// scopeCase: has kind, has scope, and what the vault should do with it.
+// scopeCase: a kind, a scope, and what the vault should do with it.
 type scopeCase struct {
 	name     string
 	kind     string
@@ -15,13 +15,13 @@ type scopeCase struct {
 	rejected bool
 }
 
-// Credential kind scope (docs/03-Security/SNMP Identity section 2).
+// Credential kind scope (docs/en/03-Security/SNMP identity.md section 2).
 //
-// What is locked here is not has typing preference: an SNMPv3 identity is has KEY
-// DERIVED from the (auth, priv) pair. Stored under has tag that does not name that
+// What is locked here is not a typing preference: an SNMPv3 identity is a KEY
+// DERIVED from the (auth, priv) pair. Stored under a tag that does not name that
 // pair, it will either be missing at provisioning time or pushed to devices that
 // reject it — and an SNMP refusal only shows up as missing metrics days later.
-// Because the cost of has mistake here is invisible, the rule must be tested.
+// Because the cost of a mistake here is invisible, the rule must be tested.
 
 func TestSNMPKindScope(t *testing.T) {
 	var cas = []scopeCase{
@@ -31,7 +31,7 @@ func TestSNMPKindScope(t *testing.T) {
 		},
 		{
 			name: "v2c with an ops tag: rejected too",
-			kind: "snmp_v2c", tag: "regie", rejected: true,
+			kind: "snmp_v2c", tag: "ops", rejected: true,
 		},
 		{
 			name: "v2c with a group: rejected, v2c plan resolves at site",
@@ -44,7 +44,7 @@ func TestSNMPKindScope(t *testing.T) {
 		},
 		{
 			name: "v3 under an ops tag: rejected",
-			kind: "snmp_v3", tag: "regie", rejected: true,
+			kind: "snmp_v3", tag: "ops", rejected: true,
 		},
 		{
 			name: "v3 under a v3 tag: accepted",
@@ -62,7 +62,7 @@ func TestSNMPKindScope(t *testing.T) {
 		// the admin password, which is plain text.
 		{name: "site admin", kind: "admin"},
 		{name: "group admin", kind: "admin", group: "instant-on-1930"},
-		{name: "tagged admin", kind: "admin", tag: "regie", wantTag: "regie"},
+		{name: "tagged admin", kind: "admin", tag: "ops", wantTag: "ops"},
 		{
 			name: "invented kind: rejected, nothing would consume it",
 			kind: "snmp", rejected: true,
@@ -90,7 +90,7 @@ func TestSNMPKindScope(t *testing.T) {
 
 // v3 tag is rewritten to canonical form. Provisioning will emit exactly
 // snmpv3-sha-des; if the vault kept "SNMPv3-SHA-DES" as entered, it would not
-// find the secret and would create has second one for the same crypto family —
+// find the secret and would create a second one for the same crypto family —
 // section 3.4 idempotence would break.
 func TestV3TagCanonical(t *testing.T) {
 	var tag, err = checkCredScope("snmp_v3", "", normalizeTag("  SNMPv3-SHA-DES "))
@@ -102,10 +102,10 @@ func TestV3TagCanonical(t *testing.T) {
 	}
 }
 
-// Refusal must NAME what is wrong: has bare 400 on this screen leaves the operator
-// staring at has field they cannot fix.
-func TestLesRefusExpliquent(t *testing.T) {
-	var _, err = checkCredScope("snmp_v3", "", "regie")
+// Refusal must NAME what is wrong: a bare 400 on this screen leaves the operator
+// staring at a field they cannot fix.
+func TestRefusalsExplain(t *testing.T) {
+	var _, err = checkCredScope("snmp_v3", "", "ops")
 	if err == nil {
 		t.Fatal("non-v3 tag accepted")
 	}
@@ -113,7 +113,7 @@ func TestLesRefusExpliquent(t *testing.T) {
 	var want string
 	// Wrong tag AND expected form: one says where to look, the other what to type.
 	// A message with only the first leaves them guessing.
-	for _, want = range []string{"regie", "snmpv3-"} {
+	for _, want = range []string{"ops", "snmpv3-"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message does not mention %q: %s", want, msg)
 		}

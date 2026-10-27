@@ -1,0 +1,5 @@
+Group name     : meshprobeb
+Security model : v3 priv
+Read view      : <no read view specified (default: all included)>
+Write view     : <no write view specified>
+Notify view    : <no notify view specified>

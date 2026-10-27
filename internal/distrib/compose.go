@@ -39,7 +39,7 @@ func (s *Service) PublicURL(r *http.Request) string {
 // ImageRef returns the proxy's image reference in the embedded registry,
 // e.g. ctrl.example.com:8080/meshcraft/proxy:latest
 func (s *Service) ImageRef(r *http.Request) string {
-	return s.externalBase(r).Host + "/" + imageName + ":latest"
+	return s.externalBase(r).Host + "/" + proxyRepo + ":latest"
 }
 
 // InsecureNote reports the insecure-registries configuration needed over HTTP.

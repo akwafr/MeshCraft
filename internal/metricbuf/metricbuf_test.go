@@ -16,15 +16,15 @@ func TestAtLeastOnceDelivery(t *testing.T) {
 	var b = New(100)
 	b.AddAll([]Sample{s("a", 1), s("b", 2), s("c", 3)})
 
-	var lot = b.Take(2)
-	if len(lot) != 2 || lot[0].Name != "a" {
-		t.Fatalf("unexpected batch: %+v", lot)
+	var batch = b.Take(2)
+	if len(batch) != 2 || batch[0].Name != "a" {
+		t.Fatalf("unexpected batch: %+v", batch)
 	}
 	// Send fails: the batch returns, at the HEAD, to preserve chronology.
 	b.Nack()
-	lot = b.Take(3)
-	if len(lot) != 3 || lot[0].Name != "a" || lot[2].Name != "c" {
-		t.Errorf("after Nack, everything must return in order: %+v", lot)
+	batch = b.Take(3)
+	if len(batch) != 3 || batch[0].Name != "a" || batch[2].Name != "c" {
+		t.Errorf("after Nack, everything must return in order: %+v", batch)
 	}
 	b.Ack()
 	var got = b.Take(10)
@@ -38,11 +38,11 @@ func TestAtLeastOnceDelivery(t *testing.T) {
 func TestSingleInFlightBatch(t *testing.T) {
 	var b = New(100)
 	b.AddAll([]Sample{s("a", 1), s("b", 2)})
-	var premier = b.Take(1)
+	var first = b.Take(1)
 	var second = b.Take(1)
-	if len(second) != 1 || second[0].Name != premier[0].Name {
+	if len(second) != 1 || second[0].Name != first[0].Name {
 		t.Errorf("Take must return the same batch until settled: %+v / %+v",
-			premier, second)
+			first, second)
 	}
 }
 
@@ -55,12 +55,12 @@ func TestBoundDropsOldest(t *testing.T) {
 	for i = 1; i <= 6; i++ {
 		b.Add(Sample{Name: "m", Value: float64(i), TS: time.Now()})
 	}
-	var lot = b.Take(10)
-	if len(lot) != 3 {
-		t.Fatalf("expected 3 samples, got %d", len(lot))
+	var batch = b.Take(10)
+	if len(batch) != 3 {
+		t.Fatalf("expected 3 samples, got %d", len(batch))
 	}
-	if lot[0].Value != 4 || lot[2].Value != 6 {
-		t.Errorf("the most RECENT must remain: %v %v", lot[0].Value, lot[2].Value)
+	if batch[0].Value != 4 || batch[2].Value != 6 {
+		t.Errorf("the most RECENT must remain: %v %v", batch[0].Value, batch[2].Value)
 	}
 	// Drops must be counted: monitoring that drops without saying so lies.
 	var st = b.Stats()
@@ -74,8 +74,8 @@ func TestBoundDropsOldest(t *testing.T) {
 func TestNackDoesNotEvictNewer(t *testing.T) {
 	var b = New(3)
 	b.AddAll([]Sample{s("v1", 1), s("v2", 2)})
-	var lot = b.Take(2)
-	if len(lot) != 2 {
+	var batch = b.Take(2)
+	if len(batch) != 2 {
 		t.Fatalf("expected batch of 2")
 	}
 	// While the batch is in flight, collection continues.

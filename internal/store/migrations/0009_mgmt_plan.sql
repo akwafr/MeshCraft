@@ -1,17 +1,17 @@
--- Plan d'adressage de management, par site
--- (cf. docs/01-Architecture/Adressage de management).
+-- Management addressing plan, per site
+-- (see docs/en/01-Architecture/Management addressing.md).
 --
--- Le plan dit COMMENT un équipement adopté devient joignable pour
--- l'administration : quel VLAN, quel sous-réseau, quelle passerelle, et si
--- l'adresse vient d'un DHCP externe ou de meshcraft.
+-- The plan says HOW an adopted device becomes reachable for administration:
+-- which VLAN, which subnet, which gateway, and whether the address comes from
+-- an external DHCP or from meshcraft.
 --
--- Rappel de la règle structurante : « géré par meshcraft » signifie que meshcraft
--- ALLOUE une adresse dans la plage et la pousse en configuration STATIQUE. Il
--- n'émet aucun paquet DHCP — ce n'est pas un serveur DHCP.
+-- Reminder of the structuring rule: "managed by meshcraft" means meshcraft
+-- ALLOCATES an address in the range and pushes it as STATIC configuration. It
+-- emits no DHCP packet — it is not a DHCP server.
 create table if not exists site_mgmt_plan (
     site_id    uuid primary key references sites(id) on delete cascade,
-    -- VLAN d'administration. untagged = management sur le VLAN natif, ce qui est
-    -- le seul mode possible sur certains équipements.
+    -- Administration VLAN. untagged = management on the native VLAN, which is the
+    -- only possible mode on some devices.
     vlan_id    int not null default 1,
     untagged   boolean not null default true,
 
@@ -22,26 +22,26 @@ create table if not exists site_mgmt_plan (
     dns        text[] not null default '{}',
     ntp        text[] not null default '{}',
 
-    -- dhcp_external : meshcraft configure le client DHCP et n'alloue rien.
-    -- meshcraft     : meshcraft choisit l'adresse dans la plage ci-dessous.
+    -- dhcp_external : meshcraft configures the DHCP client and allocates nothing.
+    -- meshcraft     : meshcraft picks the address from the range below.
     source     text not null default 'dhcp_external',
     pool_start text not null default '',
     pool_end   text not null default '',
 
-    -- strict_plan : refuser l'adoption d'un équipement incapable de porter ce
-    -- plan, au lieu de l'accepter hors plan. Activé par défaut.
+    -- strict_plan: refuse the adoption of a device unable to carry this plan,
+    -- instead of accepting it outside the plan. On by default.
     strict_plan boolean not null default true,
 
     updated_by uuid references users(id) on delete set null,
     updated_at timestamptz not null default now()
 );
 
--- IPAM : les adresses de management allouées par meshcraft.
+-- IPAM: the management addresses allocated by meshcraft.
 --
--- L'unicité est portée par la BASE et non par le code : deux adoptions
--- simultanées ne peuvent pas choisir la même adresse. Une adresse n'est jamais
--- réutilisée tant qu'un équipement peut encore la porter — un switch éteint
--- revient avec son ancienne configuration.
+-- Uniqueness is carried by the DATABASE and not by the code: two simultaneous
+-- adoptions cannot pick the same address. An address is never reused while a
+-- device may still carry it — a switch that was off comes back with its old
+-- configuration.
 create table if not exists mgmt_addresses (
     site_id     uuid not null references sites(id) on delete cascade,
     address     text not null,

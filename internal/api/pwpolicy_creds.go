@@ -63,7 +63,7 @@ import (
 //     device would fall back to the site secret, which its own connector refuses.
 //
 // A separate source is therefore what guarantees replay breaks nothing — `tagging.Evaluate`
-// only removes `rule:`-prefixed sources. A test locks this (TestEtiquettePwPolicySurvitAuRejeuDesRegles):
+// only removes `rule:`-prefixed sources. A test locks this (TestPwPolicyTagSurvivesRuleReplay):
 // not an implementation detail, the property that makes replay safe.
 const pwPolicyTagSource = "pwpolicy"
 
@@ -93,7 +93,7 @@ type pwPolicyOffer struct {
 //     different tags, exactly the split fleet the reserved namespace exists to prevent.
 //
 // Only examines ADMINISTRATION credentials from the reserved namespace. Borrowing an
-// OPERATIONS tag credential ("regie") would be worse than useless: meshcraft would decide
+// OPERATIONS tag credential ("ops") would be worse than useless: meshcraft would decide
 // filing that belongs to the operator, and the operator could delete that credential without
 // knowing a CSS326 depended on it.
 //

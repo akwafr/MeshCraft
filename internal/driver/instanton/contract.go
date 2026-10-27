@@ -28,8 +28,8 @@ import (
 //
 // Types the API layer exchanges with a connector now live in internal/driver (cf.
 // state.go). This package carried them identically on its own because it was first — and
-// two of the three connectors shipped since said in comments they copied « the same shape
-// as the Instant On connector ». Three identical definitions by convention hold until one
+// two of the three connectors shipped since said in comments they copied "the same shape
+// as the Instant On connector". Three identical definitions by convention hold until one
 // gains a field.
 //
 // An ALIAS (`type State = driver.State`) not a definition, and that is the whole point:
@@ -39,7 +39,7 @@ import (
 //
 // CONTRACT JSON TAGS ARE THE ORIGINAL ONES, deliberately, and that is not cosmetic:
 // `State` is serialized in `devices.observed` and read by everything that computes
-// configuration drift. Renaming a tag would read « zero VLANs, no ports » on every
+// configuration drift. Renaming a tag would read "zero VLANs, no ports" on every
 // already-collected device — presenting as massive drift and triggering applies.
 type (
 	// Step is a transcript step. [Admin]'s `Steps` field becomes `[]driver.Step` without
@@ -81,7 +81,7 @@ type (
 // Compile-time failure when the contract moves.
 //
 // A runtime type assertion (`admin.(driver.Admin)`) would fail silently in the field:
-// the caller would fall back to « this platform cannot do that » for a capability this
+// the caller would fall back to "this platform cannot do that" for a capability this
 // connector has, and nobody would know a signature drifted. These declarations cost zero
 // bytes at runtime and turn that silent failure into a build error.
 //
@@ -124,7 +124,7 @@ var (
 //
 // ACCESS IS RETURNED EVEN ON FAILURE, deliberately. On a product line reached only via
 // web UI, the transcript is the only way to understand why a connection was refused
-// without returning on site: « no credential accepted » and « too many open sessions »
+// without returning on site: "no credential accepted" and "too many open sessions"
 // are fixed by unrelated gestures. The caller that checks the error — and must — can
 // still read [Admin.Transcript] to display it, as the API layer does today on all
 // failure paths. Returning nil would erase that trace precisely when it matters.
@@ -143,7 +143,7 @@ func (d *Driver1930) Authenticate(ctx context.Context, tgt driver.Target,
 // --- Administration access ---
 
 // Connector returns the identity of the connector that produced this access. For
-// MESSAGES: « this platform cannot do X » helps nobody if the screen does not say
+// MESSAGES: "this platform cannot do X" helps nobody if the screen does not say
 // which platform.
 func (a *Admin) Connector() driver.Info { return (&Driver1930{}).Info() }
 
@@ -156,7 +156,7 @@ func (a *Admin) Account() string { return a.User }
 //
 // THE CLEAREST WIN OF THE WHOLE MIGRATION, and worth explaining. The API layer used to
 // reconstruct the accepted secret by searching the TRANSCRIPT: an step whose label starts
-// with « logged in as », then cross-checking its `Why` with the candidate list
+// with "logged in as", then cross-checking its `Why` with the candidate list
 // (`currentSecretOf`). A transcript label is TEXT FOR A HUMAN — rephrasing it is
 // legitimate, apparently harmless, and silently broke identity apply — the gesture that
 // leaves a device with a password the database does not know.
@@ -177,8 +177,8 @@ func (a *Admin) Transcript() []Step { return a.Steps }
 // SetSecret changes the password of THE ACCOUNT THAT JUST LOGGED IN.
 //
 // The account is not a contract parameter, deliberately: it is [Admin.Account]. Letting
-// the caller name another would open « change password of an account we have not proven
-// access to »; creating or modifying ANOTHER account is a distinct gesture, in
+// the caller name another would open "change password of an account we have not proven
+// access to"; creating or modifying ANOTHER account is a distinct gesture, in
 // [driver.AccountManager].
 //
 // `oldSecret` is passed to [Admin.SetPassword] which ignores it: on this product line
@@ -193,6 +193,11 @@ func (a *Admin) Transcript() []Step { return a.Steps }
 func (a *Admin) SetSecret(ctx context.Context, oldSecret, newSecret string) error {
 	return a.SetPassword(ctx, a.User, oldSecret, newSecret)
 }
+
+// Close: a no-op on this range. The access is an authenticated HTTP client,
+// not a persistent session the device counts against a limit — there is
+// nothing here for an SSH-based connector's Close() to free.
+func (a *Admin) Close() {}
 
 // Persist copies current configuration into startup configuration.
 //
@@ -223,7 +228,7 @@ func (a *Admin) MgmtAddressed(ctx context.Context, vlanID int) (bool, string, er
 // TWO DEVICE GESTURES IN ONE CALL, the only design decision in this file that is not a
 // simple name translation: remove the duplicate interface THEN designate management VLAN.
 // Order is not negotiable — the device refuses a management VLAN that already carries IP
-// configuration (« Please remove IPv4 configuration on new management VLAN »), because IT
+// configuration ("Please remove IPv4 configuration on new management VLAN"), because IT
 // installs the address there and does not want another on its path.
 //
 // This constraint is platform-specific, so it belongs in the connector. The API layer
@@ -255,7 +260,7 @@ func (a *Admin) ReadRaw(ctx context.Context, unit string) (string, error) {
 	return a.RawSection(ctx, unit)
 }
 
-// RawKind names, for a human, what « a unit » means here.
+// RawKind names, for a human, what "a unit" means here.
 //
 // For the UI, not ornament: without it, the debug probe would ask for a `wcd` section
 // name from someone looking at a MikroTik, and failure would look like device outage.
@@ -292,7 +297,7 @@ func (d *Driver1930) Identify(ctx context.Context, tgt driver.Target,
 //
 //  1. state BEFORE. Without it, `Changed` means nothing, and `Changed` is the only proof:
 //     on this API, a 2xx that changes nothing is silent failure;
-//  2. identity, « BEST EFFORT ». Provisioning UI serves it without session, and reading it
+//  2. identity, "BEST EFFORT". Provisioning UI serves it without session, and reading it
 //     here avoids a second round trip when adoption needs model and serial. Its failure does
 //     NOT stop the switch: the requested gesture is the switch, not inventory;
 //  3. the switch itself, which re-reads state AFTER (cf. [Client.ConfigureLocally]).

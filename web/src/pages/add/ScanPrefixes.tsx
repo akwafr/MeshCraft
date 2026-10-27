@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { viewerDate } from "../../ui/clock";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSite, useSiteId } from "../../useSite";
@@ -45,7 +46,7 @@ export default function ScanPrefixes() {
   const [toast, showToast] = useToast();
 
   // Proxies usable for this site: those covering it, plus instance proxies
-  // (see docs/01-Architecture/Proxy).
+  // (see docs/en/01-Architecture/Proxy).
   const { data: proxies } = useQuery({
     queryKey: ["discovery-proxies", siteId],
     queryFn: () => get<ProxyInfo[]>(`/api/sites/${siteId}/discovery-proxies`),
@@ -252,7 +253,7 @@ export default function ScanPrefixes() {
           <div className="empty">{t("scanPrefixes.noneDeclared")}</div>
         </div>
       ) : (
-        <div className="card" style={{ marginTop: 12, padding: 0, overflowX: "auto" }}>
+        <div className="card card-flush scroll-x scroll-cue">
           <table className="ports-table">
             <thead>
               <tr>
@@ -304,7 +305,7 @@ export default function ScanPrefixes() {
                   <td className="note">{sp.note || "—"}</td>
                   <td className="note">
                     {sp.last_run_at
-                      ? `${new Date(sp.last_run_at).toLocaleString(i18n.language)} — ${sp.last_result}`
+                      ? `${(viewerDate(sp.last_run_at) ?? new Date(sp.last_run_at)).toLocaleString(i18n.language)} — ${sp.last_result}`
                       : t("common.never")}
                   </td>
                   <td>

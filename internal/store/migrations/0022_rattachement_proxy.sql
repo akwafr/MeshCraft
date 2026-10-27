@@ -1,63 +1,62 @@
--- Rattachement d'un équipement à un proxy : désigner SON collecteur.
+-- Attaching a device to a proxy: designating ITS collector.
 --
--- Le problème. Jusqu'ici, aucun équipement n'est rattaché à quoi que ce soit :
--- `DevicesWatchedBy` DÉDUIT l'éligibilité d'un couple (couverture de sites,
--- drapeau `proxies.global`). Avec deux proxys d'instance en base — le cas
--- ordinaire dès qu'un « Local » cohabite avec un proxy déporté — le MÊME
--- équipement est surveillé par les deux. Ce n'est pas un défaut en soi : deux
--- pings valent mieux qu'un.
+-- The problem. Until now, no device is attached to anything:
+-- `DevicesWatchedBy` DEDUCES eligibility from a pair (site coverage, the
+-- `proxies.global` flag). With two instance proxies in the database — the
+-- ordinary case as soon as a "Local" lives alongside a remote proxy — the SAME
+-- device is watched by both. That is not a defect in itself: two pings are
+-- better than one.
 --
--- Ça devient un mur dès qu'il faut écrire quelque chose DANS l'équipement. La
--- déclaration d'un destinataire de traps exige UNE adresse IP concrète, et
--- « plusieurs proxys éligibles » ne se traduit pas en une adresse. Le même
--- raisonnement vaut pour la collecte SNMP : deux proxys qui interrogent le même
--- switch remontent deux fois chaque transition de port, et la corrélation ne
--- peut que les dédoublonner APRÈS coup, jamais les empêcher.
+-- It becomes a wall as soon as something must be written INTO the device.
+-- Declaring a trap recipient requires ONE concrete IP address, and "several
+-- eligible proxies" does not translate into an address. The same reasoning
+-- holds for SNMP collection: two proxies polling the same switch report every
+-- port transition twice, and correlation can only deduplicate them AFTERWARDS,
+-- never prevent them.
 --
--- La réponse est une DÉCLARATION, pas une élection. Élire le collecteur (le
--- premier proxy connecté, celui de latence la plus faible) le ferait changer
--- tout seul, et le destinataire de traps écrit dans les équipements deviendrait
--- faux sans que personne ne touche à rien. L'opérateur désigne, meshcraft obéit.
+-- The answer is a DECLARATION, not an election. Electing the collector (the
+-- first proxy connected, the one with the lowest latency) would make it change
+-- on its own, and the trap recipient written into the devices would become
+-- wrong without anybody touching anything. The operator designates, meshcraft
+-- obeys.
 --
--- Ce que la colonne signifie : le COLLECTEUR DE RÉFÉRENCE. Le proxy qui
--- interroge cet équipement en SNMP, et celui dont l'adresse sera écrite dans
--- l'équipement comme destination de ses traps.
+-- What the column means: the REFERENCE COLLECTOR. The proxy that polls this
+-- device over SNMP, and the one whose address will be written into the device
+-- as the destination of its traps.
 --
--- Ce qu'elle ne signifie PAS, et c'est aussi important :
+-- What it does NOT mean, and that matters just as much:
 --
---   * elle ne donne AUCUNE couverture. La couverture de sites reste la seule
---     porte d'entrée (cf. docs/01-Architecture/Proxy) : elle dit qui a le droit
---     de voir les équipements d'un site, et c'est une frontière de
---     confidentialité, pas une commodité. Un rattachement qui l'élargirait
---     permettrait de divulguer le nom et l'adresse d'un équipement du site A à
---     un proxy qui ne couvre que le site B, par un geste qui n'a rien à voir
---     avec les droits. Conséquence assumée : rattacher un équipement à un proxy
---     qui ne couvre pas son site ne le fait pas collecter par lui — ça le fait
---     collecter par PERSONNE. C'est à la couche qui propose le rattachement de
---     n'offrir que des proxys couvrants ;
---   * elle ne restreint PAS la surveillance ICMP. Deux proxys qui pinguent le
---     même équipement ne coûtent rien et donnent une meilleure vérité de
---     joignabilité, alors qu'un collecteur unique perd tout basculement si son
---     proxy tombe. L'arbitrage tient en une phrase : le déterminisme là où
---     l'unicité est nécessaire (SNMP, traps), la redondance là où elle est
---     gratuite (ICMP). Le tri se fait donc à la lecture, dans la couche qui
---     construit les cibles — pas ici.
+--   * it grants NO coverage. Site coverage remains the only way in (see
+--     docs/en/01-Architecture/Proxy.md): it says who may see a site's devices,
+--     and it is a confidentiality boundary, not a convenience. An attachment
+--     that widened it would allow disclosing the name and address of a site A
+--     device to a proxy that only covers site B, through a gesture that has
+--     nothing to do with rights. Accepted consequence: attaching a device to a
+--     proxy that does not cover its site does not make that proxy collect it —
+--     it makes NOBODY collect it. It is up to the layer offering the
+--     attachment to offer only covering proxies;
+--   * it does NOT restrict ICMP monitoring. Two proxies pinging the same device
+--     cost nothing and give a better reachability truth, whereas a single
+--     collector loses all failover if its proxy goes down. The trade-off fits in
+--     one sentence: determinism where uniqueness is necessary (SNMP, traps),
+--     redundancy where it is free (ICMP). The sorting therefore happens on
+--     read, in the layer that builds the targets — not here.
 --
--- `null` autorisé, et c'est l'état de tout le parc existant. Inventer un
--- rattachement à la migration serait une supposition : rien en base ne dit quel
--- proxy DOIT collecter un équipement que deux proxys atteignent également bien.
--- Un `null` garde exactement le comportement par couverture d'avant cette
--- migration — elle est donc à sémantique constante, aucune surveillance ne
--- change tant que personne n'a déclaré quoi que ce soit.
+-- `null` allowed, and that is the state of the whole existing fleet. Inventing
+-- an attachment in the migration would be a guess: nothing in the database
+-- says which proxy MUST collect a device that two proxies reach equally well.
+-- A `null` keeps exactly the coverage-based behaviour from before this
+-- migration — its semantics are therefore constant, no monitoring changes as
+-- long as nobody has declared anything.
 --
--- `on delete set null` : supprimer un proxy ne doit jamais supprimer des
--- équipements — un `cascade` ici effacerait une partie de l'inventaire au
--- retrait d'un boîtier, ce qui est absurde. Le repli correct est le retour au
--- régime par couverture, c'est-à-dire précisément `null`.
+-- `on delete set null`: deleting a proxy must never delete devices — a
+-- `cascade` here would erase part of the inventory when a box is removed, which
+-- is absurd. The correct fallback is the return to coverage-based behaviour,
+-- i.e. precisely `null`.
 alter table devices add column proxy_id uuid references proxies(id) on delete set null;
 
--- L'index sert le sens de lecture qui n'existe pas encore mais viendra dès la
--- première interface : « quels équipements ce proxy collecte-t-il ? », posée à
--- l'écran d'un proxy et au retrait d'un proxy. La requête de surveillance, elle,
--- part de `devices` et n'en a pas besoin.
+-- The index serves the read direction that does not exist yet but will come
+-- with the first interface: "which devices does this proxy collect?", asked on
+-- a proxy's screen and when a proxy is removed. The monitoring query starts
+-- from `devices` and does not need it.
 create index devices_proxy_idx on devices (proxy_id);

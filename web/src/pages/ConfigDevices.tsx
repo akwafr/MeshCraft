@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { sitePath } from "../paths";
+import { deviceDetailPath, sitePath } from "../paths";
 import { useSite, useSiteId } from "../useSite";
-import { del, get, post, type Device, type Relocation, type Site } from "../api";
+import { del, get, post, useSiteLive, type Device, type Relocation, type Site } from "../api";
 import { useSiteRole } from "../auth";
-import { ActionButton, DeleteButton, ErrorMsg, Field, Modal, useToast } from "../components";
+import { ActionButton, ErrorMsg, Field, Modal, useToast } from "../components";
+import { IconAction, IconDeleteButton } from "../ui/IconAction";
 import { ConformMgmtButton } from "./ConformMgmt";
 import { effectiveStatus, expandPorts } from "../network";
 
@@ -20,11 +21,26 @@ export default function ConfigDevices() {
   const qc = useQueryClient();
   const [moving, setMoving] = useState<Device | null>(null);
   const [toast, showToast] = useToast();
+  /**
+   * This table carries a REACHABILITY dot per row (`effectiveStatus` below), and
+   * reachability moves without anyone on this page asking it to. Until this
+   * subscription existed the screen had no refresh of any kind — not the site
+   * stream, not a fallback interval — because `useSiteLive` is what OPENS the
+   * stream, and no component mounted on this route was calling it. A device
+   * could go down and this inventory would keep it green until the operator
+   * navigated away and back.
+   *
+   * Safe against what is being edited here: the two modals hold the `Device`
+   * they were opened with in their own state, so a list arriving underneath
+   * cannot move the row out from under a delete or a site change in progress.
+   */
+  const refetchInterval = useSiteLive(siteId);
 
   const { data: devices, error } = useQuery({
     queryKey: ["devices", siteId],
     queryFn: () => get<Device[]>(`/api/sites/${siteId}/devices`),
     enabled: !!siteId,
+    refetchInterval,
   });
 
   const [relocating, setRelocating] = useState<Device | null>(null);
@@ -56,7 +72,7 @@ export default function ConfigDevices() {
       <ErrorMsg error={remove.error} />
 
       <div className="card">
-        <div style={{ overflowX: "auto" }}>
+        <div className="scroll-x scroll-cue">
           <table>
             <thead>
               <tr>
@@ -66,14 +82,14 @@ export default function ConfigDevices() {
                 <th>{t("configDevicesPage.addressCol")}</th>
                 <th>{t("configDevicesPage.portsCol")}</th>
                 <th>{t("common.stateCol")}</th>
-                <th style={{ width: 220 }}></th>
+                <th className="col-actions"></th>
               </tr>
             </thead>
             <tbody>
               {(devices ?? []).map((d) => (
                 <tr key={d.id}>
                   <td>
-                    <Link to={sitePath(siteSlug, "equipment", d.name)}>{d.name}</Link>
+                    <Link to={deviceDetailPath(siteSlug, d)}>{d.name}</Link>
                   </td>
                   <td className="note">{d.model || "—"}</td>
                   <td className="note">{d.location || "—"}</td>
@@ -92,25 +108,33 @@ export default function ConfigDevices() {
                       </div>
                     )}
                   </td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <td className="col-actions">
                     {role === "ing" && (
-                      <>
+                      <div className="icon-actions">
+                        {/* STAYS A WORD, and on purpose: it appears on the few
+                            rows that are off the addressing plan, it is orange,
+                            and it is the row's exceptional gesture rather than
+                            one of its routine three. Spelled out, it also gives
+                            the glyphs beside it the context an icon needs. */}
                         {d.mgmt?.checked && !d.mgmt.conforms && (
                           <ConformMgmtButton
                             device={d}
-                            className="ghost"
-                            style={{ color: "var(--warn)" }}
+                            className="ghost warn-text"
                             onToast={showToast}
                           />
                         )}
-                        <ActionButton kind="scan" className="ghost" onClick={() => setRelocating(d)}>
-                          {t("configDevicesPage.relocate")}
-                        </ActionButton>
-                        <ActionButton kind="sites" className="ghost" onClick={() => setMoving(d)}>
-                          {t("configDevicesPage.changeSite")}
-                        </ActionButton>
-                        <DeleteButton onConfirm={() => remove.mutate(d)} />
-                      </>
+                        <IconAction
+                          kind="scan"
+                          label={t("configDevicesPage.relocate") as string}
+                          onClick={() => setRelocating(d)}
+                        />
+                        <IconAction
+                          kind="sites"
+                          label={t("configDevicesPage.changeSite") as string}
+                          onClick={() => setMoving(d)}
+                        />
+                        <IconDeleteButton onConfirm={() => remove.mutate(d)} />
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -271,7 +295,7 @@ function RelocateModal({
             <input
               value={prefix}
               onChange={(e) => setPrefix(e.target.value)}
-              placeholder="10.99.0.0/16"
+              placeholder="192.0.2.0/24"
               className="mono"
             />
           </Field>
@@ -326,7 +350,7 @@ function RelocateModal({
                 <input
                   value={manual}
                   onChange={(e) => setManual(e.target.value)}
-                  placeholder="10.99.0.42"
+                  placeholder="192.0.2.42"
                   className="mono"
                 />
               </Field>

@@ -146,7 +146,7 @@ export function MgmtAddressingCard({
         site_id: dev.site_id,
         vlan_id: currentVlan,
         name: t("mgmtAddressing.vlanObservedName", { id: currentVlan }),
-        color: "#8b96a8",
+        color: "var(--text-dim)",
         purpose: "",
       });
     }

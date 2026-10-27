@@ -94,7 +94,7 @@ func TestParseHexKey(t *testing.T) {
 
 //  1. It must not reveal the key: FIXED length independent of the key, and no key
 //     byte appears in it.
-func TestFingerprintNeDivulguePasLaCle(t *testing.T) {
+func TestFingerprintDoesNotDiscloseTheKey(t *testing.T) {
 	var k1, _ = NewRandomKey()
 	var k2, _ = NewRandomKey()
 	var f1 = Fingerprint(k1)
@@ -116,8 +116,8 @@ func TestFingerprintNeDivulguePasLaCle(t *testing.T) {
 //  2. Two distinct keys yield two distinct fingerprints — otherwise the guard would
 //     let the wrong key through, which is exactly the catastrophe it exists to
 //     prevent.
-func TestFingerprintDistingueLesCles(t *testing.T) {
-	var vues = map[string]bool{}
+func TestFingerprintDistinguishesKeys(t *testing.T) {
+	var seenPDUs = map[string]bool{}
 	var i int
 	for i = 0; i < 200; i++ {
 		var key, err = NewRandomKey()
@@ -125,17 +125,17 @@ func TestFingerprintDistingueLesCles(t *testing.T) {
 			t.Fatal(err)
 		}
 		var fp = string(Fingerprint(key))
-		if vues[fp] {
+		if seenPDUs[fp] {
 			t.Fatal("two distinct keys yield the same fingerprint")
 		}
-		vues[fp] = true
+		seenPDUs[fp] = true
 	}
 	// And a single bit of difference must suffice: a neighboring key is not the
 	// same key.
 	var base, _ = NewRandomKey()
-	var voisine = append([]byte{}, base...)
-	voisine[31] ^= 0x01
-	if SameFingerprint(Fingerprint(base), Fingerprint(voisine)) {
+	var neighbour = append([]byte{}, base...)
+	neighbour[31] ^= 0x01
+	if SameFingerprint(Fingerprint(base), Fingerprint(neighbour)) {
 		t.Fatal("one bit of difference in the key does not change the fingerprint")
 	}
 }
@@ -143,7 +143,7 @@ func TestFingerprintDistingueLesCles(t *testing.T) {
 //  3. It is DETERMINISTIC: the fingerprint stored yesterday must be the one
 //     recomputed today, otherwise the guard would refuse to start a perfectly
 //     healthy instance — the failure would be caused by the guard itself.
-func TestFingerprintEstDeterministe(t *testing.T) {
+func TestFingerprintIsDeterministic(t *testing.T) {
 	var key, _ = NewRandomKey()
 	if !SameFingerprint(Fingerprint(key), Fingerprint(key)) {
 		t.Fatal("fingerprint is not deterministic")
@@ -151,16 +151,16 @@ func TestFingerprintEstDeterministe(t *testing.T) {
 	// Reference value on a known key: locks derivation. If someone changes the
 	// salt label or algorithm, this test fails — and that is the point, because
 	// that change would refuse to start ALL instances already in service.
-	var fixe = make([]byte, 32)
+	var fixed = make([]byte, 32)
 	var i int
-	for i = range fixe {
-		fixe[i] = byte(i)
+	for i = range fixed {
+		fixed[i] = byte(i)
 	}
-	var got = ShortID(Fingerprint(fixe))
+	var got = ShortID(Fingerprint(fixed))
 	if len(got) != 8 {
 		t.Fatalf("ShortID must be 8 hex characters, got %q", got)
 	}
-	if got != ShortID(Fingerprint(fixe)) {
+	if got != ShortID(Fingerprint(fixed)) {
 		t.Fatal("ShortID unstable")
 	}
 	if strings.Contains(got, " ") {
@@ -170,7 +170,7 @@ func TestFingerprintEstDeterministe(t *testing.T) {
 
 // ShortID must not panic on short input: it ends up in error messages, and an
 // error message that panics replaces a diagnosis with a crash.
-func TestShortIDSurEntreeCourte(t *testing.T) {
+func TestShortIDOnShortInput(t *testing.T) {
 	if ShortID(nil) != "?" || ShortID([]byte{1, 2}) != "?" {
 		t.Fatal("ShortID must return \"?\" on a fingerprint that is too short")
 	}
@@ -179,7 +179,7 @@ func TestShortIDSurEntreeCourte(t *testing.T) {
 // KeyShortID is the same identifier, computed from the key: error messages compare
 // "what the database expects" to "what the variable provides", both must be the
 // same function.
-func TestKeyShortIDCoincideAvecShortID(t *testing.T) {
+func TestKeyShortIDMatchesShortID(t *testing.T) {
 	var key, _ = NewRandomKey()
 	if KeyShortID(key) != ShortID(Fingerprint(key)) {
 		t.Fatal("KeyShortID and ShortID(Fingerprint) diverge")

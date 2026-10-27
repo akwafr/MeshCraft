@@ -1,0 +1,472 @@
+/* meshcraft — design tokens. UI-GUIDE §1 (palette), §5 (spacing), §9
+   (responsive), §10 (material).
+
+   THIS FILE IS THE PALETTE. `styles.css` no longer declares one; it consumes
+   what is declared here. tokens.css is imported last (main.tsx) so a token
+   defined here wins over anything a sheet loaded earlier left behind.
+
+   TWO THEMES, ONE DECLARATION EACH
+   --------------------------------
+   Every colour is written twice on purpose:
+
+       --bg: #0d1014;                        <- fallback
+       --bg: light-dark(#f2f4f8, #0d1014);   <- the real one
+
+   A browser that does not know `light-dark()` discards the second declaration
+   at parse time and keeps the first, so it lands on the DARK palette — the
+   theme meshcraft shipped for its whole life. The failure mode of an old
+   tablet in a technical room is "the product looks like it did last year",
+   not "the product has no colours". Nothing else in the sheet may assume a
+   scheme; `color-scheme` below does the rest (native controls, scrollbars,
+   form widgets all follow it).
+
+   The theme is chosen by `data-theme` on <html> — "light", "dark", or absent
+   for "follow the system". web/src/ui/theme.ts owns the attribute. */
+
+:root {
+  color-scheme: dark;
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ *
+ * 1. Palette                                                          *
+ * ------------------------------------------------------------------ */
+
+:root {
+  /* The surface ladder. In dark it climbs toward the light; in light it
+     climbs toward white and the ground is the grey. `--bg` is BOTH the page
+     ground and the recessed surface inside a panel (an input, a `pre.code`),
+     which is why the two themes keep that relationship rather than simply
+     inverting three greys. */
+  --bg-switching: #080a11;
+  --bg-switching: light-dark(#eef1f6, #080a11);
+  --bg-panel-switching: #11141e;
+  --bg-panel-switching: light-dark(#ffffff, #11141e);
+  --bg-hover-switching: #1a1f2e;
+  --bg-hover-switching: light-dark(#e4e9f1, #1a1f2e);
+  --border-switching: #252b3c;
+  --border-switching: light-dark(#d3dae5, #252b3c);
+
+  --text: #e6e9f3;
+  --text: light-dark(#161b24, #e6e9f3);
+  --text-dim: #8b93aa;
+  --text-dim: light-dark(#5a6475, #8b93aa);
+
+  /* The product's blue. Two jobs, both documented in UI-GUIDE §1:
+     INTERACTIVE (focus, selection, links, primary fill) and PENDING
+     (meshcraft owes this device a write). On white it has to be darker to
+     stay legible as link text — same hue, more ink. */
+  --accent: #4f7cff;
+  --accent: light-dark(#2d5fe0, #4f7cff);
+  --accent-hover: #6890ff;
+  --accent-hover: light-dark(#1f49bd, #6890ff);
+
+  /* The accent's two jobs need two values, and the reason is measurable:
+     white on #4f7cff is 3.71:1 — the primary button has been failing WCAG AA
+     for body text for as long as the dark theme has existed. Darkening
+     --accent itself would fix the button and break the link, which needs the
+     BRIGHT blue to clear 4.5:1 against a near-black ground.
+
+       --accent        ink and edges: link text, focus ring, selection,
+                       the "pending write" dot. Reads ON the ground.
+       --accent-fill   a filled surface the ink sits on: primary button,
+                       active tab pill, selected row. Is the ground.
+
+     One fill serves both themes (white on it is 5.49:1 either way), which is
+     also why a primary button looks the same weight in light and in dark.
+
+     Hover is the one half that cannot be shared: darkening the fill is what
+     reads as "pressed" on white, and on a near-black ground it reads as the
+     button receding into the panel (2.53:1, below the 3:1 a control owes its
+     surface). So dark brightens and light darkens — opposite gestures, the
+     same meaning. */
+  --accent-fill: #2d5fe0;
+  --accent-fill-hover: #3a6ae8;
+  --accent-fill-hover: light-dark(#2550c6, #3a6ae8);
+  --accent-ink: #ffffff;
+
+  /* ---- the status spine. UI-GUIDE §2 is the specification; these are only
+     its values. The three-way split --warn / --indeterminate / --danger is a
+     PRODUCT decision, not a palette preference: conflating the orange and the
+     yellow sends people to the wrong rack.
+
+     The light values are NOT a mechanical darkening. #e8d44d is invisible on
+     white, and naively darkening both inks collapses the orange and the
+     yellow into one muddy brown. They are re-separated by HUE instead: warn
+     moves toward red (28°), indeterminate toward olive (52°), opening the gap
+     to 24° where dark holds only 13°. The perceptual distance the operator
+     relies on survives the theme; the exact coordinates do not. */
+  --danger: #e5484d;
+  --danger: light-dark(#c62a2f, #e5484d);
+  --ok: #46a758;
+  --ok: light-dark(#1b7a35, #46a758);
+  --warn: #f5a623;
+  --warn: light-dark(#bf5b04, #f5a623);
+  /* "nobody can see this device right now" — a YELLOW distinct from the
+     orange of --warn. An alert says the device has a problem; this says
+     meshcraft lost the vantage point and the device may be perfectly fine. */
+  --indeterminate: #e8d44d;
+  --indeterminate: light-dark(#8a7a16, #e8d44d);
+
+  /* ---- the traffic ramp. A MAGNITUDE palette, not a status one.
+     It answers "how much of this link is in use", and it is read against the
+     port's own line rate, so the same 300 Mb/s is mid-ramp on a 1 G port and
+     barely off the floor on a 10 G one. Six stops, cold to hot.
+
+     It must never be mistaken for the status spine (§2), and the thing that
+     keeps them apart is WHERE each appears: status inks colour dots, pills,
+     borders and text; this ramp only ever colours a CURVE or its fill.
+     Nothing on a faceplate uses it. A green line means a well-used link, not
+     a healthy one — and it is only ever a line.
+
+     It stops at lime rather than running on to red. Red and orange belong to
+     --danger and --warn, and a saturated uplink is not a fault: it is a link
+     doing its job, which the operator reads from the height of the curve and
+     the ramp topping out together. */
+  --traffic-0: #2b5bd7;
+  --traffic-0: light-dark(#1b43ad, #2b5bd7);
+  --traffic-1: #2f8fe0;
+  --traffic-1: light-dark(#1b6fb8, #2f8fe0);
+  --traffic-2: #21b8c4;
+  --traffic-2: light-dark(#0e8e99, #21b8c4);
+  --traffic-3: #2fc46a;
+  --traffic-3: light-dark(#1a9450, #2fc46a);
+  --traffic-4: #7fd42a;
+  --traffic-4: light-dark(#5a9e14, #7fd42a);
+  --traffic-5: #c6e018;
+  --traffic-5: light-dark(#8a9a0c, #c6e018);
+
+  /* ---- the routing mode's own red. ADR-0013 §4.
+     NOT --danger, and the distance is the point. ADR-0001 makes red the
+     colour of FAILURE over the whole product; a mode that reused it would
+     make one colour say two incompatible things, and the day a firewall goes
+     down the screen would be red for two unrelated reasons.
+
+     The warm side of red was unavailable: moving that way runs into --warn,
+     the platform limit. So the mode went the other way, into crimson, and
+     the distance is measured rather than eyeballed — ΔE*ab 31.4 from
+     --danger in dark and 32.5 in light, where --warn and --danger
+     themselves sit only 32.7 apart. It is as far from the fault colour as
+     two colours this guide already considers safely distinct. Contrast on
+     the page ground is 5.04:1 dark / 5.91:1 light, past the 3:1 a graphical
+     object owes its surface.
+
+     And it is CONTAINED, which is the second half of the argument: it only
+     ever colours the brand mark and the mark's own selector, both in the top
+     bar. Status red inks dots, pills, borders and text and never touches the
+     mark. The two cannot be confused because they never appear as the same
+     kind of object — the same reasoning that keeps the traffic ramp apart
+     from the status spine. */
+  --mode-routing: #e73c80;
+  --mode-routing: light-dark(#af1d57, #e73c80);
+  /* The lighter stop of the mark's gradient — the brand mark is a gradient,
+     so the mode needs the pair, exactly as the blue has --accent-hover. */
+  --mode-routing-lit: #ff6ca4;
+  --mode-routing-lit: light-dark(#d13a72, #ff6ca4);
+
+  /* Tinted grounds for the same five inks — a banner fill, a row wash, a
+     chip. Derived with color-mix so a palette change carries. */
+  --danger-wash: color-mix(in srgb, var(--danger) 12%, transparent);
+  --ok-wash: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-wash: color-mix(in srgb, var(--warn) 13%, transparent);
+  --accent-wash: color-mix(in srgb, var(--accent) 13%, transparent);
+  --indeterminate-wash: color-mix(in srgb, var(--indeterminate) 14%, transparent);
+  --mode-routing-wash: color-mix(in srgb, var(--mode-routing) 16%, transparent);
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. The ground wash                                                  *
+ * ------------------------------------------------------------------ *
+ * Glass has nothing to say over a flat fill. Two very large, very faint
+ * radial washes give the page ground a direction, so a translucent bar
+ * moving over it picks up a gradient rather than a uniform grey. At 4-5%
+ * they are below the threshold of "there is a gradient here" and above the
+ * threshold of "this surface has depth". Painted on `body` (styles.css). */
+
+:root {
+  --wash-a-switching: rgba(99, 102, 241, 0.10);
+  --wash-a-switching: light-dark(rgba(45, 95, 224, 0.07), rgba(99, 102, 241, 0.10));
+  --wash-b-switching: rgba(20, 184, 166, 0.07);
+  --wash-b-switching: light-dark(rgba(27, 122, 53, 0.05), rgba(20, 184, 166, 0.07));
+}
+
+/* ------------------------------------------------------------------ *
+ * 2b. The routing ground — ADR-73885                                  *
+ * ------------------------------------------------------------------ *
+ * In routing mode the ground ladder, the glass and the two washes take the hue of
+ * --mode-routing. SAME NUANCES: each neutral keeps its OKLCH lightness and
+ * chroma and only its hue moves, from ≈270° to the crimson's 1.6°. The
+ * neutrals carry 0.016–0.032 of chroma, so they read as warm greys, not as
+ * red; only the washes carry real colour, and they stay at 5–10%. Text,
+ * accent and the status palette do NOT move: --danger is still the only
+ * saturated red on the screen.
+ *
+ * `data-mode` is stamped on <html> by Layout.tsx. */
+
+/* The routing half of each token. Declared on every page, used only through
+   the mix below. */
+:root {
+  --bg-routing: #10080a;
+  --bg-routing: light-dark(#f6eff0, #10080a);
+  --bg-panel-routing: #1c1114;
+  --bg-panel-routing: light-dark(#ffffff, #1c1114);
+  --bg-hover-routing: #2c1a1f;
+  --bg-hover-routing: light-dark(#f0e5e8, #2c1a1f);
+  --border-routing: #39252a;
+  --border-routing: light-dark(#e4d5d9, #39252a);
+  --glass-bg-routing: rgba(27, 16, 19, 0.82);
+  --glass-bg-routing: light-dark(rgba(255, 252, 253, 0.86), rgba(27, 16, 19, 0.82));
+  --wash-a-routing: rgba(231, 60, 128, 0.10);
+  --wash-a-routing: light-dark(rgba(175, 29, 87, 0.07), rgba(231, 60, 128, 0.10));
+  --wash-b-routing: rgba(255, 108, 164, 0.06);
+  --wash-b-routing: light-dark(rgba(209, 58, 114, 0.05), rgba(255, 108, 164, 0.06));
+}
+
+/* THE SWITCH IS ANIMATED, ON THE KNOB'S OWN CLOCK. One registered number,
+   `--mode-t`, goes 0 → 1, and each token is the mix of its two halves at
+   that ratio — so every `var(--bg-panel)` downstream follows frame by frame
+   with no transition of its own.
+
+   Why a number and not the seven colours registered as <color>: measured on
+   Chrome 124, a registered <color> keeps a `light-dark()` value UNRESOLVED
+   in its computed value, and two unresolved values do not interpolate — the
+   switch snapped. A <number> always does.
+
+   The duration is --dur-fast ON PURPOSE — the same token as the logo's slide
+   (styles.css, .modesw-knob-tip) — so the ground and the knob are one event;
+   slow one, slow both. Reduced motion pins it at 0ms; a browser without
+   @property simply snaps. */
+@property --mode-t {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+:root {
+  --mode-t: 0;
+  --bg: color-mix(in oklab, var(--bg-switching), var(--bg-routing) calc(var(--mode-t) * 100%));
+  --bg-panel: color-mix(in oklab, var(--bg-panel-switching), var(--bg-panel-routing) calc(var(--mode-t) * 100%));
+  --bg-hover: color-mix(in oklab, var(--bg-hover-switching), var(--bg-hover-routing) calc(var(--mode-t) * 100%));
+  --border: color-mix(in oklab, var(--border-switching), var(--border-routing) calc(var(--mode-t) * 100%));
+  --glass-bg: color-mix(in oklab, var(--glass-bg-switching), var(--glass-bg-routing) calc(var(--mode-t) * 100%));
+  --wash-a: color-mix(in oklab, var(--wash-a-switching), var(--wash-a-routing) calc(var(--mode-t) * 100%));
+  --wash-b: color-mix(in oklab, var(--wash-b-switching), var(--wash-b-routing) calc(var(--mode-t) * 100%));
+  transition: --mode-t var(--dur-fast) var(--ease);
+}
+:root[data-mode="routing"] {
+  --mode-t: 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Glass                                                            *
+ * ------------------------------------------------------------------ *
+ * The rule that keeps this from becoming decoration: GLASS IS CHROME.
+ * Top bar, mobile tab bar, sidebar, drawer, modal, popover, sticky toolbar,
+ * overlay. Never a content card, never a table, never a faceplate — you
+ * cannot read a 48-port facade through a blur, and a status colour seen
+ * through 60% opacity is no longer the status colour.
+ *
+ * Use the `.glass` class (styles.css §material), not these tokens directly. */
+
+:root {
+  /* The tint is deliberately HIGH. A bar at 0.68 let a 48-port faceplate
+     read straight through the mobile tab bar: the labels stayed legible but
+     the bar looked like a rendering fault, and green port squares sliding
+     under "Topology" is not depth, it is noise. Real system glass is nearer
+     0.8 over a strong blur — the content behind should be felt as colour and
+     movement, never resolved as content.
+
+     Light needs MORE than dark, which is the opposite of the intuition. The
+     bleed-through that matters here is saturated port green, and it is far
+     louder against a white tint than against a near-black one. */
+  --glass-bg-switching: rgba(16, 19, 29, 0.82);
+  --glass-bg-switching: light-dark(rgba(252, 253, 255, 0.86), rgba(16, 19, 29, 0.82));
+  /* The specular rim: a hairline of light along the top edge, as on a real
+     bevelled pane. It is what separates glass from "a card with opacity". */
+  --glass-rim: rgba(255, 255, 255, 0.13);
+  --glass-rim: light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.13));
+  --glass-edge: rgba(255, 255, 255, 0.07);
+  --glass-edge: light-dark(rgba(16, 22, 34, 0.1), rgba(255, 255, 255, 0.07));
+  --glass-blur: 24px;
+  /* Over-saturating is what keeps a blurred backdrop from going grey: the
+     average of many colours is always duller than any of them. */
+  --glass-saturate: 180%;
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Elevation                                                        *
+ * ------------------------------------------------------------------ *
+ * Depth is carried by shadow and surface, NOT by drawing a hairline around
+ * every box. Three steps, and the blur grows with how far the layer floats. */
+
+:root {
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-1: light-dark(0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(0, 0, 0, 0.3));
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-2: light-dark(0 8px 24px rgba(16, 24, 40, 0.12), 0 8px 24px rgba(0, 0, 0, 0.45));
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --shadow-3: light-dark(0 18px 48px rgba(16, 24, 40, 0.18), 0 18px 48px rgba(0, 0, 0, 0.55));
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. Shape                                                            *
+ * ------------------------------------------------------------------ *
+ * `--radius` stays 8px: it is the one corner radius of UI-GUIDE §5 and is
+ * named 42 times in the sheet. The additions are CONCENTRIC — a control
+ * inside a glass pane needs a smaller radius than the pane, or the two
+ * curves fight. The hardware shapes (3px port square, 0px SFP cage) are
+ * deliberately absent: they carry meaning and live at their call site. */
+
+:root {
+  --radius-sm: 5px;
+  --radius: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Type                                                             *
+ * ------------------------------------------------------------------ *
+ * IBM Plex, self-hosted (web/public/fonts, @font-face in styles.css).
+ * Plex Sans for prose, Plex Mono for every TECHNICAL IDENTIFIER — port
+ * names, addresses, MACs, rates, VLAN ids, build stamps. That split is the
+ * typographic half of "this is instrumentation": a reader should be able to
+ * tell a value they could type into a switch from a sentence about it,
+ * without reading either.
+ *
+ * The CJK and Arabic locales fall through to the system stack; Plex carries
+ * latin, latin-ext and cyrillic only. */
+
+:root {
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+
+  --fs-micro: 0.6875rem; /* 11px — column headers, unit suffixes */
+  --fs-sm: 0.8125rem; /*    13px — secondary text, dense tables */
+  --fs-base: 0.875rem; /*   14px — body */
+  --fs-md: 1rem; /*          16px — card titles */
+  --fs-lg: 1.25rem; /*       20px — section heads */
+  --fs-xl: 1.625rem; /*      26px — page titles */
+  --fs-display: 2rem; /*     32px — the one number a tile exists to show */
+
+  --lh-tight: 1.2;
+  --lh-base: 1.5;
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. Spacing                                                          *
+ * ------------------------------------------------------------------ *
+ * The §5 scale as custom properties. New CSS uses the tokens; inline
+ * style={{gap: N}} is counted by uilint and only ever goes down. */
+
+:root {
+  --sp-0: 2px;
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 10px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+  --sp-7: 20px;
+  --sp-8: 28px;
+  --sp-9: 40px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 8. Chrome metrics and safe areas                                    *
+ * ------------------------------------------------------------------ *
+ * A PWA on a phone with a notch and a home indicator must inset its own
+ * chrome; `env()` returns 0 everywhere else, so these are unconditional. */
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  --topbar-h: 52px;
+  --tabbar-h: 54px;
+  /* The minimum comfortable finger target. Pointer-fine screens may go
+     smaller; a coarse pointer may not (styles.css raises controls to this
+     under `pointer: coarse`). */
+  --touch: 44px;
+}
+
+@media (max-width: 720px) {
+  /* bp:narrow */
+  :root {
+    --topbar-h: 48px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. Motion                                                           *
+ * ------------------------------------------------------------------ *
+ * UI-GUIDE §4 owns the STATE animations (the pulse periods that mean
+ * something). These are the transition curves for ordinary interface
+ * movement, which means nothing and should be brief. */
+
+:root {
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. Overflow                                                        *
+ * ------------------------------------------------------------------ *
+ * Wide content scrolls INSIDE its own container; the page never scrolls
+ * horizontally. `.scroll-x` is the one class the responsive contract allows
+ * wide content to use — see UI-GUIDE §9.2.
+ *
+ * On a touch screen it gains momentum scrolling and a fading right edge, so
+ * that a table or a facade running past the viewport ANNOUNCES itself. A
+ * horizontal scroller with no visible cue is the single most missed
+ * affordance on a phone. */
+
+.scroll-x {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.scroll-x--faded {
+  /* The fade is painted by the mask so it works over any ground, including
+     glass. `--fade-l` / `--fade-r` are set by ui/useEdgeFade.ts as the
+     element scrolls, so the cue appears only on the side that has more. */
+  --fade-l: 0px;
+  --fade-r: 0px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade-l),
+    #000 calc(100% - var(--fade-r)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade-l),
+    #000 calc(100% - var(--fade-r)),
+    transparent 100%
+  );
+}

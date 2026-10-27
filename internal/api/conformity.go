@@ -11,7 +11,7 @@ import (
 )
 
 // Management-plan conformity for a device on its site
-// (cf. docs/01-Architecture/Adressage de management).
+// (see docs/en/01-Architecture/Management addressing.md).
 //
 // This is a DISTINCT axis from reachability, and conflating them would be a
 // display mistake: a device can respond perfectly to ping while being off-plan.
@@ -45,6 +45,45 @@ type MgmtConformity struct {
 	// has neither SSH nor a serial port.
 	PathState  string `json:"path_state,omitempty"`
 	PathReason string `json:"path_reason,omitempty"`
+}
+
+// HostnameConformity says whether the device answers to the name the inventory
+// carries — and when it does not, whether anything is going to fix that.
+//
+// A SEPARATE AXIS from MgmtConformity, and calculated on read for the same reason:
+// the intent is `devices.name`, which changes whenever an operator renames, and a
+// verdict frozen in a column would lie from the first rename. The observation is
+// free (cf. hostnameheal.go): `lldp_self.sys_name` arrives on every poll cycle, so
+// this costs one query per site and no device session at all.
+//
+// FIVE STATES, AND THE UI MUST TELL THEM APART. Collapsing any two of them was the
+// design mistake to avoid, and one pair in particular: `unsupported` and `drift`.
+// The first says the connector has no proven system-name write, so this device can
+// NEVER converge; the second says meshcraft is about to repair it. A screen showing
+// the second for the first would promise a repair that never comes, which is
+// exactly what internal/driver/hostname.go's last paragraph forbids.
+//
+// The decision itself lives in hostnameConformityOf (hostnameheal.go), next to the
+// loop that acts on it: this is the DTO, and the two must not be able to disagree
+// about what `drift` means.
+type HostnameConformity struct {
+	// Desired: normalized devices.name — what would be pushed. EMPTY when the
+	// meshcraft name cannot be a hostname at all (State == "unnameable"), because
+	// showing a name meshcraft would refuse to send is worse than showing none.
+	Desired string `json:"desired"`
+	// Observed: what the device announces about itself, from LLDP or from the last
+	// read-state identity. Absent when neither source has reported.
+	Observed string `json:"observed,omitempty"`
+	// Source: "lldp" (refreshed every poll cycle) or "read_state" (as old as the
+	// last read of this device). Travels so a surprising verdict can be traced to
+	// the reading that produced it.
+	Source string `json:"source,omitempty"`
+	// State: exactly one of "ok", "drift", "not_observed", "unsupported",
+	// "unnameable" — cf. the constants in hostnameheal.go, which document each.
+	State string `json:"state"`
+	// Because: the operator-facing sentence. Empty only for a plain "ok", where
+	// there is nothing to explain.
+	Because string `json:"because,omitempty"`
 }
 
 // outOfBandOf says whether this device's platform keeps an OUT-OF-BAND
@@ -352,10 +391,241 @@ type deviceView struct {
 	// the three MikroTik devices in the reference installation, which have nothing to
 	// fault.
 	MgmtAddressing MgmtAddressingView `json:"mgmt_addressing"`
+	// Hostname: does the equipment answer to the name the inventory carries, and
+	// if not, is a repair coming? Cf. HostnameConformity — five states, none of
+	// which may be collapsed into another.
+	//
+	// TAGGED `hostname_conformity` AND NOT `hostname`, unlike the `mgmt` field
+	// above whose short name it was first modelled on. The reason is a collision
+	// of MEANING rather than of keys: three other payloads in this API already
+	// carry `hostname` as a plain STRING — the discovery candidate, the parsed
+	// configuration, the identity — so a `hostname` that deserialized into an
+	// object would be the one field whose type nobody predicts from its name.
+	// `mgmt` has no such string twin anywhere, which is why it can afford to be
+	// terse. Guessing wrong on this key fails SILENTLY on the frontend — a row
+	// that never renders, on a screen where "nothing shown" is a legitimate
+	// state — so it is worth the extra word.
+	Hostname HostnameConformity `json:"hostname_conformity"`
 	// STP: last spanning-tree observation (Extra.stp_observed), for topology view.
 	STP *driver.SpanningTreeState `json:"stp,omitempty"`
 	// STPCaps: per-port spanning-tree edge / enable capabilities from the connector.
 	STPCaps STPCapsView `json:"stp_caps"`
+	// STPRegion: how the MST region this device CARRIES compares with the one its
+	// site WANTS — nil when there is nothing to say (cf. stpRegionViewOf).
+	//
+	// IT TRAVELS ON THIS PAYLOAD AND NOT ON A ROUTE OF ITS OWN, which ADR-0023
+	// argues at length and withConformity's own comment explains: there is no
+	// `GET /api/devices/{id}`, so a device record is published here or nowhere,
+	// and a per-device comparison endpoint would leave every fleet-wide view
+	// unable to say who is out of the tree. It costs no device session — the site
+	// plan is read once per site, like the addressing plan beside it.
+	STPRegion *STPRegionView `json:"stp_region,omitempty"`
+	// STPSuperRoot: the operator's SUPER ROOT intent for this device
+	// (Extra.stp_super_root) — "this switch is to win the root election of its
+	// MST region and keep winning it".
+	//
+	// AN INTENT AND NOT AN OBSERVATION, unlike `STP` right above it, and the
+	// distinction is load-bearing on screen: the checkbox must render what was
+	// ASKED FOR, never what the tree currently looks like. Inferring it from
+	// `stp.bridge_priority == 0` would tick the box on a switch somebody set to 0
+	// by hand years ago, and un-ticking it would then offer to "restore" a value
+	// meshcraft never chose (cf. store.SaveSTPSuperRoot).
+	STPSuperRoot bool `json:"stp_super_root"`
+	// PoE: last PoE observation (Extra.poe_observed) — per-port scope, configured
+	// class, measured snapshot. For the device sheet's PoE panel.
+	PoE *driver.PoEState `json:"poe_state,omitempty"`
+	// PoECaps: whether this device's CONNECTOR can write PoE, so the UI offers
+	// an immediate on/off only where a click will actually reach the hardware.
+	PoECaps PoECapsView `json:"poe_caps"`
+	// TrafficClassCaps: which traffic classes this platform can COUNT per port,
+	// so the port overlay's stacked graph says "not reported here" instead of
+	// quietly dropping a band (ADR-0028).
+	TrafficClassCaps TrafficClassCapsView `json:"traffic_class_caps"`
+	// Optics: last transceiver-diagnostics observation (Extra.optics_observed)
+	// — module identity and DDM readings per occupied cage. Same shelf and
+	// same cadence as PoE; no caps counterpart because optics has no write
+	// path (cf. internal/api/optics.go).
+	Optics *driver.OpticsState `json:"optics_state,omitempty"`
+	// DHCPSnoop: last DHCP-snooping observation (Extra.dhcp_snooping_observed)
+	// — the device-wide enable, the VLANs the feature inspects, and the
+	// per-port trust flags.
+	//
+	// ALL THREE LEVELS TRAVEL TOGETHER, and that is the point (cf.
+	// internal/driver/dhcpsnoop.go): a panel holding only the port flags would
+	// show "trusted" on a device whose global snooping is off, which is an
+	// exact configuration protecting nothing. The UI reads `enabled` next to
+	// every trust toggle for exactly that reason.
+	DHCPSnoop *driver.DHCPSnoopState `json:"dhcp_snoop_state,omitempty"`
+	// PortCaps: which of the two per-port ACTIONS this connector can actually
+	// perform — shut/un-shut, and PoE power cycle.
+	//
+	// Separate from PoECaps even though the cycler rides on the PoE write path:
+	// a connector can know how to SET a class without being able to promise the
+	// restore half of a cycle, and half a power cycle is an outage
+	// (cf. driver.PortPowerCycler). The UI must be able to offer one button
+	// without the other.
+	PortCaps PortActionCapsView `json:"port_caps"`
+	// LAGCaps: what this device's platform can do with AGGREGATES — write them
+	// at all, and (separately) honour an LACP fallback VLAN.
+	//
+	// The faceplate reads this to decide what to DRAW, which is why the two
+	// are separate flags: an aggregate block with a dashed "+" appears only
+	// where a write would reach the device, and the fallback field inside the
+	// builder appears only where the connector declares the gesture — ABSENT,
+	// not disabled, on the platforms that cannot (ADR-0007, UI-GUIDE §2: do
+	// not paint a platform limit in orange).
+	LAGCaps LAGCapsView `json:"lag_caps"`
+}
+
+// LAGCapsView says what this device's PLATFORM can do with link aggregation.
+// Same shape of answer as PortActionCapsView, and the same Driver-versus-
+// Connector caveat: a range whose fingerprint is known but which meshcraft
+// cannot reach is a Driver only, and the honest answer for it is "known, not
+// writable".
+type LAGCapsView struct {
+	// Known: the connector was resolved at all. False means "we cannot tell",
+	// which is not "the platform says no".
+	Known bool `json:"known"`
+	// Write: this platform aggregates AND this connector has a proven write.
+	// Both halves are required — Capabilities.Features["LACP"] says the
+	// hardware does it, the lags gesture says this code can ask it to.
+	Write bool `json:"write"`
+	// Fallback: the connector declares GestureLAGFallback — LAGState.Fallback
+	// will be honoured.
+	//
+	// THREE STATES, NOT TWO (ADR-0007): fallback set, fallback off, and
+	// fallback not supported. This flag separates the third from the other
+	// two, and the screen must render it as ABSENCE of the control. A
+	// disabled checkbox with no explanation reads as "off", which would tell
+	// an operator a port falls back when nothing will.
+	Fallback bool `json:"fallback"`
+	// MaxLAGs and PortsPerLAG: the platform bounds the write path enforces
+	// anyway (handleApplyDeviceLAGs). Published so the builder can refuse
+	// BEFORE spending a session on a list that cannot land. 0 means "no bound
+	// declared", never "zero allowed".
+	MaxLAGs     int `json:"max_lags,omitempty"`
+	PortsPerLAG int `json:"ports_per_lag,omitempty"`
+}
+
+// lagCapsOf resolves the aggregate capabilities from the connector.
+func lagCapsOf(d model.Device) LAGCapsView {
+	var name = driver.DriverNameFromExtra(d.Extra)
+	var drv, ok = driver.Get(name)
+	if !ok {
+		return LAGCapsView{}
+	}
+	var conn, isConn = drv.(driver.Connector)
+	if !isConn {
+		return LAGCapsView{Known: true}
+	}
+	var caps = conn.Capabilities(d.Model)
+	return LAGCapsView{
+		Known:       true,
+		Write:       caps.Features["LACP"] && driver.Has(conn, driver.GestureLAGs),
+		Fallback:    driver.Has(conn, driver.GestureLAGFallback),
+		MaxLAGs:     caps.MaxLAGs,
+		PortsPerLAG: caps.PortsPerLAG,
+	}
+}
+
+// PortActionCapsView says which per-port actions this device's PLATFORM can
+// carry, so the double-click overlay offers only buttons that will reach the
+// hardware. Same shape of answer as STPCapsView and PoECapsView.
+//
+// There is no `read` field here for the same reason PoECapsView has none: these
+// are ACTIONS, and what gates them is writability, known before any observation
+// exists.
+type PortActionCapsView struct {
+	// Known: the connector was resolved at all. False means "we cannot tell",
+	// which is not "the platform says no".
+	Known bool `json:"known"`
+	// Admin: the connector declares WritesExtra("port_admin") — shut and
+	// un-shut will reach the device.
+	Admin bool `json:"admin"`
+	// PowerCycle: the connector declares WritesExtra("port_power_cycle") — it can
+	// cut PoE and promise to put the SAME class back.
+	//
+	// NOT keyed on "poe", and that was a real defect while it was: EdgeSwitch,
+	// Instant On and RouterOS all declare "poe" and only EdgeSwitch implements
+	// driver.PortPowerCycler, so this flag offered the button on two platforms
+	// that answer it with a 422. Setting a class and promising to restore it are
+	// two capabilities (cf. driver/portadmin.go).
+	//
+	// A NECESSARY but not sufficient condition even so — the port must also be
+	// PoE-capable, which is a PER-PORT fact the UI reads from `poe_state` (a mixed
+	// unit like the EdgePoint S16 has jacks with no PSE hardware at all). This
+	// flag answers only "could any port on this box be cycled".
+	PowerCycle bool `json:"power_cycle"`
+}
+
+// portActionCapsOf resolves the two action capabilities from the connector,
+// with the same Driver-versus-Connector caveat as poeCapsOf: a range whose
+// fingerprint is known but which meshcraft cannot reach is a Driver only, and
+// the honest answer for it is "known, not writable".
+func portActionCapsOf(d model.Device) PortActionCapsView {
+	var name = driver.DriverNameFromExtra(d.Extra)
+	var drv, ok = driver.Get(name)
+	if !ok {
+		return PortActionCapsView{}
+	}
+	var conn, isConn = drv.(driver.Connector)
+	if !isConn {
+		return PortActionCapsView{Known: true}
+	}
+	return PortActionCapsView{
+		Known:      true,
+		Admin:      conn.WritesExtra("port_admin"),
+		PowerCycle: conn.WritesExtra("port_power_cycle"),
+	}
+}
+
+// TrafficClassCapsView says which traffic classes this device's PLATFORM can
+// COUNT per port, so the port overlay's stacked graph can tell a band that is
+// missing from a band that is zero (ADR-0028).
+//
+// THE WHOLE POINT IS THE THIRD STATE, and it is why this cannot be inferred
+// from the series. An empty series has two meanings — collection just started,
+// or this platform will never produce it — and they call for opposite
+// reactions. The samples answer "is there data"; only this view answers "could
+// there ever be".
+//
+// Same shape of answer as STPCapsView and PoECapsView, and no `read` field for
+// the same reason: readability here is not proven by an observation, because
+// its ABSENCE is exactly the ambiguous case.
+type TrafficClassCapsView struct {
+	// Known: the connector was resolved at all. False means "we cannot tell",
+	// which the overlay must not render as "the platform says no".
+	Known bool `json:"known"`
+	// Multicast / Broadcast / UnknownUnicast: one flag per class, never one
+	// "can decompose". A platform serving the ifXTable per-class counters holds
+	// the first two and not the third, which is the entire fleet today — a
+	// single flag would therefore promise unknown unicast everywhere it
+	// promised broadcast.
+	Multicast bool `json:"multicast"`
+	Broadcast bool `json:"broadcast"`
+	// UnknownUnicast: false on every connector today, and the field exists
+	// anyway so the overlay has something to render the sentence "this platform
+	// does not report unknown unicast" from. Dropping the band instead would
+	// make a two-class stack look like a complete one.
+	UnknownUnicast bool `json:"unknown_unicast"`
+}
+
+// trafficClassCapsOf resolves the three per-class counting capabilities from the
+// connector. A Driver that is not a Connector still answers: counting is a READ
+// capability, so unlike poeCapsOf there is nothing here that needs writability.
+func trafficClassCapsOf(d model.Device) TrafficClassCapsView {
+	var name = driver.DriverNameFromExtra(d.Extra)
+	var drv, ok = driver.Get(name)
+	if !ok {
+		return TrafficClassCapsView{}
+	}
+	var caps = drv.Capabilities(d.Model)
+	return TrafficClassCapsView{
+		Known:          true,
+		Multicast:      caps.CountsTrafficClass(driver.StormMulticast),
+		Broadcast:      caps.CountsTrafficClass(driver.StormBroadcast),
+		UnknownUnicast: caps.CountsTrafficClass(driver.StormUnknownUnicast),
+	}
 }
 
 // STPCapsView says what this device's PLATFORM allows for spanning tree.
@@ -368,6 +638,39 @@ type STPCapsView struct {
 	PortEnable bool     `json:"port_enable"`
 	BPDUGuard  bool     `json:"bpdu_guard"`
 	Modes      []string `json:"modes,omitempty"`
+	// Write: the connector declares WritesExtra("stp") — an Apply will actually
+	// reach the device.
+	//
+	// SEPARATE FROM `Modes`, and it had to become so. The card used to gate its
+	// Apply button on `len(modes) > 0`, which comes from Capabilities.STPModes and
+	// is populated for every platform whose modes are KNOWN — including arista-eos,
+	// whose STP write path has never reached a device and whose WritesExtra("stp")
+	// is therefore false. The button was offered and the endpoint answered 422.
+	// Knowing which protocols a range runs and being able to configure them are
+	// two different facts.
+	//
+	// Same Driver-versus-Connector caveat as poeCapsOf: a range whose fingerprint
+	// is known but which meshcraft cannot reach is a Driver only, and the honest
+	// answer for it is "known, not writable".
+	Write bool `json:"write"`
+	// SuperRoot: the connector IMPLEMENTS SpanningTreePlan.SuperRoot
+	// (driver.FeatSTPSuperRoot). Distinct from Write, and the distinction is what
+	// keeps the checkbox off cisco/ios — which declares WritesExtra("stp") and
+	// deliberately does NOT implement Super Root, so a gate on Write alone put
+	// the control on a live Catalyst where un-ticking it would have written a
+	// bridge priority through the clear path.
+	SuperRoot bool `json:"super_root"`
+	// MSTRegion: the connector WRITES SpanningTreePlan.Region — name, revision and
+	// the VLAN-to-instance table (driver.FeatMSTRegion).
+	//
+	// Distinct from Write and from Modes for the reason ADR-0022 records, and the
+	// case that forces it is fs-s3400: it declares WritesExtra("stp"), so `Write`
+	// is true, and it writes no region at all. A screen that showed the site's
+	// intended region beside a device gated on `Write` would have claimed
+	// sw01-arena was in it, while the switch carried its own bridge MAC as a
+	// region name. `Modes` does not answer it either — that says what the RANGE
+	// runs, not what this code emits.
+	MSTRegion bool `json:"mst_region"`
 }
 
 func stpCapsOf(d model.Device) STPCapsView {
@@ -378,6 +681,11 @@ func stpCapsOf(d model.Device) STPCapsView {
 	}
 	var caps = drv.Capabilities(d.Model)
 	var f = caps.Features
+	var write bool
+	var conn, isConn = drv.(driver.Connector)
+	if isConn {
+		write = conn.WritesExtra("stp")
+	}
 	return STPCapsView{
 		Known:      true,
 		Edge:       f[driver.FeatSTPEdge],
@@ -385,7 +693,71 @@ func stpCapsOf(d model.Device) STPCapsView {
 		PortEnable: f[driver.FeatSTPPortEnable],
 		BPDUGuard:  f[driver.FeatBPDUGuard],
 		Modes:      append([]string{}, caps.STPModes...),
+		Write:      write,
+		SuperRoot:  f[driver.FeatSTPSuperRoot],
+		MSTRegion:  f[driver.FeatMSTRegion],
 	}
+}
+
+// PoECapsView says what this device's PLATFORM allows for PoE, copied from the
+// connector so the UI can gate the power controls without a second fetch —
+// same shape of answer as STPCapsView, one feature over.
+//
+// There is no `read` field, deliberately: readability is proven by the
+// presence of `poe_state` itself (a connector that cannot read never produced
+// one), whereas writability must be known BEFORE any observation exists —
+// it gates whether the on/off buttons promise an immediate device write or
+// only a stored intention.
+type PoECapsView struct {
+	// Known: the connector was resolved at all. False distinguishes "we cannot
+	// tell" from "the platform says no" — the same distinction STPCapsView.Known
+	// exists to carry.
+	Known bool `json:"known"`
+	// Write: the connector declares WritesExtra("poe") — an on/off sent from
+	// the port panel will actually be pushed to the device, not merely stored.
+	Write bool `json:"write"`
+}
+
+func poeCapsOf(d model.Device) PoECapsView {
+	var name = driver.DriverNameFromExtra(d.Extra)
+	var drv, ok = driver.Get(name)
+	if !ok {
+		return PoECapsView{}
+	}
+	// WritesExtra lives on the Connector, not the Driver: a range whose
+	// fingerprint is known but that meshcraft cannot reach yet is a Driver
+	// only, and for it the honest answer is "known, not writable".
+	var write = false
+	var conn, isConn = drv.(driver.Connector)
+	if isConn {
+		write = conn.WritesExtra("poe")
+	}
+	return PoECapsView{Known: true, Write: write}
+}
+
+// poeObservedOf extracts the PoE observation stored under Extra.poe_observed.
+// Same contract as stpObservedOf: absent, unreadable, or empty means nil —
+// a bare {} must never be shown as "no PoE anywhere on this device".
+func poeObservedOf(d model.Device) *driver.PoEState {
+	if len(d.Extra) == 0 {
+		return nil
+	}
+	var bag map[string]json.RawMessage
+	if json.Unmarshal(d.Extra, &bag) != nil {
+		return nil
+	}
+	var raw, ok = bag["poe_observed"]
+	if !ok || len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var st driver.PoEState
+	if json.Unmarshal(raw, &st) != nil {
+		return nil
+	}
+	if len(st.Ports) == 0 && len(st.Notes) == 0 && st.BudgetW == 0 {
+		return nil
+	}
+	return &st
 }
 
 // withConformity enriches a device list with conformity AND sync state.
@@ -395,11 +767,41 @@ func stpCapsOf(d model.Device) STPCapsView {
 // while sync enrichment REMOVES it, to avoid loading a list of two hundred devices.
 // Chaining them the other way breaks nothing visible: the management VLAN path
 // simply becomes "indeterminate" everywhere, silently.
+//
+// # THIS IS THE ONLY PLACE THE HOSTNAME VERDICT IS PUBLISHED — read this before
+// # adding a single-device GET
+//
+// There is no `GET /api/devices/{id}` today: api.go registers PATCH and DELETE on
+// that path and nothing else, so every consumer of a device record gets it from
+// the LIST, and the list is this function. The hostname conformity axis therefore
+// travels on one payload and one only.
+//
+// That is a DEFERRAL, not a gap, exactly as long as the single-device GET stays
+// absent. Whoever adds it must carry the verdict on it too. The failure mode if
+// they do not is quiet and wrong in the worst direction: a device sheet loaded on
+// its own — deep link, refresh, a tab reopened — would show the axis as ABSENT
+// rather than as UNKNOWN, and "meshcraft has nothing to say about this name" reads
+// on screen as "there is nothing to say about this name".
+//
+// The cost is already paid and does not need re-deriving per device: the per-site
+// reads below (plan, VLANs, LLDP self-rows) are the whole expense, and for ONE
+// device it is one query each followed by pure arithmetic with NO device session.
 func (s *Server) withConformity(ctx context.Context, devices []model.Device) []deviceView {
 	var out = make([]deviceView, 0, len(devices))
 	// Plan and VLANs are the same for an entire site: do not re-read them per device.
+	// So are the LLDP self-rows, which is what makes the hostname verdict affordable
+	// on a list: one query per site, then pure arithmetic, and NO device session.
 	var plans = map[string]model.MgmtPlan{}
 	var vlans = map[string][]int{}
+	var selves = map[string]map[string]model.LLDPSelf{}
+	// The MST region the site WANTS, and whether it wants one at all — both read
+	// out of one site plan, once per site, exactly like the three caches above.
+	// The region is derived from `vlans[siteID]` rather than from a second
+	// ListVlans: it is the same list [Server.mstRegionOfSite] would read, and
+	// going twice to the database for it on a list of two hundred devices would
+	// be the cost that got this verdict refused.
+	var regions = map[string]driver.MSTRegion{}
+	var wantsMST = map[string]bool{}
 	var d model.Device
 	for _, d = range devices {
 		var plan, seen = plans[d.SiteID]
@@ -407,13 +809,33 @@ func (s *Server) withConformity(ctx context.Context, devices []model.Device) []d
 			plan, _ = s.Store.GetMgmtPlan(ctx, d.SiteID)
 			plans[d.SiteID] = plan
 			vlans[d.SiteID] = s.siteVLANIDs(ctx, d.SiteID)
+			selves[d.SiteID] = s.lldpSelfBySite(ctx, d.SiteID)
+			var sitePlan, planErr = s.Store.GetSitePlan(ctx, d.SiteID)
+			if planErr == nil {
+				regions[d.SiteID] = driver.SiteMSTRegion(
+					stpRegionNameOf(sitePlan, d.SiteID),
+					stpRegionRevisionOf(sitePlan), vlans[d.SiteID])
+				wantsMST[d.SiteID] = stpPreferenceWantsMST(sitePlan)
+			}
+			// A plan that cannot be read leaves both zero, which stpRegionViewOf
+			// renders as "nothing to say". Not as a drift: a database hiccup must
+			// not paint a fleet orange, for the same reason mstRegionOfSite
+			// returns no region at all rather than falling through to a derived
+			// name (ADR-0021).
 		}
+		var self, announced = selves[d.SiteID][d.ID]
+		var hostObserved, hostSource = hostnameObserved(d, self, announced)
+		var stpCaps = stpCapsOf(d)
 		var c = conformityWith(d, plan)
 		var enriched = withSyncVLANs(d, vlans[d.SiteID])
 		// Why no proxy watches this device, if there is a reason.
 		// Computed here rather than in withSyncVLANs, which is pure and has no access
 		// to proxy state.
 		enriched.WatchExcluded = s.WatchExcl.reasonFor(d.ID)
+		// Which protocol collects it (cf. model.Device.CollectKind). Read from
+		// `d.Extra` directly rather than through deviceIdentity: this loop runs
+		// over the whole fleet and that helper reads the discovery row per device.
+		enriched.CollectKind = collectKindOf(driver.DriverNameFromExtra(d.Extra), d.Model)
 		// Live provisioning state, so the list badge animates while an apply runs.
 		enriched.Applying = s.applyingNow(d.ID)
 		// Addressing is computed on `d`, not on `enriched`: withSyncVLANs REMOVES
@@ -423,11 +845,52 @@ func (s *Server) withConformity(ctx context.Context, devices []model.Device) []d
 		out = append(out, deviceView{
 			Device: enriched, Mgmt: c,
 			MgmtAddressing: addressingViewOf(d, plan),
-			STP:            stpObservedOf(d),
-			STPCaps:        stpCapsOf(d),
+			// On `d` and not `enriched`, same reason as addressing just above: the
+			// verdict reads `extra`, and it must read the row as the database holds
+			// it rather than whatever enrichment left behind.
+			Hostname: hostnameConformityOf(d, hostObserved, hostSource),
+			STP:      stpObservedOf(d),
+			STPCaps:  stpCaps,
+			// On `d` for the same reason as the two above: the observation is read
+			// out of `extra`, and withSyncVLANs strips observed state off `enriched`.
+			STPRegion: stpRegionViewOf(regions[d.SiteID], wantsMST[d.SiteID],
+				stpObservedOf(d), stpCaps.MSTRegion),
+			STPSuperRoot:     stpSuperRootOf(d),
+			PoE:              poeObservedOf(d),
+			PoECaps:          poeCapsOf(d),
+			TrafficClassCaps: trafficClassCapsOf(d),
+			Optics:           opticsObservedOf(d),
+			DHCPSnoop:        dhcpSnoopObservedOf(d),
+			PortCaps:         portActionCapsOf(d),
+			LAGCaps:          lagCapsOf(d),
 		})
 	}
 	return out
+}
+
+// stpSuperRootOf reads the SUPER ROOT intent stored under Extra.stp_super_root.
+//
+// Shaped exactly like stpObservedOf next to it, and absent means FALSE — an
+// unset flag is a device nobody has asked to be root, which is the only reading
+// that does not invent a decision. Note that this is the one field on this shelf
+// that is NOT an observation (cf. store.SaveSTPSuperRoot).
+func stpSuperRootOf(d model.Device) bool {
+	if len(d.Extra) == 0 {
+		return false
+	}
+	var bag map[string]json.RawMessage
+	if json.Unmarshal(d.Extra, &bag) != nil {
+		return false
+	}
+	var raw, ok = bag["stp_super_root"]
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	var on bool
+	if json.Unmarshal(raw, &on) != nil {
+		return false
+	}
+	return on
 }
 
 // stpObservedOf extracts spanning-tree observation stored under Extra.stp_observed.

@@ -13,9 +13,9 @@ import (
 
 // LLDP neighbor reporting, PROXY side.
 //
-// See docs/01-Architecture/Voisinage LLDP.md. The controller says which devices
-// to poll and at what cadence (`tunnel.SNMPWatch.LLDPIntervalS`); the proxy reads the
-// LLDP-MIB and pushes the SNAPSHOT.
+// See docs/en/01-Architecture/LLDP neighbours.md. The controller says which
+// devices to poll and at what cadence (`tunnel.SNMPWatch.LLDPIntervalS`); the
+// proxy reads the LLDP-MIB and pushes the SNAPSHOT.
 //
 // # Why this path reuses neither the metrics buffer nor the event channel
 //
@@ -29,12 +29,12 @@ import (
 //     this neighbor been seen" would then have to be read off the shape of a flat
 //     curve, which isn't an answer;
 //   - the tunnel's event channel carries only TRANSITIONS, never a repeated
-//     current state (cf. docs/01-Architecture/Protocole controleur-proxy). Pushing
-//     an entire table every thirty seconds would violate that invariant, and its
-//     queue of 256 entries is sized for rare flips, not for a periodic snapshot.
-//     Fabricating `neighbor.new` / `neighbor.gone` transitions would have made
-//     every dropped event permanent — the same failure mode that `resync` cost a
-//     lot to fix for reachability;
+//     current state (see docs/en/01-Architecture/Controller-proxy protocol.md).
+//     Pushing an entire table every thirty seconds would violate that invariant,
+//     and its queue of 256 entries is sized for rare flips, not for a periodic
+//     snapshot. Fabricating `neighbor.new` / `neighbor.gone` transitions would
+//     have made every dropped event permanent — the same failure mode that
+//     `resync` cost a lot to fix for reachability;
 //   - `ask` is explicitly "NOT a collection path" (same doc). It's one-off,
 //     controller-initiated, and has no cadence.
 //

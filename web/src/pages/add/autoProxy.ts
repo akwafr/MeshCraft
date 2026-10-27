@@ -1,5 +1,5 @@
 /**
- * « Auto » probe-proxy mode: pick the proxy whose DECLARED range contains the
+ * "Auto" probe-proxy mode: pick the proxy whose DECLARED range contains the
  * management address the wizard is about to probe.
  *
  * Containment, not equality: a /24 management subnet is covered by a proxy

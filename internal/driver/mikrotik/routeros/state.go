@@ -12,7 +12,7 @@ import (
 // Reading the state ACTUALLY applied on a RouterOS device.
 //
 // This is the 'Read' step of the reconciliation pipeline
-// (docs/01-Architecture/Reconciliation §2): without it, meshcraft cannot know
+// (docs/en/01-Architecture/Reconciliation.md §2): without it, meshcraft cannot know
 // whether what it believes is what is, and 'configuration drift' remains a
 // buzzword.
 //
@@ -231,6 +231,9 @@ type DeviceState struct {
 	// (OBSERVED: VLAN 99). Administration can arrive through them; knowing them is what
 	// allows refusing to break them.
 	CPUTagged []int `json:"cpu_tagged,omitempty"`
+	// Bondings: the device's link aggregates (`/interface/bonding`), read
+	// beside the bridge tables the bonds appear in. Nil = menu unreadable.
+	Bondings []Bonding `json:"bondings,omitempty"`
 }
 
 // cpuPort is the name RouterOS gives the CPU in bridge VLAN member lists.
@@ -287,9 +290,9 @@ func (c *Client) ReadState(ctx context.Context) (State, error) {
 // filtering state, and the list of VLANs whose CPU pseudo-port is a member — five things
 // the contract does not carry and without which writing would be blind.
 //
-// VALIDATED LIVE against 10.99.0.54. On the reference device returns: bridge `bridge`
+// VALIDATED LIVE against 192.0.2.54. On the reference device returns: bridge `bridge`
 // with filtering ACTIVE, 26 ports, 3 VLANs (1 dynamic, 99, 100), management VLAN 99 on
-// `vlan99` at `10.99.0.54/24`, CPU tagged in 99, one port with link (`sfp-sfpplus2`).
+// `vlan99` at `192.0.2.54/24`, CPU tagged in 99, one port with link (`sfp-sfpplus2`).
 func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 	var out = DeviceState{
 		VLANs:  []BridgeVLAN{},
@@ -308,17 +311,12 @@ func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 			"no switching VLANs to read")
 		return out, nil
 	}
-	// The chosen bridge is the one that FILTERS, if any: it carries segmentation.
-	// Otherwise the first — a device with several non-filtering bridges has no VLAN plan
-	// to compare anyway.
-	var chosen = bridges[0]
-	var b Row
-	for _, b = range bridges {
-		if b.Bool("vlan-filtering") {
-			chosen = b
-			break
-		}
-	}
+	// The chosen bridge is the one that FILTERS, if any (cf. pickBridge). The rule
+	// lives in a function and not inline here because a SECOND reader now depends on
+	// it: DHCP snooping is a bridge property (dhcpsnoop.go), and a read that answered
+	// about one bridge while apply's guardrails reasoned about another would report
+	// trust flags belonging to a switching table nobody is looking at.
+	var chosen = pickBridge(bridges)
 	out.BridgeName = chosen.Get("name")
 	out.BridgeRowID = chosen.ID()
 	out.VLANFiltering = chosen.Bool("vlan-filtering")
@@ -352,6 +350,17 @@ func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 	}
 
 	out.VLANs, out.Ports, out.CPUTagged = foldVLANs(vlanRows, portRows, out.BridgeName)
+
+	// 3bis. Link aggregates. Tolerated absence: a reduced firmware without the
+	// menu still has ports and VLANs worth reading, and `Bondings` nil reads as
+	// "not read" downstream (cf. driver.State.LAGs).
+	var bondRows, bondErr = c.List(ctx, "interface/bonding")
+	if bondErr == nil {
+		out.Bondings = foldBondings(bondRows)
+	} else {
+		c.step(true, "bonding menu unreadable",
+			"aggregates not read: "+bondErr.Error())
+	}
 
 	// 4. Link state, read on physical interfaces.
 	//
@@ -388,7 +397,7 @@ func (c *Client) ReadDeviceState(ctx context.Context) (DeviceState, error) {
 //
 // The derivation chain, entirely OBSERVED on the reference device:
 //
-//	/ip/address      → {"address":"10.99.0.54/24","interface":"vlan99",
+//	/ip/address      → {"address":"192.0.2.54/24","interface":"vlan99",
 //	                    "actual-interface":"vlan99"}
 //	/interface/vlan  → {"name":"vlan99","vlan-id":"99","interface":"bridge"}
 //
@@ -434,7 +443,7 @@ func foldMgmt(addrs, vlans []Row, out *DeviceState) {
 	// Sorting by `comment: defconf` is not a cosmetic trick. OBSERVED on the reference
 	// device, `/ip/address` carries TWO addresses: `192.168.88.1/24` on the bridge with
 	// `comment: defconf` — the factory address nobody uses but which still responds — and
-	// `10.99.0.54/24` on `vlan99`, the real one. Keeping the first would designate VLAN 1
+	// `192.0.2.54/24` on `vlan99`, the real one. Keeping the first would designate VLAN 1
 	// as management VLAN, therefore protect the wrong VLAN and leave the session carrier
 	// open to rewrite.
 	var best Row
@@ -762,6 +771,16 @@ func (s DeviceState) Standard() State {
 	var st BridgePort
 	for name, st = range s.Ports {
 		out.Ports[name] = PortState{Mode: st.Mode, PVID: st.PVID, Tagged: st.Tagged}
+	}
+
+	// Aggregates, and their bridge-port entries LEAVE the port map: a bond is
+	// not a faceplate jack, and a "bonding1" key in Ports would read as an
+	// unmanaged port to every consumer that iterates the map. Its VLAN half
+	// lives on the LAG (standardLAGs read it from this same map first).
+	out.LAGs = standardLAGs(s)
+	var i int
+	for i = range s.Bondings {
+		delete(out.Ports, s.Bondings[i].Name)
 	}
 	return out
 }

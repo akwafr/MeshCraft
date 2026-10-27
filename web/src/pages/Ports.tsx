@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { sitePath } from "../paths";
+import { deviceDetailPath, sitePath } from "../paths";
 import { useSite, useSiteId } from "../useSite";
 import {
   useSiteLive,
@@ -15,24 +15,27 @@ import {
   type Vlan,
 } from "../api";
 import { useSiteRole } from "../auth";
-import { ErrorMsg, HelpTip, QuickTip, Switch, useToast } from "../components";
+import { PortTrafficCell } from "../PortTraffic";
+import { PortHoverTip, type PortHover } from "../PortHoverTip";
+import { claimHoverTip, releaseHoverTip } from "../hoverExclusive";
+import { portConfigLines } from "../portConfig";
+import { ErrorMsg, QuickTip, Switch, useToast } from "../components";
 import {
   decimalSeparator,
   expandPorts,
   fmtMbps,
   nativeVlan,
-  statusColor,
   vlanMap,
   type VlanMap,
 } from "../network";
-import { modelShort } from "../modelLabel";
+import { modelOf, modelShort } from "../modelLabel";
 import {
   lldpByPort,
   neighborName,
   neighborPort,
   neighborTooltip,
 } from "../lldp";
-import { PortSquare } from "../netui";
+import { PortSquare, StatusDot } from "../netui";
 
 /** Neighbor of a port, as displayed by the "Neighbor" column. */
 interface Neighbor {
@@ -98,6 +101,21 @@ export default function Ports() {
     refetchInterval,
   });
   const vm = vlanMap(vlans);
+  // THE FLOATING PORT TIP, on the port LIST too — the overlay's second entry
+  // point (ADR-0028).
+  //
+  // Until now this table was a dead end: its squares took no `onHover`, so it
+  // rendered a plain `<span>` with a text QuickTip and the charts the faceplate
+  // offers were unreachable from here. Hovering a row now opens the SAME
+  // component the device page opens, which is the whole reason PortHoverTip is
+  // shared: an operator must not learn that the per-class graph "only works on
+  // the equipment page".
+  //
+  // One state for the table, exclusive through hoverExclusive, keyed by
+  // device+port so a mouse MOVE repositions without remounting the telemetry
+  // query underneath.
+  const [portHover, setPortHover] = useState<PortHover | null>(null);
+  const portTipId = "ports-table-port-tip";
 
   const setPort = useMutation({
     mutationFn: (a: { deviceId: string; port: string; intent: PortIntent }) =>
@@ -138,7 +156,11 @@ export default function Ports() {
   // — are summarized by the first one and counted in the tooltip: a table
   // cell can't carry three, but it must not imply there's only one.
   lldpByPort(lldp?.neighbors).forEach((list, key) => {
-    const n = list[0];
+    // A contradicted observation must not be the one the cell presents as
+    // current: the far port it names is held by someone else in a fresher
+    // reading, so it names a cable that has moved. It stays in the tooltip,
+    // where the reason is written — the cell just stops leading with it.
+    const n = list.find((o) => !o.refuted) ?? list[0];
     const peer = n.peer_device ? byId.get(n.peer_device) : undefined;
     neighbors.set(key, {
       device: neighborName(n, byId) + (list.length > 1 ? ` +${list.length - 1}` : ""),
@@ -183,16 +205,11 @@ export default function Ports() {
 
   return (
     <>
+      {/* No page heading: the tab bar names this page. The count was the one
+          thing the heading carried that is not said anywhere else, so it moves
+          to the filter it describes — next to the search box, where the number
+          that just changed is read. */}
       <div className="toolbar">
-        <h1>
-          {t("nav.ports")}
-          <HelpTip label={t("portsPage.helpLabel") as string}>
-            <p>{t("portsPage.help1")}</p>
-            <p>{t("portsPage.help2")}</p>
-            <p>{t("portsPage.help3")}</p>
-          </HelpTip>
-          <span className="sub">{t("portsPage.shownOfTotal", { shown, total })}</span>
-        </h1>
         <div className="row">
           <input
             style={{ width: 260 }}
@@ -200,6 +217,7 @@ export default function Ports() {
             placeholder={t("portsPage.searchPlaceholder") as string}
             onChange={(e) => setQ(e.target.value)}
           />
+          <span className="note">{t("portsPage.shownOfTotal", { shown, total })}</span>
           <div className={"plan-toggle-btn" + (onlyActive ? " on" : "")}>
             <Switch
               checked={onlyActive}
@@ -219,20 +237,20 @@ export default function Ports() {
           <div className="card" key={d.id}>
             <div className="card-head">
               <div className="row" style={{ gap: 8 }}>
-                <span className="dot" style={{ background: statusColor(d.status) }} />
-                <Link to={sitePath(siteSlug, "equipment", d.name)} style={{ fontWeight: 700, fontSize: 14 }}>
+                <StatusDot dev={d} />
+                <Link to={deviceDetailPath(siteSlug, d)} style={{ fontWeight: 700, fontSize: 14 }}>
                   {d.name}
                 </Link>
                 <QuickTip text={d.model || undefined} className="quicktip-inline">
                   <span className="note">
-                    {modelShort(d.model, d.vendor)}
+                    {modelShort(modelOf(d), d.vendor)}
                   </span>
                 </QuickTip>
                 {d.location && <span className="chip">{d.location}</span>}
               </div>
               <span className="note">{t("portsPage.portsCount", { count: rows.length })}</span>
             </div>
-            <div style={{ overflowX: "auto" }}>
+            <div className="scroll-x scroll-cue">
               <table className="ports-table">
                 <thead>
                   <tr>
@@ -241,7 +259,7 @@ export default function Ports() {
                     <th>{t("common.description")}</th>
                     <th style={{ width: 190 }}>VLAN</th>
                     <th style={{ width: 96 }}>{t("portsPage.linkCol")}</th>
-                    <th style={{ width: 150 }}>{t("portsPage.trafficCol")}</th>
+                    <th style={{ width: 132 }}>{t("portsPage.trafficCol")}</th>
                     <th style={{ width: 78 }}>PoE</th>
                     <th style={{ width: 210 }}>{t("portsPage.neighborCol")}</th>
                   </tr>
@@ -250,13 +268,45 @@ export default function Ports() {
                   {rows.map(({ pr }) => {
                     const p = pr.p;
                     const nb = neighbors.get(`${d.id}:${pr.name}`);
-                    const rx = off || !p.link ? 0 : (p.rx_mbps ?? 0);
-                    const tx = off || !p.link ? 0 : (p.tx_mbps ?? 0);
                     return (
                       <tr key={pr.name}>
                         <td>
                           <PortSquare
                             name={pr.name} displayName={pr.display} port={p} vm={vm} size={18} off={off}
+                            onHover={(e) => {
+                              claimHoverTip(portTipId);
+                              setPortHover({
+                                key: d.id + "/" + pr.name,
+                                deviceId: d.id,
+                                port: pr.name,
+                                title: d.name + " · " + pr.display,
+                                // The square's own QuickTip still carries these
+                                // and still serves here — unlike on a faceplate,
+                                // this page's squares are 18 px in a dense table
+                                // and the bubble is the only thing that names a
+                                // VLAN. Both come from one function, so the two
+                                // overlays cannot word it differently.
+                                facts: portConfigLines(p, vm, undefined, t),
+                                subtitle: t("planPage.linkTraffic24h") as string,
+                                classCaps: d.traffic_class_caps,
+                                clientX: e.clientX,
+                                clientY: e.clientY,
+                              });
+                            }}
+                            onHoverMove={(e) =>
+                              setPortHover((cur) =>
+                                cur && cur.key === d.id + "/" + pr.name
+                                  ? { ...cur, clientX: e.clientX, clientY: e.clientY }
+                                  : cur,
+                              )
+                            }
+                            onHoverLeave={() =>
+                              setPortHover((cur) => {
+                                if (cur?.key !== d.id + "/" + pr.name) return cur;
+                                releaseHoverTip(portTipId);
+                                return null;
+                              })
+                            }
                           />
                         </td>
                         <td>
@@ -303,8 +353,22 @@ export default function Ports() {
                             <span className="note" style={{ fontSize: 11 }}>down</span>
                           )}
                         </td>
-                        <td className="note" style={{ whiteSpace: "nowrap", fontSize: 11 }}>
-                          {p.link && !off ? `${fmtMbps(rx)} / ${fmtMbps(tx)}` : "—"}
+                        <td className="ports-traffic-cell">
+                          {/* The column used to read "12.4 Mb/s / 3.1 Mb/s":
+                              two numbers, no history, and no way to tell a
+                              busy gigabit from an idle ten-gig. The curve
+                              carries the shape and its COLOUR carries the
+                              load against this port's own line rate. */}
+                          {p.link ? (
+                            <PortTrafficCell
+                              deviceId={d.id}
+                              port={pr.name}
+                              speed={pr.speed}
+                              off={off}
+                            />
+                          ) : (
+                            <span className="spark-empty">—</span>
+                          )}
                         </td>
                         <td className="note" style={{ fontSize: 11 }}>
                           {!pr.poeCap
@@ -321,11 +385,15 @@ export default function Ports() {
                             <>
                               {nb.deviceId ? (
                                 <Link
-                                  to={sitePath(
-                                    siteSlug,
-                                    "equipment",
-                                    byId.get(nb.deviceId)?.name ?? nb.device,
-                                  )}
+                                  // A neighbor we know by ID gets the
+                                  // ID-keyed path; one we only know by
+                                  // name keeps the name form, which the
+                                  // detail page still resolves.
+                                  to={
+                                    byId.get(nb.deviceId)
+                                      ? deviceDetailPath(siteSlug, byId.get(nb.deviceId)!)
+                                      : sitePath(siteSlug, "equipment", nb.device)
+                                  }
                                   style={{ fontSize: 12 }}
                                 >
                                   {nb.device}
@@ -373,6 +441,7 @@ export default function Ports() {
         </div>
       )}
 
+      <PortHoverTip hover={portHover} />
       {toast}
     </>
   );

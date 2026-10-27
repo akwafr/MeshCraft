@@ -19,13 +19,13 @@ import {
 import { useSiteRole } from "../auth";
 import {
   ActionButton,
-  DeleteButton,
   ErrorMsg,
   Field,
   HelpTip,
   QuickTip,
   useToast,
 } from "../components";
+import { IconDeleteButton } from "../ui/IconAction";
 import { PortSquare } from "../netui";
 import { vlanMap } from "../network";
 
@@ -33,7 +33,7 @@ import { vlanMap } from "../network";
  * Switch profiles: describe the facade of equipment using RULES.
  *
  * This screen replaces the equipment-groups screen
- * (docs/01-Architecture/Profils de switchs). It is organized into three
+ * (docs/en/01-Architecture/Switch profiles). It is organized into three
  * zones, and the order is not decorative:
  *
  *   1. the site's list of profiles;
@@ -238,7 +238,7 @@ export default function SwitchProfiles() {
                 <th>{t("switchProfilesPage.profileCol")}</th>
                 <th>{t("switchProfilesPage.tagCol")}</th>
                 <th>{t("switchProfilesPage.rulesCol")}</th>
-                <th style={{ width: 160 }}></th>
+                <th className="col-actions"></th>
               </tr>
             </thead>
             <tbody>
@@ -252,11 +252,19 @@ export default function SwitchProfiles() {
                     </td>
                     <td className="mono note">{p.tag || "—"}</td>
                     <td className="note">{(spec.rules ?? []).length} {t("switchProfilesPage.rulesCol").toLowerCase()}</td>
-                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <ActionButton kind="edit" className="ghost" onClick={() => openProfile(p)}>
-                        {ing ? t("common.edit") : t("switchProfilesPage.view")}
-                      </ActionButton>
-                      {ing && <DeleteButton onConfirm={() => remove.mutate(p.id)} />}
+                    <td className="col-actions">
+                      <div className="icon-actions">
+                        {/* THE ONE LABEL THAT STAYS A WORD on this screen: it
+                            says "Edit" to an engineer and "View" to a
+                            viewer, and there is no glyph for "consult without
+                            changing". A pencil would promise an edit the role
+                            refuses — the icon would not compress the label, it
+                            would contradict it. */}
+                        <ActionButton kind="edit" className="ghost" onClick={() => openProfile(p)}>
+                          {ing ? t("common.edit") : t("switchProfilesPage.view")}
+                        </ActionButton>
+                        {ing && <IconDeleteButton onConfirm={() => remove.mutate(p.id)} />}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -828,7 +836,16 @@ function Preview({
               <span
                 style={{ opacity: dimmed ? 0.12 : 1, transition: "opacity .12s" }}
               >
-                <PortSquare name={p.name} displayName={p.display} port={intent} vm={vm} size={22} />
+                {/* 24, not 22: `PortSquare` gates its port NUMBER at
+                    `size >= 24` (netui.tsx), and this call site was the only
+                    one in the frontend sitting under the gate — two pixels
+                    short, so this facade drew unnumbered squares while every
+                    other facade numbered them. Raising the call site rather
+                    than lowering the gate keeps ONE threshold for the whole
+                    frontend: lowering it would have re-flowed all five
+                    PortSquare callers to prove one page. (2026-08-09,
+                    UI-GUIDE §7.) */}
+                <PortSquare name={p.name} displayName={p.display} port={intent} vm={vm} size={24} />
               </span>
             </QuickTip>
           );

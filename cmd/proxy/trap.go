@@ -21,91 +21,93 @@ import (
 	"meshcraft/internal/tunnel"
 )
 
-// Reception des traps SNMP, et detection des transitions de port.
+// SNMP trap reception, and port-transition detection.
 //
-// Deux idees gouvernent ce fichier, et elles se tiennent l'une l'autre.
+// Two ideas govern this file, and they hold each other up.
 //
-//  1. Un trap ne porte jamais la verite, seulement l'URGENCE. Un trap v2c est de
-//     l'UDP non authentifie : falsifiable, perdable, reordonnable. Rien de son
-//     contenu n'est written dans state — il ne fait qu'AVANCER le poll `if_state`
-//     qui aurait eu lieu de toute way (cf. tunnel.EventPortUp).
-//  2. Les transitions sont donc computed a CHAQUE poll `if_state`, quel qu'en
-//     soit le declencheur, en diffant contre la last observation. Corollaire
-//     d'exploitation : un canal de traps coupe, sature ou absent ne degrade que
-//     la LATENCE — on retombe sur la cadence de polling — et jamais la justesse.
+//  1. A trap never carries the truth, only URGENCY. A v2c trap is
+//     unauthenticated UDP: forgeable, losable, reorderable. Nothing of its
+//     content is written into state — it only BRINGS FORWARD the `if_state`
+//     poll that would have happened anyway (see tunnel.EventPortUp).
+//  2. Transitions are therefore computed on EVERY `if_state` poll, whatever
+//     triggered it, by diffing against the last observation. Operational
+//     corollary: a trap channel that is cut, saturated or absent only degrades
+//     LATENCY — we fall back to the polling cadence — and never correctness.
 //
-// Ce qui couterait cher serait de melanger les deux : deux sources state pour un
-// same port, qu'il faudrait ensuite arbitrer a chaque desaccord.
+// What would be expensive is mixing the two: two sources of state for the same
+// port, which would then have to be arbitrated at every disagreement.
 
-// Declencheurs portes par tunnel.Event.Trigger. Ils ne disent pas hence vient la
-// verite (toujours du poll), mais ce qui a economise l'attente.
+// Triggers carried by tunnel.Event.Trigger. They do not say where the truth
+// comes from (always the poll), but what saved the wait.
 const (
 	triggerPoll = "poll"
 	triggerTrap = "trap"
 )
 
-// metricIfOperStatus recopie le nom de metrique emis par snmppoll.Samples.
+// metricIfOperStatus copies the metric name emitted by snmppoll.Samples.
 //
-// Ce nom y est une constante non exportee, et l'ouvrir n'appartient pas a ce lot.
-// La duplication est donc assumee, mais elle est VERIFIEE : un test fait passer
-// une table `ifOperStatus` par snmppoll.Samples et verifies qu'observedPorts la
-// retrouve. Un renommage there-bas casse ici un test, pas la production en silence.
+// There that name is an unexported constant, and opening it up does not belong
+// in this batch. The duplication is therefore accepted, but it is CHECKED: a
+// test runs an `ifOperStatus` table through snmppoll.Samples and checks that
+// observedPorts finds it. A rename over there breaks a test here, not
+// production in silence.
 const metricIfOperStatus = "meshcraft_if_oper_status"
 
-// Valeurs d'`ifOperStatus` (MIB-II, RFC 2863) qui nous concernent.
+// `ifOperStatus` values (MIB-II, RFC 2863) that concern us.
 //
-// « up » est reserve a la valeur 1, et a elle seule. `lowerLayerDown(7)` est un
-// port qui ne passe pas de trafic : le classer ailleurs que dans « down »
-// obligerait the UI a inventer un troisieme etat pour dire la same chose. Les
-// valeurs intermediaires — testing(3), unknown(4), dormant(5), notPresent(6) —
-// sont traitees comme « down » et la valeur brute est portee dans le Detail : on
-// n'affirme pas qu'un port est en service quand the device ne l'affirme pas.
+// "up" is reserved for value 1, and for it alone. `lowerLayerDown(7)` is a port
+// that passes no traffic: classifying it anywhere other than "down" would force
+// the UI to invent a third state to say the same thing. The intermediate
+// values — testing(3), unknown(4), dormant(5), notPresent(6) — are treated as
+// "down" and the raw value is carried in the Detail: we do not claim a port is
+// in service when the device does not claim it.
 //
-// Le bruit redoute (un port qui oscillerait 2 ↔ 7 en emettant deux evenements
-// par battement) n'existe pas ici, parce que le diff porte sur l'ETAT BOOLEEN et
-// pas sur la valeur : 2 → 7 ne produit aucun evenement.
+// The feared noise (a port oscillating 2 ↔ 7 emitting two events per flap) does
+// not exist here, because the diff is on the BOOLEAN STATE and not on the
+// value: 2 → 7 produces no event.
 const (
 	ifOperUp             = 1
 	ifOperDown           = 2
 	ifOperLowerLayerDown = 7
 )
 
-// OID des traps standard. On n'en reconnait que deux, et c'est deliberate : le
-// poll dit la verite, le trap ne fait que wake. Un catalogue de traps
-// constructeur serait du travail a refaire a chaque gamme, pour une information
-// qu'on relit de toute way dans `ifTable` la milliseconde suivante.
+// Standard trap OIDs. Only two are recognised, deliberately: the poll tells the
+// truth, the trap only wakes it up. A catalogue of vendor traps would be work
+// to redo for every product line, for information we re-read from `ifTable`
+// the very next millisecond anyway.
 const (
 	oidSnmpTrapOID = "1.3.6.1.6.3.1.1.4.1.0" // snmpTrapOID.0
 	oidLinkDown    = "1.3.6.1.6.3.1.1.5.3"
 	oidLinkUp      = "1.3.6.1.6.3.1.1.5.4"
 )
 
-// trapBindRetry : delai avant de retenter un bind qui a echoue. Le port 162 peut
-// se liberer (un autre collecteur qu'on desinstalle), mais reessayer chaque
-// seconde ne le libererait pas plus vite.
+// trapBindRetry: delay before retrying a bind that failed. Port 162 may free up
+// (another collector being uninstalled), but retrying every second would not
+// free it any faster.
 const trapBindRetry = time.Minute
 
-// trapSummaryEvery : cadence du bilan de receive en DEBUG. Sans ce bilan, un
-// parc where aucun device n'est configure pour envoyer ses traps est
-// indiscernable d'un parc reactif.
+// trapSummaryEvery: cadence of the DEBUG reception summary. Without it, a fleet
+// where no device is configured to send its traps is indistinguishable from a
+// responsive one.
 const trapSummaryEvery = 5 * time.Minute
 
-// --- Detection des transitions : logique pure ---
+// --- Transition detection: pure logic ---
 
-// portObs est ce qu'un poll a vu d'un port : son etat operationnel et son nom.
+// portObs is what a poll saw of a port: its operational state and its name.
 //
-// Le nom ILLUSTRE, l'index IDENTIFIE (cf. tunnel.Event.IfIndex) : il n'entre pas
-// dans la comparaison, sinon renommer un port fabriquerait une transition.
+// The name ILLUSTRATES, the index IDENTIFIES (see tunnel.Event.IfIndex): the
+// name is not part of the comparison, otherwise renaming a port would fabricate
+// a transition.
 type portObs struct {
 	status int
 	name   string
 }
 
-// portUp traduit `ifOperStatus` en « ce port passe du trafic ».
+// portUp translates `ifOperStatus` into "this port passes traffic".
 func portUp(status int) bool { return status == ifOperUp }
 
-// operStatusLabel nomme une valeur d'`ifOperStatus`. Utile seulement au Detail et
-// au journal : un operator lit « dormant » beaucoup plus vite que « 5 ».
+// operStatusLabel names an `ifOperStatus` value. Useful only for the Detail and
+// the log: an operator reads "dormant" much faster than "5".
 func operStatusLabel(status int) string {
 	switch status {
 	case ifOperUp:
@@ -123,15 +125,15 @@ func operStatusLabel(status int) string {
 	case ifOperLowerLayerDown:
 		return "lowerLayerDown"
 	}
-	return "inconnu"
+	return "unknown"
 }
 
-// observedPorts extrait d'un lot d'samples state de chaque port.
+// observedPorts extracts each port's state from a batch of samples.
 //
-// On repart des samples ALREADY en main rather que de refaire un walk : la
-// table a been lue une fois, la relire pour en tirer une autre conclusion
-// doublerait le cost sur the device et ouvrirait la porte a deux lectures
-// divergentes du same instant.
+// We start from the samples ALREADY in hand rather than redoing a walk: the
+// table has been read once, re-reading it to draw another conclusion would
+// double the cost on the device and open the door to two diverging readings of
+// the same instant.
 func observedPorts(samples []metricbuf.Sample) map[int]portObs {
 	var out = map[int]portObs{}
 	var s metricbuf.Sample
@@ -141,16 +143,16 @@ func observedPorts(samples []metricbuf.Sample) map[int]portObs {
 		}
 		var idx, err = strconv.Atoi(s.Labels["ifindex"])
 		if err != nil {
-			continue // sans index, l'sample n'identifie aucun port
+			continue // without an index, the sample identifies no port
 		}
-		// L'tag `port` est absente quand `ifDescr` n'a pas pu be lue : le
-		// nom reste vide, la detection fonctionne quand same.
+		// The `port` tag is absent when `ifDescr` could not be read: the name stays
+		// empty, detection works anyway.
 		out[idx] = portObs{status: int(s.Value), name: s.Labels["port"]}
 	}
 	return out
 }
 
-// portChange est une transition retenue, avant sa mise en forme en evenement.
+// portChange is a retained transition, before it is shaped into an event.
 type portChange struct {
 	ifIndex int
 	name    string
@@ -158,17 +160,17 @@ type portChange struct {
 	status  int
 }
 
-// diffPorts compare deux observations d'un same device.
+// diffPorts compares two observations of the same device.
 //
-// Trois silences, et chacun evite d'inventer un fait :
+// Three silences, each of which avoids inventing a fact:
 //
-//   - Un port vu pour la FIRST fois ne produit rien. Annoncer une transition
-//     au premier passage reviendrait a annoncer un changement qui n'a pas eu lieu
-//     — same raison que le `up == nil` de targetState dans monitor.go.
-//   - Un port DISPARU de la table ne produit rien : un membre de pile retire ou
-//     une front panel retrecie est une decision d'exploitation, pas une panne.
-//   - Un changement de valeur qui ne change pas state booleen (2 → 7) ne produit
-//     rien : c'est la same information dite autrement.
+//   - A port seen for the FIRST time produces nothing. Announcing a transition
+//     on the first pass would announce a change that did not happen — same
+//     reason as targetState's `up == nil` in monitor.go.
+//   - A port that DISAPPEARED from the table produces nothing: a stack member
+//     removed or a shrunken front panel is an operating decision, not an outage.
+//   - A value change that does not change the boolean state (2 → 7) produces
+//     nothing: it is the same information said differently.
 func diffPorts(prev, cur map[int]portObs) []portChange {
 	var out []portChange
 	var idx int
@@ -182,19 +184,19 @@ func diffPorts(prev, cur map[int]portObs) []portChange {
 			ifIndex: idx, name: obs.name, up: portUp(obs.status), status: obs.status,
 		})
 	}
-	// Un 48 ports qui redemarre produit quarante-huit transitions d'un coup :
-	// l'ordre de parcours d'une map est aleatoire, et un journal qui egrene les
-	// ports dans un ordre different a chaque incident est illisible.
+	// A 48-port switch that reboots produces forty-eight transitions at once: map
+	// iteration order is random, and a log that lists the ports in a different
+	// order on every incident is unreadable.
 	sort.Slice(out, func(i, j int) bool { return out[i].ifIndex < out[j].ifIndex })
 	return out
 }
 
-// portDetail compose le texte d'accompagnement d'un evenement de port.
+// portDetail composes the accompanying text of a port event.
 //
-// Deux informations de nature differente peuvent s'y croiser, et il faut les
-// distinguer : la valeur exotique d'`ifOperStatus` describes CE port et vient du
-// poll ; le label du trap qualifie la RAFALE qui nous a reveilles, pas le port
-// — c'est un indice de diagnostic, jamais une data.
+// Two pieces of information of a different nature may meet there, and they must
+// be told apart: the exotic `ifOperStatus` value describes THIS port and comes
+// from the poll; the trap label qualifies the BURST that woke us up, not the
+// port — it is a diagnostic hint, never data.
 func portDetail(ch portChange, trapLabel string) string {
 	var parts []string
 	if ch.status != ifOperUp && ch.status != ifOperDown {
@@ -207,23 +209,22 @@ func portDetail(ch portChange, trapLabel string) string {
 	return strings.Join(parts, " ; ")
 }
 
-// --- Detection des transitions : cablage sur le collecteur ---
+// --- Transition detection: wiring on the collector ---
 
-// notePortStates diffe l'observation courante contre la previous et emet les
-// transitions du parc.
+// notePortStates diffs the current observation against the previous one and
+// emits the fleet's transitions.
 //
-// Appelee after CHAQUE poll `if_state` reussi, et seulement pour celui-there :
-// `if_counters` ne contient pas d'`ifOperStatus`, et le passer ici ferait
-// disparaitre tous les ports a chaque cycle de compteurs.
+// Called after EVERY successful `if_state` poll, and only for that one:
+// `if_counters` contains no `ifOperStatus`, and passing it here would make every
+// port disappear on every counters cycle.
 func (c *SNMPCollector) notePortStates(deviceID string,
 	samples []metricbuf.Sample, trigger, trapLabel string) {
 	var cur = observedPorts(samples)
 	if len(cur) == 0 {
-		// Un poll qui a rendu des samples mais aucun `ifOperStatus` est une
-		// lecture PARTIELLE (la table a manque au walk), pas un device dont les
-		// ports se sont volatilises. On garde l'observation previous : l'ecraser
-		// ferait de la prochaine lecture une « first observation », donc un
-		// silence sur la transition suivante.
+		// A poll that returned samples but no `ifOperStatus` is a PARTIAL read (the
+		// table was missing from the walk), not a device whose ports vanished. The
+		// previous observation is kept: overwriting it would turn the next read into a
+		// "first observation", hence a silence on the following transition.
 		return
 	}
 
@@ -252,21 +253,21 @@ func (c *SNMPCollector) notePortStates(deviceID string,
 	}
 }
 
-// emitEvent depose un evenement sur le canal du proxy, sans jamais bloquer.
+// emitEvent drops an event on the proxy's channel, without ever blocking.
 func (c *SNMPCollector) emitEvent(ev tunnel.Event) {
 	c.mu.Lock()
 	var fn = c.emit
 	c.mu.Unlock()
 	if fn == nil {
-		// Collecteur pas encore cable (ou test) : on le dit sans paniquer ni perdre
-		// le poll qui a produit l'evenement.
-		slog.Debug("evenement de port sans canal de sortie", "type", ev.Type)
+		// Collector not wired yet (or a test): say so without panicking or losing the
+		// poll that produced the event.
+		slog.Debug("port event with no output channel", "type", ev.Type)
 		return
 	}
 	fn(ev)
 }
 
-// findWatch retrouve une cible par son identifiant. Appelee sous c.mu.
+// findWatch finds a target by its identifier. Called under c.mu.
 func findWatch(watches []tunnel.SNMPWatch, deviceID string) (tunnel.SNMPWatch, bool) {
 	var w tunnel.SNMPWatch
 	for _, w = range watches {
@@ -277,61 +278,60 @@ func findWatch(watches []tunnel.SNMPWatch, deviceID string) (tunnel.SNMPWatch, b
 	return tunnel.SNMPWatch{}, false
 }
 
-// --- Filtre identity ---
+// --- Identity filter ---
 
-// trapVerdict dit ce qu'on a fait d'un trap, et pourquoi. Les trois cas sont
-// COMPTES : un canal qui rejette tout et un canal muet se ressemblent beaucoup
-// trop dans un journal.
+// trapVerdict says what was done with a trap, and why. All three cases are
+// COUNTED: a channel that rejects everything and a silent channel look far too
+// alike in a log.
 type trapVerdict int
 
 const (
-	// trapUnknownSource : l'IP source n'est dans aucune SNMPWatch. Sur un network
-	// de production, c'est l'ordinaire — d'autres devices arrosent le
-	// collecteur — et ca ne merite pas mieux que DEBUG.
+	// trapUnknownSource: the source IP is in no SNMPWatch. On a production network
+	// this is ordinary — other devices spray the collector — and it deserves no
+	// more than DEBUG.
 	trapUnknownSource trapVerdict = iota
-	// trapBadCommunity : l'IP est connue, la community ne correspond pas. C'est
-	// ce cas qui empeche un tiers sur le chemin d'injecter des evenements de port
-	// en usurpant l'adresse d'un device surveille.
+	// trapBadCommunity: the IP is known, the community does not match. This is the
+	// case that stops a third party on the path from injecting port events by
+	// spoofing the address of a watched device.
 	trapBadCommunity
 	trapAccepted
 )
 
-// effectiveCommunity rend la community actually attendue d'un device.
+// effectiveCommunity returns the community actually expected from a device.
 //
-// Vide signifie « public » et non « n'importe laquelle » : c'est exactement le
-// repli de snmppoll.dialSNMP, et deux rules differentes pour la same watch
-// finiraient par accepter des traps d'un device qu'on n'arrive pas a
-// interroger.
+// Empty means "public" and not "any": that is exactly snmppoll.dialSNMP's
+// fallback, and two different rules for the same watch would end up accepting
+// traps from a device we cannot manage to poll.
 func effectiveCommunity(w tunnel.SNMPWatch) string {
 	if w.Community == "" {
-		// La SAME constante que le poll, et non un « public » recopie ici : ce repli
-		// a existe en trois exemplaires dans ce depot, et le jour where l'un d'eux
-		// change, le filtre des traps accepte des paquets d'un device qu'on
-		// n'arrive plus a interroger — ou l'inverse, sans que rien ne le dise.
+		// The SAME constant as the poll, and not a "public" copied here: this fallback
+		// once existed in three copies in this repository, and the day one of them
+		// changes, the trap filter accepts packets from a device we can no longer poll
+		// — or the reverse, with nothing saying so.
 		return snmppoll.DefaultCommunity
 	}
 	return w.Community
 }
 
-// classifyTrap decide si un trap vient d'un device surveille.
+// classifyTrap decides whether a trap comes from a watched device.
 //
-// Identite par IP SOURCE confrontee a la liste de surveillance, plus la
-// community. C'est faible — une IP source s'usurpe — mais c'est tout ce qu'un
-// trap v2c offre, et c'est precisely pour ca que rien de son contenu n'est
-// written : au pire, un attaquant obtient un walk `if_state` anticipe, dont le
-// result vient de the device et pas de lui.
+// Identity by SOURCE IP checked against the watch list, plus the community.
+// That is weak — a source IP can be spoofed — but it is all a v2c trap offers,
+// and that is precisely why nothing of its content is written: at worst, an
+// attacker gets an early `if_state` walk, whose result comes from the device
+// and not from them.
 //
-// Les traps v3 arrivent sans community et sont donc rejetes : la v3 viendra avec
-// identity de service (cf. tunnel.SNMPWatch.Community), et un « on accepte
-// quand on ne sait pas verify » serait le contraire de ce filtre.
+// v3 traps arrive without a community and are therefore rejected: v3 will come
+// with service identity (see tunnel.SNMPWatch.Community), and an "accept when
+// we cannot verify" would be the opposite of this filter.
 func classifyTrap(watches []tunnel.SNMPWatch, srcIP, community string) (tunnel.SNMPWatch, trapVerdict) {
 	var src, err = netip.ParseAddr(srcIP)
 	if err != nil {
 		return tunnel.SNMPWatch{}, trapUnknownSource
 	}
-	// Unmap : une socket UDP en dual-stack rend « ::ffff:10.0.0.5 » there where la watch
-	// dit « 10.0.0.5 ». Comparer les textes ferait echouer le filtre selon
-	// l'humeur de la pile network de l'hote.
+	// Unmap: a dual-stack UDP socket returns "::ffff:10.0.0.5" where the watch says
+	// "10.0.0.5". Comparing the texts would make the filter fail depending on the
+	// mood of the host's network stack.
 	src = src.Unmap()
 
 	var ipKnown bool
@@ -352,11 +352,12 @@ func classifyTrap(watches []tunnel.SNMPWatch, srcIP, community string) (tunnel.S
 	return tunnel.SNMPWatch{}, trapUnknownSource
 }
 
-// trapOIDLabel rend l'OID du trap recu et, si on le reconnait, son nom.
+// trapOIDLabel returns the received trap's OID and, if recognised, its name.
 //
-// Pour un trap v2c, l'OID vit dans le varbind `snmpTrapOID.0` ; un trap v1 le
-// porte autrement (Enterprise + GenericTrap) et rend ici une string vide. Ce
-// n'est pas une lacune a combler : la valeur ne sert qu'au journal et au Detail.
+// For a v2c trap, the OID lives in the `snmpTrapOID.0` varbind; a v1 trap
+// carries it differently (Enterprise + GenericTrap) and returns an empty
+// string here. That is not a gap to fill: the value only serves the log and
+// the Detail.
 func trapOIDLabel(pkt *gosnmp.SnmpPacket) (string, string) {
 	if pkt == nil {
 		return "", ""
@@ -382,17 +383,17 @@ func trapOIDLabel(pkt *gosnmp.SnmpPacket) (string, string) {
 	return oid, ""
 }
 
-// trapSeenDetail compose le Detail de l'evenement de preuve : ce qui a traverse.
+// trapSeenDetail composes the Detail of the proof event: what got through.
 //
-// Le label quand on reconnait le trap, l'OID brut sinon — c'est ce qui permet a
-// l'exploitant de distinguer « the device m'envoie ses linkDown » de « il ne
-// m'envoie que des traps constructeur », deux situations qui prouvent also le
-// chemin mais ne se reglent pas pareil. Jamais VIDE, same pour un trap v1 qui ne
-// porte pas snmpTrapOID.0 (cf. trapOIDLabel) : un Detail vide se lirait comme un
-// champ perdu en route.
+// The label when the trap is recognised, the raw OID otherwise — that is what
+// lets the operator tell "the device sends me its linkDowns" from "it only
+// sends me vendor traps", two situations that prove the path equally but are
+// not fixed the same way. Never EMPTY, even for a v1 trap that does not carry
+// snmpTrapOID.0 (see trapOIDLabel): an empty Detail would read as a field lost
+// on the way.
 //
-// Ce qui n'y entre sous aucune forme : la community. C'est un secret d'operation,
-// et l'evenement part au controleur puis a the UI.
+// What goes in under no form: the community. It is an operating secret, and the
+// event goes to the controller and then to the UI.
 func trapSeenDetail(oid, label string) string {
 	if label != "" {
 		return label
@@ -400,41 +401,41 @@ func trapSeenDetail(oid, label string) string {
 	if oid != "" {
 		return "oid=" + oid
 	}
-	return "trap sans OID identifiable"
+	return "trap without an identifiable OID"
 }
 
-// --- Amortissement par device ---
+// --- Per-device throttling ---
 
-// trapGate regroupe les rafales de traps d'un same device.
+// trapGate groups bursts of traps from the same device.
 //
-// Un 48 ports qui redemarre emet une centaine de traps en quelques
-// millisecondes. Un poll par trap ferait du chemin rapide un amplificateur
-// braque sur the device already en difficulte — et cette gamme (Instant On 1930)
-// ne tient que cinq sessions SNMP. La table `ifTable` etant lue en entier de
-// toute way, lire pour un port ou pour cinquante costs pareil : on regroupe.
+// A 48-port switch that reboots emits a hundred traps in a few milliseconds.
+// One poll per trap would turn the fast path into an amplifier aimed at a
+// device already in trouble — and this product line (Instant On 1930) only
+// holds five SNMP sessions. Since `ifTable` is read whole anyway, reading for
+// one port or for fifty costs the same: we group.
 //
-// La decision est SEPAREE de l'ordonnancement (admit rend un delai, elle ne
-// demarre aucun minuteur) pour qu'elle se teste sans horloge reelle.
+// The decision is SEPARATE from the scheduling (admit returns a delay, it
+// starts no timer) so it can be tested without a real clock.
 type trapGate struct {
 	mu sync.Mutex
-	// pending : un poll est already programme pour cet device, les traps qui
-	// arrivent sont absorbes par lui.
+	// pending: a poll is already scheduled for this device, arriving traps are
+	// absorbed by it.
 	pending map[string]bool
-	// label : label du trap qui a OUVERT la fenetre courante.
+	// label: label of the trap that OPENED the current window.
 	label map[string]string
-	// lastPoll : dernier poll declenche par trap, qui fixe le plancher.
+	// lastPoll: last trap-triggered poll, which sets the floor.
 	lastPoll map[string]time.Time
-	// seen : devices dont le chemin retour a ALREADY been prouve au controleur
-	// (tunnel.EventTrapSeen emis une fois).
+	// seen: devices whose return path has ALREADY been proven to the controller
+	// (tunnel.EventTrapSeen emitted once).
 	//
-	// Cet etat n'a rien a voir avec l'amortissement, et il vit pourtant ici : la
-	// preuve doit se rearmer quand the device quitte puis retrouve la
-	// surveillance, et `forget` est le SEUL point de purge que SetWatches
-	// (cmd/proxy/snmp.go) appelle already. Une carte de plus sur le collecteur aurait
-	// exige une ligne de plus there-bas — donc une modification d'un fichier qui ne
-	// observes pas de ce lot, et surtout un second endroit a ne pas oublier le jour
-	// where la purge changera. Rattachee a la structure already purgee, la property
-	// « rien ne survit au retrait d'un device » se demontre en un seul point.
+	// This state has nothing to do with throttling, and yet it lives here: the
+	// proof must re-arm when the device leaves and comes back to monitoring, and
+	// `forget` is the ONLY purge point that SetWatches (cmd/proxy/snmp.go) already
+	// calls. One more map on the collector would have required one more line over
+	// there — hence a change to a file outside this batch, and above all a second
+	// place not to forget the day the purge changes. Attached to the structure
+	// that is already purged, the property "nothing survives a device's removal"
+	// is proven in a single place.
 	seen map[string]bool
 }
 
@@ -447,21 +448,19 @@ func newTrapGate() *trapGate {
 	}
 }
 
-// admit dit s'il faut programmer un poll pour cet device, et dans combien de
-// temps.
+// admit says whether a poll must be scheduled for this device, and in how long.
 //
-// Le plancher tunnel.TrapMinPollGap RETARDE, il ne jette pas : un trap arrive
-// juste after un poll signale peut-be un etat que ce poll n'a pas encore vu, et
-// l'abandonner perdrait une transition reelle jusqu'au prochain cycle ordinaire.
-// Un port qui bat en boucle produit donc au pire un walk toutes les deux
-// secondes, ce qui est le comportement voulu.
+// The tunnel.TrapMinPollGap floor DELAYS, it does not discard: a trap arriving
+// just after a poll may signal a state that poll has not seen yet, and dropping
+// it would lose a real transition until the next ordinary cycle. A port
+// flapping in a loop therefore produces at worst one walk every two seconds,
+// which is the intended behaviour.
 func (g *trapGate) admit(deviceID, label string, now time.Time) (time.Duration, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.pending[deviceID] {
-		// Fenetre already ouverte. Elle adopte tout de same le premier label
-		// exploitable de la rafale : un trap constructeur suivi d'un linkDown doit
-		// laisser « linkDown » au diagnostic.
+		// Window already open. It still adopts the first usable label of the burst:
+		// a vendor trap followed by a linkDown must leave "linkDown" for the diagnosis.
 		if g.label[deviceID] == "" {
 			g.label[deviceID] = label
 		}
@@ -477,8 +476,8 @@ func (g *trapGate) admit(deviceID, label string, now time.Time) (time.Duration, 
 	return delay, true
 }
 
-// release note qu'un poll declenche par trap vient d'avoir lieu, et rend le
-// label de la rafale qu'il solde.
+// release records that a trap-triggered poll has just happened, and returns
+// the label of the burst it settles.
 func (g *trapGate) release(deviceID string, at time.Time) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -489,17 +488,17 @@ func (g *trapGate) release(deviceID string, at time.Time) string {
 	return label
 }
 
-// firstSeen rend vrai UNE SEULE fois par device : au premier trap accepted
-// depuis son ingress dans la surveillance.
+// firstSeen returns true ONLY ONCE per device: on the first accepted trap since
+// it entered monitoring.
 //
-// C'est le garde-fou de tunnel.EventTrapSeen. La preuve du chemin retour ne change
-// plus une fois acquise ; la repeter a chaque trap ferait d'un parc bavard un
-// generateur de journal, et noierait les evenements qui, eux, disent un changement.
+// It is the guard of tunnel.EventTrapSeen. The return-path proof no longer
+// changes once acquired; repeating it on every trap would turn a chatty fleet
+// into a log generator, and drown the events that do announce a change.
 //
-// Test-et-pose sous le same verrou que le reste de la structure : aujourd'hui les
-// traps d'une rafale arrivent tous sur la goroutine de lecture de gosnmp, mais rien
-// dans son contrat ne le promet, et deux preuves pour un device seraient
-// exactement le bruit qu'on cherche a eviter.
+// Test-and-set under the same lock as the rest of the structure: today all the
+// traps of a burst arrive on gosnmp's read goroutine, but nothing in its
+// contract promises that, and two proofs for one device would be exactly the
+// noise we are trying to avoid.
 func (g *trapGate) firstSeen(deviceID string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -510,12 +509,12 @@ func (g *trapGate) firstSeen(deviceID string) bool {
 	return true
 }
 
-// forget oublie un device qui n'est plus surveille. Sans ca, les cartes
-// gardent trace de tout ce que le controleur a un jour confie a ce proxy.
+// forget drops a device that is no longer watched. Without it, the maps keep a
+// trace of everything the controller ever entrusted to this proxy.
 //
-// C'est aussi ce qui REARME la preuve du chemin retour (cf. seen) : un device
-// qui revient dans la liste revient d'un monde where un pare-feu, une route ou une ACL
-// a pu changer — la preuve d'hier n'y engage plus rien.
+// It is also what RE-ARMS the return-path proof (see seen): a device coming back
+// into the list comes back from a world where a firewall, a route or an ACL may
+// have changed — yesterday's proof commits to nothing there.
 func (g *trapGate) forget(watched map[string]bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -540,9 +539,9 @@ func (g *trapGate) forget(watched map[string]bool) {
 
 // --- Reception ---
 
-// trapStats compte ce que la socket a vu. Rien ici ne monte en WARN : des traps
-// d'devices non surveilles, c'est l'ordinaire d'un network de production, et
-// les journaliser fort noierait ce qui compte.
+// trapStats counts what the socket saw. Nothing here goes up to WARN: traps
+// from unwatched devices are ordinary on a production network, and logging them
+// loudly would drown what matters.
 type trapStats struct {
 	received      uint64
 	accepted      uint64
@@ -551,63 +550,63 @@ type trapStats struct {
 	badCommunity  uint64
 }
 
-// trapHandler traite un trap decode : le paquet, sa source, et l'adresse locale
-// qu'il visait — invalide quand le noyau ne sait pas la dire.
+// trapHandler handles a decoded trap: the packet, its source, and the local
+// address it targeted — invalid when the kernel cannot tell.
 type trapHandler func(pkt *gosnmp.SnmpPacket, src *net.UDPAddr, dst netip.Addr)
 
-// trapReceiver : une socket de traps en ecoute, avec le port qu'elle occupe.
+// trapReceiver: a listening trap socket, with the port it occupies.
 //
-// # Pourquoi NOTRE socket, et non gosnmp.TrapListener
+// # Why OUR socket, and not gosnmp.TrapListener
 //
-// Parce que son contrat ne rend que la SOURCE du datagramme
-// (`TrapHandlerFunc(*SnmpPacket, *net.UDPAddr)`) et que sa socket est un champ non
-// exporte : rien, dans gosnmp, ne donne access a l'adresse de DESTINATION —
-// i.e. a celle de nos adresses que the device a actually visee. Or
-// c'est exactement ce qui manquait pour que la preuve du chemin retour soit
-// attribuable a l'adresse que meshcraft a written (cf. tunnel.EventTrapSeen) : une
-// ecoute sur l'adresse joker accepte tout, et un device configure vers un autre
-// collecteur de la same machine fabriquait une « preuve » sans rapport.
+// Because its contract only returns the datagram's SOURCE
+// (`TrapHandlerFunc(*SnmpPacket, *net.UDPAddr)`) and its socket is an
+// unexported field: nothing in gosnmp gives access to the DESTINATION address
+// — i.e. to which of our addresses the device actually targeted. And that is
+// exactly what was missing for the return-path proof to be attributable to the
+// address meshcraft wrote (see tunnel.EventTrapSeen): a listener on the
+// wildcard address accepts everything, and a device configured towards another
+// collector on the same machine used to fabricate an unrelated "proof".
 //
-// Ce que ca ne costs PAS, et c'est ce qui a fait la decision : rien du decoding
-// SNMP. `gosnmp.GoSNMP.UnmarshalTrap` et `SnmpPacket.MarshalMsg` sont EXPORTES —
-// on garde donc le parseur de la bibliotheque, et jusqu'a la response aux
-// `InformRequest`. La seule chose perdue est le rapport d'engineID des traps v3
-// (`reportAuthoritativeEngineID`), qui ne concerne que des paquets sans community,
-// donc que `classifyTrap` jette de toute way.
+// What it does NOT cost, and that is what made the decision: nothing of the
+// SNMP decoding. `gosnmp.GoSNMP.UnmarshalTrap` and `SnmpPacket.MarshalMsg` are
+// EXPORTED — so we keep the library's parser, down to the response to
+// `InformRequest`. The only thing lost is engineID reporting for v3 traps
+// (`reportAuthoritativeEngineID`), which only concerns packets without a
+// community, hence ones `classifyTrap` throws away anyway.
 //
-// Et ca SIMPLIFIE le bind : `net.ListenUDP` rend son erreur tout de suite, there where
-// `TrapListener.Listen` est bloquant et obligeait a courir after son signal
-// d'ecoute — une goroutine, deux canaux et un delai de garde — pour distinguer
-// « lie » de « refused ».
+// And it SIMPLIFIES the bind: `net.ListenUDP` returns its error right away,
+// whereas `TrapListener.Listen` blocks and forced us to chase its listening
+// signal — a goroutine, two channels and a guard delay — to tell "bound" from
+// "refused".
 type trapReceiver struct {
 	conn *net.UDPConn
-	// p4 / p6 : la SAME socket vue par x/net, qui seule sait reclamer au noyau
-	// l'adresse de destination de chaque datagramme. Une seule des deux est non
-	// nulle ; les deux peuvent l'be, et alors on ecoute sans savoir attribuer —
-	// perdre l'attribution vaut mieux que perdre les traps.
+	// p4 / p6: the SAME socket as seen by x/net, which alone knows how to ask the
+	// kernel for each datagram's destination address. Only one of the two is
+	// non-nil; both may be nil, and then we listen without being able to attribute
+	// — losing attribution is better than losing traps.
 	p4 *ipv4.PacketConn
 	p6 *ipv6.PacketConn
-	// port : le port DEMANDE. C'est lui que reconcileTraps compare a la consigne, et
-	// pas celui obtenu : sinon une consigne a 0 (un test) relierait la socket a
-	// chaque seconde.
+	// port: the REQUESTED port. That is what reconcileTraps compares to the
+	// instruction, not the one obtained: otherwise an instruction of 0 (a test)
+	// would rebind the socket every second.
 	port int
-	// bound : le port actually obtenu, pour le journal et pour les tests.
+	// bound: the port actually obtained, for the log and for tests.
 	bound int
-	// params : notre instance, jamais gosnmp.Default — ce singleton est partage avec
-	// le polling du same processus, et le decoding written dedans.
+	// params: our instance, never gosnmp.Default — that singleton is shared with
+	// the polling in the same process, and decoding writes into it.
 	params *gosnmp.GoSNMP
 	handle trapHandler
-	// closing : un `Close` fait echouer la lecture en cours, et cette erreur-there n'est
-	// pas un incident. Sans le drapeau, tout changement de port would write une ligne
-	// d'erreur pour un arret qu'on venait de demander.
+	// closing: a `Close` makes the pending read fail, and that error is not an
+	// incident. Without the flag, every port change would write an error line for a
+	// shutdown we had just asked for.
 	closing atomic.Bool
-	// dead : la boucle de lecture a rendu la main sur une erreur qu'on ne lui
-	// demandait pas. C'est ce qui empeche la MORT SILENCIEUSE du canal, et il fallait
-	// le prevoir en quittant gosnmp : sa boucle, elle, ignorait ses erreurs de lecture
-	// et tournait pour toujours. Une socket qui reste enregistree dans le collecteur
-	// alors que plus personne ne la lit serait indiscernable d'un parc calme —
-	// exactement le mode failure que tout ce fichier combat. reconcileTraps la relie
-	// donc comme si la consigne avait changed.
+	// dead: the read loop returned on an error nobody asked of it. This is what
+	// prevents the channel's SILENT DEATH, and it had to be planned for when leaving
+	// gosnmp: its loop ignored its read errors and spun forever. A socket that stays
+	// registered in the collector while nobody reads it any more would be
+	// indistinguishable from a quiet fleet — exactly the failure mode this whole
+	// file fights. reconcileTraps therefore rebinds it as if the instruction had
+	// changed.
 	dead atomic.Bool
 }
 
@@ -619,17 +618,17 @@ func (r *trapReceiver) stop() {
 	_ = r.conn.Close()
 }
 
-// dstKnown : cette socket sait-elle dire a quelle adresse un datagramme was
-// adresse ? Ce que le proxy annonce a son demarrage, parce que c'est la difference
-// entre une preuve attribuee et une preuve qui n'est qu'un pari.
+// dstKnown: can this socket tell which address a datagram was sent to? The
+// proxy announces it at startup, because it is the difference between an
+// attributed proof and a proof that is only a bet.
 func (r *trapReceiver) dstKnown() bool { return r != nil && (r.p4 != nil || r.p6 != nil) }
 
-// startTrapReceiver lie la socket, reclame au noyau l'adresse de destination des
-// datagrams, et demarre la lecture.
+// startTrapReceiver binds the socket, asks the kernel for the datagrams'
+// destination address, and starts reading.
 func startTrapReceiver(port int, handle trapHandler) (*trapReceiver, error) {
-	// Adresse JOKER, comme avant : le proxy ne sait pas laquelle de ses adresses un
-	// device va viser — c'est precisely la question a laquelle PKTINFO repond.
-	// Une IP nulle rend la same socket double pile que le « 0.0.0.0:162 » d'avant.
+	// WILDCARD address, as before: the proxy does not know which of its addresses a
+	// device will target — that is precisely the question PKTINFO answers. A nil IP
+	// gives the same dual-stack socket as the "0.0.0.0:162" of before.
 	var conn, err = net.ListenUDP("udp", &net.UDPAddr{Port: port})
 	if err != nil {
 		return nil, err
@@ -642,13 +641,14 @@ func startTrapReceiver(port int, handle trapHandler) (*trapReceiver, error) {
 	if ok {
 		r.bound = local.Port
 	}
-	// L'ORDRE suit la FAMILLE de la socket, et il n'est pas interchangeable :
-	// IPV6_RECVPKTINFO n'existe que sur une socket AF_INET6 — ce que rend une ecoute
-	// joker sur un hote a double pile, et where le noyau rapporte aussi la destination
-	// des datagrams IPv4 sous forme mappee — tandis qu'IP_PKTINFO n'existe que sur
-	// une AF_INET, le cas d'un hote sans IPv6. On demande donc l'un, puis l'autre, et
-	// on se passe des deux si le noyau refuse : un trap dont on ignore la destination
-	// reste un trap recu, et le controleur sait dire ce qu'une telle preuve vaut.
+	// The ORDER follows the socket's FAMILY, and it is not interchangeable:
+	// IPV6_RECVPKTINFO only exists on an AF_INET6 socket — which is what a wildcard
+	// listen on a dual-stack host gives, and where the kernel also reports the
+	// destination of IPv4 datagrams in mapped form — while IP_PKTINFO only exists on
+	// an AF_INET one, the case of a host without IPv6. So we ask for one, then the
+	// other, and do without both if the kernel refuses: a trap whose destination is
+	// unknown is still a received trap, and the controller knows what such a proof
+	// is worth.
 	var p6 = ipv6.NewPacketConn(conn)
 	if p6.SetControlMessage(ipv6.FlagDst, true) == nil {
 		r.p6 = p6
@@ -662,13 +662,13 @@ func startTrapReceiver(port int, handle trapHandler) (*trapReceiver, error) {
 	return r, nil
 }
 
-// trapDstAddr normalise l'adresse de destination rendue par le noyau.
+// trapDstAddr normalises the destination address returned by the kernel.
 //
-// Unmap pour la raison de classifyTrap : une socket double pile rend
-// « ::ffff:10.42.0.67 » there where le controleur a written « 10.42.0.67 » dans
-// the device, et comparer les textes ferait echouer l'attribution selon l'humeur
-// de la pile de l'hote. Une adresse absente ou joker ne dit rien et vaut donc
-// « je ne sais pas » — ce qui est un result, pas une valeur par default.
+// Unmap for classifyTrap's reason: a dual-stack socket returns
+// "::ffff:10.42.0.67" where the controller wrote "10.42.0.67" into the device,
+// and comparing the texts would make attribution fail depending on the mood of
+// the host's stack. An absent or wildcard address says nothing and therefore
+// means "I don't know" — which is a result, not a default value.
 func trapDstAddr(ip net.IP) netip.Addr {
 	var addr, ok = netip.AddrFromSlice(ip)
 	if !ok {
@@ -681,7 +681,7 @@ func trapDstAddr(ip net.IP) netip.Addr {
 	return addr
 }
 
-// read rend le datagramme ET l'adresse locale a laquelle il was adresse.
+// read returns the datagram AND the local address it was sent to.
 func (r *trapReceiver) read(buf []byte) (int, netip.Addr, *net.UDPAddr, error) {
 	var n int
 	var src net.Addr
@@ -709,45 +709,44 @@ func (r *trapReceiver) read(buf []byte) (int, netip.Addr, *net.UDPAddr, error) {
 	return n, trapDstAddr(dst), udp, err
 }
 
-// readLoop lit, decodes, et rend la main au filtre.
+// readLoop reads, decodes, and hands over to the filter.
 //
-// UNE seule goroutine, comme la boucle de gosnmp qu'elle remplace : `onTrap` est
-// written pour be appele dans le chemin critique de la socket et n'y bloque pas
-// (le poll part dans un minuteur).
+// ONE goroutine only, like the gosnmp loop it replaces: `onTrap` is written to
+// be called on the socket's critical path and does not block there (the poll
+// leaves in a timer).
 func (r *trapReceiver) readLoop() {
 	for {
-		// Un tampon NEUF par datagramme, comme gosnmp, et pas un tampon reused —
-		// l'economie serait un trap. `decodeValue` rend les `OctetString` d'un varbind
-		// en TRANCHANT dans le tampon de lecture (`retVal.Value = data[cursor:length]`) :
-		// le paquet decode alias donc ce tampon, et le tour de boucle suivant ecraserait
-		// silencieusement le contenu d'un paquet encore en cours de traitement. Le filtre
-		// actuel n'en lit que des strings already copiees, mais 4 Ko par trap est un prix
-		// derisoire pour que ca reste vrai le jour where quelqu'un voudra lire un varbind.
+		// A FRESH buffer per datagram, like gosnmp, and not a reused one — the saving
+		// would be a trap. `decodeValue` returns a varbind's `OctetString`s by SLICING
+		// into the read buffer (`retVal.Value = data[cursor:length]`): the decoded
+		// packet therefore aliases that buffer, and the next loop iteration would
+		// silently overwrite the content of a packet still being processed. The current
+		// filter only reads strings that are already copied, but 4 KB per trap is a
+		// trivial price for that to stay true the day someone wants to read a varbind.
 		//
-		// 4096 octets, la taille de gosnmp : au-dela le datagramme est tronque, donc
-		// rejete au decoding — et un device qui emet des traps de 4 Ko a un autre
-		// probleme que sa reactivity.
+		// 4096 bytes, gosnmp's size: beyond that the datagram is truncated, hence
+		// rejected at decoding — and a device that emits 4 KB traps has a bigger
+		// problem than its responsiveness.
 		var buf = make([]byte, 4096)
 		var n, dst, src, err = r.read(buf)
 		if err != nil {
 			if r.closing.Load() {
 				return
 			}
-			// Une socket UDP liee ne se « casse » pas en cours de route : l'erreur est
-			// soit l'arret qu'on vient de demander, soit un incident dont on ne se
-			// remet pas en reessayant en boucle serree. On le dit, on se declares morte,
-			// et reconcileTraps relie une socket neuve a la seconde suivante — avec son
-			// amortissement si le bind fails a son tour.
-			slog.Warn("lecture des traps interrompue — la socket va be reliee",
+			// A bound UDP socket does not "break" along the way: the error is either the
+			// shutdown we just asked for, or an incident one does not recover from by
+			// retrying in a tight loop. Say so, declare ourselves dead, and reconcileTraps
+			// binds a fresh socket the next second — with its throttling if the bind fails
+			// in turn.
+			slog.Warn("trap reading interrupted — the socket will be rebound",
 				"err", err, "port", r.bound)
 			r.dead.Store(true)
 			return
 		}
 		var pkt, decErr = r.params.UnmarshalTrap(buf[:n], false)
 		if decErr != nil {
-			// 162/udp receives de tout sur un network de production. Un datagramme
-			// indecodable est du bruit, pas un incident : DEBUG, comme une source non
-			// surveillee.
+			// 162/udp receives everything on a production network. An undecodable datagram
+			// is noise, not an incident: DEBUG, like an unwatched source.
 			slog.Debug("trap indecodable", "err", decErr, "src", src)
 			continue
 		}
@@ -756,15 +755,15 @@ func (r *trapReceiver) readLoop() {
 	}
 }
 
-// answerInform repond a un `InformRequest`, qui est un trap ACQUITTE : sans
-// response, l'emetteur retransmet puis abandonne.
+// answerInform answers an `InformRequest`, which is an ACKNOWLEDGED trap:
+// without a response, the sender retransmits then gives up.
 //
-// Reprise de gosnmp.TrapListener, parce que la perdre serait une regression
-// silencieuse. meshcraft ne pose jamais d'inform — `instanton.ApplyTrapReceiver`
-// declares un destinataire de traps — mais un device configure a la main peut en
-// emettre, et il n'a pas a retransmettre pour rien. Le paquet est renvoye tel quel,
-// variables comprises (RFC 3416 § 4.2.4) : c'est ce que l'emetteur attend pour
-// solder sa retransmission.
+// Carried over from gosnmp.TrapListener, because losing it would be a silent
+// regression. meshcraft never sets up informs — `instanton.ApplyTrapReceiver`
+// declares a trap recipient — but a hand-configured device may emit them, and it
+// has no reason to retransmit for nothing. The packet is sent back as is,
+// variables included (RFC 3416 § 4.2.4): that is what the sender expects to
+// settle its retransmission.
 func (r *trapReceiver) answerInform(pkt *gosnmp.SnmpPacket, src *net.UDPAddr) {
 	if pkt == nil || src == nil || pkt.PDUType != gosnmp.InformRequest {
 		return
@@ -777,14 +776,13 @@ func (r *trapReceiver) answerInform(pkt *gosnmp.SnmpPacket, src *net.UDPAddr) {
 		return
 	}
 	if _, err = r.conn.WriteToUDP(out, src); err != nil {
-		slog.Debug("response a un inform non envoyee", "err", err, "src", src)
+		slog.Debug("inform response not sent", "err", err, "src", src)
 	}
 }
 
-// onTrap est appelee par la boucle de lecture de gosnmp, donc dans le chemin
-// critique de la socket : elle filtre, decide, et rend la main. Le poll part dans
-// un minuteur, jamais ici — retenir cette goroutine ferait perdre les traps
-// suivants de la rafale.
+// onTrap is called by the read loop, hence on the socket's critical path: it
+// filters, decides, and returns. The poll leaves in a timer, never here —
+// holding this goroutine would lose the following traps of the burst.
 func (c *SNMPCollector) onTrap(pkt *gosnmp.SnmpPacket, src *net.UDPAddr, dst netip.Addr) {
 	c.mu.Lock()
 	c.trapStats.received++
@@ -795,10 +793,10 @@ func (c *SNMPCollector) onTrap(pkt *gosnmp.SnmpPacket, src *net.UDPAddr, dst net
 	if src != nil {
 		srcIP = src.IP.String()
 	}
-	// L'adresse VISEE, ou rien du tout. Un « je ne sais pas » se transmet en clair :
-	// le combler par l'adresse que le proxy croit employer pour joindre the device
-	// rendrait la verification du controleur tautologique, puisque c'est precisely
-	// cette adresse-there qui est l'hypothese a verify.
+	// The TARGETED address, or nothing at all. An "I don't know" is passed on
+	// openly: filling it with the address the proxy believes it uses to reach the
+	// device would make the controller's check tautological, since that address is
+	// precisely the hypothesis to verify.
 	var dstAddr string
 	if dst.IsValid() {
 		dstAddr = dst.String()
@@ -816,49 +814,49 @@ func (c *SNMPCollector) onTrap(pkt *gosnmp.SnmpPacket, src *net.UDPAddr, dst net
 	c.mu.Unlock()
 
 	if verdict != trapAccepted {
-		var reason = "source non surveillee"
+		var reason = "unwatched source"
 		if verdict == trapBadCommunity {
-			reason = "community inattendue"
+			reason = "unexpected community"
 		}
-		slog.Debug("trap ignored", "raison", reason, "src", srcIP, "oid", oid)
+		slog.Debug("trap ignored", "reason", reason, "src", srcIP, "oid", oid)
 		return
 	}
-	slog.Debug("trap recu", "device", w.DeviceID, "ip", srcIP, "oid", oid, "trap", label,
+	slog.Debug("trap received", "device", w.DeviceID, "ip", srcIP, "oid", oid, "trap", label,
 		"destination", dstAddr)
 
-	// La preuve du chemin retour, au premier trap accepted et a lui seul.
+	// The return-path proof, on the first accepted trap and on it alone.
 	//
-	// Placee ICI, entre le filtre identity et l'amortissement, et c'est le point
-	// important : ce qui prouve le chemin, c'est qu'un trap de cet device soit
-	// ARRIVE et reconnu, pas qu'il ait obtenu un poll. Un trap absorbe par la
-	// fenetre de regroupement (admit rendant false) a traverse le same pare-feu, la
-	// same route et la same ACL que celui qui l'a ouverte : le mettre after `admit`
-	// ferait dependre la preuve de l'ordonnancement, et un device dont le
-	// premier trap tomberait dans une rafale en cours resterait indefiniment
-	// « adresse applied, chemin non verified » a the UI.
+	// Placed HERE, between the identity filter and the throttling, and that is the
+	// important point: what proves the path is that a trap from this device
+	// ARRIVED and was recognised, not that it earned a poll. A trap absorbed by the
+	// grouping window (admit returning false) went through the same firewall, the
+	// same route and the same ACL as the one that opened it: putting this after
+	// `admit` would make the proof depend on scheduling, and a device whose first
+	// trap fell into an ongoing burst would stay indefinitely "address applied,
+	// path not verified" in the UI.
 	//
-	// En revanche AVANT le filtre, jamais : n'importe qui sur le chemin pourrait
-	// alors fabriquer la preuve d'un device qui, lui, n'a rien emis.
+	// BEFORE the filter, on the other hand, never: anyone on the path could then
+	// fabricate the proof of a device that emitted nothing.
 	//
-	// L'transmit ne bloque pas le chemin critique de la socket (cf. emitEvent), et
-	// se fait hors du verrou de la porte — sinon le canal de sortie du Monitor
-	// commanderait la duree de vie d'un verrou pris a chaque trap du parc.
+	// Emitting does not block the socket's critical path (see emitEvent), and
+	// happens outside the gate's lock — otherwise the Monitor's output channel
+	// would govern the lifetime of a lock taken on every trap of the fleet.
 	if c.trapGate.firstSeen(w.DeviceID) {
 		c.emitEvent(tunnel.Event{
 			Type: tunnel.EventTrapSeen, DeviceID: w.DeviceID,
-			// L'IP de la WATCH, pas celle de la socket : c'est l'adresse que le
-			// controleur connait, et classifyTrap vient de garantir qu'elles
-			// designent le same hote. Recopier la source rendrait « ::ffff:10.0.0.5 »
-			// un jour sur deux, selon la pile network de l'hote.
+			// The WATCH's IP, not the socket's: it is the address the controller knows,
+			// and classifyTrap has just guaranteed they designate the same host. Copying
+			// the source would give "::ffff:10.0.0.5" every other day, depending on the
+			// host's network stack.
 			IP: w.IP,
-			// L'adresse LOCALE visee, elle, vient bien de la socket et de nulle part
-			// ailleurs : c'est le seul fait de ce paquet que le proxy connaisse et que
-			// le controleur ne puisse pas deduire. C'est lui qui rend la preuve
-			// attribuable a la destination written (cf. tunnel.Event.DestAddr).
+			// The targeted LOCAL address, by contrast, does come from the socket and from
+			// nowhere else: it is the only fact of this packet the proxy knows and the
+			// controller cannot deduce. It is what makes the proof attributable to the
+			// written destination (see tunnel.Event.DestAddr).
 			DestAddr: dstAddr,
-			// Pas de Trigger : ce champ dit ce qui a economise l'attente sur une
-			// TRANSITION (cf. tunnel.Event.Trigger), et il n'y en a aucune ici. Le
-			// type de l'evenement dit already qu'un trap est passe.
+			// No Trigger: that field says what saved the wait on a TRANSITION (see
+			// tunnel.Event.Trigger), and there is none here. The event type already says a
+			// trap got through.
 			Detail: trapSeenDetail(oid, label),
 		})
 	}
@@ -880,46 +878,44 @@ func (c *SNMPCollector) onTrap(pkt *gosnmp.SnmpPacket, src *net.UDPAddr, dst net
 
 // trapPoll execute le poll de confirmation, SUR LE PROXY.
 //
-// Aucun aller-retour au controleur : le trap arrive ici, la response est ici, et
-// demander la permission a travers le WAN annulerait la seconde qu'on vient de
-// gagner. Le controleur receives le RESULT, sous la forme d'un evenement de port
-// comme les autres.
+// No round trip to the controller: the trap arrives here, the response is here,
+// and asking permission across the WAN would cancel the second we just gained.
+// The controller receives the RESULT, in the form of a port event like any
+// other.
 func (c *SNMPCollector) trapPoll(deviceID string) {
 	var label = c.trapGate.release(deviceID, time.Now())
 
 	c.mu.Lock()
-	// La watch est relue MAINTENANT et pas au moment du trap : la fenetre de
-	// regroupement laisse le temps a une nouvelle WatchConfig d'arriver, et
-	// interroger avec une community stale echouerait sans raison visible.
+	// The watch is re-read NOW and not at trap time: the grouping window leaves
+	// time for a new WatchConfig to arrive, and polling with a stale community
+	// would fail for no visible reason.
 	var w, found = findWatch(c.watches, deviceID)
 	if found {
-		// Le trap AVANCE le poll `if_state` : on decale la cadence ordinaire
-		// d'autant. Sans ca, le cycle regulier relirait la same table dans la
-		// seconde — deux walks pour une information, sur the device qui est
-		// justement en train d'avoir un probleme.
+		// The trap BRINGS FORWARD the `if_state` poll: the ordinary cadence is shifted
+		// by as much. Without that, the regular cycle would re-read the same table
+		// within the second — two walks for one piece of information, on the very
+		// device that is having a problem.
 		c.last[deviceID+"|state"] = time.Now()
 	}
 	c.mu.Unlock()
 	if !found {
-		return // retire de la surveillance entre-temps : rien a confirmer
+		return // removed from monitoring in the meantime: nothing to confirm
 	}
 	c.job(context.Background(), targetOf(w), snmppoll.MetricIfState, triggerTrap, label)()
 }
 
-// --- Cycle de vie de l'ecoute ---
+// --- Listener lifecycle ---
 
-// trapSettings lit dans la configuration de surveillance ce qui concerne les
-// traps.
+// trapSettings reads what concerns traps from the monitoring configuration.
 //
-// Pourquoi aller la chercher, au lieu de la recevoir ? `Monitor.SetConfig` est le
-// point ingress de la WatchConfig, mais il ne transmet au collecteur que
-// `cfg.SNMP`, et il le fait AVANT to write `m.cfg` — un collecteur qui lirait la
-// config depuis SetWatches lirait donc la PRECEDENTE, ce qui est le genre de
-// decalage d'une config qu'aucun test ne rattrape. La reconciliation se fait
-// ailleurs, depuis la boucle du collecteur : idempotente par construction, elle
-// ne relie aucune socket quand rien n'a changed, et au pire une seconde s'ecoule
-// avant qu'un changement prenne effet — sur un canal dont le role est justement
-// de n'be qu'un accelerateur.
+// Why fetch it, instead of receiving it? `Monitor.SetConfig` is the entry point
+// of the WatchConfig, but it only passes `cfg.SNMP` to the collector, and it
+// does so BEFORE writing `m.cfg` — a collector reading the config from
+// SetWatches would therefore read the PREVIOUS one, the kind of config lag no
+// test catches. Reconciliation happens elsewhere, from the collector's loop:
+// idempotent by construction, it rebinds no socket when nothing changed, and at
+// worst one second passes before a change takes effect — on a channel whose
+// role is precisely to be only an accelerator.
 func (m *Monitor) trapSettings() (bool, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -930,11 +926,11 @@ func (m *Monitor) trapSettings() (bool, int) {
 	return m.cfg.TrapListen, port
 }
 
-// trapLoop tient l'ecoute des traps alignee sur la configuration.
+// trapLoop keeps the trap listener aligned with the configuration.
 //
-// Dans sa PROPRE goroutine : lier ou fermer une socket peut prendre quelques
-// secondes (gosnmp attend la fin de sa boucle de lecture), et ce delai n'a rien a
-// faire dans la boucle qui interroge le parc.
+// In its OWN goroutine: binding or closing a socket may take a few seconds
+// (gosnmp waits for its read loop to finish), and that delay has no business
+// in the loop that polls the fleet.
 func (c *SNMPCollector) trapLoop(ctx context.Context) {
 	var tick = time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -956,29 +952,29 @@ func (c *SNMPCollector) trapLoop(ctx context.Context) {
 	}
 }
 
-// reconcileTraps aligne la socket sur la consigne. Idempotente : rien ne bouge
-// tant que la consigne ne bouge pas — relier une socket a chaque WatchConfig
-// recue perdrait des traps a chaque changement de configuration, et ca ne se
-// verrait dans aucun journal.
+// reconcileTraps aligns the socket with the instruction. Idempotent: nothing
+// moves as long as the instruction does not — rebinding a socket on every
+// WatchConfig received would lose traps at every configuration change, and
+// that would show in no log.
 func (c *SNMPCollector) reconcileTraps(now time.Time) {
 	var listen, port = monitor.trapSettings()
 
 	c.mu.Lock()
 	var cur = c.traps
 	if !listen || port != c.trapTried {
-		// La consigne a changed : l'amortissement des echecs repart de zero.
-		// L'operator qui corrige un port n'a pas a attendre la fin d'un backoff
-		// qu'il ne voit pas.
+		// The instruction changed: failure throttling starts over from zero. The
+		// operator fixing a port should not have to wait for the end of a backoff they
+		// cannot see.
 		c.trapRetryAt, c.trapErrSaid, c.trapTried = time.Time{}, false, port
 	}
 	var retryAt = c.trapRetryAt
 	c.mu.Unlock()
 
 	if cur != nil && (!listen || cur.port != port || cur.dead.Load()) {
-		slog.Info("ecoute des traps SNMP arretee", "port", cur.port,
-			"lecture_morte", cur.dead.Load())
-		// Une socket fermee ne se rouvre pas : changer de port — ou remplacer une
-		// lecture morte — veut dire en construire une neuve.
+		slog.Info("SNMP trap listener stopped", "port", cur.port,
+			"read_dead", cur.dead.Load())
+		// A closed socket does not reopen: changing port — or replacing a dead read —
+		// means building a fresh one.
 		cur.stop()
 		c.mu.Lock()
 		c.traps = nil
@@ -997,33 +993,32 @@ func (c *SNMPCollector) reconcileTraps(now time.Time) {
 		c.trapErrSaid = true
 		c.mu.Unlock()
 		if said {
-			slog.Debug("ecoute des traps toujours impossible", "port", port, "err", err)
+			slog.Debug("trap listener still impossible", "port", port, "err", err)
 			return
 		}
-		// UNE fois, et fort — puis on continue sans. Perdre la reactivity n'est pas
-		// perdre la supervision ; faire semblant d'ecouter serait le pire result,
-		// parce qu'un operator croirait voir ses ports tomber en une seconde.
-		slog.Error("ecoute des traps SNMP impossible — la supervision continue sans "+
-			"le chemin rapide, les transitions de port seront views a la cadence de "+
-			"polling (port already pris par un autre collecteur ? "+
-			"CAP_NET_BIND_SERVICE manquante ?)", "port", port, "err", err)
+		// ONCE, and loudly — then carry on without. Losing responsiveness is not losing
+		// monitoring; pretending to listen would be the worst outcome, because an
+		// operator would believe they see their ports go down within a second.
+		slog.Error("SNMP trap listener impossible — monitoring continues without "+
+			"the fast path, port transitions will be seen at the polling cadence "+
+			"(port already taken by another collector? "+
+			"CAP_NET_BIND_SERVICE missing?)", "port", port, "err", err)
 		return
 	}
 	c.mu.Lock()
 	c.traps = rec
 	c.mu.Unlock()
-	slog.Info("ecoute des traps SNMP active", "port", port,
-		"destination_lisible", rec.dstKnown())
+	slog.Info("SNMP trap listener active", "port", port,
+		"destination_readable", rec.dstKnown())
 	if !rec.dstKnown() {
-		// Une fois par bind, et fort : la supervision reactive fonctionne, mais ce
-		// proxy ne pourra pas dire a laquelle de ses adresses un device adresse ses
-		// traps. Le controleur enregistrera donc des preuves NON ATTRIBUEES — « les
-		// traps arrivent ici », sans pouvoir affirmer que c'est bien l'adresse written
-		// dans the device qui les receives. Le taire laisserait croire a une
-		// verification qui n'a pas lieu.
-		slog.Warn("ce noyau ne rend pas l'adresse de destination des datagrams " +
-			"(PKTINFO refused) : les traps sont recus normalement, mais la preuve du " +
-			"chemin retour ne pourra pas be attribuee a l'adresse written dans " +
+		// Once per bind, and loudly: reactive monitoring works, but this proxy will
+		// not be able to say which of its addresses a device sends its traps to. The
+		// controller will therefore record UNATTRIBUTED proofs — "traps arrive here",
+		// without being able to assert that it is the address written into the device
+		// that receives them. Keeping quiet would suggest a check that does not happen.
+		slog.Warn("this kernel does not return the datagrams' destination address " +
+			"(PKTINFO refused): traps are received normally, but the return-path " +
+			"proof cannot be attributed to the address written into " +
 			"the device")
 	}
 }
@@ -1044,7 +1039,7 @@ func (c *SNMPCollector) logTrapStats() {
 	if !listening && s.received == 0 {
 		return
 	}
-	slog.Debug("bilan des traps", "recus", s.received, "polls_declenches", s.accepted,
-		"absorbes", s.absorbed, "source_inconnue", s.unknownSource,
-		"communaute_invalide", s.badCommunity)
+	slog.Debug("trap summary", "received", s.received, "polls_triggered", s.accepted,
+		"absorbed", s.absorbed, "unknown_source", s.unknownSource,
+		"bad_community", s.badCommunity)
 }

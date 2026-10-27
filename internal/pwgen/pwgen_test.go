@@ -95,7 +95,7 @@ func TestRefusesTooShort(t *testing.T) {
 // from here already satisfies it — adding punctuation to this alphabet would make
 // that reasoning false and would file, under a shared tag, secrets part of the
 // fleet would reject.
-func TestAlphabetSansPonctuation(t *testing.T) {
+func TestAlphabetWithoutPunctuation(t *testing.T) {
 	if len(Alphabet) != 62 {
 		t.Fatalf("alphabet of %d characters, expected 62 (26+26+10)", len(Alphabet))
 	}
@@ -117,9 +117,9 @@ func TestAlphabetSansPonctuation(t *testing.T) {
 // Length is the project's only rule for "what length under which bounds". Two
 // competing calculations, and someday the tag announces 15 while the secret is
 // actually 16: the credential would be filed under a name that lied.
-func TestLengthSousContraintes(t *testing.T) {
+func TestLengthUnderConstraints(t *testing.T) {
 	var cas = []struct {
-		nom      string
+		name     string
 		min, max int
 		want     int
 	}{
@@ -133,7 +133,7 @@ func TestLengthSousContraintes(t *testing.T) {
 	}
 	var c = cas[0]
 	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			var got, err = Length(c.min, c.max)
 			if err != nil {
 				t.Fatalf("bounds %d..%d wrongly refused: %v", c.min, c.max, err)
@@ -165,9 +165,9 @@ func TestLengthSousContraintes(t *testing.T) {
 // Truncating would set a password the device rejects AFTER write, i.e. at the
 // worst moment; yielding eight characters on a platform capped at six would leave
 // meshcraft believing a secret was set when it was not.
-func TestContrainteImpossible(t *testing.T) {
+func TestImpossibleConstraint(t *testing.T) {
 	var cas = []struct {
-		nom      string
+		name     string
 		min, max int
 	}{
 		{"floor above cap", 20, 15},
@@ -177,7 +177,7 @@ func TestContrainteImpossible(t *testing.T) {
 	}
 	var c = cas[0]
 	for _, c = range cas {
-		t.Run(c.nom, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			var _, err = Length(c.min, c.max)
 			if err == nil {
 				t.Fatalf("bounds %d..%d accepted: a silently truncated secret "+

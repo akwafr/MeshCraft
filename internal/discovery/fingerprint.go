@@ -27,7 +27,7 @@ func re(p string) *regexp.Regexp { return regexp.MustCompile("(?i)" + p) }
 // These entries are used to IDENTIFY the device and to read its
 // configuration. They are not yet write connectors: driving the
 // configuration of a Cisco or an Aruba requires the phase-2 work (see
-// docs/01-Architecture/Connecteurs).
+// docs/en/01-Architecture/Connectors.md).
 var matchers = []Matcher{
 	// Aruba Instant On: BEFORE the generic HPE/Aruba entries, otherwise
 	// "hpe-procurve" would catch the range. These switches are WEB-ONLY
@@ -37,6 +37,18 @@ var matchers = []Matcher{
 	{Driver: "aruba-instant-on-1930", Vendor: "Aruba (HPE)",
 		Re:         re(`Instant\s?On`),
 		ConfigNote: "Web-only range: the configuration is read through the web interface, not the CLI."},
+	// Arista BEFORE the Cisco entries, and this is not a preference of ordering
+	// but the only thing that keeps the two apart. EOS is deliberately
+	// IOS-shaped: its banners and its `show version` answer to
+	// `IOS Software`-adjacent phrasings on some trains, and the CLI it presents
+	// takes `show version` and `configure` exactly as a Catalyst does. The word
+	// "Arista", on the other hand, appears in no Cisco output — so matching it
+	// first is what stops an EOS switch being handed to the IOS connector, whose
+	// command set differs from this one in precisely the lines a provisioning
+	// run depends on (the address form, the default route, trunk encapsulation).
+	// Connector: internal/driver/arista/eos.
+	{Driver: "arista-eos", Vendor: "Arista", Re: re(`Arista|EOS-4\.|\b(?:DCS|CCS)-7\d{3}`),
+		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-config"},
 	{Driver: "cisco-nxos", Vendor: "Cisco", Re: re(`NX-OS|Nexus`),
 		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-config"},
 	{Driver: "cisco-ios", Vendor: "Cisco", Re: re(`Cisco IOS|IOS-XE|IOS Software|Catalyst|WS-C\d|C9[23]00`),
@@ -61,6 +73,18 @@ var matchers = []Matcher{
 	// Connector: internal/driver/mikrotik/routeros.
 	{Driver: "mikrotik-routeros", Vendor: "MikroTik", Re: re(`RouterOS|ROSSSH|MikroTik`),
 		IdentCmd: "/system resource print", ConfigCmd: "/export terse"},
+	// Ubiquiti EdgeSwitch / EdgePoint / UniFi Switch — BEFORE the generic
+	// Ubiquiti entry, which also catches EdgeRouter and the access points.
+	//
+	// PageCmd CAPTURED on an EdgePoint S16 (2026-08-03): "terminal length 0"
+	// is accepted, and "no pagination" — which this entry shipped with, from
+	// the reference — answers "% Invalid input detected at '^' marker".
+	// Driver: internal/driver/ubiquiti/edgeswitch (no connector yet; serial adoption).
+	{Driver: "ubiquiti-edgeswitch", Vendor: "Ubiquiti",
+		Re:        re(`EdgeSwitch|UBNT EdgeSwitch|EdgePoint|EP-S\d+|UniFi Switch|US-\d+-\d+W`),
+		PageCmd:   "terminal length 0",
+		IdentCmd:  "show version",
+		ConfigCmd: "show running-config"},
 	{Driver: "ubiquiti", Vendor: "Ubiquiti", Re: re(`UniFi|EdgeSwitch|EdgeOS|Ubiquiti`),
 		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-config"},
 	{Driver: "extreme-exos", Vendor: "Extreme", Re: re(`ExtremeXOS|EXOS|Extreme Networks`),
@@ -75,6 +99,16 @@ var matchers = []Matcher{
 		PageCmd: "terminal length 0", IdentCmd: "show version", ConfigCmd: "show running-configuration"},
 	{Driver: "fortiswitch", Vendor: "Fortinet", Re: re(`FortiSwitch|FortiOS`),
 		IdentCmd: "get system status", ConfigCmd: "show"},
+	// FS.com S3400 PoE+ (BDCOM-style CLI) — BEFORE the S3900 entry: the two FS
+	// ranges run unrelated CLIs, and only the model string tells them apart.
+	// Ident/config commands are DOCUMENTED (S3400-48T4SP CLI reference), not
+	// yet captured on hardware.
+	// Driver: internal/driver/fs/s3400 (no connector yet; Web Serial soft-reset).
+	{Driver: "fs-s3400", Vendor: "FS.com",
+		Re:        re(`S3400|S3150-8T2FP|S3260-(8|16)T`),
+		PageCmd:   "terminal length 0",
+		IdentCmd:  "show version",
+		ConfigCmd: "show running-config"},
 	// FS.com S3900 — BEFORE the overly broad matchers. Ident/config observed
 	// in lab testing, OpCode 1.7.
 	// Connector: internal/driver/fs/s3900 (CLI builders; Web Serial soft-reset).

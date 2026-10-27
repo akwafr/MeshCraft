@@ -18,12 +18,12 @@
 // entire fleet pay for one model's constraint: a site with a CSS326 and
 // forty-eight Instant On ports would see all forty-nine secrets drop to 15
 // characters. The answer is the tagging mechanism, designed for exactly this
-// case (docs/01-Architecture/Etiquettes et portee des identifiants section 1,
+// case (docs/en/01-Architecture/Tags and credential scope.md section 1,
 // which names "a line that caps passwords at 16 characters").
 //
 // This package is therefore to admin passwords what `internal/snmpv3` is to
 // SNMPv3 identity: the SOLE JUDGE of a reserved namespace. An operational tag
-// ("regie", "scene") must never be read as a technical constraint, nor the
+// ("ops", "scene") must never be read as a technical constraint, nor the
 // reverse — and the stored tag is always the OUTPUT of [Policy.Tag], never a
 // typed string: a spelling variant would fabricate a second credential for the
 // same constraint, and the fleet would end up split in two with no screen saying
@@ -184,7 +184,7 @@ func isAlphanumeric(s string) bool {
 //
 // Deliberately BROADER than [ParseTag]: it returns true for everything bearing
 // the reserved prefix, including a form this package would not generate
-// (`pwpolicy-`, `pwpolicy-len0`, `pwpolicy-machin`). That is what input
+// (`pwpolicy-`, `pwpolicy-len0`, `pwpolicy-whatever`). That is what input
 // validation needs: refusing the ENTIRE namespace by hand is the only way to
 // prevent a spelling variant from coexisting with the canonical form. A guard
 // that forbade only valid forms would let through `pwpolicy-len015`, which looks

@@ -5,53 +5,57 @@ import (
 	"sort"
 )
 
-// Le model VLAN de SwOS pris au serieux : l'APPARTENANCE, le VLAN NATIF, et les
-// TROIS champs par port qui decident si tout cela agit ou decore.
+// The SwOS VLAN model taken seriously: MEMBERSHIP, the NATIVE VLAN, and the
+// THREE per-port fields that decide whether all of that acts or decorates.
 //
-// # POURQUOI CE FICHIER EXISTE
+// # WHY THIS FILE EXISTS
 //
-// La first livraison du connecteur posait deux choses — le masque de membres de
-// /vlan.b et le tableau `dvid` de /fwd.b — et s'arretait there. C'est la half du
-// model. /fwd.b porte trois AUTRES champs par port, tous inscriptibles, tous already
-// renvoyes a the device a chaque pose (cf. FwdWritableFields), et chacun capable
-// d'annuler ce que les deux premiers viennent to write :
+// The connector's first delivery set two things — the /vlan.b member mask and
+// the /fwd.b `dvid` array — and stopped there. That is half of the model.
+// /fwd.b carries three OTHER per-port fields, all writable, all already sent
+// back to the device on every write (cf. FwdWritableFields), and each able to
+// cancel what the first two have just written:
 //
 //	`vlan` (FieldVLANMode)     — 0 disabled, 1 optional, 2 enabled, 3 strict.
-//	                            A `disabled`, le port IGNORE la table des VLAN :
-//	                            l'appartenance et le VLAN natif sont configures et
-//	                            SANS EFFET.
-//	`vlni` (FieldVLANReceive)  — 0 any, 1 only tagged, 2 only untagged. Un port
-//	                            access en « only tagged » jette tout son trafic.
-//	`fvid` (FieldForceVLAN)    — masque. Un port en « Force VLAN ID » range TOUT son
-//	                            trafic entrant dans son VLAN natif, tags
-//	                            comprises : il n'est plus un trunk, quoi que la
-//	                            table dise de lui.
+//	                            At `disabled`, the port IGNORES the VLAN table:
+//	                            membership and native VLAN are configured and
+//	                            WITHOUT EFFECT.
+//	`vlni` (FieldVLANReceive)  — 0 any, 1 only tagged, 2 only untagged. An
+//	                            access port on "only tagged" drops all its
+//	                            traffic.
+//	`fvid` (FieldForceVLAN)    — mask. A port on "Force VLAN ID" puts ALL its
+//	                            incoming traffic into its native VLAN, tags
+//	                            included: it is no longer a trunk, whatever the
+//	                            table says about it.
 //
-// La lecture state les taisait aussi, sauf `vlan`. Un UI pouvait donc present
-// un trunk de trois VLAN sur un port qui force tout dans le VLAN 1.
+// The state read kept quiet about them too, except `vlan`. A UI could
+// therefore present a three-VLAN trunk on a port that forces everything into
+// VLAN 1.
 //
-// # CE QUE CE FICHIER WRITES, ET CE QU'IL REFUSE WRITE
+// # WHAT THIS FILE WRITES, AND WHAT IT REFUSES TO WRITE
 //
-// Il written UN seul de ces trois champs, `vlan`, et seulement pour le FAIRE MONTER de
-// `disabled` a `enabled`. Les raisons de ne pas toucher aux autres sont dans
-// [ModeRaise] et [receivePolicy] — elles tiennent toutes a la same chose : sur cette
-// plateforme, resserrer un filtre est un geste qui JETTE du trafic, et il n'y a ni
-// console de secours, ni retour arriere.
+// It writes ONE of these three fields, `vlan`, and only to RAISE it from
+// `disabled` to `enabled`. The reasons for not touching the others are in
+// [ModeRaise] and [receivePolicy] — they all come down to the same thing: on
+// this platform, tightening a filter is a gesture that DROPS traffic, and
+// there is neither a recovery console nor a way back.
 //
-// Source de la semantique des valeurs : la documentation SwOS de MikroTik (manuel de
-// la gamme CSS610, section VLAN), corroborated par les valeurs observed sur le
-// CSS326-24G-2S+ de reference — `vlan:[0x01 × 26]` (« optional », le default),
-// `vlni:[0x00 × 26]` (« any »), `fvid:0x00000000` (personne).
+// Source for the semantics of the values: MikroTik's SwOS documentation (CSS610
+// range manual, VLAN section), corroborated by the values observed on the
+// reference CSS326-24G-2S+ — `vlan:[0x01 × 26]` ("optional", the default),
+// `vlni:[0x00 × 26]` ("any"), `fvid:0x00000000` (nobody).
 
-// --- L'appartenance voulue d'un port ---
+// --- The wanted membership of a port ---
 
-// askedVLANs rend les VLAN dont un port DOIT be membre selon l'intention.
+// askedVLANs returns the VLANs a port MUST be a member of according to the
+// intent.
 //
-// Le VLAN natif compte comme une appartenance, et ce n'est pas une subtilite : sur
-// SwOS, une trame ne sort d'un port que si ce port est membre de son VLAN — le VLAN
-// natif n'echappe pas a la rule, il decide seulement de l'ETIQUETTE. Un PVID applied
-// sans appartenance donne un port qui range son trafic entrant dans un VLAN dont rien
-// ne ressort (cf. [vlanAnomalies], qui le signale quand the device le porte already).
+// The native VLAN counts as a membership, and that is not a subtlety: on
+// SwOS, a frame leaves a port only if that port is a member of its VLAN — the
+// native VLAN is no exception to the rule, it only decides the TAG. A PVID set
+// without membership gives a port that puts its incoming traffic into a VLAN
+// nothing comes out of (cf. [vlanAnomalies], which flags it when the device
+// already carries it).
 func askedVLANs(want PortState) []int {
 	var seen = map[int]bool{}
 	var out []int
@@ -71,16 +75,17 @@ func askedVLANs(want PortState) []int {
 	return out
 }
 
-// heldVLANs rend les VLAN dont un port est membre DANS LA TABLE data.
+// heldVLANs returns the VLANs a port is a member of IN THE given TABLE.
 //
-// Lu sur la table rather que sur state standard, et la difference compte : state
-// standard rend `Tagged`, i.e. l'appartenance MOINS le VLAN natif. Calculer
-// un retrait there-dessus laisserait croire qu'un port n'est pas membre de son propre
-// VLAN natif, donc ferait retirer ce qu'il faut garder.
+// Read from the table rather than from the standard state, and the
+// difference matters: the standard state returns `Tagged`, i.e. membership
+// MINUS the native VLAN. Computing a removal from that would suggest a port
+// is not a member of its own native VLAN, and so would remove what must be
+// kept.
 //
-// `ok` est faux from qu'un masque n'est pas lisible : un retrait calcule sur une
-// appartenance devinee est un retrait au hasard, et sur cette plateforme un retrait
-// coupe.
+// `ok` is false as soon as a mask is unreadable: a removal computed on a
+// guessed membership is a random removal, and on this platform a removal
+// cuts.
 func heldVLANs(table []*Page, index int) ([]int, error) {
 	var out []int
 	var row *Page
@@ -92,8 +97,8 @@ func heldVLANs(table []*Page, index int) ([]int, error) {
 		var member bool
 		member, ok = row.Bit(FieldVLANMembers, index)
 		if !ok {
-			return nil, fmt.Errorf("/vlan.b : le masque de membres du VLAN %d n'est pas "+
-				"lisible au rang %d (champ « %s » absent ou de forme inattendue)",
+			return nil, fmt.Errorf("/vlan.b: the member mask of VLAN %d is not "+
+				"readable at rank %d (field \"%s\" missing or of unexpected shape)",
 				vid, index, FieldVLANMembers)
 		}
 		if member {
@@ -104,79 +109,82 @@ func heldVLANs(table []*Page, index int) ([]int, error) {
 	return out, nil
 }
 
-// --- Le retrait, et les trois refus qui l'encadrent ---
+// --- Removal, and the three refusals around it ---
 
-// LeaveDecision est ce qu'une pose fait — ou refuse de faire — d'une appartenance
-// que le plan ne demande plus.
+// LeaveDecision is what a write does — or refuses to do — with a membership
+// the plan no longer asks for.
 type LeaveDecision struct {
-	// Leave : les VLAN dont le port sort actually.
+	// Leave: the VLANs the port actually leaves.
 	Leave []int
-	// Refused : les retraits que la pose s'interdit, avec leur motif, en clair.
+	// Refused: the removals the write forbids itself, with their reason, in
+	// plain words.
 	Refused []string
 }
 
-// planLeaves decide quelles appartenances un port PERD.
+// planLeaves decides which memberships a port LOSES.
 //
-// LE RETRAIT EST LA HALF MANQUANTE DE LA CONVERGENCE, et son absence n'was pas
-// neutre : un device pouvait be annonce « conforme » tout en transportant des
-// VLAN que le plan avait retires depuis des mois. La limite was dite a the UI, ce
-// qui valait mieux que le silence, mais elle laissait le parc deriver dans le sens le
-// plus couteux — un VLAN qui fuit entre deux zones ne se voit pas, et quand il se
-// voit, c'est en cherchant autre chose.
+// REMOVAL IS THE MISSING HALF OF CONVERGENCE, and its absence was not
+// neutral: a device could be announced "conforming" while carrying VLANs the
+// plan had removed months ago. The limit was stated in the UI, which was
+// better than silence, but it let the fleet drift in the most expensive
+// direction — a VLAN leaking between two zones is not seen, and when it is
+// seen, it is while looking for something else.
 //
-// TROIS REFUS l'encadrent, et chacun couvre une way documentee de se couper la
-// main sur une plateforme qui n'a ni SSH, ni Telnet, ni serial port :
+// THREE REFUSALS frame it, and each covers a documented way of locking
+// yourself out on a platform that has neither SSH, nor Telnet, nor a serial
+// port:
 //
-//  1. UN VLAN DE MANAGEMENT NE SE RETIRE PAS D'UN PORT QUI PORTE UN LIEN, sauf
-//     `force`. Ni celui du plan du site, ni celui que the device declares : rien ne
-//     dit lequel des ports actifs porte la session — SwOS ne le publie pas, et `avln`
-//     ne nomme qu'un VLAN, pas un port.
+//  1. A MANAGEMENT VLAN IS NOT REMOVED FROM A PORT THAT CARRIES A LINK, unless
+//     `force`. Neither the site plan's nor the one the device declares:
+//     nothing says which of the active ports carries the session — SwOS does
+//     not publish it, and `avln` names only a VLAN, not a port.
 //
-//     CE REFUS PORTAIT SUR TOUS LES PORTS, y compris ceux sans lien, au motif qu'« un
-//     port sans lien aujourd'hui est peut-be l'uplink de demain, et le benefit d'un
-//     tel retrait est nul ». Les deux halves de cette phrase were fausses, et le
-//     reference fleet l'a montre le 29 juillet 2026 :
+//     THIS REFUSAL USED TO COVER EVERY PORT, including those without a link,
+//     on the grounds that "a port without a link today may be tomorrow's
+//     uplink, and the benefit of such a removal is nil". Both halves of that
+//     sentence were wrong, and the reference fleet showed it on 29 July 2026:
 //
-//     LE BENEFIT N'EST PAS NUL, IL EST DE SECURITY. Sur SwOS, appartenance et
-//     tagging sont la SAME data : laisser le VLAN de management membre d'un port
-//     access, c'est laisser n'importe quel poste branche there atteindre le plan
-//     d'administration en etiquetant lui-same son trafic. C'est tres exactement le
-//     trou que l'intention « access VLAN 100 » existe pour fermer.
+//     THE BENEFIT IS NOT NIL, IT IS SECURITY. On SwOS, membership and tagging
+//     are the SAME data: leaving the management VLAN a member of an access
+//     port means letting any workstation plugged in there reach the
+//     administration plane by tagging its own traffic. That is exactly the
+//     hole the intent "access VLAN 100" exists to close.
 //
-//     ET LE COST WAS  LA CONVERGENCE, ENTIRELY. Le VLAN 99 de the device de
-//     reference est membre des VINGT-SIX ports (observed /vlan.b). Une pose demandant
-//     « les 24 ports cuivre en access VLAN 100 » ecrivait donc ZERO port et refusait
-//     vingt-quatre fois, a chaque passage, pour toujours : `ports_written` vide,
-//     quarante-huit ecarts que rien ne pouvait fermer, et un exploitant qui lit
-//     « ca ne fonctionne pas » — ce qui was le bon diagnostic.
+//     AND THE COST WAS CONVERGENCE, ENTIRELY. VLAN 99 on the reference device
+//     is a member of ALL TWENTY-SIX ports (observed /vlan.b). A write asking
+//     for "the 24 copper ports in access VLAN 100" therefore wrote ZERO ports
+//     and refused twenty-four times, on every pass, forever: `ports_written`
+//     empty, forty-eight deviations nothing could close, and an operator
+//     reading "it does not work" — which was the right diagnosis.
 //
-//     Le risque residuel, lui, exige un LIEN : une session ne traverse pas une prise
-//     vide. C'est already le critere des deux autres garde-fous de ce fichier et de
-//     [planModeRaise] ; l'appliquer ici rend le fichier consistent au lieu d'ajouter une
-//     hypothese. Un port actif qui n'est PAS celui de la session garde donc son
-//     appartenance : c'est le residu conservateur, et il est assume ;
+//     The residual risk, for its part, requires a LINK: a session does not
+//     cross an empty socket. That is already the criterion of the two other
+//     guards in this file and of [planModeRaise]; applying it here makes the
+//     file consistent instead of adding a hypothesis. An active port that is
+//     NOT the session's therefore keeps its membership: that is the
+//     conservative residue, and it is owned;
 //
-//  2. AUCUN RETRAIT SUR UN PORT ACTIF quand aucun VLAN de management n'est connu
-//     (`avln:0x00`, l'factory state : « administration accepted depuis n'importe quel
-//     VLAN »). Rien ne dit alors quel port porte la session, et retirer une
-//     appartenance de celui qui la porte la coupe ;
+//  2. NO REMOVAL ON AN ACTIVE PORT when no management VLAN is known
+//     (`avln:0x00`, the factory state: "administration accepted from any
+//     VLAN"). Nothing then says which port carries the session, and removing
+//     a membership from the one carrying it cuts it;
 //
-//  3. LE VLAN NATIF EFFECTIF n'est jamais retire. Il est dans `asked` par
-//     construction quand le plan en designe un ; ce garde-fou couvre le cas where le
-//     plan n'en designe PAS et where le port garde donc celui de the device.
+//  3. THE EFFECTIVE NATIVE VLAN is never removed. It is in `asked` by
+//     construction when the plan names one; this guard covers the case where
+//     the plan does NOT name one and the port therefore keeps the device's.
 //
-// Le VLAN 1 n'est jamais concerne : il n'a pas de ligne dans la table (cf.
-// implicitVLAN), donc rien a en retirer.
+// VLAN 1 is never affected: it has no row in the table (cf. implicitVLAN), so
+// there is nothing to remove from it.
 //
-// Fonction PURE : c'est elle qui decide de couper un VLAN sur un port, et elle doit
-// be verifiable sur les captures reelles de the device rather que sur du hardware
-// en service.
+// A PURE function: it is what decides to cut a VLAN on a port, and it must be
+// verifiable on the device's real captures rather than on hardware in
+// service.
 func planLeaves(port string, index int, want PortState, effectivePVID int,
 	table []*Page, linked bool, protected map[int]string, force bool) (LeaveDecision, error) {
 	var out LeaveDecision
 
-	// `TaggedAtLeast` means unresolved « all » (empty site plan): do not strip
-	// tagged membership. A resolved « all » has TaggedAtLeast false and an exact
+	// `TaggedAtLeast` means unresolved "all" (empty site plan): do not strip
+	// tagged membership. A resolved "all" has TaggedAtLeast false and an exact
 	// site VLAN list — removals are legitimate.
 	if want.TaggedAtLeast {
 		return out, nil
@@ -191,7 +199,7 @@ func planLeaves(port string, index int, want PortState, effectivePVID int,
 	for _, v = range askedVLANs(want) {
 		asked[v] = true
 	}
-	// Le natif effectif, qu'il vienne du plan ou de the device.
+	// The effective native VLAN, whether it comes from the plan or the device.
 	if effectivePVID > 0 {
 		asked[effectivePVID] = true
 	}
@@ -204,23 +212,23 @@ func planLeaves(port string, index int, want PortState, effectivePVID int,
 		var why, isProtected = protected[v]
 		if isProtected && linked && !force {
 			out.Refused = append(out.Refused, fmt.Sprintf(
-				"%s reste membre du VLAN %d (%s) : c'est un VLAN de MANAGEMENT et ce port "+
-					"porte un lien ACTIF. SwOS ne dit pas lequel de ses ports porte la session "+
-					"d'administration — « %s » ne nomme qu'un VLAN — donc retirer ce VLAN d'un "+
-					"port actif peut be le geste qui coupe access, sur un model qui n'a ni "+
-					"SSH, ni Telnet, ni serial port. Les ports SANS lien, eux, perdent bien cette "+
-					"appartenance : c'est ce qui permet a un access port de devenir vraiment un "+
-					"access port. Pour l'y retirer aussi, il faut forcer.",
+				"%s stays a member of VLAN %d (%s): it is a MANAGEMENT VLAN and this port "+
+					"carries an ACTIVE link. SwOS does not say which of its ports carries the "+
+					"administration session — \"%s\" names only a VLAN — so removing this VLAN "+
+					"from an active port may be the gesture that cuts access, on a model that has "+
+					"neither SSH, nor Telnet, nor a serial port. Ports WITHOUT a link do lose this "+
+					"membership: that is what lets an access port really become an "+
+					"access port. To remove it here too, it must be forced.",
 				port, v, why, FieldAllowVLAN))
 			continue
 		}
 		if mgmtUnknown && linked && !force {
 			out.Refused = append(out.Refused, fmt.Sprintf(
-				"%s reste membre du VLAN %d : il porte un lien ACTIF et the device "+
-					"accepte l'administration depuis N'IMPORTE QUEL VLAN (/sys.b « %s » = 0), "+
-					"donc rien ne dit que ce n'est pas lui qui porte la session. Sur cette "+
-					"plateforme, appartenance et tagging sont la SAME data : retirer un "+
-					"port de la liste des membres coupe ce VLAN sur ce port, sans demi-mesure.",
+				"%s stays a member of VLAN %d: it carries an ACTIVE link and the device "+
+					"accepts administration from ANY VLAN (/sys.b \"%s\" = 0), "+
+					"so nothing says it is not the one carrying the session. On this "+
+					"platform, membership and tagging are the SAME data: removing a "+
+					"port from the member list cuts that VLAN on that port, with no half measure.",
 				port, v, FieldAllowVLAN))
 			continue
 		}
@@ -230,74 +238,75 @@ func planLeaves(port string, index int, want PortState, effectivePVID int,
 	return out, nil
 }
 
-// --- Le mode VLAN : faire agir ce qu'on vient to write ---
+// --- The VLAN mode: making what was just written take effect ---
 
-// ModeRaise est la decision de mode VLAN pour UN port.
+// ModeRaise is the VLAN mode decision for ONE port.
 type ModeRaise struct {
-	// Mode est la valeur a write dans /fwd.b `vlan`.
+	// Mode is the value to write into /fwd.b `vlan`.
 	Mode uint32
-	// Change dit s'il y a quelque chose a write. Faux ne veut PAS dire « mode 0 » :
-	// VLANModeDisabled VAUT zero, et confondre les deux ferait ETEINDRE le filtrage
-	// des ports qu'on ne voulait pas toucher — l'exact inverse du but de ce code.
+	// Change says whether there is something to write. False does NOT mean
+	// "mode 0": VLANModeDisabled IS zero, and confusing the two would TURN OFF
+	// filtering on ports we did not mean to touch — the exact opposite of the
+	// purpose of this code.
 	Change bool
-	// Refused est le motif du refus, quand il y en a un.
+	// Refused is the reason for the refusal, when there is one.
 	Refused string
 }
 
-// planModeRaise decide s'il faut REVEILLER le filtrage VLAN d'un port.
+// planModeRaise decides whether to WAKE UP a port's VLAN filtering.
 //
-// # LE PROBLEME : UNE POSE REUSSIE ET SANS EFFET
+// # THE PROBLEM: A SUCCESSFUL WRITE WITH NO EFFECT
 //
-// Un port dont /fwd.b `vlan` vaut `disabled` IGNORE la table des VLAN. meshcraft
-// pouvait donc y write une appartenance et un VLAN natif, relire, tout comparer,
-// afficher « conforme » — et le port continuait de laisser tout passer. La lecture
-// state le DISAIT dans une note, ce qui was mieux que rien, mais aucune pose ne le
-// corrigeait : la seule action possible pour l'exploitant was d'aller cliquer dans
-// l'interface de the device, ce qui est exactement ce que meshcraft existe pour
-// eviter.
+// A port whose /fwd.b `vlan` is `disabled` IGNORES the VLAN table. meshcraft
+// could therefore write a membership and a native VLAN there, read back,
+// compare everything, display "conforming" — and the port kept letting
+// everything through. The state read SAID so in a note, which was better than
+// nothing, but no write fixed it: the operator's only option was to go and
+// click in the device's UI, which is exactly what meshcraft exists to avoid.
 //
-// # CE QUI EST WRITES : `disabled` → `enabled`, ET RIEN D'AUTRE
+// # WHAT IS WRITTEN: `disabled` → `enabled`, AND NOTHING ELSE
 //
-// Les quatre modes ne sont pas quatre crans d'un same reglage :
+// The four modes are not four notches of one setting:
 //
-//	disabled — la table n'est pas consultee. Ce qu'on written est decoratif.
-//	optional — le DEFAULT d'usine, et state des 26 ports de the device de
-//	           reference. La table est consultee, mais un VLAN qu'elle ne declares pas
-//	           passe librement.
-//	enabled  — filtrage a la SORTIE : une trame ne sort d'un port que s'il est membre
-//	           du VLAN.
-//	strict   — `enabled` PLUS un control a l'INGRESS : le port doit be membre du
-//	           VLAN de la trame recue.
+//	disabled — the table is not consulted. What is written is decorative.
+//	optional — the factory DEFAULT, and the state of all 26 ports of the
+//	           reference device. The table is consulted, but a VLAN it does not
+//	           declare passes freely.
+//	enabled  — EGRESS filtering: a frame leaves a port only if it is a member
+//	           of the VLAN.
+//	strict   — `enabled` PLUS an INGRESS check: the port must be a member of
+//	           the VLAN of the received frame.
 //
-// Seul le passage depuis `disabled` est fait, et seulement jusqu'a `enabled` :
+// Only the move from `disabled` is made, and only up to `enabled`:
 //
-//   - `optional` → `enabled` RESSERRE un filtre sur un port qui fonctionne
-//     aujourd'hui. Toute trame d'un VLAN que la table ne declares pas cesse de passer
-//     a la seconde where c'est written. Sur l'reference device, dont les 26 ports
-//     sont en `optional`, personne n'a requested ca — et meshcraft ne sait pas quels
-//     VLAN non declares transitent par un port ;
-//   - `enabled` → `strict` ajoute un filtre d'INGRESS, i.e. jette des trames
-//     que le port acceptait. La documentation de MikroTik le recommande en fin de
-//     configuration ; elle s'adresse a un humain qui regarde son switch, pas a une
-//     reconciliation qui repasse toutes les nuits sur deux cents devices ;
-//   - RIEN N'EST JAMAIS LOWERED. Un exploitant qui a mis `strict` l'a voulu.
+//   - `optional` → `enabled` TIGHTENS a filter on a port that works today.
+//     Every frame of a VLAN the table does not declare stops passing the
+//     second it is written. On the reference device, whose 26 ports are on
+//     `optional`, nobody asked for that — and meshcraft does not know which
+//     undeclared VLANs transit through a port;
+//   - `enabled` → `strict` adds an INGRESS filter, i.e. drops frames the port
+//     used to accept. MikroTik's documentation recommends it at the end of a
+//     configuration; it is addressed to a human watching their switch, not to
+//     a reconciliation that goes over two hundred devices every night;
+//   - NOTHING IS EVER LOWERED. An operator who set `strict` meant it.
 //
-// # LE GARDE-FOU : NE PAS FILTRER CE QU'ON N'A PAS DECLARED
+// # THE GUARD: DO NOT FILTER WHAT WAS NOT DECLARED
 //
-// `enabled` filtre a la sortie. Le poser sur un port qui n'est PAS membre d'un VLAN
-// de management, ou pas membre de son propre VLAN natif, ferait tomber ce trafic-there.
-// Le control porte donc sur l'appartenance TELLE QU'ELLE SERA AFTER la pose —
-// `members` est calcule sur la table already completee — et non sur celle d'avant :
-// c'est le same geste qui declares et qui filtre, dans cet ordre.
+// `enabled` filters on egress. Setting it on a port that is NOT a member of a
+// management VLAN, or not a member of its own native VLAN, would drop that
+// traffic. The check is therefore on the membership AS IT WILL BE AFTER the
+// write — `members` is computed on the already-completed table — and not on
+// the one before: it is the same gesture that declares and filters, in that
+// order.
 //
-// Un port SANS LIEN ne porte aucune session : le garde-fou ne s'y applique pas, sans
-// quoi un device neuf, dont tous les ports sont off, resterait a jamais en
-// filtrage disabled.
+// A port WITHOUT A LINK carries no session: the guard does not apply to it,
+// otherwise a new device, all of whose ports are down, would stay forever
+// with filtering disabled.
 func planModeRaise(port string, current uint32, members map[int]bool, effectivePVID int,
 	linked bool, protected map[int]string, force bool) ModeRaise {
 	var out ModeRaise
 	if current != VLANModeDisabled {
-		return out // rien a wake, et rien a resserrer : voir ci-dessus
+		return out // nothing to wake, and nothing to tighten: see above
 	}
 	if force {
 		out.Mode, out.Change = VLANModeEnabled, true
@@ -308,15 +317,15 @@ func planModeRaise(port string, current uint32, members map[int]bool, effectiveP
 		return out
 	}
 
-	// Le port porte un lien : il peut porter la session. On ne resserre que si tout ce
-	// qui doit continuer de sortir de ce port en sortira.
+	// The port carries a link: it may carry the session. Tighten only if
+	// everything that must keep leaving this port will leave it.
 	if effectivePVID > 0 && effectivePVID != implicitVLAN && !members[effectivePVID] {
 		out.Refused = fmt.Sprintf(
-			"%s : filtrage VLAN laisse DISABLED (/fwd.b « %s » = disabled). Son VLAN "+
-				"natif est %d et il n'est pas membre de ce VLAN dans la table : activer le "+
-				"filtrage a la sortie ferait tomber ce trafic, sur un port qui porte un lien "+
-				"ACTIF. Consequence a connaitre : l'appartenance et le VLAN natif de ce port "+
-				"sont written mais SANS EFFET tant que ce mode reste a disabled.",
+			"%s: VLAN filtering left DISABLED (/fwd.b \"%s\" = disabled). Its native "+
+				"VLAN is %d and it is not a member of that VLAN in the table: enabling "+
+				"egress filtering would drop that traffic, on a port that carries an "+
+				"ACTIVE link. Consequence to be aware of: this port's membership and native VLAN "+
+				"are written but WITHOUT EFFECT as long as this mode stays disabled.",
 			port, FieldVLANMode, effectivePVID)
 		return out
 	}
@@ -327,11 +336,11 @@ func planModeRaise(port string, current uint32, members map[int]bool, effectiveP
 			continue
 		}
 		out.Refused = fmt.Sprintf(
-			"%s : filtrage VLAN laisse DISABLED (/fwd.b « %s » = disabled). Il porte un "+
-				"lien ACTIF et n'est pas membre du VLAN de management %d (%s) : activer le "+
-				"filtrage a la sortie couperait l'administration si la session passe par ce "+
-				"port, et ce model n'a ni SSH, ni Telnet, ni serial port. L'appartenance "+
-				"written sur ce port reste donc SANS EFFET.",
+			"%s: VLAN filtering left DISABLED (/fwd.b \"%s\" = disabled). It carries an "+
+				"ACTIVE link and is not a member of management VLAN %d (%s): enabling "+
+				"egress filtering would cut administration if the session goes through this "+
+				"port, and this model has neither SSH, nor Telnet, nor a serial port. The membership "+
+				"written on this port therefore stays WITHOUT EFFECT.",
 			port, FieldVLANMode, v, protected[v])
 		return out
 	}
@@ -339,50 +348,53 @@ func planModeRaise(port string, current uint32, members map[int]bool, effectiveP
 	return out
 }
 
-// receivePolicy dit pourquoi ce connecteur does not write NI `vlni` NI `fvid`.
+// receivePolicy says why this connector writes NEITHER `vlni` NOR `fvid`.
 //
-// Ce n'est pas une capability absente de la plateforme — les deux champs existent,
-// sont inscriptibles, et sont already renvoyes a the device a chaque pose avec leur
-// valeur lue. C'est un refus to write, et il vaut d'be enonce rather que laisse au
-// silence.
+// It is not a capability missing from the platform — both fields exist, are
+// writable, and are already sent back to the device on every write with
+// their read value. It is a refusal to write, and it deserves to be stated
+// rather than left to silence.
 //
-//	`vlni` (« VLAN Receive ») — le resserrer est ce qui rend un access port
-//	  « propre » : « only untagged » lui fait jeter les trames tagged. Mais le model
-//	  standard de meshcraft ne dit PAS qu'un access port refuse le tagged, il dit quel
-//	  VLAN sort non etiquete ; et sur cette plateforme l'administration peut arriver
-//	  TAGGED sur n'importe quel port, y compris un access port (c'est le cas de
-//	  l'reference device, dont la session arrive tagged en 99 sur une cage au
-//	  VLAN natif 1). Poser « only untagged » sur un access port est donc une way
-//	  d'shut off l'administration que rien dans l'intention ne laisserait prevoir.
-//	`fvid` (« Force VLAN ID ») — il n'a aucun equivalent dans le model standard : il
-//	  range TOUT le trafic entrant dans le VLAN natif, tags comprises. Aucune
-//	  intention de meshcraft ne demande cela, donc aucune write ne doit le poser —
-//	  ni, symetriquement, le retirer a un exploitant qui l'a voulu.
+//	`vlni` ("VLAN Receive") — tightening it is what makes an access port
+//	  "clean": "only untagged" makes it drop tagged frames. But meshcraft's
+//	  standard model does NOT say an access port refuses tagged traffic, it
+//	  says which VLAN leaves untagged; and on this platform administration can
+//	  arrive TAGGED on any port, including an access port (that is the case of
+//	  the reference device, whose session arrives tagged in 99 on a cage with
+//	  native VLAN 1). Setting "only untagged" on an access port is therefore a
+//	  way to shut off administration that nothing in the intent would let
+//	  anyone foresee.
+//	`fvid` ("Force VLAN ID") — it has no equivalent in the standard model: it
+//	  puts ALL incoming traffic into the native VLAN, tags included. No
+//	  meshcraft intent asks for that, so no write must set it — nor,
+//	  symmetrically, remove it from an operator who wanted it.
 //
-// Les deux sont en revanche LUS et flagged quand ils contredisent le role du port
-// (cf. [vlanAnomalies]) : ce qu'on refuse to write, on le dit au moins a voix haute.
+// Both are, on the other hand, READ and flagged when they contradict the
+// port's role (cf. [vlanAnomalies]): what we refuse to write, we at least say
+// out loud.
 func receivePolicy() string {
-	return "ce connecteur does not write ni « VLAN Receive » (/fwd.b " + FieldVLANReceive +
-		") ni « Force VLAN ID » (/fwd.b " + FieldForceVLAN + ") : les resserrer jette du " +
-		"trafic, et le model standard n'exprime pas ce qu'il faudrait pour le decider"
+	return "this connector writes neither \"VLAN Receive\" (/fwd.b " + FieldVLANReceive +
+		") nor \"Force VLAN ID\" (/fwd.b " + FieldForceVLAN + "): tightening them drops " +
+		"traffic, and the standard model does not express what would be needed to decide it"
 }
 
-// --- La lecture : ce que trois champs par port disent et que state taisait ---
+// --- The read: what three per-port fields say and the state kept quiet ---
 
-// vlanAnomalies rend, en phrases pour un exploitant, les configurations VLAN
-// PRESENT ET CONTRADICTOIRES que la vue standard ne sait pas exprimer.
+// vlanAnomalies returns, as sentences for an operator, the PRESENT AND
+// CONTRADICTORY VLAN configurations the standard view cannot express.
 //
-// Toutes sont des etats qu'un CSS accepte sans rien signaler, et chacune fait qu'un
-// UI montrant le VLAN natif et l'appartenance d'un port DESCRIBES AUTRE CHOSE que ce
-// que le port fait du trafic. C'est le same role que la note « filtrage disabled »
-// already rendue par la lecture state, etendu aux trois champs qu'elle ne regardait
-// pas.
+// All are states a CSS accepts without flagging anything, and each one makes a
+// UI showing a port's native VLAN and membership DESCRIBE SOMETHING OTHER than
+// what the port does with the traffic. It is the same role as the "filtering
+// disabled" note the state read already returns, extended to the three fields
+// it did not look at.
 //
-// Fonction PURE, verifiable sur les captures de testdata/.
+// A PURE function, verifiable on the captures in testdata/.
 //
-// L'ORDRE VA DU PLUS GRAVE AU PLUS ANECDOTIQUE, parce qu'une liste de notes se lit du
-// haut : un port qui force tout son trafic dans un VLAN ne fait rien de ce qui est
-// affiche pour lui, un PVID sans appartenance ne casse qu'un sens de circulation.
+// THE ORDER GOES FROM MOST SERIOUS TO MOST ANECDOTAL, because a list of notes
+// is read from the top: a port that forces all its traffic into a VLAN does
+// none of what is displayed for it, a PVID without membership only breaks one
+// direction of traffic.
 func vlanAnomalies(vlanRows []*Page, fwd *Page, f Facade) []string {
 	var out []string
 	var ports = f.Ports()
@@ -394,9 +406,9 @@ func vlanAnomalies(vlanRows []*Page, fwd *Page, f Facade) []string {
 	var modes, hasModes = fwd.Nums(FieldVLANMode)
 	var recv, hasRecv = fwd.Nums(FieldVLANReceive)
 
-	// Les listes sont construites dans l'ordre de la FACADE : un tri alphabetique
-	// placerait Port10 avant Port2, et une note qui enumerates vingt-quatre ports dans cet
-	// ordre est illisible, donc equivalente a ne rien dire.
+	// The lists are built in FACEPLATE order: an alphabetical sort would put
+	// Port10 before Port2, and a note that enumerates twenty-four ports in that
+	// order is unreadable, hence equivalent to saying nothing.
 	var forced, orphans, unreachable, accessTaggedOnly, trunkUntaggedOnly, strictOrphan []string
 
 	var i int
@@ -409,9 +421,9 @@ func vlanAnomalies(vlanRows []*Page, fwd *Page, f Facade) []string {
 			forced = append(forced, name)
 		}
 
-		// L'appartenance du port a son propre VLAN natif. Le VLAN 1 n'a pas de ligne
-		// dans la table et n'en a pas besoin (cf. implicitVLAN) : il ne compte donc ni
-		// comme absent, ni comme orphelin.
+		// The port's membership of its own native VLAN. VLAN 1 has no row in
+		// the table and does not need one (cf. implicitVLAN): it therefore
+		// counts neither as absent nor as orphaned.
 		var row = rowFor(vlanRows, pvid)
 		var member bool
 		if pvid > 0 && pvid != implicitVLAN {
@@ -426,8 +438,8 @@ func vlanAnomalies(vlanRows []*Page, fwd *Page, f Facade) []string {
 			}
 		}
 
-		// Le role du port, tel que la lecture state le deduira : un port qui
-		// transporte des VLAN tagged est un trunk, les autres sont des access.
+		// The port's role, as the state read will infer it: a port that carries
+		// tagged VLANs is a trunk, the others are access ports.
 		var trunk = carriesTagged(vlanRows, i, pvid)
 		if hasRecv && i < len(recv) {
 			switch recv[i] {
@@ -449,56 +461,56 @@ func vlanAnomalies(vlanRows []*Page, fwd *Page, f Facade) []string {
 	}
 
 	if len(forced) > 0 {
-		out = append(out, "FORCE VLAN ID actif sur "+joinComma(forced)+" (/fwd.b « "+
-			FieldForceVLAN+" ») : ces ports rangent TOUT leur trafic entrant dans leur "+
-			"VLAN natif, tags comprises — une trame tagged en 30 qui entre there "+
-			"devient du VLAN natif. Ce ne sont donc PAS des trunks, quoi que la table des "+
-			"VLAN dise de leur appartenance, et la liste des VLAN tagged affichee pour eux "+
-			"ne describes rien de ce qui circule. meshcraft does not write jamais ce champ : il a been "+
-			"applied sur the device.")
+		out = append(out, "FORCE VLAN ID active on "+joinComma(forced)+" (/fwd.b \""+
+			FieldForceVLAN+"\"): these ports put ALL their incoming traffic into their "+
+			"native VLAN, tags included — a frame tagged 30 that enters there "+
+			"becomes native VLAN traffic. They are therefore NOT trunks, whatever the VLAN "+
+			"table says about their membership, and the list of tagged VLANs displayed for them "+
+			"describes nothing of what flows. meshcraft never writes this field: it was "+
+			"set on the device.")
 	}
 	if len(strictOrphan) > 0 {
-		out = append(out, "FILTRAGE STRICT SANS APPARTENANCE sur "+joinComma(strictOrphan)+
-			" (/fwd.b « "+FieldVLANMode+" » = strict) : le mode strict control "+
-			"l'appartenance A L'INGRESS, et ces ports ne sont pas membres de leur propre "+
-			"VLAN natif. Leur trafic untagged est donc jete from la receive — le port est "+
-			"configure, actif, et muet.")
+		out = append(out, "STRICT FILTERING WITHOUT MEMBERSHIP on "+joinComma(strictOrphan)+
+			" (/fwd.b \""+FieldVLANMode+"\" = strict): strict mode checks "+
+			"membership ON INGRESS, and these ports are not members of their own "+
+			"native VLAN. Their untagged traffic is therefore dropped on receive — the port is "+
+			"configured, active, and mute.")
 	}
 	if len(unreachable) > 0 {
-		out = append(out, "VLAN NATIF ABSENT DE LA TABLE sur "+joinComma(unreachable)+
-			" (/fwd.b « "+FieldDefaultVLAN+" ») : ces ports rangent leur trafic untagged "+
-			"dans un VLAN qui n'a aucune ligne dans /vlan.b, donc aucun membre. Rien ne "+
-			"peut en sortir vers un autre port. A ne pas confondre avec le VLAN 1, qui est "+
-			"le default implicite du hardware et n'a legitimately pas de ligne.")
+		out = append(out, "NATIVE VLAN ABSENT FROM THE TABLE on "+joinComma(unreachable)+
+			" (/fwd.b \""+FieldDefaultVLAN+"\"): these ports put their untagged traffic "+
+			"into a VLAN that has no row in /vlan.b, hence no member. Nothing can "+
+			"leave it towards another port. Not to be confused with VLAN 1, which is "+
+			"the hardware's implicit default and legitimately has no row.")
 	}
 	if len(orphans) > 0 {
-		out = append(out, "PVID SANS APPARTENANCE sur "+joinComma(orphans)+" : ces ports "+
-			"rangent leur trafic untagged dans leur VLAN natif mais ne figurent PAS dans "+
-			"la liste des membres de ce VLAN. Sur SwOS, une trame ne sort d'un port que "+
-			"s'il est membre du VLAN : ce trafic entre et ne ressort nulle part. SwOS "+
-			"accepte cette configuration sans rien signaler ; une pose meshcraft la "+
-			"complete en posant les deux.")
+		out = append(out, "PVID WITHOUT MEMBERSHIP on "+joinComma(orphans)+": these ports "+
+			"put their untagged traffic into their native VLAN but do NOT appear in "+
+			"that VLAN's member list. On SwOS, a frame leaves a port only "+
+			"if it is a member of the VLAN: this traffic enters and leaves nowhere. SwOS "+
+			"accepts this configuration without flagging anything; a meshcraft write "+
+			"completes it by setting both.")
 	}
 	if len(accessTaggedOnly) > 0 {
-		out = append(out, "PORT ACCESS QUI N'ACCEPTE QUE LE TAGGED sur "+
-			joinComma(accessTaggedOnly)+" (/fwd.b « "+FieldVLANReceive+" » = only tagged) : "+
-			"ces ports ne transportent aucun VLAN tagged et jettent pourtant toute trame "+
-			"non tagged a ingress. Un poste branche there n'a aucun trafic qui passe. "+
-			"meshcraft does not write jamais ce champ.")
+		out = append(out, "ACCESS PORT THAT ACCEPTS ONLY TAGGED on "+
+			joinComma(accessTaggedOnly)+" (/fwd.b \""+FieldVLANReceive+"\" = only tagged): "+
+			"these ports carry no tagged VLAN and yet drop every untagged "+
+			"frame on ingress. A workstation plugged in there has no traffic getting through. "+
+			"meshcraft never writes this field.")
 	}
 	if len(trunkUntaggedOnly) > 0 {
-		out = append(out, "TRUNK QUI N'ACCEPTE QUE LE UNTAGGED sur "+
-			joinComma(trunkUntaggedOnly)+" (/fwd.b « "+FieldVLANReceive+" » = only "+
-			"untagged) : ces ports sont membres de VLAN tagged et jettent pourtant toute "+
-			"trame tagged a ingress. Le trunk fonctionne dans un seul sens. meshcraft "+
-			"does not write jamais ce champ.")
+		out = append(out, "TRUNK THAT ACCEPTS ONLY UNTAGGED on "+
+			joinComma(trunkUntaggedOnly)+" (/fwd.b \""+FieldVLANReceive+"\" = only "+
+			"untagged): these ports are members of tagged VLANs and yet drop every "+
+			"tagged frame on ingress. The trunk works in one direction only. meshcraft "+
+			"never writes this field.")
 	}
 	return out
 }
 
-// carriesTagged dit si le port d'index `i` est membre d'au moins un VLAN autre que
-// son VLAN natif — i.e. s'il transporte du tagged, donc si la lecture state
-// l'appellera un trunk.
+// carriesTagged says whether the port of index `i` is a member of at least one
+// VLAN other than its native VLAN — i.e. whether it carries tagged traffic,
+// hence whether the state read will call it a trunk.
 func carriesTagged(vlanRows []*Page, i, pvid int) bool {
 	var row *Page
 	for _, row = range vlanRows {
@@ -515,11 +527,11 @@ func carriesTagged(vlanRows []*Page, i, pvid int) bool {
 	return false
 }
 
-// sortedKeysInt rend les keys entire d'une carte, triees.
+// sortedKeysInt returns the integer keys of a map, sorted.
 //
-// Trie parce que ces keys servent a composer des messages destines a un humain et
-// compares d'une execution a l'autre : l'ordre de parcours d'une carte Go varie a
-// chaque execution, et ferait changer un refus qui ne change pas.
+// Sorted because these keys are used to compose messages meant for a human
+// and compared from one run to the next: Go's map iteration order varies on
+// every run, and would make a refusal that does not change change.
 func sortedKeysInt(m map[int]string) []int {
 	var out = make([]int, 0, len(m))
 	var k int

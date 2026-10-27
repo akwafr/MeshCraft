@@ -1,7 +1,7 @@
 // Package snmppoll queries a device via SNMP and returns samples.
 //
 // Run by the PROXY, never the controller: a walk crossing the WAN in UDP costs one round
-// trip per OID and fails on the first link incident (docs/fr/01-Architecture/Monitoring.md
+// trip per OID and fails on the first link incident (docs/en/01-Architecture/Monitoring.md
 // section 2).
 //
 // Only two OID sets, deliberately. `if_state` is what must stay fresh -- it says a port
@@ -37,6 +37,23 @@ const (
 	oidIfHCOutOctets = "1.3.6.1.2.1.31.1.1.1.10" // ifHCOutOctets
 	oidIfInErrors    = "1.3.6.1.2.1.2.2.1.14"    // ifInErrors
 	oidIfOutErrors   = "1.3.6.1.2.1.2.2.1.20"    // ifOutErrors
+	// The per-class decomposition (ADR-0028) — ifXTable, Counter64, the SAME
+	// table ifHCInOctets and ifHighSpeed above already come back from on this
+	// fleet. That is the evidence the capability is declared on: an agent
+	// answering `.6` and `.15` implements ifXTable.
+	//
+	// FOUR OIDS AND NOT THE WHOLE TABLE, deliberately. Every entry in this block
+	// is a walk paid on every device on every cycle (cf. oidsFor), so the two
+	// directions of the two classes that EXIST are added and nothing else.
+	//
+	// There is no fifth OID for unknown unicast because the standard MIB has
+	// none. `ifInUnknownProtos` (1.3.6.1.2.1.2.2.1.15) is a different object —
+	// frames discarded for an unsupported protocol, not unicast the switch
+	// flooded — and spending it under that name would invent the class.
+	oidIfInMulticastPkts  = "1.3.6.1.2.1.31.1.1.1.2" // ifInMulticastPkts
+	oidIfInBroadcastPkts  = "1.3.6.1.2.1.31.1.1.1.3" // ifInBroadcastPkts
+	oidIfOutMulticastPkts = "1.3.6.1.2.1.31.1.1.1.4" // ifOutMulticastPkts
+	oidIfOutBroadcastPkts = "1.3.6.1.2.1.31.1.1.1.5" // ifOutBroadcastPkts
 )
 
 // Target is a device to query.
@@ -44,12 +61,29 @@ type Target struct {
 	DeviceID  string `json:"device_id"`
 	IP        string `json:"ip"`
 	Community string `json:"community,omitempty"`
-	// Version: "2c" by default. v3 will come with service identity.
+	// Version: "2c" by default; "v3" when the three identity fields below are
+	// set. The service identity that was announced ("v3 will come with service
+	// identity") EXISTS now: it is the read-only `mcmonitor` account the
+	// controller provisions on v3 platforms (cf. internal/api/snmpidentity.go),
+	// and these fields carry it to the session.
 	Version string `json:"version,omitempty"`
-	Port    int    `json:"port,omitempty"`
+	// V3User / V3AuthAlg / V3AuthSecret: the USM read identity, authNoPriv —
+	// the first (and today only) v3 regime the fleet ships (the FS S3400 has
+	// no privacy user form at all, measured 2026-08-11). On the wire this is
+	// STRICTLY better than a community: the passphrase never transits, only
+	// an HMAC does.
+	V3User       string `json:"v3_user,omitempty"`
+	V3AuthAlg    string `json:"v3_auth_alg,omitempty"`
+	V3AuthSecret string `json:"v3_auth_secret,omitempty"`
+	Port         int    `json:"port,omitempty"`
 	// MaxIfIndex bounds retained interfaces to physical front-panel ports.
 	// 0 = no bound. See tunnel.SNMPWatch.
 	MaxIfIndex int `json:"max_ifindex,omitempty"`
+	// FDBPerVLAN: this platform's forwarding table is read per VLAN with
+	// community indexing ("community@N") — Cisco IOS. Set by the CONTROLLER
+	// from the connector, like every platform decision: the proxy executes.
+	// See PollFDB.
+	FDBPerVLAN bool `json:"fdb_per_vlan,omitempty"`
 }
 
 // Metric names an OID set.
@@ -112,7 +146,7 @@ func toFloat(pdu gosnmp.SnmpPDU) (float64, bool) {
 	case gosnmp.Integer, gosnmp.Counter32, gosnmp.Counter64, gosnmp.Gauge32,
 		gosnmp.TimeTicks, gosnmp.Uinteger32:
 		// Only short declaration in the package, and irreducible: a type switch with binding
-		// has no `var` form in Go. Project rule (CLAUDE.md) does not apply; not a cleanup
+		// has no `var` form in Go. Project rule #1 (no `:=`) does not apply; not a cleanup
 		// oversight. Rewriting without binding would repeat type assertion in five branches
 		// for identical bodies.
 		switch v := pdu.Value.(type) {
@@ -198,6 +232,17 @@ func Samples(deviceID string, tables map[string]map[string]gosnmp.SnmpPDU,
 	emit(oidIfHCOutOctets, metricbuf.MetricIfOutOctets)
 	emit(oidIfInErrors, metricbuf.MetricIfInErrors)
 	emit(oidIfOutErrors, metricbuf.MetricIfOutErrors)
+	// Per-class (ADR-0028). An agent that does not implement these columns
+	// returns noSuchObject rather than a row, `emit` finds no table and adds
+	// nothing — so the series stays EMPTY on such a platform instead of
+	// reading zero. That is the right failure here, but it is not on its own
+	// what the screen shows: "empty" and "this platform cannot count it" are
+	// told apart by the declared capability, never by the hole
+	// (mdpv1.FeatTrafficClass*).
+	emit(oidIfInMulticastPkts, metricbuf.MetricIfInMulticastPackets)
+	emit(oidIfOutMulticastPkts, metricbuf.MetricIfOutMulticastPackets)
+	emit(oidIfInBroadcastPkts, metricbuf.MetricIfInBroadcastPackets)
+	emit(oidIfOutBroadcastPkts, metricbuf.MetricIfOutBroadcastPackets)
 	return out
 }
 
@@ -235,8 +280,14 @@ func physical(idx string, ifTypes map[string]gosnmp.SnmpPDU, maxIfIndex int) boo
 func oidsFor(metric string) []string {
 	switch metric {
 	case MetricIfCounters:
+		// The four per-class walks ride in `if_counters` and NOT in `if_state`,
+		// which is the cheap set polled most often. They are counters, the graph
+		// derives them over minutes, and nothing on screen needs them at the
+		// cadence a link-state change does.
 		return []string{oidIfDescr, oidIfType, oidIfHCInOctets, oidIfHCOutOctets,
-			oidIfInErrors, oidIfOutErrors}
+			oidIfInErrors, oidIfOutErrors,
+			oidIfInMulticastPkts, oidIfOutMulticastPkts,
+			oidIfInBroadcastPkts, oidIfOutBroadcastPkts}
 	case MetricHealth:
 		// Device sensors: uptime, CPU, memory, temperatures, voltages, fans, PSUs. See
 		// health.go, whose header costs this set and states what its scale factors are worth.
@@ -335,7 +386,7 @@ func Dial(t Target) (*Session, error) {
 // conventions applies project connection conventions WITHOUT opening a socket.
 //
 // Separate from Dial so tests can read them as-is, without network or device: that test
-// fails if any of five values moves (cf. TestConventionsDeConnexionUniques). Conventions
+// fails if any of five values moves (cf. TestSingleConnectionConventions). Conventions
 // nothing verifies drift on their own.
 func conventions(t Target) *gosnmp.GoSNMP {
 	var port = t.Port
@@ -346,13 +397,11 @@ func conventions(t Target) *gosnmp.GoSNMP {
 	if community == "" {
 		community = DefaultCommunity
 	}
-	return &gosnmp.GoSNMP{
+	var g = &gosnmp.GoSNMP{
 		Target:    t.IP,
 		Port:      uint16(port), //nolint:gosec
 		Community: community,
-		// v2c for everyone, even when Target.Version asks otherwise: v3 comes with service
-		// identity, and trying v3 without identity would fail cold on whole fleet.
-		Version: gosnmp.Version2c,
+		Version:   gosnmp.Version2c,
 		// Tight bounds: mute device must not hold a collection cycle. Two tries, no more --
 		// metric will return. Same bounds for diagnostic walk: looser, it would succeed where
 		// supervision fails and we believe supervision "loses" OIDs.
@@ -360,6 +409,27 @@ func conventions(t Target) *gosnmp.GoSNMP {
 		Retries: 1,
 		MaxOids: 60,
 	}
+	// v3, and ONLY with a complete identity: a target that says "v3" while
+	// carrying no account still speaks v2c, because trying v3 without identity
+	// fails cold — the historical reason this function forced v2c for everyone.
+	// AuthNoPriv is the fleet's one v3 regime (cf. Target fields); the auth
+	// algorithm names come from the provisioning plan (snmpprov), which only
+	// ever emits "sha" or "md5" for the ranges that declare them.
+	if t.Version == "v3" && t.V3User != "" && t.V3AuthSecret != "" {
+		g.Version = gosnmp.Version3
+		g.SecurityModel = gosnmp.UserSecurityModel
+		g.MsgFlags = gosnmp.AuthNoPriv
+		var proto = gosnmp.SHA
+		if t.V3AuthAlg == "md5" {
+			proto = gosnmp.MD5
+		}
+		g.SecurityParameters = &gosnmp.UsmSecurityParameters{
+			UserName:                 t.V3User,
+			AuthenticationProtocol:   proto,
+			AuthenticationPassphrase: t.V3AuthSecret,
+		}
+	}
+	return g
 }
 
 // BulkWalk walks an ARBITRARY subtree and passes each PDU to fn as-is, in walk order.

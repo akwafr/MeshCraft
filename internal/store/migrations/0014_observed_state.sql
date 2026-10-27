@@ -1,25 +1,24 @@
--- L'état RÉELLEMENT lu sur l'équipement, et de quoi attribuer un écart.
--- Voir docs/01-Architecture/Réconciliation §2 et §6.
+-- The state ACTUALLY read from the device, and what is needed to attribute a gap.
+-- See docs/en/01-Architecture/Reconciliation.md §2 and §6.
 --
--- Jusqu'ici `devices.ports` portait UNE configuration, sans dire s'il
--- s'agissait de ce que meshcraft veut ou de ce que l'équipement porte. Les deux
--- ne coïncident pas : entre une modification faite dans meshcraft et sa pose, et
--- entre une modification faite à la main sur le switch et sa détection, le parc
--- vit avec deux vérités. Les confondre, c'est ne jamais pouvoir dire laquelle
--- est en retard.
+-- Until now `devices.ports` carried ONE configuration, without saying whether it
+-- was what meshcraft wants or what the device carries. The two do not coincide:
+-- between a change made in meshcraft and its push, and between a change made by
+-- hand on the switch and its detection, the fleet lives with two truths.
+-- Conflating them means never being able to say which one is behind.
 alter table devices
   add column if not exists observed jsonb not null default '{}'::jsonb;
 
--- Quand l'équipement a été relu. NULL = jamais : on ne prétend pas savoir.
+-- When the device was read back. NULL = never: we do not pretend to know.
 alter table devices
   add column if not exists observed_at timestamptz;
 
--- Quand l'intention a changé DANS meshcraft, et quand elle a été posée.
+-- When the intent changed IN meshcraft, and when it was pushed.
 --
--- Ces deux dates sont ce qui permet d'attribuer un écart sans le deviner : si
--- l'intention n'a pas bougé depuis la dernière pose et que l'équipement diffère
--- quand même, alors c'est l'ÉQUIPEMENT qui a changé. C'est le seul cas qui
--- mérite d'interrompre l'exploitant.
+-- These two dates are what lets a gap be attributed without guessing: if the
+-- intent has not moved since the last push and the device differs anyway, then
+-- it is the DEVICE that changed. That is the only case worth interrupting the
+-- operator for.
 alter table devices
   add column if not exists desired_changed_at timestamptz;
 

@@ -19,6 +19,7 @@ package s3900
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,6 +31,26 @@ import (
 
 	"meshcraft/internal/driver"
 )
+
+// errTruncated marks a read THAT NEVER REACHED A PROMPT — the same sentinel,
+// for the same reason, as the one on the S3400 connector next door (see
+// fs/s3400/ssh.go for the incident that named it).
+//
+// [cliConn.run] already separates the two cases and used to throw the
+// distinction away at its boundary: [cliConn.waitFor] returns EARLY on a dead
+// session, an expired deadline or a cancelled context, holding a PREFIX of the
+// answer, whereas reCLIError matches only after the prompt came back, on output
+// that is COMPLETE. "show run" cut inside an interface block is valid-looking
+// configuration to its last byte, so a parser cannot tell; only this can.
+var errTruncated = errors.New("the read did not end at a CLI prompt (truncated)")
+
+// isTruncated reports whether this error means "the output is a prefix".
+func isTruncated(err error) bool { return errors.Is(err, errTruncated) }
+
+// truncatedErr wraps a premature exit from a read, naming the command.
+func truncatedErr(cmd string, err error) error {
+	return fmt.Errorf("\"%s\" %w: %w", cmd, errTruncated, err)
+}
 
 const (
 	sshPort     = "22"
@@ -55,7 +76,7 @@ type cliConn struct {
 	// buf accumulates what has been read and not yet consumed by waitPrompt.
 	buf strings.Builder
 	// banner is the login banner printed before the first prompt; it carries
-	// the product name on this platform (« S3900-24T4S »).
+	// the product name on this platform ("S3900-24T4S").
 	banner string
 }
 
@@ -83,7 +104,7 @@ func dialSSH(ctx context.Context, tgt driver.Target, user, secret string) (*ssh.
 		conn, err = d.DialContext(ctx, "tcp", addr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("TCP %s : %v", addr, err)
+		return nil, fmt.Errorf("TCP %s: %v", addr, err)
 	}
 
 	var cfg = &ssh.ClientConfig{
@@ -131,7 +152,7 @@ func dialSSH(ctx context.Context, tgt driver.Target, user, secret string) (*ssh.
 	return ssh.NewClient(sc, chans, reqs), nil
 }
 
-// openCLI ouvre le shell interactif et attend le premier prompt.
+// openCLI opens the interactive shell and waits for the first prompt.
 func openCLI(ctx context.Context, client *ssh.Client) (*cliConn, error) {
 	var session, err = client.NewSession()
 	if err != nil {
@@ -182,8 +203,8 @@ func openCLI(ctx context.Context, client *ssh.Client) (*cliConn, error) {
 	}()
 
 	// First prompt: the device may print a banner before it. That banner is the
-	// ONLY place the product name appears on the CLI path — « CLI session with
-	// the S3900-24T4S is opened » — so it is kept, not discarded (cf. bannerModel).
+	// ONLY place the product name appears on the CLI path — "CLI session with
+	// the S3900-24T4S is opened" — so it is kept, not discarded (cf. bannerModel).
 	var banner, perr = c.waitPrompt(ctx, cmdTimeout)
 	if perr != nil {
 		c.close()
@@ -213,9 +234,11 @@ func (c *cliConn) waitPrompt(ctx context.Context, timeout time.Duration) (string
 func (c *cliConn) waitFor(ctx context.Context, timeout time.Duration, re *regexp.Regexp) (string, error) {
 	var deadline = time.NewTimer(timeout)
 	defer deadline.Stop()
+	var b byte
+	var ok bool
 	for {
 		select {
-		case b, ok := <-c.out:
+		case b, ok = <-c.out:
 			if !ok {
 				return c.take(), fmt.Errorf("SSH session closed by the device")
 			}
@@ -253,14 +276,20 @@ func (c *cliConn) sendLine(line string) error {
 // run sends a command and waits for the next prompt. The returned output is
 // the command's (echo included); a detected CLI error is returned second —
 // the caller decides whether it is fatal.
+//
+// THE EARLY RETURNS ARE WRAPPED IN [errTruncated] AND THE LAST ONE IS NOT: that
+// is the error contract. Returning before the prompt means the string is a
+// PREFIX; returning after it means the device finished and may have refused.
+// Existing callers are unaffected — they test `err != nil` together with an
+// empty output, and both still answer exactly as before.
 func (c *cliConn) run(ctx context.Context, cmd string, timeout time.Duration) (string, error) {
 	var werr = c.sendLine(cmd)
 	if werr != nil {
-		return "", werr
+		return "", truncatedErr(cmd, werr)
 	}
 	var out, err = c.waitPrompt(ctx, timeout)
 	if err != nil {
-		return out, err
+		return out, truncatedErr(cmd, err)
 	}
 	var m = reCLIError.FindString(out)
 	if m != "" {

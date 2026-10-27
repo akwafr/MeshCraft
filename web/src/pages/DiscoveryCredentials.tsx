@@ -9,10 +9,10 @@ import { ActionButton, DeleteButton, ErrorMsg, Field, HelpTip, useToast } from "
  *
  * They belong to the INSTANCE, not a site — discovery precedes site choice — and
  * that is why this screen lives in global configuration, beside users and proxies.
- * It once lived under a site's « Add a device » menu: nobody looked there, and
+ * It once lived under a site's "Add a device" menu: nobody looked there, and
  * the operator re-entered their password on every probe.
  *
- * Do not confuse with a site's « Credentials » screen (pages/SiteCredentials),
+ * Do not confuse with a site's "Credentials" screen (pages/SiteCredentials),
  * which manages credentials APPLIED to already-adopted devices. This one is for
  * reaching an unknown.
  */
@@ -242,7 +242,7 @@ export default function DiscoveryCredentials() {
           </div>
         </div>
       ) : (
-        <div className="card" style={{ marginTop: 12, padding: 0, overflowX: "auto" }}>
+        <div className="card card-flush scroll-x scroll-cue">
           <table className="ports-table">
             <thead>
               <tr>

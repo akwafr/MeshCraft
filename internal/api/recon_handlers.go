@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,11 +16,12 @@ import (
 
 	"meshcraft/internal/driver"
 	"meshcraft/internal/model"
+	"meshcraft/internal/modelid"
 	"meshcraft/internal/recon"
 )
 
 // Configuration drift: read the device, compare, and propose arbitration. See
-// docs/01-Architecture/Reconciliation sections 2, 3, and 6.
+// docs/en/01-Architecture/Reconciliation.md sections 2, 3, and 6.
 //
 // The principle governing this entire file: a READ never modifies intent. Without
 // this rule, drift would absorb itself on the first refresh and nobody would ever
@@ -58,6 +61,13 @@ type observedState struct {
 	// MgmtVLAN is the VLAN the device says it is administered through (0 = untagged /
 	// unknown). Optional with omitempty so older observed rows stay valid.
 	MgmtVLAN int `json:"mgmt_vlan,omitempty"`
+	// LAGs: the device's link aggregates, as the connector read them
+	// (driver.State.LAGs). Omitempty under the LinkUp comment's migration rule;
+	// nil still means "not read", never "none". They live OUTSIDE the port
+	// drift diff — the aggregate conformity story is deliberately not written
+	// yet (cf. Store.SaveLAGIntent) — but they are observation like everything
+	// else here, and the screen's overlines draw from this field.
+	LAGs []driver.LAGState `json:"lags,omitempty"`
 }
 
 // withSync enriches a device with its synchronization state.
@@ -70,6 +80,10 @@ type observedState struct {
 func (s *Server) withSync(ctx context.Context, d model.Device) model.Device {
 	var out = withSyncVLANs(d, s.siteVLANIDs(ctx, d.SiteID))
 	out.WatchExcluded = s.WatchExcl.reasonFor(d.ID)
+	// Which protocol collects it, so the interface can label the collection pill
+	// with the protocol that was actually tried (cf. model.Device.CollectKind).
+	var _, driverName = s.deviceIdentity(ctx, d)
+	out.CollectKind = collectKindOf(driverName, d.Model)
 	// Live provisioning: true only while the connector is writing to THIS device.
 	// Read from the apply queue, not the database — it is a runtime fact.
 	out.Applying = s.applyingNow(d.ID)
@@ -79,6 +93,12 @@ func (s *Server) withSync(ctx context.Context, d model.Device) model.Device {
 // withSyncVLANs is the part that does not touch the database, so list and detail share
 // the same computation without re-reading the plan per device.
 func withSyncVLANs(d model.Device, siteVLANs []int) model.Device {
+	// The canonical model identity rides along here (ADR-0014) because this is
+	// the one computation every device read goes through — list and detail both.
+	// It is derivation, not storage: `d.Model` is left exactly as it arrived.
+	var mid = modelid.Of(d.Model)
+	d.ModelKey, d.ModelLabel, d.ModelSKU = mid.Key, mid.Label, mid.SKU
+
 	var changes = driftOf(d, siteVLANs)
 	d.Sync = string(recon.State(d.ObservedAt, d.DesiredChangedAt, d.AppliedAt, changes))
 	d.ApplyStalled = applyStalled(d, changes)
@@ -132,8 +152,8 @@ func mergeLinkState(d model.Device) model.Device {
 		port["link_state"] = state
 		if state == "err-disabled" {
 			// The reason lives in a device-level note that names the port. It is
-			// a SENTENCE for a human (« GE25 was shut down BY THE SWITCH
-			// (err-disabled), reason gbic-invalid ») — surfaced verbatim, matched
+			// a SENTENCE for a human ("GE25 was shut down BY THE SWITCH
+			// (err-disabled), reason gbic-invalid") — surfaced verbatim, matched
 			// by the port name it contains.
 			var note string
 			for _, note = range obs.Notes {
@@ -209,13 +229,36 @@ func driftOf(d model.Device, siteVLANs []int) []recon.Change {
 	if len(d.Observed) > 0 {
 		_ = json.Unmarshal(d.Observed, &obs)
 	}
+	// Ports enslaved to an OBSERVED aggregate leave the comparison: a member's
+	// traffic configuration rides the LAG (measured on RouterOS — enslaving
+	// removes the member's own bridge row, so its "pvid" reads 0 forever), and
+	// diffing the port intent against that would keep the device at `drift`
+	// for as long as the aggregate exists. The aggregate's own conformity is
+	// deliberately not diffed yet (cf. Store.SaveLAGIntent).
+	var enslaved = map[string]bool{}
+	var l int
+	for l = range obs.LAGs {
+		var m string
+		for _, m = range obs.LAGs[l].Members {
+			enslaved[m] = true
+		}
+	}
 	var observed = map[string]recon.PortIntent{}
 	var name string
 	var p driver.PortState
 	for name, p = range obs.Ports {
+		if enslaved[name] {
+			continue
+		}
 		observed[name] = recon.PortIntent{Mode: p.Mode, PVID: p.PVID, Tagged: p.Tagged}
 	}
-	return recon.DiffPorts(recon.Resolve(recon.ParsePorts(d.Ports), siteVLANs), observed)
+	var desired = recon.Resolve(recon.ParsePorts(d.Ports), siteVLANs)
+	for name = range desired {
+		if enslaved[name] {
+			delete(desired, name)
+		}
+	}
+	return recon.DiffPorts(desired, observed)
 }
 
 // portPrefix returns the naming prefix of the device's FIRST faceplate group ("GE"…),
@@ -245,20 +288,116 @@ func portPrefix(d model.Device) string {
 	return "GE"
 }
 
-// handleReadDeviceState re-reads the device and records what it carries.
+// faceplatePortCount totals the ports the MODEL declares, or 0 when the faceplate
+// is unreadable — in which case no caller may conclude anything from it.
 //
-// READ-ONLY on the device side: replayable as often as needed, including on a production
-// fleet. `operator` level — observing is not modifying.
-func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
-	var d, ok = s.deviceForWrite(w, r, "operator")
-	if !ok {
-		return
+// Deliberately not derived from any observation: its whole purpose is to be a
+// yardstick INDEPENDENT of the read being judged.
+func faceplatePortCount(d model.Device) int {
+	var groups []struct {
+		Count int `json:"count"`
 	}
-	if d.MgmtIP == "" {
-		respondErr(w, http.StatusUnprocessableEntity,
-			"this device has no known management address")
-		return
+	if json.Unmarshal(d.PortGroups, &groups) != nil {
+		return 0
 	}
+	var total int
+	var g struct {
+		Count int `json:"count"`
+	}
+	for _, g = range groups {
+		if g.Count > 0 {
+			total += g.Count
+		}
+	}
+	return total
+}
+
+// deviceEventFn records ONE device event, without the caller knowing whether a
+// human asked for the gesture.
+//
+// It exists because [Server.readDeviceState] is now shared by the button and by
+// the periodic config read-back (configpoll.go), and the two attribute their
+// history differently: the handler passes [Server.requestEvents], which credits
+// the operator's session through emitDeviceEvent; the loop passes
+// [Server.emitDeviceBG], which credits "meshcraft" — the existing
+// request-free twin autoapply.go already uses. Attribution is information: a
+// model change discovered at three in the morning must not carry the name of
+// whoever last logged in.
+type deviceEventFn func(d model.Device, evType string, sev int, msg string)
+
+// requestEvents binds device events to the HTTP request that caused them.
+func (s *Server) requestEvents(r *http.Request) deviceEventFn {
+	return func(d model.Device, evType string, sev int, msg string) {
+		s.emitDeviceEvent(r, d, evType, sev, msg)
+	}
+}
+
+// deviceStateRead is what ONE read-state gesture produced beyond the `out` map:
+// the device row AFTER every persistence step of the gesture, and the verdict
+// computed on it.
+//
+// The row is returned rather than re-read by callers because four writes happen
+// between the caller's copy and this one (observed state, faceplate, identity,
+// port renames), and a caller acting on its stale copy is exactly the bug
+// readLLDPNeighborhood already had to work around inside the gesture.
+type deviceStateRead struct {
+	Device  model.Device
+	Changes []recon.Change
+	Sync    recon.Sync
+}
+
+// readStateFatal marks a failure of MESHCRAFT'S OWN storage, as opposed to the
+// device refusing or being unreachable.
+//
+// The distinction is the handler's status code — 500 for our database, 200
+// `ok:false` for a device that would not answer — and it used to be expressed
+// by WHICH line of the handler returned. Extracting the gesture had to keep it
+// expressible, or a failing database would start reading as a failing switch
+// and send troubleshooting to the rack.
+type readStateFatal struct{ err error }
+
+func (e readStateFatal) Error() string { return e.err.Error() }
+func (e readStateFatal) Unwrap() error { return e.err }
+
+// readDeviceState IS the read-state gesture: open one administration session,
+// read everything that session is worth reading, persist each piece on its own
+// shelf, and return the reconciliation verdict.
+//
+// # Why this is a function and not just the handler's body
+//
+// It was the handler's body until the periodic config read-back needed the same
+// gesture (configpoll.go). Copying it would have been the worst outcome
+// available: this gesture has EIGHT persistence steps, each with its own
+// failure policy, and two copies would have diverged on the first one somebody
+// remembered to change in only one place — the scheduled path would then
+// silently store less than the button, and the difference would show up as
+// "clicking refresh fixes it", which is precisely the complaint this whole
+// change exists to end.
+//
+// # What stayed OUT of it, deliberately
+//
+//   - the `config.drift` event. It is not the same decision in the two paths:
+//     the button announces the verdict the operator just asked for, while a
+//     loop that re-announced an unchanged drift every half hour would bury the
+//     event log (cf. configPollDriftWorthEvent);
+//   - the SNMP re-push kick. "A manual refresh is also the operator saying
+//     make this device right" — RunSNMPHeal already covers the scheduled side,
+//     with a backoff the manual gesture is explicitly allowed to clear;
+//   - permission checks and the empty-address refusal, which are HTTP answers.
+//
+// # It never touches intent
+//
+// Every write below lands on an OBSERVATION shelf — `devices.observed`,
+// `extra.*_observed`, `lldp_*` — or on a hardware fact the device alone knows
+// (faceplate, model). None of them calls TouchDesired or MarkApplied, so no
+// read, scheduled or clicked, can schedule an apply or move a device's sync
+// state by itself. That is the invariant stated at the top of this file — "a
+// READ never modifies intent" — and it is what makes running this gesture on a
+// timer safe.
+func (s *Server) readDeviceState(ctx context.Context, d model.Device,
+	out map[string]any, emit deviceEventFn) (deviceStateRead, error) {
+
+	var res = deviceStateRead{Device: d}
 
 	// ONE-TIME PORT-NAME CATCH-UP. A device whose ports were written before
 	// its connector adopted a standard naming scheme (or that was adopted by
@@ -275,34 +414,31 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 	// only the key changes, nothing is asked of the wire. Best-effort and
 	// silent when there is nothing stale: it renames only keys the connector
 	// itself says translate, never guesses.
-	var portsRenamed bool
-	d, portsRenamed = s.remapDevicePortsIfStale(r.Context(), d)
+	d, _ = s.remapDevicePortsIfStale(ctx, d)
+	res.Device = d
 
 	// SINGLE resolution point: the connector discovery designated, transport,
 	// credentials, and try order (cf. adminFor).
-	var _, adm, _, err = s.adminFor(r.Context(), d)
-	var out = map[string]any{}
-	if err != nil {
-		// A DOWN PROXY STAYS A 503, and that is not status-code zeal: resolution now
-		// goes through one path, and drowning "this proxy's tunnel is down" in the same
-		// `200 ok:false` as "the device refuses credentials" would send troubleshooting
-		// to a switch that is fine.
-		if errors.Is(err, errNoTunnel) {
-			respondErr(w, http.StatusServiceUnavailable, err.Error())
-			return
-		}
-		// Transcript is shown only when present: connectors differ on nil (cf. transcriptOf).
-		out["ok"], out["error"], out["steps"] = false, err.Error(), transcriptOf(adm)
-		respond(w, http.StatusOK, out)
-		return
+	var _, adm, _, err = s.adminFor(ctx, d)
+	if adm != nil {
+		defer adm.Close()
 	}
+	if err != nil {
+		// Transcript is shown only when present: connectors differ on nil (cf. transcriptOf).
+		// The caller decides what an unreachable device means for it — a 503 on a
+		// down tunnel for the handler, a logged skip for the loop.
+		out["steps"] = transcriptOf(adm)
+		return res, err
+	}
+	// An external driver serves all nine reads of this gesture in ONE wire
+	// call; in process this is a no-op. The helpers below cannot tell the
+	// difference — cf. bulkread.go.
+	adm = prefetchIfBulk(ctx, adm)
 	var state driver.State
-	state, err = adm.ReadState(r.Context())
+	state, err = adm.ReadState(ctx)
 	out["steps"] = adm.Transcript()
 	if err != nil {
-		out["ok"], out["error"] = false, err.Error()
-		respond(w, http.StatusOK, out)
-		return
+		return res, err
 	}
 	// Connector notes are PHRASES to display, with no decision to draw: present but
 	// INERT VLAN configuration ("disabled" mode on SwOS, inactive `vlan-filtering` on
@@ -312,17 +448,12 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 		out["notes"] = state.Notes
 	}
 
-	var raw []byte
-	if raw, err = json.Marshal(observedState{
-		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp(), Links: state.Links,
-		MgmtVLAN: state.MgmtVLAN,
-	}); err != nil {
-		fail(w, err)
-		return
-	}
-	if err = s.Store.SaveObserved(r.Context(), d.ID, raw); err != nil {
-		fail(w, err)
-		return
+	// The observation shelf, through the SAME function apply's own re-read uses
+	// (saveObservedState): the handler used to inline this marshal, which meant
+	// two places built `devices.observed` and only one of them was covered by the
+	// comment explaining why `state.Notes` must stay out of it.
+	if err = s.saveObservedState(ctx, d.ID, state); err != nil {
+		return res, readStateFatal{err}
 	}
 
 	// MANAGEMENT ADDRESSING is re-read IN THE SAME GESTURE (migration 0027): by what
@@ -335,7 +466,7 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 	// already saved at this point. Losing VLANs and ports across a fleet because an
 	// addressing page is unreadable on one line would be a regression, and the reason is
 	// returned to the screen rather than hidden.
-	var addrState, addrNote = s.readMgmtAddressing(r.Context(), d.ID, adm)
+	var addrState, addrNote = s.readMgmtAddressing(ctx, d.ID, adm)
 	if addrNote != "" {
 		out["mgmt_addr_note"] = addrNote
 	}
@@ -352,7 +483,7 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 	// Spanning tree is re-read in the same gesture: topology needs mode, root and
 	// per-port roles without a second round-trip. Failure does not interrupt the
 	// read — STP is optional per platform.
-	var stpState, stpNote = s.readSpanningTree(r.Context(), d.ID, adm)
+	var stpState, stpNote = s.readSpanningTree(ctx, d.ID, adm)
 	if stpNote != "" {
 		out["stp_note"] = stpNote
 	}
@@ -360,49 +491,136 @@ func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
 		out["stp"] = stpState
 	}
 
-	// FACEPLATE catch-up, in the same read gesture. A device adopted before its
-	// connector could read the faceplate (or entered by hand) carries no port
-	// groups, so nothing draws and SNMP/LLDP port resolution degrades. If it is
-	// empty and the connector can read it, fill it now — the faceplate is a fact
-	// of the hardware, like observed state, so a read is the right place. Failure
-	// never interrupts: ports and VLANs are already saved.
-	//
-	// ALSO forced when the stored groups still carry the connector's OLD prefix
-	// scheme (facadeNamingStale) — this is deliberately NOT the same condition
-	// as portsRenamed: a device already caught up on a PRIOR read has
-	// portsRenamed=false on this one (nothing left to rename in devices.ports),
-	// but its port_groups can still carry the stale prefix from before that
-	// prior read ever ran fillFaceplate. Checking the stored groups directly,
-	// every time, is what makes this catch-up actually converge instead of
-	// firing once and silently leaving the facade behind.
-	if faceplateEmpty(d.PortGroups) || portsRenamed || s.facadeNamingStale(r.Context(), d) {
-		s.fillFaceplate(r.Context(), d, adm, out)
+	// PoE is re-read in the same gesture: per-port scope, configured class,
+	// and measured draw, without a second round-trip. Failure does not
+	// interrupt the read — PoE is optional per platform. Persisted under
+	// Extra.poe_observed (cf. readPoE) so the device sheet's PoE panel can
+	// answer without a live round-trip; it stays out of drift by construction.
+	var poeState, poeNote = s.readPoE(ctx, d.ID, adm)
+	if poeNote != "" {
+		out["poe_note"] = poeNote
+	}
+	if len(poeState.Ports) > 0 {
+		out["poe"] = poeState
 	}
 
+	// Transceiver diagnostics (DDM) ride the same gesture, same doctrine as
+	// PoE one paragraph up; the hook itself lives in optics.go on purpose
+	// (one feature, one file).
+	var opticsState, opticsNote = s.readOptics(ctx, d.ID, adm)
+	if opticsNote != "" {
+		out["optics_note"] = opticsNote
+	}
+	if len(opticsState.Ports) > 0 || len(opticsState.Notes) > 0 {
+		out["optics"] = opticsState
+	}
+
+	// LLDP neighbours are re-read in the same gesture on connectors that read
+	// them over the admin session — the only collection path on platforms
+	// whose SNMP agent serves no LLDP-MIB (design and arbitration with the
+	// SNMP poller: internal/api/lldp_cli.go). Failure never interrupts.
+	s.readLLDPNeighborhood(ctx, d, adm, out)
+
+	// The forwarding table rides the same gesture on connectors that read it
+	// over the admin session — the only path on the platform whose gNMI train
+	// rejects the OpenConfig FDB subtree (internal/api/fdb_cli.go). Failure
+	// never interrupts.
+	s.readFDBTable(ctx, d, adm, out)
+
+	// FACEPLATE catch-up, in the same read gesture. The faceplate is a fact of
+	// the hardware, like observed state, so a read is the right place to keep
+	// it true: re-read it EVERY time on a connector that can (a show command
+	// or two on the session already open), and persist only when it actually
+	// differs from what is stored (cf. fillFaceplate). An offline staleness
+	// probe used to gate this call, but it could only see NAMING drift (a
+	// stored prefix the connector would rename): a device adopted before its
+	// connector learned to split copper from SFP cages carries a structurally
+	// stale facade under perfectly current names — one uniform "GE" group, no
+	// "SFP+" label — and its optical ports stayed invisible on the topology
+	// forever, because no naming probe can see a missing label. Only the
+	// device itself knows its front panel, so ask it. Failure never
+	// interrupts: ports and VLANs are already saved.
+	s.fillFaceplate(ctx, d, adm, out)
+
+	// INVENTORY SELF-HEAL, same gesture: model and identity facts (cf. identity_selfheal.go).
+	s.selfHealIdentity(ctx, d, adm, out, emit)
+
 	var fresh model.Device
-	if fresh, err = s.Store.GetDevice(r.Context(), d.ID); err != nil {
-		fail(w, err)
+	if fresh, err = s.Store.GetDevice(ctx, d.ID); err != nil {
+		return res, readStateFatal{err}
+	}
+	res.Device = fresh
+	res.Changes = driftOf(fresh, s.siteVLANIDs(ctx, d.SiteID))
+	res.Sync = recon.State(fresh.ObservedAt, fresh.DesiredChangedAt, fresh.AppliedAt,
+		res.Changes)
+	out["vlans"], out["ports"] = state.VLANs, len(state.Ports)
+	return res, nil
+}
+
+// handleReadDeviceState re-reads the device and records what it carries.
+//
+// READ-ONLY on the device side: replayable as often as needed, including on a production
+// fleet. `operator` level — observing is not modifying.
+//
+// The gesture itself is [Server.readDeviceState], shared with the periodic
+// config read-back; what stays here is the HTTP part — who may ask, what each
+// class of failure answers, and the drift line an operator's own click earns.
+func (s *Server) handleReadDeviceState(w http.ResponseWriter, r *http.Request) {
+	var d, ok = s.deviceForWrite(w, r, "operator")
+	if !ok {
 		return
 	}
-	var changes = driftOf(fresh, s.siteVLANIDs(r.Context(), d.SiteID))
-	var sync = recon.State(fresh.ObservedAt, fresh.DesiredChangedAt, fresh.AppliedAt, changes)
+	if d.MgmtIP == "" {
+		respondErr(w, http.StatusUnprocessableEntity,
+			"this device has no known management address")
+		return
+	}
+	var out = map[string]any{}
+	var res, err = s.readDeviceState(r.Context(), d, out, s.requestEvents(r))
+	if err != nil {
+		// OUR OWN STORAGE FAILING IS A 500, and it must not be dressed as a
+		// device problem (cf. readStateFatal).
+		var fatal readStateFatal
+		if errors.As(err, &fatal) {
+			fail(w, fatal.err)
+			return
+		}
+		// A DOWN PROXY STAYS A 503, and that is not status-code zeal: resolution now
+		// goes through one path, and drowning "this proxy's tunnel is down" in the same
+		// `200 ok:false` as "the device refuses credentials" would send troubleshooting
+		// to a switch that is fine.
+		if errors.Is(err, errNoTunnel) {
+			respondErr(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		out["ok"], out["error"] = false, err.Error()
+		respond(w, http.StatusOK, out)
+		return
+	}
 	// Drift is logged: an operational fact, not a display detail. Someone touched the
 	// device, and history must say so.
-	if sync == recon.SyncDrift {
+	//
+	// UNCONDITIONAL HERE, and conditional in the loop (configPollDriftWorthEvent).
+	// A human clicked and is owed a line saying what that click found, even the
+	// third time; a timer that re-announced the same unchanged drift every half
+	// hour would make the event log unreadable and teach people to ignore it.
+	if res.Sync == recon.SyncDrift {
 		s.emitDeviceEvent(r, d, "config.drift", model.SevWarning,
-			"Configuration drift on \""+d.Name+"\": "+itoa(len(changes))+
+			"Configuration drift on \""+d.Name+"\": "+itoa(len(res.Changes))+
 				" difference(s) between what meshcraft knows and the device.")
 	}
-	out["ok"], out["sync"], out["drift"] = true, sync, changes
-	out["vlans"], out["ports"] = state.VLANs, len(state.Ports)
+	out["ok"], out["sync"], out["drift"] = true, res.Sync, res.Changes
 
 	// A MANUAL refresh is also the operator saying "make this device right". If
 	// supervision should be up and is not, kick the SNMP re-push here — in the
 	// background, so this read-only response stays read-only and instant. It is
 	// the user-triggered twin of RunSNMPHeal: same idempotent gesture, but the
 	// manual click clears the backoff instead of waiting up to a day for it.
-	if fresh.SnmpStatus != "ok" {
-		s.KickSNMPHeal(fresh)
+	//
+	// Deliberately NOT in the shared gesture: the scheduled read has RunSNMPHeal
+	// beside it already, with a doubling cooldown this kick is meant to bypass.
+	if res.Device.SnmpStatus != "ok" {
+		s.KickSNMPHeal(res.Device)
 		out["snmp_reprovision"] = "triggered"
 	}
 	respond(w, http.StatusOK, out)
@@ -446,61 +664,6 @@ func remapPortNamesIfStale(namer driver.PortNamer, ports json.RawMessage) (json.
 		return ports, false
 	}
 	return encoded, true
-}
-
-// facadeGroupPrefix is the one field facadeNamingStale needs from a stored
-// port group — kept separate from portrules.Port / the facade JSON shape used
-// elsewhere, because this is a MINIMAL probe, not a full decode.
-type facadeGroupPrefix struct {
-	Prefix string `json:"prefix"`
-	From   int    `json:"from"`
-}
-
-// facadeNamingStale is the PURE decision behind the facade half of the
-// standard-naming catch-up: does at least one stored port group still carry a
-// prefix the connector's PortNamer would translate to something ELSE? If so,
-// the group predates the connector's current naming scheme.
-//
-// Same probe shape as remapPortNamesIfStale, applied to port_groups instead
-// of ports: test the group's FIRST port (prefix + from) — on every numbering
-// connector shipped today the mapping is affine, so one sample proves the
-// whole group.
-func facadeNamingStale(namer driver.PortNamer, portGroups json.RawMessage) bool {
-	if len(portGroups) == 0 {
-		return false // faceplateEmpty already covers this case
-	}
-	var groups []facadeGroupPrefix
-	if json.Unmarshal(portGroups, &groups) != nil {
-		return false
-	}
-	var g facadeGroupPrefix
-	for _, g = range groups {
-		if g.From <= 0 || g.Prefix == "" {
-			continue
-		}
-		var sample = g.Prefix + strconv.Itoa(g.From)
-		var std, ok = namer.StandardPortName(sample)
-		if ok && std != sample {
-			return true
-		}
-	}
-	return false
-}
-
-// facadeNamingStale (method) resolves the device's connector and applies the
-// pure check above. False on any resolution failure — an unresolvable
-// connector or one without PortNamer has nothing to be stale AGAINST.
-func (s *Server) facadeNamingStale(ctx context.Context, d model.Device) bool {
-	var _, name = s.deviceIdentity(ctx, d)
-	var drv, known = driver.Get(name)
-	if !known {
-		return false
-	}
-	var namer, canName = driver.AsPortNamer(drv)
-	if !canName {
-		return false
-	}
-	return facadeNamingStale(namer, d.PortGroups)
 }
 
 // remapDevicePortsIfStale renames devices.ports keys still written under a
@@ -548,16 +711,46 @@ func faceplateEmpty(pg json.RawMessage) bool {
 	return len(groups) == 0
 }
 
-// fillFaceplate reads the physical faceplate from the live device and persists it,
-// on a connector that can. Best-effort: any failure is noted, never fatal — the
-// read already saved ports and VLANs. This is the catch-up that keeps a
-// blank-adopted device from staying portless forever (cf. driver.FaceplateReader).
+// faceplateDiffers reports whether a freshly-read faceplate differs from the
+// stored one, comparing DECODED values rather than bytes: key order and
+// whitespace are storage accidents, not hardware facts, and jsonb does not
+// preserve either. An empty or unreadable stored facade differs from any
+// fresh read — the fresh read comes from the device itself, the one authority
+// on its own front panel. An unreadable FRESH read never differs: nothing
+// safe to write.
+func faceplateDiffers(stored, fresh json.RawMessage) bool {
+	if faceplateEmpty(stored) {
+		return true
+	}
+	var b any
+	if json.Unmarshal(fresh, &b) != nil {
+		return false
+	}
+	var a any
+	if json.Unmarshal(stored, &a) != nil {
+		return true
+	}
+	return !reflect.DeepEqual(a, b)
+}
+
+// fillFaceplate reads the physical faceplate from the live device and persists
+// it WHEN IT DIFFERS from what is stored, on a connector that can read it.
+// Best-effort: any failure is noted, never fatal — the read already saved
+// ports and VLANs. This is the catch-up that keeps a blank-adopted device from
+// staying portless forever, and a device adopted under an OLDER connector from
+// keeping a facade shape the connector no longer produces — the write is
+// skipped when nothing changed, so replaying the read on a healthy fleet
+// stays a no-op (cf. driver.FaceplateReader).
 func (s *Server) fillFaceplate(ctx context.Context, d model.Device, adm driver.Admin, out map[string]any) {
 	var reader, ok = driver.AsFaceplateReader(adm)
 	if !ok {
 		return
 	}
 	var groups, err = reader.ReadFaceplate(ctx)
+	if errors.Is(err, driver.ErrNotImplemented) {
+		// The wire form of a failed assertion: silent, as above.
+		return
+	}
 	if err != nil {
 		out["faceplate_note"] = "faceplate not read: " + err.Error()
 		return
@@ -565,6 +758,9 @@ func (s *Server) fillFaceplate(ctx context.Context, d model.Device, adm driver.A
 	var raw, mErr = json.Marshal(groups)
 	if mErr != nil || len(groups) == 0 {
 		return
+	}
+	if !faceplateDiffers(d.PortGroups, raw) {
+		return // the stored facade already matches the hardware: nothing to write
 	}
 	var _, sErr = s.Store.SetDeviceFaceplate(ctx, d.ID, raw)
 	if sErr != nil {
@@ -599,6 +795,9 @@ func (s *Server) handleReadRawSection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var conn, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm)})
@@ -690,6 +889,9 @@ func (s *Server) handlePrepareMgmtMigration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var conn, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm)})
@@ -754,6 +956,9 @@ func (s *Server) handleCommitMgmtMigration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var conn, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm)})
@@ -867,6 +1072,9 @@ func (s *Server) handlePersistMgmtMigration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var conn, adm, _, err = s.adminFor(r.Context(), d)
+	if adm != nil {
+		defer adm.Close()
+	}
 	if err != nil {
 		respond(w, http.StatusOK, map[string]any{
 			"ok": false, "error": err.Error(), "steps": transcriptOf(adm)})
@@ -933,7 +1141,7 @@ func (s *Server) handlePersistMgmtMigration(w http.ResponseWriter, r *http.Reque
 // being: while each handler called `instanton.OpenAdmin` hard-coded, none could pick the
 // wrong platform — they all did, all the time, visible only on a single-vendor fleet.
 // The defect surfaced: adopting a MikroTik switch sent SNMP provisioning in Instant On
-// protocol to it, `https://10.99.0.54/`, connection refused because that device does not
+// protocol to it, `https://192.0.2.54/`, connection refused because that device does not
 // listen on 443.
 
 // connectorFor returns the connector DISCOVERY designated for this device, or why it is
@@ -1067,7 +1275,7 @@ func mgmtMoverRefusal(conn driver.Connector) string {
 			"the dual-path migrate procedure needs ADDING an administration path on the "+
 				"target VLAN, confirming it obtained an address, then only then switching. "+
 				"This platform cannot carry two addresses at once. Use "+
-				"« Conform Management » (`mgmt-addressing/jump`) when offered, or change "+
+				"\"Conform Management\" (`mgmt-addressing/jump`) when offered, or change "+
 				"addressing by hand — connector capabilities (`mgmt.notes`) give the "+
 				"exact order of operations").Error()
 	}
@@ -1105,11 +1313,226 @@ func (s *Server) handleImportDeviceConfig(w http.ResponseWriter, r *http.Request
 		respondErr(w, http.StatusUnprocessableEntity, "unreadable observed state")
 		return
 	}
-
-	var created, err = s.ensureVlans(r.Context(), d.SiteID, obs)
+	// THE SHORT-READ REFUSAL IS NOT MADE HERE ANY MORE — absorbObserved makes it
+	// itself and returns *shortRead, which this handler only has to RENDER. See
+	// ADR-0017 for why it moved: the refusal used to live in this handler with a
+	// comment telling the next caller to repeat it, and the next caller
+	// (importFromDevice, at adoption) did not.
+	var merged, created, declined, err = s.absorbObserved(r.Context(), d, obs)
+	var short *shortRead
+	if errors.As(err, &short) {
+		// 422, not 500: the request is well formed and the operator is not at
+		// fault — the last read is. The sentence says which gesture fixes it.
+		respondErr(w, http.StatusUnprocessableEntity, short.Error()+
+			". Read the device again and retry once the count matches")
+		return
+	}
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	s.emitDeviceEvent(r, d, "config.absorbed", model.SevNotice,
+		"Configuration of \""+d.Name+"\" imported into meshcraft ("+
+			itoa(merged)+" port(s), "+itoa(len(created))+" VLAN(s) created).")
+	// The declined half is REPORTED, never swallowed: an operator who asked to
+	// import a configuration and got its ports but not its VLANs has to be told
+	// which ones, and why, or they will look for a bug that is a safeguard.
+	var reply = map[string]any{"ok": true, "ports": merged, "vlans_created": created}
+	if declined != "" {
+		reply["vlans_declined"] = declined
+		s.emitDeviceEvent(r, d, "config.absorbed", model.SevWarning, declined)
+	}
+	respond(w, http.StatusOK, reply)
+}
+
+// shortRead is the refusal [Server.absorbObserved] makes BEFORE writing
+// anything: the observation it was handed does not cover the device's ports, so
+// absorbing it would DELETE the intent of those it did not reach.
+//
+// A TYPE RATHER THAN A RULE WRITTEN DOWN SOMEWHERE. Each caller still chooses
+// how to render it — 422 on the device page, a warning sentence at adoption —
+// but a caller that renders it badly merely communicates badly, where a caller
+// that forgot the old commented-out rule destroyed configuration. See ADR-0017.
+//
+// Error() is the operator's sentence, in full: the one place it is composed, so
+// the device page and the adoption form cannot explain the same refusal in two
+// different ways.
+type shortRead struct {
+	// Observed is how many ports the read actually reached.
+	Observed int
+	// Faceplate is how many the device's MODEL declares, 0 when it declares none.
+	Faceplate int
+	// Intent is how many ports the model already carries. Consulted only when
+	// Faceplate is 0, where it is the only yardstick left.
+	Intent int
+}
+
+func (e *shortRead) Error() string {
+	if e.Faceplate > 0 {
+		return fmt.Sprintf(
+			"the last read back only covers %d of this device's %d ports, so importing it "+
+				"would delete the configuration of the %d it did not reach",
+			e.Observed, e.Faceplate, e.Faceplate-e.Observed)
+	}
+	return fmt.Sprintf(
+		"the last read back covers no port at all, so importing it would delete the "+
+			"configuration of the %d port(s) this device's model carries", e.Intent)
+}
+
+// shortReadRefusal decides whether an observation may become the intent.
+//
+// # A TRUNCATED READ MUST NOT BECOME THE INTENT
+//
+// absorbObserved replaces `ports` WHOLESALE, so a partial observation does not
+// merge — it DELETES the intent of every port the read did not reach, and that
+// is not recoverable afterwards.
+//
+// Two incidents, not one hypothesis.
+//
+// 2026-08-11, poefs3400lab persisted an observation of 23 of its 52 ports:
+// `show running-config` was cut off inside GE23's stanza, and the connector
+// accepted it because it only treats a read as failed when the output is EMPTY
+// (fs/s3400/state.go). Drift read 30 differences, the UI showed apply blocked —
+// the state that most invites the import button — and pressing it would have
+// dropped 29 ports including all four 10G uplink trunks.
+//
+// 2026-10-24, sw01-arena (FS S3400-48T4SP, 48×GE + 4×XG) was ADOPTED with 48 of
+// its 52 ports: XG1-XG4 absent from the model, the 48 all `access` on a
+// seven-VLAN switch, and `sync: in_sync` — because intent and observation came
+// out of the SAME truncated read, so drift compares two equally wrong halves and
+// finds nothing. That is why this check cannot be left to callers: the damage it
+// prevents is damage nothing else in the product can see afterwards.
+//
+// # Why the FACEPLATE is the yardstick
+//
+// It comes from the MODEL, not from the same read that may have been cut short.
+// Measured across the whole fleet before the first refusal landed: eight of nine
+// devices observe EXACTLY their faceplate count and the ninth observes MORE
+// (CiscoLabFirst1, 28 against a declared 26 — a connector reporting uplinks the
+// faceplate does not model). So `<` cannot fire on a healthy device, which is
+// the property that makes a refusal safe; `>` is deliberately not touched.
+//
+// AN UNKNOWN FACEPLATE (0) MUST NOT BLOCK, or every platform that declares none
+// loses the ability to import at all. There the only yardstick left is the
+// intent already stored, and it only answers the extreme case: a read that
+// reached NO port, against a model that carries some. That is an import
+// declaring every jack unconfigured, and it is never what anybody asked for.
+// Anything finer — refusing any absorb that shrinks the port set — would block a
+// legitimately re-modelled device (ports renamed, a stack member removed) with
+// no way out, which is why it is not done.
+func shortReadRefusal(d model.Device, obs observedState) *shortRead {
+	var faceplate = faceplatePortCount(d)
+	if faceplate > 0 {
+		if len(obs.Ports) < faceplate {
+			return &shortRead{Observed: len(obs.Ports), Faceplate: faceplate}
+		}
+		return nil
+	}
+	if len(obs.Ports) > 0 {
+		return nil
+	}
+	var existing map[string]json.RawMessage
+	if json.Unmarshal(d.Ports, &existing) != nil || len(existing) == 0 {
+		// Nothing to lose: an empty read over an empty model asserts nothing, and
+		// the VLAN half of an absorb (ensureVlans) stays legitimate for a device
+		// whose connector reads VLANs but no port.
+		return nil
+	}
+	return &shortRead{Intent: len(existing)}
+}
+
+// absorbObserved brings a device's OBSERVED configuration into meshcraft's own
+// intent: it creates the site VLANs that configuration references, and replaces
+// the per-port intent with what the device actually carries.
+//
+// EXTRACTED FROM the device page's import button so that ADOPTION can perform
+// the same gesture (cf. handleAdoptDiscovered). The two must not drift: "import
+// the local configuration" has to mean the same thing whether it is chosen on
+// the adoption form or pressed a week later, or a device adopted one way would
+// carry a different intent from the same switch adopted the other.
+//
+// Returns the number of ports written and the VLAN ids created, which is what
+// both callers report to the operator.
+//
+// THIS FUNCTION OWNS THE SAFETY CHECK, and that is the whole point (ADR-0017).
+// It used to say the opposite — "the caller owns the safety check … any new
+// caller has to make the same refusal before arriving here" — and the next
+// caller written, importFromDevice at adoption, did not make it. A caller that
+// ignores *shortRead now gets a refusal and an error; before, it got a silent
+// deletion. The type moves the cost of forgetting onto the message, not onto
+// the data.
+func (s *Server) absorbObserved(ctx context.Context, d model.Device,
+	obs observedState) (ports int, created []int, declined string, err error) {
+
+	// REFUSED BEFORE ANYTHING IS READ OR WRITTEN, so a refusal costs no query
+	// and leaves nothing half-done.
+	var refusal = shortReadRefusal(d, obs)
+	if refusal != nil {
+		return 0, nil, "", refusal
+	}
+
+	// A ONE-DEVICE GESTURE MUST NOT SILENTLY REWRITE THE WHOLE FABRIC.
+	//
+	// # The incident this rule comes from, 2026-08-12
+	//
+	// Importing a CRS305's configuration created seven VLANs the site did not
+	// have (10-13, 60, 101, 102 — the device's own plan). Within seconds EVERY
+	// OTHER SWITCH on the site went to `drift` and the operator saw
+	// "configuration applied incompletely" across the fleet. Nothing was wrong
+	// with the devices: `tagged: "all"` means "every VLAN the SITE declares"
+	// (recon.ResolveTaggedAll), so adding seven VLANs redefined every full trunk
+	// on every other device at once. Eight devices, forty-eight full trunks on
+	// core01 alone, from one adoption.
+	//
+	// That semantic is CORRECT and is not what changed here — a VLAN added
+	// deliberately from the VLAN screen should reach the whole fabric, which is
+	// the point of a full trunk. What was wrong is the CONSENT: the operator
+	// asked to import one switch's configuration, not to schedule a
+	// reconfiguration of every other one.
+	//
+	// # The rule
+	//
+	// VLANs are created only when doing so cannot change what another device is
+	// already configured to carry — i.e. when no OTHER device on the site has a
+	// full trunk. Adopting into a fresh site (the ordinary case, and the one the
+	// feature was built for) therefore still creates them. On a populated site
+	// the port configuration is imported anyway, and the VLANs are named in a
+	// sentence for the operator to add deliberately, where the fabric-wide
+	// consequence is visible and theirs.
+	//
+	// The port intents do NOT need the site rows to be correct: `tagged` is a
+	// list of ids, and the CRS305 stayed `in_sync` throughout with its tagged
+	// lists referencing VLANs the site did not declare. So declining this half
+	// costs the operator a naming, never a configuration.
+	var wanted, wErr = s.vlansMissingForDevice(ctx, d.SiteID, obs)
+	if wErr != nil {
+		return 0, nil, "", wErr
+	}
+	if len(wanted) > 0 {
+		var affected, aErr = s.fullTrunkPortsElsewhere(ctx, d.SiteID, d.ID)
+		if aErr != nil {
+			return 0, nil, "", aErr
+		}
+		if affected > 0 {
+			declined = fmt.Sprintf("VLAN(s) %s were NOT created on the site: %d full-trunk "+
+				"port(s) on other devices carry \"all VLANs\", so creating them here would "+
+				"change what those devices are configured to carry and put the whole site "+
+				"out of conformity. The port configuration WAS imported; add these VLANs "+
+				"from the site's VLAN screen if the fabric really should carry them",
+				intList(wanted), affected)
+		}
+	}
+
+	// SKIPPED ENTIRELY when declined, rather than filtered: ensureVlans harvests
+	// ids from the ports' PVID and tagged lists as well as from the declared VLAN
+	// list, so removing the declarations alone would still create them — and the
+	// tagged lists ARE the configuration, which must not be altered to protect
+	// the site plan.
+	if declined == "" {
+		created, err = s.ensureVlans(ctx, d.SiteID, obs)
+		if err != nil {
+			return 0, nil, "", err
+		}
 	}
 
 	// Merge: configuration comes from the device, label stays meshcraft's.
@@ -1130,7 +1553,10 @@ func (s *Server) handleImportDeviceConfig(w http.ResponseWriter, r *http.Request
 		var prev, had = existing[name]
 		if had {
 			var key string
-			for _, key = range []string{"label", "link", "poe", "poe_w", "rx_mbps", "tx_mbps"} {
+			// `profile_id` rides along with the meshcraft-only annotations: the
+			// device knows nothing of VLAN groups, so absorbing ITS configuration
+			// must not sever the port→profile link the operator declared here.
+			for _, key = range []string{"label", "profile_id", "link", "poe", "poe_w", "rx_mbps", "tx_mbps"} {
 				var v, seen = prev[key]
 				if seen {
 					port[key] = v
@@ -1142,23 +1568,106 @@ func (s *Server) handleImportDeviceConfig(w http.ResponseWriter, r *http.Request
 
 	var raw []byte
 	if raw, err = json.Marshal(merged); err != nil {
-		fail(w, err)
-		return
+		return 0, nil, "", err
 	}
-	if err = s.Store.AbsorbObserved(r.Context(), d.ID, raw); err != nil {
-		fail(w, err)
-		return
+	if err = s.Store.AbsorbObserved(ctx, d.ID, raw); err != nil {
+		return 0, nil, "", err
 	}
 	// Intent that failed was just abandoned: trace of that apply no longer applies. Keeping
 	// it would show perpetual failure, with a "retry" button that would re-apply configuration
 	// that no longer exists. An error here does not cancel import, which did succeed.
-	_ = s.Store.ClearApplyOutcome(r.Context(), d.ID)
-	s.emitDeviceEvent(r, d, "config.absorbed", model.SevNotice,
-		"Configuration of \""+d.Name+"\" imported into meshcraft ("+
-			itoa(len(merged))+" port(s), "+itoa(len(created))+" VLAN(s) created).")
-	respond(w, http.StatusOK, map[string]any{
-		"ok": true, "ports": len(merged), "vlans_created": created,
-	})
+	_ = s.Store.ClearApplyOutcome(ctx, d.ID)
+	return len(merged), created, declined, nil
+}
+
+// vlansMissingForDevice lists the VLAN ids this observation references that the
+// site does not declare. The dry run of [Server.ensureVlans], kept separate so
+// the decision above can be taken BEFORE anything is written.
+func (s *Server) vlansMissingForDevice(ctx context.Context, siteID string,
+	obs observedState) ([]int, error) {
+
+	var known, err = s.Store.ListVlans(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+	var have = map[int]bool{}
+	var v model.Vlan
+	for _, v = range known {
+		have[v.VlanID] = true
+	}
+	var wanted = map[int]bool{}
+	var dv driver.VLAN
+	for _, dv = range obs.VLANs {
+		wanted[dv.ID] = true
+	}
+	var p driver.PortState
+	for _, p = range obs.Ports {
+		if p.PVID > 0 {
+			wanted[p.PVID] = true
+		}
+		var id int
+		for _, id = range p.Tagged {
+			wanted[id] = true
+		}
+	}
+	var out []int
+	var id int
+	for id = range wanted {
+		if !have[id] && id > 0 {
+			out = append(out, id)
+		}
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+// fullTrunkPortsElsewhere counts ports on OTHER devices of the site whose intent
+// is "all VLANs" — the ports whose meaning a new site VLAN would change.
+//
+// The device being imported is excluded: its own trunks are about to be replaced
+// by what it actually carries, so they cannot be surprised by the result.
+func (s *Server) fullTrunkPortsElsewhere(ctx context.Context, siteID,
+	exceptDeviceID string) (int, error) {
+
+	var devices, err = s.Store.ListDevices(ctx, siteID)
+	if err != nil {
+		return 0, err
+	}
+	return countFullTrunks(devices, exceptDeviceID), nil
+}
+
+// countFullTrunks is the pure half: how many ports on devices OTHER than
+// `exceptDeviceID` are configured as "all VLANs".
+//
+// Pure because it is the number a safeguard turns on, and a wrong answer is
+// silent in both directions — too low re-opens the fleet-wide surprise, too high
+// refuses a VLAN creation nobody would have been disturbed by.
+func countFullTrunks(devices []model.Device, exceptDeviceID string) int {
+	var n int
+	var i int
+	for i = range devices {
+		if devices[i].ID == exceptDeviceID {
+			continue
+		}
+		var ports = portIntents(devices[i])
+		var name string
+		for name = range ports {
+			if string(ports[name].Tagged) == `"all"` {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// intList renders VLAN ids for an operator sentence.
+func intList(ids []int) string {
+	var parts = make([]string, 0, len(ids))
+	var id int
+	for _, id = range ids {
+		parts = append(parts, strconv.Itoa(id))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ensureVlans creates site VLANs the device references that meshcraft lacks. Returns
@@ -1241,7 +1750,7 @@ func (s *Server) saveObservedState(ctx context.Context, deviceID string,
 	state driver.State) error {
 	var raw, err = json.Marshal(observedState{
 		VLANs: state.VLANs, Ports: state.Ports, LinkUp: state.LinkUp(), Links: state.Links,
-		MgmtVLAN: state.MgmtVLAN,
+		MgmtVLAN: state.MgmtVLAN, LAGs: state.LAGs,
 	})
 	if err != nil {
 		return err
@@ -1308,8 +1817,8 @@ func (s *Server) handleApplyDeviceConfig(w http.ResponseWriter, r *http.Request)
 	s.emitDeviceEvent(r, d, "config.applied", model.SevNotice,
 		"Configuration applied on \""+d.Name+"\": "+itoa(len(res.Result.PortsWritten))+
 			" port(s) written, "+itoa(len(res.Result.VLANsCreated))+" VLAN(s) created, "+
-			itoa(len(res.Result.Skipped))+" skipped, "+itoa(len(res.Remaining))+
-			" drift(s) remaining.")
+			itoa(len(res.Result.AllNotApplied()))+" not applied, "+
+			itoa(len(res.Remaining))+" drift(s) remaining.")
 	respond(w, http.StatusOK, out)
 }
 

@@ -232,7 +232,7 @@ func (s *Server) applySwitchSpecToDevice(ctx context.Context, d model.Device,
 	var msg = d.Name + " - switch profile applied: " + strconv.Itoa(len(names)) +
 		" port(s) configured, " + strconv.Itoa(len(plan.Uncovered)) + " left unchanged"
 	if profileName != "" {
-		msg = d.Name + " - switch profile « " + profileName + " » applied: " +
+		msg = d.Name + " - switch profile \"" + profileName + "\" applied: " +
 			strconv.Itoa(len(names)) + " port(s) configured, " +
 			strconv.Itoa(len(plan.Uncovered)) + " left unchanged"
 	}
@@ -322,6 +322,23 @@ func mergePortConfigs(existing json.RawMessage,
 		var v json.RawMessage
 		for k, v = range a.Config.Fields() {
 			fields[k] = v
+		}
+		// The follow-link travels WITH the values (cf. Assignment.PortProfileID).
+		// A rule that references a port profile stamps it — the port panel then
+		// opens on the group lane, as after a hand-applied group. Any other
+		// winning rule CLEARS it: the port's values now come from that rule,
+		// and a leftover reference would claim a provenance the values no
+		// longer have. Ports no rule wins are not in `assignments` at all and
+		// keep whatever link they had — same "absent = untouched" contract as
+		// the rest of the merge.
+		if a.PortProfileID != "" {
+			var idRaw, idErr = json.Marshal(a.PortProfileID)
+			if idErr != nil {
+				return nil, idErr
+			}
+			fields["profile_id"] = idRaw
+		} else {
+			fields["profile_id"] = json.RawMessage(`null`)
 		}
 		var raw, err = json.Marshal(fields)
 		if err != nil {

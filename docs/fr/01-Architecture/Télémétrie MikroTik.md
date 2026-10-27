@@ -107,7 +107,7 @@ l'équipement lit la fin d'un mot comme le début du suivant, et la session part
 
 > [!note] Deux protocoles du même constructeur, deux conventions d'octets OPPOSÉES
 > La longueur est ici en **gros-boutien** (octet de poids fort d'abord). Les adresses IP
-> de SwOS, elles, sont en **petit-boutien** — `0x2400630a` se lit 10.99.0.36, et le
+> de SwOS, elles, sont en **petit-boutien** — `0x240200c0` se lit 192.0.2.36, et le
 > connecteur voisin consacre un paragraphe entier à ce piège. Inverser l'un ou l'autre
 > produit des octets parfaitement valides et une valeur fausse, ce qui est la seule
 > catégorie d'erreur qu'aucun message ne signale. D'où, des deux côtés, un test
@@ -437,7 +437,7 @@ l'équipement ne sert pas ne rend simplement rien.
 > proxy, lui, parle UDP — et c'est par lui que le geste prescrit au §4 a été fait.
 >
 > **Deux canaux indépendants du même équipement, lus au même instant.** Sur le
-> CSS326-24G-2S+ de référence (10.99.0.36), `/sys.b` rend `temp:0x45`, soit **69 °C**, et
+> CSS326-24G-2S+ de référence (192.0.2.36), `/sys.b` rend `temp:0x45`, soit **69 °C**, et
 > `mtxrHealth.11.0` rend **690**. Le diviseur de 10 est donc juste — il n'est plus emprunté
 > à Observium et LibreNMS, il est vérifié. La série collectée affiche bien 69 °C.
 >
@@ -531,7 +531,7 @@ le proxy ne reçoit aucune cible : ni état, ni compteurs, ni capteurs
 
 ### 4.2 Le relevé
 
-Séquence exécutée sur l'équipement de référence, à travers le tunnel de `proxy-akwalan` :
+Séquence exécutée sur l'équipement de référence, à travers le tunnel de `proxy-lab` :
 
 1. **lecture** de `/snmp.b` — l'agent est **actif** (`en:0x01`) et porte une communauté ;
 2. **constat** que la communauté de l'équipement **diffère** de celle du coffre (15 caractères
@@ -624,7 +624,7 @@ CRS326. C'était vrai de la **déclaration** et faux du **fait** : aucune série
 remontée de cet équipement jusqu'au 29 juillet 2026.
 
 La cause n'est pas dans son connecteur, elle est dans les **bornes de source** de la
-communauté que meshcraft y avait écrite — `addresses=10.99.0.0/16`, le sous-réseau du plan
+communauté que meshcraft y avait écrite — `addresses=192.0.2.0/24`, le sous-réseau du plan
 du site — alors que le proxy l'interroge depuis `10.42.0.67`, parce qu'il y est **routé**.
 Un agent RouterOS qui refuse une source se tait. Le mécanisme complet, le relevé et le
 correctif (bornes cumulées, et collecteur choisi à l'adoption) sont dans [[Monitoring]]

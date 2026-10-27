@@ -82,18 +82,18 @@ func watchers(proxies []watchProxy, r watchRow) []string {
 
 // The two instance proxies from the demo database: the situation that motivated this batch,
 // and the only case where SNMP duplication is guaranteed.
-var deuxGlobaux = []watchProxy{
+var twoGlobals = []watchProxy{
 	{id: "local", global: true},
-	{id: "akwalan", global: true},
+	{id: "lab", global: true},
 }
 
 // The case that motivated the migration. Two instance proxies see the same device; without
 // attachment, both poll it via SNMP and there is no answer to "which address to write as trap
 // destination?" Attached, there is only one.
-func TestRattachementRendLeCollecteurUnique(t *testing.T) {
-	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "akwalan"}
-	var got = collectors(deuxGlobaux, dev)
-	if len(got) != 1 || got[0] != "akwalan" {
+func TestAttachmentMakesTheCollectorUnique(t *testing.T) {
+	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "lab"}
+	var got = collectors(twoGlobals, dev)
+	if len(got) != 1 || got[0] != "lab" {
 		t.Fatalf("attached device must have ONE collector and only one (its own), got %v", got)
 	}
 }
@@ -102,9 +102,9 @@ func TestRattachementRendLeCollecteurUnique(t *testing.T) {
 // remove NOTHING from ping. Both proxies keep monitoring, otherwise the collector's fall would
 // take device reachability with it — an indicator going dark because a proxy fell, not because
 // the switch died.
-func TestRattachementNeRestreintPasLePing(t *testing.T) {
-	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "akwalan"}
-	var got = watchers(deuxGlobaux, dev)
+func TestAttachmentDoesNotRestrictPing(t *testing.T) {
+	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "lab"}
+	var got = watchers(twoGlobals, dev)
 	if len(got) != 2 {
 		t.Fatalf("ICMP monitoring stays by coverage: expected both proxies, got %v", got)
 	}
@@ -112,13 +112,13 @@ func TestRattachementNeRestreintPasLePing(t *testing.T) {
 
 // Unattached: strictly pre-migration-0022 behavior. Every eligible proxy is a collector, nobody
 // having declared otherwise. This test says the migration is semantics-preserving.
-func TestNonRattacheConserveLeComportementParCouverture(t *testing.T) {
+func TestUnattachedKeepsCoverageBehaviour(t *testing.T) {
 	var dev = watchRow{name: "sw-b1", siteID: "B", mgmtIP: "192.168.1.10"}
-	var got = collectors(deuxGlobaux, dev)
+	var got = collectors(twoGlobals, dev)
 	if len(got) != 2 {
 		t.Fatalf("without attachment, every eligible proxy collects: expected 2, got %v", got)
 	}
-	if len(watchers(deuxGlobaux, dev)) != 2 {
+	if len(watchers(twoGlobals, dev)) != 2 {
 		t.Fatalf("without attachment, every eligible proxy pings")
 	}
 }
@@ -126,10 +126,10 @@ func TestNonRattacheConserveLeComportementParCouverture(t *testing.T) {
 // Detaching returns the device to coverage. Fallback for `on delete set null` as much as
 // explicit detach (SetDeviceProxy with empty string), and it must leave no device without a
 // collector.
-func TestDetachementRendALaCouverture(t *testing.T) {
-	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "akwalan"}
+func TestDetachingReturnsToCoverage(t *testing.T) {
+	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "lab"}
 	dev.proxyID = "" // what SetDeviceProxy(ctx, id, "") writes to database
-	var got = collectors(deuxGlobaux, dev)
+	var got = collectors(twoGlobals, dev)
 	if len(got) != 2 {
 		t.Fatalf("after detach, back to coverage: expected 2, got %v", got)
 	}
@@ -143,12 +143,12 @@ func TestDetachementRendALaCouverture(t *testing.T) {
 // collector. It remains pinged. The layer proposing attachment must offer only covering
 // proxies; if this line ever fails, someone widened eligibility and migration 0022 must be
 // re-read before "fixing" the test.
-func TestRattachementNeDonnePasLaCouverture(t *testing.T) {
+func TestAttachmentDoesNotGrantCoverage(t *testing.T) {
 	var proxies = []watchProxy{
 		{id: "local", global: true},
-		{id: "agence-b", sites: map[string]bool{"B": true}},
+		{id: "branch-b", sites: map[string]bool{"B": true}},
 	}
-	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "agence-b"}
+	var dev = watchRow{name: "sw-a1", siteID: "A", mgmtIP: "192.168.1.10", proxyID: "branch-b"}
 	if len(collectors(proxies, dev)) != 0 {
 		t.Fatalf("non-covering proxy must not collect, got %v", collectors(proxies, dev))
 	}
@@ -160,9 +160,9 @@ func TestRattachementNeDonnePasLaCouverture(t *testing.T) {
 
 // A device without address is neither pinged nor collected, attached or not: designating a
 // collector does not manufacture an address to poll.
-func TestSansAdressePasDeSurveillance(t *testing.T) {
-	var dev = watchRow{name: "sw-neuf", siteID: "A", proxyID: "akwalan"}
-	if len(watchers(deuxGlobaux, dev)) != 0 || len(collectors(deuxGlobaux, dev)) != 0 {
+func TestNoAddressNoMonitoring(t *testing.T) {
+	var dev = watchRow{name: "sw-new", siteID: "A", proxyID: "lab"}
+	if len(watchers(twoGlobals, dev)) != 0 || len(collectors(twoGlobals, dev)) != 0 {
 		t.Fatalf("device without mgmt_ip stays out of monitoring")
 	}
 }
@@ -174,7 +174,7 @@ func TestSansAdressePasDeSurveillance(t *testing.T) {
 // The test lives here with the attachment it serves, although nullableUUID is declared in
 // discovery_store.go: SetDeviceProxy relies on this behavior to detach, and regression would
 // show up here if someone decided an empty string is a caller error.
-func TestNullableUUIDDetacheSurChaineVide(t *testing.T) {
+func TestNullableUUIDDetachesOnEmptyString(t *testing.T) {
 	if nullableUUID("") != nil {
 		t.Fatalf("empty string must become NULL, got %v", nullableUUID(""))
 	}
@@ -252,19 +252,19 @@ func confirmTrapPath(r trapDestRow, proxyID string) (trapDestRow, bool) {
 }
 
 // Reference row: destination pushed and confirmed.
-func destConfirmee() trapDestRow {
+func destConfirmed() trapDestRow {
 	return trapDestRow{
-		proxyID: "akwalan", destAddr: "10.42.0.67", destProxyID: "akwalan",
+		proxyID: "lab", destAddr: "10.42.0.67", destProxyID: "lab",
 		confirmed: true,
 	}
 }
 
-// TestChangerDeCollecteurInvalideLaConfirmation: changing collector changes the address to
+// TestChangingCollectorInvalidatesTheConfirmation: changing collector changes the address to
 // write into the device. What is there becomes wrong, and acquired confirmation is worthless
 // — it referred to the return path toward the OLD proxy. Keeping it would show "path verified"
 // for a path nothing ever took.
-func TestChangerDeCollecteurInvalideLaConfirmation(t *testing.T) {
-	var got = setDeviceProxy(destConfirmee(), "local")
+func TestChangingCollectorInvalidatesTheConfirmation(t *testing.T) {
+	var got = setDeviceProxy(destConfirmed(), "local")
 	if got.confirmed {
 		t.Error("collector change must cancel confirmation")
 	}
@@ -274,54 +274,54 @@ func TestChangerDeCollecteurInvalideLaConfirmation(t *testing.T) {
 	}
 	// Detach too: no collector, therefore no unique address to write — destination designates
 	// nothing reproducible.
-	if setDeviceProxy(destConfirmee(), "").confirmed {
+	if setDeviceProxy(destConfirmed(), "").confirmed {
 		t.Error("detach must cancel confirmation")
 	}
 }
 
-// TestRattachementIdentiqueNePerdRien: counterpart of the previous. A screen resubmitting the
+// TestIdenticalAttachmentLosesNothing: counterpart of the previous. A screen resubmitting the
 // current value, or a replayed gesture, must not destroy a still-accurate proof — otherwise the
 // next trap would re-announce an already known path.
-func TestRattachementIdentiqueNePerdRien(t *testing.T) {
-	var got = setDeviceProxy(destConfirmee(), "akwalan")
+func TestIdenticalAttachmentLosesNothing(t *testing.T) {
+	var got = setDeviceProxy(destConfirmed(), "lab")
 	if !got.confirmed || got.destAddr != "10.42.0.67" {
 		t.Errorf("identical re-attachment keeps destination and proof, got %+v", got)
 	}
 }
 
-// TestReposeIdentiqueConserveLaPreuve: replaying exactly the same line — what every replayed
+// TestIdenticalReapplyKeepsTheProof: replaying exactly the same line — what every replayed
 // provisioning does, and it replays on every model or address change — must neither lose the
 // established fact nor generate a second "path established" announcement.
-func TestReposeIdentiqueConserveLaPreuve(t *testing.T) {
-	var got = setTrapDestination(destConfirmee(), "10.42.0.67", "akwalan")
+func TestIdenticalReapplyKeepsTheProof(t *testing.T) {
+	var got = setTrapDestination(destConfirmed(), "10.42.0.67", "lab")
 	if !got.confirmed {
 		t.Error("replaying same destination must not reset path doubt")
 	}
 }
 
-// TestReposeAilleursRemetToutAProuver: a different address, or the same proxy via another
+// TestReapplyElsewhereResetsTheProof: a different address, or the same proxy via another
 // route, is a DIFFERENT return path. Nothing says it works, and old proof does not carry over.
-func TestReposeAilleursRemetToutAProuver(t *testing.T) {
-	if setTrapDestination(destConfirmee(), "172.17.0.1", "akwalan").confirmed {
+func TestReapplyElsewhereResetsTheProof(t *testing.T) {
+	if setTrapDestination(destConfirmed(), "172.17.0.1", "lab").confirmed {
 		t.Error("new address must reset proof")
 	}
-	if setTrapDestination(destConfirmee(), "10.42.0.67", "local").confirmed {
+	if setTrapDestination(destConfirmed(), "10.42.0.67", "local").confirmed {
 		t.Error("new proxy must reset proof")
 	}
 }
 
-// TestPreuveNeSeJournaliseQuUneFois: proxy emits `EventTrapSeen` only once per device and
+// TestProofIsLoggedOnlyOnce: proxy emits `EventTrapSeen` only once per device and
 // proxy, but REARMS its counter as soon as the device leaves then re-enters its watch list —
 // therefore on every tunnel reconnect and every fleet change. Without the `where` bound, a
 // proxy restart would produce one "return path established" line for the whole fleet at once.
-func TestPreuveNeSeJournaliseQuUneFois(t *testing.T) {
-	var row = destConfirmee()
+func TestProofIsLoggedOnlyOnce(t *testing.T) {
+	var row = destConfirmed()
 	row.confirmed = false
-	var got, first = confirmTrapPath(row, "akwalan")
+	var got, first = confirmTrapPath(row, "lab")
 	if !first || !got.confirmed {
 		t.Fatalf("first trap confirms and journals, got %v/%+v", first, got)
 	}
-	var again, second = confirmTrapPath(got, "akwalan")
+	var again, second = confirmTrapPath(got, "lab")
 	if second {
 		t.Error("second trap must journal nothing more")
 	}
@@ -330,7 +330,7 @@ func TestPreuveNeSeJournaliseQuUneFois(t *testing.T) {
 	}
 }
 
-// TestConfirmTrapPathNAccepteAucuneHorloge: clock-mixing lock, and it targets the SIGNATURE
+// TestConfirmTrapPathAcceptsNoClock: clock-mixing lock, and it targets the SIGNATURE
 // because that is all a test without a database can hold.
 //
 // What happened on first real-hardware trial: `trap_seen_at` was eleven seconds BEFORE the
@@ -344,14 +344,14 @@ func TestPreuveNeSeJournaliseQuUneFois(t *testing.T) {
 // warning comment but REMOVING the parameter: as long as the function accepts no `time.Time`,
 // nobody can inject a third-party date, and the `update`'s `now()` remains the only source.
 // This test fails on the first attempt to add it back.
-func TestConfirmTrapPathNAccepteAucuneHorloge(t *testing.T) {
+func TestConfirmTrapPathAcceptsNoClock(t *testing.T) {
 	// METHOD EXPRESSION, not a bound method: receiver is in the signature, making parameter
 	// count readable as-is.
 	var fn = reflect.TypeOf((*Store).ConfirmTrapPath)
-	var horloge = reflect.TypeOf(time.Time{})
+	var clock = reflect.TypeOf(time.Time{})
 	var i int
 	for i = 0; i < fn.NumIn(); i++ {
-		if fn.In(i) == horloge {
+		if fn.In(i) == clock {
 			t.Fatalf("ConfirmTrapPath accepts timestamp at position %d: proof would reuse "+
 				"proxy date while trap_dest_at comes from now() — the two columns would no "+
 				"longer be comparable", i)
@@ -364,19 +364,19 @@ func TestConfirmTrapPathNAccepteAucuneHorloge(t *testing.T) {
 	}
 }
 
-// TestPreuveExigeLaDestinationEcrite: `where` also filters on `trap_dest_proxy_id`. A trap
+// TestProofRequiresTheWrittenDestination: `where` also filters on `trap_dest_proxy_id`. A trap
 // accepted by a proxy whose address is not the one we pushed does not confirm our claim — and
 // a destination never pushed has nothing to confirm.
-func TestPreuveExigeLaDestinationEcrite(t *testing.T) {
-	var row = destConfirmee()
+func TestProofRequiresTheWrittenDestination(t *testing.T) {
+	var row = destConfirmed()
 	row.confirmed = false
-	var _, autre = confirmTrapPath(row, "local")
-	if autre {
+	var _, other = confirmTrapPath(row, "local")
+	if other {
 		t.Error("another proxy must not confirm written destination")
 	}
-	var jamaisPosee = trapDestRow{proxyID: "akwalan"}
-	var _, rien = confirmTrapPath(jamaisPosee, "akwalan")
-	if rien {
+	var neverSet = trapDestRow{proxyID: "lab"}
+	var _, nothing = confirmTrapPath(neverSet, "lab")
+	if nothing {
 		t.Error("without written destination, nothing to confirm")
 	}
 }

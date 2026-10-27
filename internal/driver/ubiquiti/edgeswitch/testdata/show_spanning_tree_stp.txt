@@ -1,0 +1,34 @@
+show spanning-tree
+
+Spanning Tree Protocol......................... stp
+Bridge Max Age................................. 20
+Bridge Max Hops................................ 20
+Bridge Tx Hold Count........................... 6
+Bridge Forwarding Delay........................ 15
+Hello Time..................................... 2
+Bridge Hold Time............................... 6
+CST Regional Root.............................. 80:00:9C:05:D6:F5:F1:37
+Regional Root Path Cost........................ 0
+Bridge Priority................................ 32768
+Bridge Identifier.............................. 80:00:9C:05:D6:F5:F1:37
+Time Since Topology Change..................... 0 day 0 hr 0 min 1 sec
+Topology Change Count.......................... 11
+Topology Change in progress.................... TRUE
+Designated Root................................ 40:00:D4:01:C3:AB:32:F4
+Root Port Identifier........................... 0/18
+Root Path Cost................................. 8000
+Interface   State           Role
+--------- ----------------- ----------
+0/18      Forwarding        Root
+
+
+     Associated FIDs           Associated VLANs
+     ---------------           ----------------
+     1                         1
+     42                        42
+     98                        98
+     99                        99
+     100                       100
+
+
+(UBNT EdgeSwitch) #

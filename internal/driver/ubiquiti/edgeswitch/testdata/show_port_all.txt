@@ -1,0 +1,29 @@
+show port all
+
+                 Admin     Physical   Physical   Link   Link    LACP   Flow
+Intf      Type   Mode      Mode       Status     Status Trap    Mode   Mode
+--------- ------ --------- ---------- ---------- ------ ------- ------ -------
+0/1              Enable    Auto                  Down   Enable  Enable Disable
+0/2              Enable    Auto                  Down   Enable  Enable Disable
+0/3              Enable    Auto                  Down   Enable  Enable Disable
+0/4              Enable    Auto                  Down   Enable  Enable Disable
+0/5              Enable    Auto                  Down   Enable  Enable Disable
+0/6              Enable    Auto                  Down   Enable  Enable Disable
+0/7              Enable    Auto                  Down   Enable  Enable Disable
+0/8              Enable    Auto                  Down   Enable  Enable Disable
+0/9              Enable    Auto                  Down   Enable  Enable Disable
+0/10             Enable    Auto                  Down   Enable  Enable Disable
+0/11             Enable    Auto                  Down   Enable  Enable Disable
+0/12             Enable    Auto                  Down   Enable  Enable Disable
+0/13             Enable    Auto                  Down   Enable  Enable Disable
+0/14             Enable    Auto                  Down   Enable  Enable Disable
+0/15             Enable    Auto                  Down   Enable  Enable Disable
+0/16             Enable    Auto                  Down   Enable  Enable Disable
+0/17             Enable    Auto D                Down   Enable  Enable Disable
+0/18             Enable    Auto D     10G Full   Up     Enable  Enable Disable
+3/1              Enable                          Down   Enable  N/A    Disable
+3/2              Enable                          Down   Enable  N/A    Disable
+3/3              Enable                          Down   Enable  N/A    Disable
+3/4              Enable                          Down   Enable  N/A    Disable
+3/5              Enable                          Down   Enable  N/A    Disable
+3/6              Enable                          Down   Enable  N/A    Disable

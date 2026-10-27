@@ -11,7 +11,7 @@ import (
 )
 
 // Secret generations (cf. migration 0011 and
-// docs/03-Security/Identite de service et rotation sections 3 to 6).
+// docs/en/03-Security/Service identity and rotation.md sections 3 to 6).
 
 const genCols = `g.id::text, g.credential_id::text, coalesce(g.device_id::text, ''),
 	g.generation, g.state, g.created_at, g.activated_at, g.retired_at`
@@ -61,18 +61,36 @@ func (s *Store) ListGenerations(ctx context.Context, credentialID string) ([]mod
 // TOGETHER and are archived together: a generation carrying only one would leave
 // unanswered, at the next rotation, the only question that matters — which encryption
 // phrase goes with this one.
+//
+// The second return names the OTHER credential rows that moved with this one, because
+// they hold a copy of the same account's password. See internal/store/credresync.go for
+// what that means, which rows it can select, and why it happens here rather than when a
+// device confirms. It is empty for every rotation that has no such copy, which is most
+// of them.
 func (s *Store) AddGeneration(ctx context.Context, credentialID, deviceID string,
-	secretEnc, secret2Enc []byte, createdBy string) (model.CredentialGeneration, error) {
+	secretEnc, secret2Enc []byte, createdBy string) (model.CredentialGeneration,
+	[]SiblingResync, error) {
 	var tx, err = s.pool.Begin(ctx)
 	if err != nil {
-		return model.CredentialGeneration{}, err
+		return model.CredentialGeneration{}, nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// READ FIRST, and inside the transaction. `credSiblingRows` locks the site's
+	// credential rows for the rest of it, so the rule below judges the same rows the
+	// writes will land on — and it reads the rotated row's own kind and account from the
+	// DATABASE rather than trusting what the caller thought it was rotating.
+	var rotated credRow
+	var others []credRow
+	rotated, others, err = credSiblingRows(ctx, tx, credentialID)
+	if err != nil {
+		return model.CredentialGeneration{}, nil, err
+	}
 
 	var g model.CredentialGeneration
 	g, err = addGenerationTx(ctx, tx, credentialID, deviceID, secretEnc, secret2Enc, createdBy)
 	if err != nil {
-		return model.CredentialGeneration{}, err
+		return model.CredentialGeneration{}, nil, err
 	}
 	// The vault follows the current generation.
 	//
@@ -88,18 +106,38 @@ func (s *Store) AddGeneration(ctx context.Context, credentialID, deviceID string
 		        rotated_at = now()
 		  where id = $1::uuid`,
 		credentialID, secretEnc, secret2Enc); err != nil {
-		return model.CredentialGeneration{}, err
+		return model.CredentialGeneration{}, nil, err
 	}
+
+	// THE COPIES OF THIS ACCOUNT FOLLOW, IN THIS TRANSACTION.
+	//
+	// A `gnmi` row naming the same account holds its own copy of this password, and the
+	// moment the head above moved, that copy became wrong — with nothing anywhere saying
+	// so, because it still RESOLVES. Doing it here rather than in a second call is the
+	// entire point: a rotation that advanced the admin generation and failed to advance
+	// the copy would leave exactly the state this closes, so it must not be possible to
+	// commit one without the other. Any error aborts the rotation itself.
+	var moved []SiblingResync
+	moved, err = resyncSiblingsTx(ctx, tx, resyncTargets(rotated, deviceID, others),
+		secretEnc, createdBy)
+	if err != nil {
+		return model.CredentialGeneration{}, nil, err
+	}
+
 	if err = tx.Commit(ctx); err != nil {
-		return model.CredentialGeneration{}, err
+		return model.CredentialGeneration{}, nil, err
 	}
-	return g, nil
+	return g, moved, nil
 }
 
 // addGenerationTx is the shared body: changing the secret from the edit screen and
 // clicking "new generation" are the SAME act. Two distinct paths would eventually
 // diverge, and the day they diverge history lies about what is actually on devices.
-func addGenerationTx(ctx context.Context, tx pgx.Tx, credentialID, deviceID string,
+//
+// It takes [credTx] rather than [pgx.Tx] — the two methods it actually uses — so that the
+// fan-out built on top of it (credresync.go) can be driven without a database. A real
+// [pgx.Tx] satisfies it, so every production caller still passes one.
+func addGenerationTx(ctx context.Context, tx credTx, credentialID, deviceID string,
 	secretEnc, secret2Enc []byte, createdBy string) (model.CredentialGeneration, error) {
 	var next int
 	var err = tx.QueryRow(ctx,
@@ -212,6 +250,39 @@ func (s *Store) NoteInstalledGeneration(ctx context.Context, deviceID, credentia
 	return err
 }
 
+// NoteCredentialFailure records that a push was ATTEMPTED on this device and did
+// not end up confirmed, WITHOUT claiming anything about what the device carries.
+//
+// The counterpart of [Store.NoteInstalledGeneration], and the reason it is a
+// separate statement rather than a parameter: that one writes
+// `installed_generation`, and a failed push must not write it. Passing the target
+// generation with an error message would file the fleet's belief and its
+// contradiction in the same row, and the belief is what
+// [Store.InstalledGenerations] reads to decide who still lags. A device that
+// refused the new secret still carries the OLD one; saying otherwise is how a
+// promotion gets approved over a device that never took it.
+//
+// `installed_at` and `last_verified_at` are untouched for the same reason:
+// `last_verified_at` means "this row's claim was proven", and a failure proves
+// nothing. What the row gains is a READABLE cause, so the device shows up in the
+// outstanding list with the reason attached instead of as a silent absence — the
+// shape `deployment_test.go` already anticipates ("a push was attempted and
+// failed") and that nothing, until now, ever produced.
+//
+// The insert is the interesting half: a device NEVER reached has no row at all,
+// so its first failure is what creates one. `installed_generation` stays NULL,
+// which [Store.InstalledGenerations] scans as 0 — "never observed", not
+// "generation zero".
+func (s *Store) NoteCredentialFailure(ctx context.Context, deviceID, credentialID,
+	errMsg string) error {
+	var _, err = s.pool.Exec(ctx,
+		`insert into device_credential_state (device_id, credential_id, last_error)
+		 values ($1::uuid, $2::uuid, $3)
+		 on conflict (device_id, credential_id) do update set last_error = $3`,
+		deviceID, credentialID, errMsg)
+	return err
+}
+
 // RetirableGenerations lists generations that COULD be purged, and those still
 // blocked with the reason. A generation is never purged while a known device still
 // carries it: a switch powered off for three months reboots with its old password.
@@ -262,7 +333,7 @@ func (s *Store) RevealGeneration(ctx context.Context, credentialID string,
 
 // CredentialFor picks the credential that applies to a device: its GROUP's if one
 // exists, the site's otherwise. This is the rule from section 12 of
-// docs/03-Security/Identite de service et rotation, and it exists because password
+// docs/en/03-Security/Service identity and rotation.md, and it exists because password
 // policies differ from one model to another.
 func (s *Store) CredentialFor(ctx context.Context, siteID, groupName, kind string) (model.SiteCredential, error) {
 	return scanSiteCred(s.pool.QueryRow(ctx,

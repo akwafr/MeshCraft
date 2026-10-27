@@ -30,8 +30,19 @@ type Hub struct {
 type session struct {
 	proxyID string
 	version string
-	since   time.Time
-	ymux    *yamux.Session
+	// features: what this session announced it can do, verbatim from the handshake
+	// header. Kept as the raw list rather than parsed flags: one string is enough for
+	// the single capability that exists, and it keeps the session honest about what
+	// was actually said.
+	features string
+	since    time.Time
+	ymux     *yamux.Session
+	// resyncDone: this session has closed its resync burst (EventResyncDone).
+	//
+	// PER SESSION, and that is the point: a reconnection builds a new session, so the
+	// proxy is automatically "resyncing again" without anyone having to remember to
+	// reset a flag. Guarded by the Hub mutex like the map itself.
+	resyncDone bool
 
 	// watch is the watch configuration stream, opened on demand and reused: config is
 	// rewritten on it at every change.
@@ -46,8 +57,15 @@ func NewHub() *Hub {
 // Register records a session and returns the function to call at its end. It unregisters
 // only if the session is still the current one -- otherwise a fast reconnection would be
 // evicted by the old session's cleanup.
-func (h *Hub) Register(proxyID, version string, ymux *yamux.Session) func() {
-	var s = &session{proxyID: proxyID, version: version, since: time.Now(), ymux: ymux}
+//
+// `features` is the capability list the proxy announced at the handshake
+// (HeaderFeatures); empty is the ordinary value for every proxy built before
+// capabilities existed, and means "assume nothing".
+func (h *Hub) Register(proxyID, version, features string, ymux *yamux.Session) func() {
+	var s = &session{
+		proxyID: proxyID, version: version, features: features,
+		since: time.Now(), ymux: ymux,
+	}
 	h.mu.Lock()
 	var previous = h.sessions[proxyID]
 	h.sessions[proxyID] = s
@@ -132,6 +150,76 @@ func (h *Hub) Connected(proxyID string) bool {
 	return s != nil && !s.ymux.IsClosed()
 }
 
+// ResyncState: where a proxy stands in the burst of restated state that follows a
+// (re)connection. Cf. EventResyncDone for what the burst is and why its END had to
+// become a fact rather than an inference.
+//
+// FOUR states and not a boolean, because the two ways of not being "done" call for
+// opposite decisions: a proxy that is still restating is worth waiting a moment for,
+// and one that will never say so is worth nothing at all.
+type ResyncState int
+
+const (
+	// ResyncAbsent: no session. The proxy is not connected, so it has neither
+	// restated anything nor told us it will. Says nothing about the proxy's age.
+	ResyncAbsent ResyncState = iota
+	// ResyncPending: connected, announced the capability, burst still in flight.
+	// The one state in which waiting for a proxy is justified.
+	ResyncPending
+	// ResyncDone: the burst is closed. Whatever this proxy knows, the controller now
+	// holds.
+	ResyncDone
+	// ResyncUnsupported: connected, and never announced FeatureResyncDone — an older
+	// binary. It will never close its burst, so nothing may ever wait on it: this
+	// state exists precisely so that "cannot say" is not confused with "not yet",
+	// which would freeze a fleet of old proxies.
+	ResyncUnsupported
+)
+
+func (r ResyncState) String() string {
+	switch r {
+	case ResyncPending:
+		return "pending"
+	case ResyncDone:
+		return "done"
+	case ResyncUnsupported:
+		return "unsupported"
+	}
+	return "absent"
+}
+
+// Resync reports where a proxy stands in its post-connect resync burst.
+//
+// A closed-but-not-yet-reaped session answers ResyncAbsent, like Connected: its
+// resync means nothing once the tunnel it travelled on is gone.
+func (h *Hub) Resync(proxyID string) ResyncState {
+	var s = h.get(proxyID)
+	if s == nil || s.ymux.IsClosed() {
+		return ResyncAbsent
+	}
+	if !HasFeature(s.features, FeatureResyncDone) {
+		return ResyncUnsupported
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if s.resyncDone {
+		return ResyncDone
+	}
+	return ResyncPending
+}
+
+// noteResyncDone records that THIS session closed its resync burst.
+//
+// Scoped to the session pointer and not to the proxy id, which is what makes it
+// correct across a reconnection: a marker still travelling on a dying stream would
+// otherwise mark the session that has just replaced it as caught up, and the
+// controller would stop waiting for a burst that has not started. Idempotent.
+func (h *Hub) noteResyncDone(s *session) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s.resyncDone = true
+}
+
 // List inventories established tunnels.
 func (h *Hub) List() []Status {
 	h.mu.RLock()
@@ -197,11 +285,12 @@ func (h *Hub) AcceptEvents(proxyID string, handle EventHandler) {
 		if err != nil {
 			return // session ended
 		}
-		go h.readEvents(proxyID, stream, handle)
+		go h.readEvents(s, stream, handle)
 	}
 }
 
-func (h *Hub) readEvents(proxyID string, stream net.Conn, handle EventHandler) {
+func (h *Hub) readEvents(s *session, stream net.Conn, handle EventHandler) {
+	var proxyID = s.proxyID
 	defer stream.Close() //nolint:errcheck
 	var br = bufio.NewReader(stream)
 	var req DialRequest
@@ -220,13 +309,21 @@ func (h *Hub) readEvents(proxyID string, stream net.Conn, handle EventHandler) {
 		if ev.Type == "" {
 			continue
 		}
+		if ev.Type == EventResyncDone {
+			// Hub state is updated HERE rather than in the handler: what a proxy has
+			// finished saying is a property of the session, and it must not depend on
+			// whichever callback the controller happened to pass. The event is still
+			// forwarded — the handler journals it, and that line is the only trace an
+			// operator has that a proxy announced itself caught up.
+			h.noteResyncDone(s)
+		}
 		handle(proxyID, ev)
 	}
 }
 
 // Dial opens a TCP connection to host:port FROM the proxy. The returned connection is an
 // ordinary net.Conn: the caller (driver, probe, HTTP client) has no notion of tunnel --
-// the "single code path" rule from docs/01-Architecture/Vue d'ensemble.
+// the "single code path" rule from docs/en/01-Architecture/Overview.md.
 func (h *Hub) Dial(ctx context.Context, proxyID, host string, port int) (net.Conn, error) {
 	var s = h.get(proxyID)
 	if s == nil || s.ymux.IsClosed() {

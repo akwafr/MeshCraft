@@ -1,24 +1,26 @@
-// Floating 24 h bandwidth chart shown while hovering a topology link.
-// Reuses device telemetry + LineChart — no per-link API.
-import { useQuery } from "@tanstack/react-query";
+// Floating 24 h chart shown while hovering a topology link: bandwidth, and the
+// OPTICAL LEVELS of the end that owns the counters when that end is a fibre.
+// Reuses device telemetry + LineChart — no per-link API, and the query is shared
+// with the faceplate tip (PortHoverTip), which is why hovering the same switch
+// on either page costs one request between them.
 import { useTranslation } from "react-i18next";
 
-import { get } from "./api";
+import { LevelChart } from "./LevelChart";
 import { fmtMbps } from "./network";
 import {
-  portTraffic,
-  type DeviceTelemetry,
-} from "./telemetry";
+  tipPosition,
+  usePortTelemetry,
+  useTipXLabel,
+} from "./PortHoverTip";
+import { portLevels, portTraffic } from "./telemetry";
 import { LineChart, SERIES } from "./viz";
-
-const WINDOW_MINUTES = 1440;
 
 export type LinkTrafficHover = {
   /** Stable id so move updates do not remount the query. */
   key: string;
   deviceId: string;
   port: string;
-  /** Which end owns the counters — maps rx/tx onto "toward A/B". */
+  /** Which end owns the counters — maps rx/tx onto the egress of A / of B. */
   from: "A" | "B";
   nameA: string;
   nameB: string;
@@ -29,36 +31,34 @@ export type LinkTrafficHover = {
 
 export function LinkTrafficTip({ hover }: { hover: LinkTrafficHover | null }) {
   const { t } = useTranslation();
-  const { data: tele, isFetching, isError } = useQuery({
-    queryKey: ["telemetry", hover?.deviceId ?? "", WINDOW_MINUTES],
-    queryFn: () =>
-      get<DeviceTelemetry>(
-        `/api/devices/${hover!.deviceId}/telemetry?minutes=${WINDOW_MINUTES}`,
-      ),
-    enabled: !!hover?.deviceId,
-    staleTime: 60_000,
-  });
+  // Shared with the faceplate tip (PortHoverTip): same route, same key, so a
+  // switch already hovered on one screen costs no request on the other.
+  const { data: tele, isFetching, isError } = usePortTelemetry(hover?.deviceId);
+  const xLabel = useTipXLabel(tele?.step_seconds ?? 0);
 
   if (!hover) return null;
 
   const traffic = portTraffic(tele, hover.port);
-  const towardA = hover.from === "A" ? traffic.rx : traffic.tx;
-  const towardB = hover.from === "A" ? traffic.tx : traffic.rx;
-  const step = tele?.step_seconds ?? 0;
+  // EGRESS PER END, not "toward X" (ADR-0026). The two numbers are the same
+  // two they always were — what leaves A is what travels toward B — but the
+  // map now names them by the switch that SENDS, and a tip that named them by
+  // the switch that receives would tell the same story backwards on the same
+  // screen. `tx` of the end owning the counters is its own egress; that end's
+  // `rx` is the other end's egress, minus whatever was lost on the way.
+  const outOfA = hover.from === "A" ? traffic.tx : traffic.rx;
+  const outOfB = hover.from === "A" ? traffic.rx : traffic.tx;
+  // THE LEVELS OF THE END THAT OWNS THE COUNTERS, which is the end this tip is
+  // already reporting bandwidth for. A fibre has a level at BOTH ends and they
+  // are different numbers — what leaves one is not what reaches the other — so
+  // labelling one end's reading with the link's name would be a quiet lie. The
+  // subtitle already names whose counters these are; the levels are that same
+  // device's.
+  const levels = portLevels(tele, hover.port);
   const hasSeries =
-    towardA.some((v) => v != null) || towardB.some((v) => v != null);
-
-  const pad = 14;
-  const tipW = 320;
-  const tipH = 210;
-  const left = Math.min(
-    Math.max(8, hover.clientX + pad),
-    window.innerWidth - tipW - 8,
-  );
-  const top = Math.min(
-    Math.max(8, hover.clientY + pad),
-    window.innerHeight - tipH - 8,
-  );
+    outOfA.some((v) => v != null) || outOfB.some((v) => v != null);
+  const { left, top, width } = tipPosition(
+    hover.clientX, hover.clientY, levels.length > 0 ? 380 : 210);
+  const tipW = width;
 
   return (
     <div
@@ -89,26 +89,27 @@ export function LinkTrafficTip({ hover }: { hover: LinkTrafficHover | null }) {
           height={140}
           series={[
             {
-              name: t("planPage.towardDevice", { device: hover.nameA }),
-              color: SERIES.in,
-              points: towardA,
+              name: t("planPage.egressOf", { device: hover.nameA }),
+              color: SERIES.out,
+              points: outOfA,
             },
             {
-              name: t("planPage.towardDevice", { device: hover.nameB }),
-              color: SERIES.out,
-              points: towardB,
+              name: t("planPage.egressOf", { device: hover.nameB }),
+              color: SERIES.in,
+              points: outOfB,
             },
           ]}
           format={fmtMbps}
-          xLabel={(i, n) => {
-            if (i === n - 1) return t("switchDetailPage.chartNow");
-            const back = (n - 1 - i) * step;
-            if (back < 90) return t("switchDetailPage.chartSecondsAgo", { n: Math.round(back) });
-            if (back < 5400) return t("switchDetailPage.chartMinutesAgo", { n: Math.round(back / 60) });
-            if (back < 48 * 3600) return t("switchDetailPage.chartHoursAgo", { n: Math.round(back / 3600) });
-            return t("switchDetailPage.chartDaysAgo", { n: Math.round(back / 86400) });
-          }}
+          xLabel={xLabel}
         />
+      )}
+      {levels.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div className="kicker" style={{ marginBottom: 4 }}>
+            {t("switchDetailPage.opticsLevelsTitle")}
+          </div>
+          <LevelChart lines={levels} stepSeconds={tele?.step_seconds ?? 0} />
+        </div>
       )}
     </div>
   );
