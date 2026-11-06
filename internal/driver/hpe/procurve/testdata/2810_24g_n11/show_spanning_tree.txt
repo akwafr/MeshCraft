@@ -19,7 +19,7 @@
   Topology Change Count  : 1           
   Time Since Last Change : 8 hours     
 
-  CST Root MAC Address : 000f20-0c3380
+  CST Root MAC Address : 000f20-000077
   CST Root Priority    : 32768       
   CST Root Path Cost   : 400000      
   CST Root Port        : 23                 
@@ -59,7 +59,7 @@
   20    100/1000T | Auto      128   Disabled   |
   21    100/1000T | Auto      128   Disabled   |
   22    100/1000T | Auto      128   Disabled   |
-  23    100/1000T | 200000    128   Forwarding | 001ffe-db9780 2     Yes No  
+  23    100/1000T | 200000    128   Forwarding | 001ffe-007980 2     Yes No  
   24    100/1000T | Auto      128   Disabled   |
  
 

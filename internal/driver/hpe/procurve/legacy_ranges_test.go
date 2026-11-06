@@ -5,8 +5,8 @@ package procurve
 // pin that the 2810 reads with the SAME parsers as the 2610 reference unit:
 // the neighbouring range this connector now claims in its fingerprint.
 //
-// Transformation applied: stripControl (cli.go), then serial, base MAC, contact
-// and SNMP communities replaced. Nothing else.
+// Transformation applied: stripControl (cli.go), then serial, MACs, contact,
+// SNMP communities, IP addresses and VLAN names replaced. Nothing else.
 
 import (
 	"path/filepath"
@@ -60,7 +60,7 @@ func Test2810Faceplate(t *testing.T) {
 	}
 }
 
-// The LES player template: VLAN 200 untagged on every port, the rest tagged on
+// The player-switch template: VLAN 200 untagged on every port, the rest tagged on
 // the 21-24 uplinks, management on VLAN 99.
 func Test2810RunningConfig(t *testing.T) {
 	var rc = parseRunningConfig(fixture2810(t, "show_running_config.txt"))

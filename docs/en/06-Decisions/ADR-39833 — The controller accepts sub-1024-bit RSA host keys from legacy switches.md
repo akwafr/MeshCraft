@@ -7,7 +7,7 @@ Date: 2026-11-06
 
 ## Context
 
-A ProCurve 2650 (J4899A, H.10.x) on the LES test bench answers SSH with an
+A ProCurve 2650 (J4899A, H.10.x) on a test bench answers SSH with an
 **896-bit RSA host key**. Since Go 1.24, `crypto/rsa` refuses any key shorter
 than 1024 bits, and the refusal happens during the key exchange — before a
 credential is ever presented. Discovery reported it verbatim:

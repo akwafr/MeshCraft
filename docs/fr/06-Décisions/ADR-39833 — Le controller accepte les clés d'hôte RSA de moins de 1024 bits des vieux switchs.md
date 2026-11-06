@@ -7,7 +7,7 @@ Date: 2026-11-06
 
 ## Contexte
 
-Un ProCurve 2650 (J4899A, H.10.x) du banc LES répond en SSH avec une **clé
+Un ProCurve 2650 (J4899A, H.10.x) d'un banc de test répond en SSH avec une **clé
 d'hôte RSA de 896 bits**. Depuis Go 1.24, `crypto/rsa` refuse toute clé de moins
 de 1024 bits, et le refus a lieu pendant l'échange de clés — avant même la
 présentation d'un identifiant. La découverte le rapportait tel quel :

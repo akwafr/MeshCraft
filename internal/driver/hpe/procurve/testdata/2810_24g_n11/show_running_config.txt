@@ -13,8 +13,8 @@ snmp-server contact "noc@example.org"
 max-vlans 256 
 time timezone 1 
 time daylight-time-rule Western-Europe 
-ip default-gateway 172.16.99.1 
-sntp server 172.16.2.20 
+ip default-gateway 203.0.113.1 
+sntp server 198.51.100.20 
 timesync sntp 
 sntp unicast 
 snmp-server community "REDACTED" Unrestricted 
@@ -25,52 +25,52 @@ vlan 1
    no untagged 1-24 
    exit 
 vlan 2 
-   name "SERVERS" 
+   name "VLAN_A" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 3 
-   name "ADMINS" 
+   name "VLAN_B" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 9 
-   name "GUESTS" 
+   name "VLAN_C" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 10 
-   name "STREAMING" 
+   name "VLAN_D" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 99 
-   name "MANAGEMENT" 
-   ip address 172.16.99.90 255.255.255.0 
+   name "MGMT" 
+   ip address 203.0.113.90 255.255.255.0 
    tagged 21-24 
    exit 
 vlan 101 
-   name "ZONE1" 
+   name "ACCESS1" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 102 
-   name "ZONE2" 
+   name "ACCESS2" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 103 
-   name "ZONE3" 
+   name "ACCESS3" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 104 
-   name "ZONE4" 
+   name "ACCESS4" 
    no ip address 
    tagged 21-24 
    exit 
 vlan 200 
-   name "PLAYERS" 
+   name "VLAN_E" 
    untagged 1-24 
    no ip address 
    exit 

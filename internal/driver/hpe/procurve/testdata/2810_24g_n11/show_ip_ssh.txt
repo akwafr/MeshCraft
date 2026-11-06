@@ -12,7 +12,7 @@
   Ses Type     | Protocol  Source IP and Port   
   --- -------- + --------- ---------------------
   1   console  |
-  2   ssh      | SSH v2    172.16.99.3:57422    
+  2   ssh      | SSH v2    203.0.113.3:57422    
   3   inactive |
   4   inactive |
  
