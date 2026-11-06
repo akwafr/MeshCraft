@@ -61,7 +61,10 @@ import (
 func init() { driver.Register(&Driver{}) }
 
 // Driver covers the ProCurve 2600 range (2610-24, 2610-48, and their PoE
-// variants), which share one CLI and one web interface.
+// variants), which share one CLI and one web interface — and the neighbouring
+// 2626/2650 (H.10.x) and 2810 (N.11.x) ranges that speak the same CLI. Reads on
+// a 2810-24G are CAPTURED (testdata/2810_24g_n11); writes are validated on the
+// 2610 only.
 type Driver struct{}
 
 func (d *Driver) Info() driver.Info {
@@ -81,7 +84,9 @@ func (d *Driver) Info() driver.Info {
 		Doc: "ProCurve 2600 Series Management and Configuration Guide, CAPTURED on a " +
 			"2610-48 (J9088A, R.11.121) 2026-08-03: reads, VLAN membership, SNMP, " +
 			"spanning tree and management addressing were run on that hardware and " +
-			"the verbatim output is in the package's testdata",
+			"the verbatim output is in the package's testdata. Reads also CAPTURED on a " +
+			"2810-24G (J9021A, N.11.15) 2026-11-06; 2626/2650 (H.10.x) recognised, " +
+			"not yet captured",
 	}
 }
 
@@ -275,8 +280,17 @@ func monitoring() driver.MonitoringCapabilities {
 // unambiguous — it names one product — where the word "ProCurve" alone covers
 // two decades of switches with three different CLIs.
 var (
-	// reProCurve2600: the range this connector actually describes.
-	reProCurve2600 = regexp.MustCompile(`(?i)ProCurve\s+Switch\s+26\d\d|J90(8[89]|9[01])A`)
+	// reProCurve2600: the ranges this connector actually describes — the
+	// 2610 (J9085A-J9089A), and the two neighbours that share its CLI
+	// line for line on the reads and VLAN writes this package does:
+	//   - 2626/2650 (J4900x, J4899x, PoE J8164A/J8165A), H.10.x — the older
+	//     generation of the same CLI;
+	//   - 2810-24G/48G (J9021A/J9022A), N.11.x — CAPTURED 2026-11-06 on a
+	//     2810-24G: same banner, prompt and "show vlans" layout as the 2610.
+	// The 2810 banner reads "ProCurve J9021A Switch 2810-24G" (part number
+	// BEFORE "Switch"), which the range-name half alone would miss.
+	reProCurve2600 = regexp.MustCompile(`(?i)ProCurve\s+Switch\s+(26\d\d|28[12]0)|` +
+		`J90(8[5-9]|9[01])A|J4899[ABC]|J4900[ABC]|J816[45]A|J902[12]A`)
 	// reProCurveAny: the brand, which is NOT the same claim. Matching it earns a
 	// low score on purpose: meshcraft would rather file a 5400 as "an HPE switch
 	// we do not know" than as a 2610 whose command set it would then apply.

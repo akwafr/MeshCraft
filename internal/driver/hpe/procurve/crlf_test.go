@@ -72,3 +72,20 @@ func TestStripControlTreatsNELAsALineBreak(t *testing.T) {
 		t.Errorf("cursor sequences or CR survived: %q", stripControl("\x1b[?25hSW# \r"))
 	}
 }
+
+// CAPTURED on a 2810-24G N.11.15: the banner gate is followed by no line break
+// at all, the prompt being placed by cursor addressing. Without treating a move
+// to column 1 as a new line, the prompt is glued to "continue" and never matched.
+func TestStripControlTreatsColumnOneAsALineBreak(t *testing.T) {
+	var raw = "\x1b[24;1HPress any key to continue\x1b[1;1H\x1b[?25h\x1b[24;27H\x1b[2J" +
+		"\x1b[?7l\x1b[1;200r\x1b[200;1H\x1b[2K\x1b[200;1H\x1b[?25h\x1b[200;1HSW-PLAYER-90> "
+	var got = stripControl(raw)
+	if !rePrompt.MatchString(got) {
+		t.Fatalf("the operator prompt after the banner gate was not recognised in %q", got)
+	}
+	// A move to another column is the echo repaint, not a new line.
+	var echo = stripControl("show versi\x1b[200;15H\x1b[?25h\x1b[200;25Hon")
+	if echo != "show version" {
+		t.Errorf("echo repaint split the command: %q", echo)
+	}
+}

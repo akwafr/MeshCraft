@@ -68,6 +68,10 @@ var rePrompt = regexp.MustCompile(`(?m)^[\w.\-]+(?:\([\w\-]+\))?[#>][ \t]*$`)
 // a login that had actually succeeded timed out waiting for a prompt that was on
 // screen. Stripping them at the read boundary keeps every later regex — prompt
 // and configuration alike — working on the text a human sees.
+// reHome matches a cursor move to column 1 (ESC[H, ESC[<row>H, ESC[<row>;1H) —
+// see stripControl.
+var reHome = regexp.MustCompile(`\x1b\[(?:[0-9]*(?:;1)?)?H`)
+
 var reANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][A-Za-z0-9]|\x1b[A-DF-Za-z]`)
 
 // stripControl turns what the device sends into the text a human sees.
@@ -83,8 +87,22 @@ var reANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][A-Za-z0-9]|\x1b
 //	"SW-PLAYER-79# no page\x1bESW-PLAYER-79# configure terminal\x1bESW-PLAYER-79(config)# "
 //
 // So it is translated FIRST, before anything else is removed.
+//
+// A CURSOR MOVE TO COLUMN 1 IS A LINE BREAK TOO, for the same reason. CAPTURED on
+// a 2810-24G (N.11.15) on 2026-11-06: the login banner ends with a gate that is
+// followed by NO line terminator at all — the screen is cleared and the prompt is
+// placed by cursor addressing:
+//
+//	"\x1b[24;1HPress any key to continue\x1b[1;1H … \x1b[2J … \x1b[200;1HSW-PLAYER-90> "
+//
+// Stripped naively that reads "Press any key to continueSW-PLAYER-90> ", the
+// anchored prompt regex never fires, and a session whose credential had been
+// accepted timed out as "no CLI prompt". A move to column 1 starts a new line on
+// screen, so it starts one here; moves to any other column (the echo repaint,
+// "\x1b[200;25H") are left to the generic stripping.
 func stripControl(s string) string {
 	s = strings.ReplaceAll(s, "\x1bE", "\n")
+	s = reHome.ReplaceAllString(s, "\n")
 	s = reANSI.ReplaceAllString(s, "")
 	return strings.ReplaceAll(s, "\r", "")
 }
@@ -162,9 +180,14 @@ func openCLI(ctx context.Context, client *ssh.Client) (*cliConn, error) {
 
 	// Clear the banner gate, then reach the first prompt.
 	_ = c.sendLine("")
-	if _, err = c.waitPrompt(ctx, cmdTimeout); err != nil {
+	var first string
+	if first, err = c.waitPrompt(ctx, cmdTimeout); err != nil {
 		c.close()
 		return nil, fmt.Errorf("no CLI prompt after opening the shell: %v", err)
+	}
+	if err = c.escalate(ctx, first); err != nil {
+		c.close()
+		return nil, err
 	}
 	if _, err = c.run(ctx, "no page", cmdTimeout); err != nil {
 		// Not fatal: a refusal costs an error echo, where active pagination would
@@ -320,4 +343,64 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// reOperatorPrompt matches a session left at operator level ("SW-PLAYER-90>").
+var reOperatorPrompt = regexp.MustCompile(`(?m)^[\w.\-]+>[ \t]*$`)
+
+// reCredPrompt matches the questions "enable" asks when a manager password is set.
+var reCredPrompt = regexp.MustCompile(`(?i)(user ?name|password)\s*:\s*$`)
+
+// escalate brings an operator-level session up to manager level.
+//
+// CAPTURED on a 2810-24G (N.11.15) on 2026-11-06: the site credential was
+// accepted but landed on "SW-PLAYER-90>", where "show running-config" and
+// "no page" answer "Invalid input". That unit has an operator password and NO
+// manager password, so "enable" goes straight to "#" — and every read the
+// connector does needs that level.
+//
+// When a manager password IS set, "enable" asks for it. This connector does not
+// hold a second secret for that, so it backs out and says so rather than
+// typing the login password at a prompt it was not meant for.
+func (c *cliConn) escalate(ctx context.Context, first string) error {
+	if !reOperatorPrompt.MatchString(tail(first, 300)) {
+		return nil
+	}
+	var err = c.sendLine("enable")
+	if err != nil {
+		return err
+	}
+	var deadline = time.NewTimer(cmdTimeout)
+	defer deadline.Stop()
+	var b byte
+	var ok bool
+	for {
+		select {
+		case b, ok = <-c.out:
+			if !ok {
+				return fmt.Errorf("SSH session closed by the device during \"enable\"")
+			}
+			c.buf.WriteByte(b)
+			if b != ' ' && b != ':' && b != '#' && b != '>' {
+				continue
+			}
+			var seen = stripControl(tail(c.buf.String(), 300))
+			if reCredPrompt.MatchString(seen) {
+				_, _ = io.WriteString(c.stdin, "\x03")
+				c.take()
+				return fmt.Errorf("this account lands at operator level (\">\") and " +
+					"\"enable\" asks for a manager password: give meshcraft the " +
+					"manager account instead")
+			}
+			if strings.HasSuffix(strings.TrimRight(seen, " \t"), "#") && rePrompt.MatchString(seen) {
+				c.take()
+				return nil
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			c.take()
+			return fmt.Errorf("operator-level session: no manager prompt after \"enable\" (%s)", cmdTimeout)
+		}
+	}
 }

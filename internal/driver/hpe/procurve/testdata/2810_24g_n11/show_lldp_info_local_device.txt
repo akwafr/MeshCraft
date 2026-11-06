@@ -1,0 +1,52 @@
+
+
+
+
+
+
+ LLDP Local Device Information
+
+  Chassis Type : mac-address
+  Chassis Id   : b4 39 d6 00 90 20        
+  System Name  : SW-PLAYER-90                  
+  System Description : ProCurve J9021A Switch 2810-24G, revision N.11.15, R...
+  System Capabilities Supported:bridge
+  System Capabilities Enabled:bridge
+
+  Management Address  :
+     Type:ipv4
+     Address:172.16.99.90
+
+ LLDP Port Information
+
+  Port     | PortType PortId   PortDesc
+  -------- + -------- -------- --------
+  1        | local    1        1       
+  2        | local    2        2       
+  3        | local    3        3       
+  4        | local    4        4       
+  5        | local    5        5       
+  6        | local    6        6       
+  7        | local    7        7       
+  8        | local    8        8       
+  9        | local    9        9       
+  10       | local    10       10      
+  11       | local    11       11      
+  12       | local    12       12      
+  13       | local    13       13      
+  14       | local    14       14      
+  15       | local    15       15      
+  16       | local    16       16      
+  17       | local    17       17      
+  18       | local    18       18      
+  19       | local    19       19      
+  20       | local    20       20      
+  21       | local    21       21      
+  22       | local    22       22      
+  23       | local    23       23      
+  24       | local    24       24      
+ 
+
+
+
+

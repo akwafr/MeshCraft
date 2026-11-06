@@ -108,4 +108,5 @@ no longer says anything about it.
 | [[ADR-80600 — Ctrl+F searches the site, the second press hands back to the browser]] | Global search | Accepted |
 | [[ADR-74818 — An ADR number is drawn at random, not taken as the next one]] | ADR numbering | Accepted |
 | [[ADR-46584 — Identity is an icon, and sign-out lives behind it]] | Account menu | Accepted |
+| [[ADR-39833 — The controller accepts sub-1024-bit RSA host keys from legacy switches]] | Legacy SSH host keys | Accepted |
 | [[ADR-73885 — The page background takes the mode's tint]] | Per-mode background | Accepted |

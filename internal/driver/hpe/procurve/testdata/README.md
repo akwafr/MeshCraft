@@ -34,3 +34,15 @@ characters and zero VLANs off the real switch.
 | `show_ip_ssh.txt` | the four-session table that explains this range's "refused pty" |
 | `show_system_information.txt` | serial, base MAC and revision, two label pairs per line |
 | `show_version.txt` | that this command carries neither model nor part number |
+
+## `2810_24g_n11/` — SW-PLAYER-90
+
+Verbatim output of a **ProCurve 2810-24G (J9021A), software N.11.15**, read on
+**2026-11-06** over SSH through a meshcraft proxy (LES test bench). Same
+`stripControl` transformation as above — which by then also turns a cursor move
+to column 1 into a line break, hence the blank lines between prompt repaints.
+Serial, base MAC, contact and SNMP communities are replaced; nothing else.
+
+This unit logs in at **operator** level (`SW-PLAYER-90>`, no manager password
+set) and `enable` takes it to manager without a prompt; the captures were taken
+after that `enable`.

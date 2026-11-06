@@ -1,0 +1,106 @@
+
+
+
+
+
+
+Running configuration:
+
+; J9021A Configuration Editor; Created on release #N.11.15
+
+hostname "SW-PLAYER-90" 
+snmp-server contact "noc@example.org" 
+max-vlans 256 
+time timezone 1 
+time daylight-time-rule Western-Europe 
+ip default-gateway 172.16.99.1 
+sntp server 172.16.2.20 
+timesync sntp 
+sntp unicast 
+snmp-server community "REDACTED" Unrestricted 
+snmp-server community "REDACTED" Operator 
+vlan 1 
+   name "DEFAULT_VLAN" 
+   no ip address 
+   no untagged 1-24 
+   exit 
+vlan 2 
+   name "SERVERS" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 3 
+   name "ADMINS" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 9 
+   name "GUESTS" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 10 
+   name "STREAMING" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 99 
+   name "MANAGEMENT" 
+   ip address 172.16.99.90 255.255.255.0 
+   tagged 21-24 
+   exit 
+vlan 101 
+   name "ZONE1" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 102 
+   name "ZONE2" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 103 
+   name "ZONE3" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 104 
+   name "ZONE4" 
+   no ip address 
+   tagged 21-24 
+   exit 
+vlan 200 
+   name "PLAYERS" 
+   untagged 1-24 
+   no ip address 
+   exit 
+spanning-tree
+spanning-tree 1 bpdu-protection
+spanning-tree 2 bpdu-protection
+spanning-tree 3 bpdu-protection
+spanning-tree 4 bpdu-protection
+spanning-tree 5 bpdu-protection
+spanning-tree 6 bpdu-protection
+spanning-tree 7 bpdu-protection
+spanning-tree 8 bpdu-protection
+spanning-tree 9 bpdu-protection
+spanning-tree 10 bpdu-protection
+spanning-tree 11 bpdu-protection
+spanning-tree 12 bpdu-protection
+spanning-tree 13 bpdu-protection
+spanning-tree 14 bpdu-protection
+spanning-tree 15 bpdu-protection
+spanning-tree 16 bpdu-protection
+spanning-tree 17 bpdu-protection
+spanning-tree 18 bpdu-protection
+spanning-tree 19 bpdu-protection
+spanning-tree 20 bpdu-protection
+spanning-tree bpdu-protection-timeout 10 force-version RSTP-operation
+ip ssh
+password operator
+
+
+
+
+
+

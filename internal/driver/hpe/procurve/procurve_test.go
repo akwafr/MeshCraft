@@ -174,3 +174,21 @@ func TestDriverDeclaresOnlyTheExtrasItWrites(t *testing.T) {
 		}
 	}
 }
+
+// The neighbouring ranges that share the 2610 CLI. The 2810 string is the banner
+// CAPTURED on SW-PLAYER-90 (2026-11-06); the 2650 one is its LLDP/sysDescr form.
+func TestFingerprintRecognisesThe2650And2810(t *testing.T) {
+	var d = &Driver{}
+	var cases = []string{
+		"ProCurve J9021A Switch 2810-24G",
+		"ProCurve J4899B Switch 2650, revision H.10.119",
+		"HP J4900C ProCurve Switch 2626",
+	}
+	var s string
+	for _, s = range cases {
+		var got = d.Fingerprint(driver.Evidence{SysDescr: s})
+		if got < 80 {
+			t.Errorf("%q scored %d, want >= 80", s, got)
+		}
+	}
+}

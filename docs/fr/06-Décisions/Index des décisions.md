@@ -109,4 +109,5 @@ il n'en dit plus rien.
 | [[ADR-80600 — Ctrl+F cherche dans le site, la seconde pression rend la main au navigateur]] | Recherche globale | Accepté |
 | [[ADR-74818 — Un numéro d'ADR se tire au sort, il ne se prend pas au suivant]] | Numérotation des ADR | Accepté |
 | [[ADR-46584 — L'identité est une icône, et la déconnexion vit derrière elle]] | Menu de compte | Accepté |
+| [[ADR-39833 — Le controller accepte les clés d'hôte RSA de moins de 1024 bits des vieux switchs]] | Clés d'hôte SSH anciennes | Accepté |
 | [[ADR-73885 — Le fond de la page prend la teinte du mode]] | Fond par mode | Accepté |

@@ -1,3 +1,13 @@
+// Legacy switches still in service carry RSA host keys shorter than 1024 bits:
+// a ProCurve 2650 (J4899A, H.10.x) offers an 896-bit key, and Go >= 1.24 refuses
+// it ("crypto/rsa: 896-bit keys are insecure") before authentication even
+// starts, so discovery, connectors and the console all lose the unit. The SSH
+// algorithm lists already accept this vintage (group1, 3des-cbc, ssh-dss); this
+// restores the matching key size for the controller binary only. Signatures we
+// verify against such a key are host-key checks on a management LAN, not
+// something meshcraft relies on for secrecy.
+//go:debug rsa1024min=0
+
 // The meshcraft controller: API, embedded SPA, proxy docker registry.
 package main
 

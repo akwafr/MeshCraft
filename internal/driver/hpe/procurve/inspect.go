@@ -4,6 +4,7 @@ package procurve
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
 	"meshcraft/internal/driver"
@@ -157,7 +158,7 @@ func (c *Client) identity(ctx context.Context) driver.Identity {
 		id.Model, id.ModelCode = parseLocalDevice(local)
 	}
 	if id.Model != "" {
-		id.Family = "ProCurve 2600"
+		id.Family = familyOf(id.Model)
 	}
 
 	var brief string
@@ -194,3 +195,15 @@ func (d *Driver) Identify(ctx context.Context, tgt driver.Target,
 	defer c.Close()
 	return c.identity(ctx), nil
 }
+
+// familyOf names the range from the LLDP model ("ProCurve Switch 2810-24G" →
+// "ProCurve 2800"). The connector drives all of them with one command set; the
+// family is what the inventory shows, and filing a 2810 as a "2600" was wrong.
+func familyOf(model string) string {
+	if reFamily28.MatchString(model) {
+		return "ProCurve 2800"
+	}
+	return "ProCurve 2600"
+}
+
+var reFamily28 = regexp.MustCompile(`\b28[12]0`)

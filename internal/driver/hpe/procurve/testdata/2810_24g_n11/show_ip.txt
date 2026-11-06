@@ -1,0 +1,26 @@
+
+
+
+
+
+
+ Internet (IP) Service
+
+
+  Default Gateway : 172.16.99.1    
+  Default TTL     : 64   
+  Arp Age         : 20 
+
+  VLAN         | IP Config  IP Address      Subnet Mask     Proxy ARP
+  ------------ + ---------- --------------- --------------- ---------
+  DEFAULT_VLAN | Disabled  
+  SERVERS      | Disabled  
+  ADMINS       | Disabled  
+  GUESTS       | Disabled  
+  STREAMING    | Disabled  
+  MANAGEMENT   | Manual     172.16.99.90    255.255.255.0   No        
+  ZONE1        | Disabled  
+  ZONE2        | Disabled  
+  ZONE3        | Disabled  
+  ZONE4        | Disabled  
+  PLAYERS      | Disabled
